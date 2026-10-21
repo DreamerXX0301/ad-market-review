@@ -1,0 +1,99 @@
+/* Scope the six-character wordmark without changing navigation or data layout. */
+.sidebar .brand.brand--dreamer {
+  gap: 9px;
+  padding-left: 15px;
+  padding-right: 12px;
+  flex-shrink: 0;
+}
+.brand--dreamer .brand-mark {
+  width: 32px;
+  height: 36px;
+  flex: 0 0 32px;
+}
+.brand--dreamer .brand-copy {
+  min-width: 0;
+}
+.sidebar .brand--dreamer strong {
+  display: block;
+  font-size: 17px;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.sidebar .brand--dreamer .brand-copy > span {
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+.topbar-title {
+  min-width: 0;
+}
+.topbar-title > div:last-child {
+  min-width: 0;
+}
+.dreamer-breadcrumb {
+  white-space: nowrap;
+  overflow: hidden;
+}
+.dreamer-breadcrumb .breadcrumb-product {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dreamer-breadcrumb > svg {
+  flex-shrink: 0;
+}
+.workspace-footer.dreamer-footer {
+  flex-wrap: wrap;
+  row-gap: 7px;
+}
+.dreamer-footer > span:first-child {
+  flex-shrink: 0;
+}
+.dreamer-footer strong {
+  font-weight: 600;
+  color: var(--subtle);
+}
+@media (max-width: 1250px) and (min-width: 761px) {
+  .sidebar .brand.brand--dreamer {
+    gap: 7px;
+    padding-left: 12px;
+    padding-right: 10px;
+  }
+  .brand--dreamer .brand-mark {
+    width: 29px;
+    flex-basis: 29px;
+  }
+  .sidebar .brand--dreamer strong {
+    font-size: 16px;
+  }
+  .sidebar .brand--dreamer .brand-copy > span {
+    font-size: 7px;
+  }
+}
+@media (max-width: 760px) {
+  .topbar .dreamer-breadcrumb {
+    display: none;
+  }
+  .topbar .topbar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 6px;
+  }
+  .topbar .topbar-title h1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .topbar .topbar-controls {
+    flex: 0 0 auto;
+  }
+  .workspace-footer.dreamer-footer {
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .dreamer-footer .footer-product-description {
+    display: block;
+    margin-top: 3px;
+  }
+}

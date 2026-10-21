@@ -26,7 +26,7 @@ def validate():
 
 
 def main():
-    parser=argparse.ArgumentParser(description='市序本地管理')
+    parser=argparse.ArgumentParser(description='冒险的梦想家本地管理')
     sub=parser.add_subparsers(dest='command',required=True)
     sub.add_parser('migrate');sub.add_parser('validate')
     importer=sub.add_parser('import-audit');importer.add_argument('path')

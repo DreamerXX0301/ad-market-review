@@ -1,0 +1,286 @@
+name: Publish verified GHCR image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from VERSION (without v)
+        required: true
+        default: 0.1.1
+        type: string
+      confirm:
+        description: Authorize GHCR upload after checks; does not deploy
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-ad-market-review
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main' && github.repository == 'DreamerXX0301/ad-market-review' && inputs.confirm
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: checks
+    if: github.ref == 'refs/heads/main' && github.repository == 'DreamerXX0301/ad-market-review' && inputs.confirm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/dreamerxx0301/ad-market-review
+      ARCHITECTURE: ${{ matrix.architecture }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Bind release version and complete source revision
+        id: release
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess, tomllib
+          version = pathlib.Path('VERSION').read_text().strip()
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Expected a stable semantic version'
+          assert version == os.environ['REQUESTED_VERSION'], 'Dispatch version differs from VERSION'
+          assert json.loads(pathlib.Path('frontend/package.json').read_text())['version'] == version
+          assert tomllib.loads(pathlib.Path('backend/pyproject.toml').read_text())['project']['version'] == version
+          revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert revision == os.environ['GITHUB_SHA'] and re.fullmatch(r'[0-9a-f]{40}', revision)
+          created = subprocess.check_output(['git', 'show', '-s', '--format=%cI', revision], text=True).strip()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\nrevision={revision}\ncreated={created}\n')
+          PY
+      - name: Set up the native platform builder
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Authenticate this release job to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build one native architecture locally before uploading it
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          push: false
+          tags: shixu-workbench:publication-check
+          build-args: |
+            NODE_IMAGE=docker.io/library/node:22.22.1-bookworm-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
+            PYTHON_IMAGE=docker.io/library/python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641
+            APP_VERSION=${{ steps.release.outputs.version }}
+            VCS_REF=${{ steps.release.outputs.revision }}
+            BUILD_DATE=${{ steps.release.outputs.created }}
+          # Single-platform Docker load does not preserve attestations. Exact
+          # source revision/version are bound in OCI labels and receipts.
+          provenance: false
+      - name: Verify image identity and real HTTP in an empty temporary filesystem
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          REVISION: ${{ steps.release.outputs.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence
+          docker image inspect shixu-workbench:publication-check > "release-evidence/image-$ARCHITECTURE.json"
+          python3 - <<'PY'
+          import json, os, pathlib
+          data = json.loads(pathlib.Path('release-evidence/image-'+os.environ['ARCHITECTURE']+'.json').read_text())[0]
+          assert data['Os'] == 'linux' and data['Architecture'] == os.environ['ARCHITECTURE']
+          labels = data['Config']['Labels']
+          assert labels['org.opencontainers.image.version'] == os.environ['VERSION']
+          assert labels['org.opencontainers.image.revision'] == os.environ['REVISION']
+          PY
+          cat > "$RUNNER_TEMP/smoke.py" <<'PY'
+          import json, os, platform, sqlite3, subprocess, sys, time, urllib.request
+          assert sqlite3.sqlite_version == '3.54.1'
+          server = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8788'])
+          try:
+              for attempt in range(50):
+                  try:
+                      with urllib.request.urlopen('http://127.0.0.1:8788/health', timeout=2) as response:
+                          health = json.load(response)
+                      break
+                  except Exception:
+                      if server.poll() is not None: raise RuntimeError('API exited during startup')
+                      time.sleep(.5)
+              else: raise RuntimeError('API health timed out')
+              assert health['application'] == 'ad-market-review'
+              assert health['app_name'] == '冒险的梦想家'
+              assert health['version'] == os.environ['EXPECTED_VERSION']
+              with urllib.request.urlopen('http://127.0.0.1:8788/', timeout=3) as response:
+                  html = response.read().decode()
+              assert '<title>冒险的梦想家 · A股研究工作台</title>' in html
+              assert 'id="root"' in html
+              print(json.dumps({'health': health, 'html_title_verified': True, 'sqlite': sqlite3.sqlite_version,
+                  'machine': platform.machine(), 'worker_started': False, 'source_credentials_mounted': False}, ensure_ascii=False))
+          finally:
+              server.terminate()
+              try: server.wait(timeout=10)
+              except subprocess.TimeoutExpired: server.kill(); server.wait()
+          PY
+          docker run --rm --network none --read-only --tmpfs /tmp:mode=1777 \
+            --tmpfs /var/lib/shixu:uid=10001,gid=10001,mode=0700 \
+            --env EXPECTED_VERSION="$VERSION" \
+            --mount "type=bind,source=$RUNNER_TEMP/smoke.py,target=/tmp/smoke.py,readonly" \
+            --entrypoint python shixu-workbench:publication-check /tmp/smoke.py \
+            | tee "release-evidence/smoke-$ARCHITECTURE.json"
+      - name: Run the fourteen existing isolated-volume checks on amd64
+        if: matrix.architecture == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/validate_container.py --image-tag publication-check --report release-evidence/container-checks-amd64.json
+          python3 - <<'PY'
+          import json, pathlib
+          report = json.loads(pathlib.Path('release-evidence/container-checks-amd64.json').read_text())
+          assert report['passed'] == report['total'] == 14
+          PY
+      - name: Upload this verified architecture under its complete source revision
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          REVISION: ${{ steps.release.outputs.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$IMAGE:sha-$REVISION-linux-$ARCHITECTURE"
+          docker tag shixu-workbench:publication-check "$tag"
+          docker push "$tag"
+          docker buildx imagetools inspect "$tag" > "release-evidence/registry-$ARCHITECTURE.txt"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          architecture = os.environ['ARCHITECTURE']
+          inspected = pathlib.Path(f'release-evidence/registry-{architecture}.txt').read_text()
+          found = re.search(r'^Digest:\s+(sha256:[0-9a-f]{64})\s*$', inspected, re.MULTILINE)
+          assert found, 'Registry digest was not confirmed'
+          value = {'image': os.environ['IMAGE'], 'architecture': architecture, 'digest': found.group(1),
+                   'version': os.environ['VERSION'], 'git_commit': os.environ['REVISION']}
+          pathlib.Path(f'release-evidence/platform-{architecture}.json').write_text(json.dumps(value, indent=2)+'\n')
+          PY
+      - name: Retain per-platform evidence even if verification failed
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: platform-image-${{ matrix.architecture }}-${{ github.sha }}
+          path: release-evidence/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  publish:
+    needs: [checks, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/dreamerxx0301/ad-market-review
+    steps:
+      - name: Download only receipts from this workflow's successful native builds
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: platform-image-*-${{ github.sha }}
+          path: release-evidence
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Validate both architecture receipts and refuse to overwrite an existing version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          receipts = [json.loads(pathlib.Path(f'release-evidence/platform-{architecture}.json').read_text())
+                      for architecture in ('amd64', 'arm64')]
+          assert {r['architecture'] for r in receipts} == {'amd64', 'arm64'}
+          assert len({r['version'] for r in receipts}) == 1
+          version = receipts[0]['version']
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version)
+          for row in receipts:
+              assert row['git_commit'] == os.environ['GITHUB_SHA'] and row['image'] == os.environ['IMAGE']
+              assert re.fullmatch(r'sha256:[0-9a-f]{64}', row['digest'])
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('version='+version+'\n')
+              for row in receipts: output.write(row['architecture']+'='+row['digest']+'\n')
+          PY
+          version="$(python3 -c "import json; print(json.load(open('release-evidence/platform-amd64.json'))['version'])")"
+          if docker buildx imagetools inspect "$IMAGE:v$version" > release-evidence/existing-tag.txt 2> release-evidence/existing-tag-error.txt; then
+            echo 'Version tag exists. Refusing to overwrite; choose a new release version.'
+            exit 1
+          elif ! grep -Eiq 'not found|manifest unknown|name unknown' release-evidence/existing-tag-error.txt; then
+            echo 'Version absence could not be established. Refusing promotion.'
+            cat release-evidence/existing-tag-error.txt
+            exit 1
+          fi
+      - name: Publish a multi-platform index from the exact verified digests
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          AMD64_DIGEST: ${{ steps.release.outputs.amd64 }}
+          ARM64_DIGEST: ${{ steps.release.outputs.arm64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --tag "$IMAGE:v$VERSION" --tag "$IMAGE:sha-$GITHUB_SHA" \
+            "$IMAGE@$AMD64_DIGEST" "$IMAGE@$ARM64_DIGEST"
+          docker buildx imagetools inspect "$IMAGE:v$VERSION" --raw > release-evidence/release-manifest.json
+          docker buildx imagetools inspect "$IMAGE:v$VERSION" | tee release-evidence/release-inspect.txt
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          manifest = json.loads(pathlib.Path('release-evidence/release-manifest.json').read_text())
+          children = {(r.get('platform', {}).get('os'), r.get('platform', {}).get('architecture')): r['digest']
+                      for r in manifest.get('manifests', [])}
+          assert children.get(('linux', 'amd64')) == os.environ['AMD64_DIGEST']
+          assert children.get(('linux', 'arm64')) == os.environ['ARM64_DIGEST']
+          inspected = pathlib.Path('release-evidence/release-inspect.txt').read_text()
+          found = re.search(r'^Digest:\s+(sha256:[0-9a-f]{64})\s*$', inspected, re.MULTILINE)
+          assert found
+          value = {'version': os.environ['VERSION'], 'git_commit': os.environ['GITHUB_SHA'],
+              'version_tag': os.environ['IMAGE'] + ':v' + os.environ['VERSION'],
+              'source_revision_tag': os.environ['IMAGE'] + ':sha-' + os.environ['GITHUB_SHA'],
+              'release_digest': found.group(1), 'pull_reference': os.environ['IMAGE'] + '@' + found.group(1),
+              'platform_digests': {'linux/amd64': os.environ['AMD64_DIGEST'], 'linux/arm64': os.environ['ARM64_DIGEST']},
+              'deployed': False, 'anonymous_pull_verified': False,
+              'visibility': 'must-be-checked-by-package-owner'}
+          pathlib.Path('release-evidence/release-image.json').write_text(json.dumps(value, indent=2)+'\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Verified GHCR publication\n\nVersion: `'+value['version_tag']+'`\n\n')
+              summary.write('Pull by digest: `'+value['pull_reference']+'`\n\nCommit: `'+value['git_commit']+'`\n\n')
+              summary.write('Native amd64 + arm64 HTTP checks passed; amd64 also passed 14 isolated-volume checks. No deployment occurred.\n\n')
+              summary.write('The owner must make the package public and separately verify anonymous pulls.\n')
+          PY
+      - name: Preserve complete publication evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ghcr-image-${{ github.sha }}
+          path: release-evidence/
+          if-no-files-found: ignore
+          retention-days: 30

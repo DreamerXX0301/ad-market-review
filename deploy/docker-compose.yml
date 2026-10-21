@@ -1,0 +1,79 @@
+# Standalone fresh-install file: pulls only, never builds or upgrades old volumes.
+# Version tag is a convenience; use SHIXU_IMAGE_REF=repository@sha256:digest to pin.
+name: ad-market-review
+x-runtime: &runtime
+  image: ${SHIXU_IMAGE_REF:-ghcr.io/dreamerxx0301/ad-market-review:v0.1.1}
+  environment: &environment
+    SHIXU_DATA_DIR: /var/lib/shixu
+    SHIXU_SQLITE_PATH: /var/lib/shixu/business/app.sqlite3
+    SHIXU_PUBLISHED_DIR: /var/lib/shixu/published
+    SHIXU_RAW_DIR: /var/lib/shixu/raw
+    SHIXU_WORK_DIR: /var/lib/shixu/work
+    SHIXU_CREDENTIAL_DIR: /var/lib/shixu/credentials
+    SHIXU_CREDENTIAL_MASTER_KEY_FILE: /run/secrets/shixu_master
+  init: true
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 40s
+services:
+  init:
+    <<: *runtime
+    user: "0:0"
+    command: [python, /app/deploy/init_volumes.py]
+    restart: "no"
+    volumes:
+      - business:/var/lib/shixu/business
+      - published:/var/lib/shixu/published
+      - raw:/var/lib/shixu/raw
+      - work:/var/lib/shixu/work
+      - credentials:/var/lib/shixu/credentials
+  api:
+    <<: *runtime
+    command: [python, -m, uvicorn, app.main:app, --host, 0.0.0.0, --port, "8788", --workers, "1"]
+    restart: unless-stopped
+    read_only: true
+    # API derivatives are disposable and private. Do not expose worker work.
+    tmpfs: [/tmp, "/var/lib/shixu/work:uid=10001,gid=10001,mode=0700"]
+    ports: ["127.0.0.1:${SHIXU_HTTP_PORT:-8788}:8788"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - business:/var/lib/shixu/business
+      - published:/var/lib/shixu/published:ro
+      - credentials:/var/lib/shixu/credentials
+    secrets: [shixu_master]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/health',timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+  worker:
+    <<: *runtime
+    # Explicit opt-in prevents a candidate `up -d` from starting a worker.
+    profiles: [worker]
+    command: [python, -m, app.worker]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    deploy:
+      replicas: 1
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - business:/var/lib/shixu/business
+      - published:/var/lib/shixu/published
+      - raw:/var/lib/shixu/raw
+      - work:/var/lib/shixu/work
+      - credentials:/var/lib/shixu/credentials:ro
+    secrets: [shixu_master]
+volumes:
+  business:
+  published:
+  raw:
+  work:
+  credentials:
+secrets:
+  shixu_master:
+    file: ${SHIXU_MASTER_KEY_FILE:?Set the original separately stored master-key file path}

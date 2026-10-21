@@ -4,7 +4,7 @@ import { CheckCircle2, X, XCircle } from "lucide-react";
 import { useApi } from "./lib/api";
 import type { Row } from "./lib/api";
 import AppShell, { marketRoutes, routeTitles } from "./components/AppShell";
-import { ErrorBox, ToastContext, Loading, Panel } from "./components/UI";
+import { Empty, ErrorBox, ToastContext, Loading, Panel } from "./components/UI";
 import { StockDrawer } from "./components/Charts";
 import type { ChartEventBaseline } from "./components/Charts";
 import {
@@ -24,6 +24,7 @@ import Research from "./features/research/Research";
 import SectorChartDialog from "./features/market/SectorChartDialog";
 import SectorMembersDialog from "./features/sector/SectorMembersDialog";
 import { globalSectorSelection } from "./components/searchPresentation";
+import { marketInstallationState } from "./components/marketInstallation";
 const currentRoute = () => {
   const hash = location.hash.slice(1).split("?")[0];
   return routeTitles[hash] ? hash : "market";
@@ -108,7 +109,7 @@ export default function App() {
     setDate((current) => (!current || current === previous ? latest : current));
   }, [bootstrap.data]);
   useEffect(() => {
-    document.title = `${routeTitles[route]} · 市序`;
+    document.title = `${routeTitles[route]} · 冒险的梦想家`;
   }, [route]);
   useEffect(() => {
     if (!toast) return;
@@ -147,6 +148,59 @@ export default function App() {
     [],
   );
   function page(key: string) {
+    if (marketRoutes.has(key)) {
+      const state = marketInstallationState(
+        bootstrap.data,
+        bootstrap.loading,
+        bootstrap.error,
+      );
+      if (state === "loading")
+        return (
+          <Panel title="正在连接本机数据服务">
+            <Loading />
+          </Panel>
+        );
+      if (state === "empty")
+        return (
+          <Panel title={routeTitles[key] || "盘面研究"}>
+            <Empty
+              title="尚未初始化行情"
+              description="配置数据源后，在数据中心手动初始化。完成并发布行情后，这里会显示真实盘面；当前没有启动同步任务。"
+              action={
+                <div className="button-group">
+                  <button className="btn" onClick={() => navigate("sources")}>
+                    配置数据源
+                  </button>
+                  <button
+                    className="btn primary"
+                    onClick={() => navigate("data")}
+                  >
+                    前往数据中心
+                  </button>
+                </div>
+              }
+            />
+          </Panel>
+        );
+      if (state === "error" || state === "unavailable")
+        return (
+          <Panel title="暂时无法读取行情状态">
+            <Empty
+              title="行情状态尚未确认"
+              description={
+                state === "error"
+                  ? "请检查上方API连接错误后重试，数据源与数据中心仍可从导航访问。"
+                  : "数据服务尚未返回有效的行情日期，请重试读取状态。"
+              }
+              action={
+                <button className="btn" onClick={bootstrap.reload}>
+                  重新读取状态
+                </button>
+              }
+            />
+          </Panel>
+        );
+    }
     switch (key) {
       case "market":
       case "indices":
@@ -240,17 +294,11 @@ export default function App() {
             retry={bootstrap.reload}
           />
         )}{" "}
-        {bootstrap.loading && !bootstrap.data ? (
-          <Panel title="正在连接本机数据服务">
-            <Loading />
-          </Panel>
-        ) : (
-          visited.map((key) => (
-            <div className="workspace-page" key={key} hidden={key !== route}>
-              <RetainedPage active={key === route}>{page(key)}</RetainedPage>
-            </div>
-          ))
-        )}
+        {visited.map((key) => (
+          <div className="workspace-page" key={key} hidden={key !== route}>
+            <RetainedPage active={key === route}>{page(key)}</RetainedPage>
+          </div>
+        ))}
       </AppShell>
       {sector &&
         (sector.view === "chart" ? (

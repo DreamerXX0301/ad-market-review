@@ -1,12 +1,12 @@
 """Platform HTTP endpoints; all data and job behavior lives in services."""
 from fastapi import APIRouter,Body,HTTPException,Query
-from app.core import json_clean
+from app.core import APP_NAME,APP_ID,json_clean
 from app.services import platform_service,market_service,task_service,source_service,research_service,workspace_automation
 
 router=APIRouter(prefix='/api/v1',tags=['platform'])
 
 @router.get('/health')
-def health(): return {'status':'ok','application':'shixu'}
+def health(): return {'status':'ok','application':APP_ID,'app_name':APP_NAME}
 
 @router.get('/bootstrap')
 def bootstrap():return json_clean(platform_service.bootstrap())

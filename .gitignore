@@ -42,6 +42,20 @@ playwright-report/
 !/docs/架构与模块边界.md
 !/docs/数据库与数据流.md
 !/docs/数据源与权限.md
+!/docs/Docker部署.md
 /deploy/*checks*.json
 /deploy/validation-report.json
 /frontend/api-contract-checks.json
+
+# Local development and one-off administrative utilities.
+/scripts/benchmark_api.py
+/scripts/benchmark_history_windows.py
+/scripts/benchmark_initial_import.py
+/scripts/benchmark_ten_year.py
+/scripts/check_ladder_trading_api.py
+/scripts/import_audit.py
+/scripts/validate_live_sources.py
+/contracts/analytics.sql
+/scripts/reinitialize_preserving_strategies.py
+/backend/tests/test_strategy_preserving_reinitialization.py
+/backend/tests/test_sector_strategy_preserving_reinitialization.py
