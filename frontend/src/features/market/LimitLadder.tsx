@@ -21,6 +21,7 @@ import {
 import MarketDataCoverage from "./MarketDataCoverage";
 import TopicMembersDialog from "./TopicMembersDialog";
 import { CurrencyCell } from "./MarketTable";
+import CopyStockCode from "../../components/CopyStockCode";
 import { sortMarketRows } from "./marketPresentation";
 import type { MarketSort } from "./marketPresentation";
 import {
@@ -118,16 +119,18 @@ function LadderStockCard({
   return (
     <article className="ladder-stock-card">
       <div className="ladder-stock-primary">
-        <button
-          className="ladder-stock-identity"
-          onClick={() => onStock(row.instrument_id)}
-          disabled={!row.instrument_id}
-        >
-          <strong>
-            {row.name || row.code || row.instrument_id || "名称待核验"}
-          </strong>
-          <code>{row.code || row.instrument_id}</code>
-        </button>
+        <div className="ladder-stock-identity-wrap">
+          <button
+            className="ladder-stock-identity"
+            onClick={() => onStock(row.instrument_id)}
+            disabled={!row.instrument_id}
+          >
+            <strong>
+              {row.name || row.code || row.instrument_id || "名称待核验"}
+            </strong>
+          </button>
+          <CopyStockCode code={row.code} instrumentId={row.instrument_id} />
+        </div>
         <div className="ladder-stock-status">
           {showHeight && positiveCount(board) && (
             <span className="ladder-stock-height">

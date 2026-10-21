@@ -11,6 +11,8 @@ import {
 } from "../../components/UI";
 import { num, percent, tone } from "../../lib/format";
 import MarketDataCoverage from "./MarketDataCoverage";
+import WatchlistButton from "../watchlist/WatchlistButton";
+import "../sector/MemberDialog.css";
 import { SortableMarketTable } from "./MarketTable";
 import { filterMarketMembers, topicMembersRequest } from "./marketPresentation";
 import {
@@ -66,13 +68,19 @@ export default function TopicMembersDialog({
             </button>
           </div>
         )}
-        <div className="market-members-summary">
+        <div className="market-members-summary member-dialog-context">
           <Badge>{date} · 盘面日期</Badge>
-          <span>已知成员 {data?.total ?? "—"} 只</span>
+          <span className="member-context-item">
+            <small>已知成员</small>
+            <strong>{data?.total ?? "—"} 只</strong>
+          </span>
           {data?.quote_coverage && (
-            <span>
-              该日报价可用 {data.quote_coverage.known ?? "—"} /{" "}
-              {data.quote_coverage.total ?? "—"}
+            <span className="member-context-item">
+              <small>报价可用</small>
+              <strong>
+                {data.quote_coverage.known ?? "—"} /{" "}
+                {data.quote_coverage.total ?? "—"}
+              </strong>
             </span>
           )}
         </div>
@@ -116,44 +124,49 @@ export default function TopicMembersDialog({
             <Warnings items={data?.warnings} />
           </div>
         </details>
-        <div className="result-toolbar">
-          <input
-            aria-label="搜索分类成分股"
-            className="search-input"
-            placeholder="搜索成员名称、代码…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <span className="muted">
-            {result.loading
-              ? "正在读取所选日成员…"
-              : data
-                ? `已返回 ${items.length}${data.total != null ? ` / ${data.total}` : ""} 只 · 当前匹配 ${filtered.length} 只`
-                : "成员数量待核验"}
-          </span>
-        </div>
-        <div
-          className="market-members-board-filter"
-          role="group"
-          aria-label="按上市板块筛选成分股"
-        >
-          {[
-            ["all", "全部"],
-            ["main", "主板"],
-            ["chinext", "创业板"],
-            ["star", "科创板"],
-            ["beijing", "北交所"],
-            ["unknown", "未知"],
-          ].map(([value, label]) => (
-            <button
-              key={value}
-              className={board === value ? "active" : ""}
-              aria-pressed={board === value}
-              onClick={() => setBoard(value)}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="member-dialog-toolbar">
+          <div className="result-toolbar member-dialog-search-row">
+            <label className="member-dialog-field member-dialog-field-search">
+              <span>搜索成分股</span>
+              <input
+                aria-label="搜索分类成分股"
+                className="search-input"
+                placeholder="搜索成员名称、代码…"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            <span className="muted">
+              {result.loading
+                ? "正在读取所选日成员…"
+                : data
+                  ? `已返回 ${items.length}${data.total != null ? ` / ${data.total}` : ""} 只 · 当前匹配 ${filtered.length} 只`
+                  : "成员数量待核验"}
+            </span>
+          </div>
+          <div
+            className="market-members-board-filter"
+            role="group"
+            aria-label="按上市板块筛选成分股"
+          >
+            {[
+              ["all", "全部"],
+              ["main", "主板"],
+              ["chinext", "创业板"],
+              ["star", "科创板"],
+              ["beijing", "北交所"],
+              ["unknown", "未知"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                className={board === value ? "active" : ""}
+                aria-pressed={board === value}
+                onClick={() => setBoard(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
         {!path ? (
           <Warning>此分类缺少稳定标识，无法核验所选日期成员。</Warning>
@@ -256,6 +269,21 @@ export default function TopicMembersDialog({
                 ),
               },
               { key: "quote_date", title: "报价日" },
+              {
+                key: "actions",
+                title: "自选",
+                sortable: false,
+                render: (_value: unknown, row: Row) => (
+                  <WatchlistButton
+                    instrumentId={row.instrument_id}
+                    sourceKind="sector"
+                    sourceId={topic.topic_code || topic.topic_id}
+                    sourceName={topic.name}
+                    observedDate={date}
+                    compact
+                  />
+                ),
+              },
             ]}
             onStock={onStock}
             pageSize={20}

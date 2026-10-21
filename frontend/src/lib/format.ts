@@ -1,3 +1,8 @@
+import {
+  isHiddenIndicatorField,
+  visibleIndicatorData,
+} from "./indicatorVisibility";
+
 export const num = (v: any, digits = 2) =>
   v === null || v === undefined || v === "" || !Number.isFinite(Number(v))
     ? "—"
@@ -47,8 +52,10 @@ export const dateTime = (v: any) =>
       : String(v)
           .replace("T", " ")
           .replace(/\.\d+Z$/, " UTC");
-export const textValue = (v: any): string =>
-  v == null
+export const textValue = (input: any): string => {
+  if (isHiddenIndicatorField(input)) return "已隐藏的指标";
+  const v = visibleIndicatorData(input);
+  return v == null
     ? "—"
     : typeof v === "boolean"
       ? v
@@ -69,6 +76,7 @@ export const textValue = (v: any): string =>
         : typeof v === "object"
           ? v.name || v.label || JSON.stringify(v)
           : String(v);
+};
 export const label: Record<string, string> = {
   start: "区间起点",
   end: "区间终点",

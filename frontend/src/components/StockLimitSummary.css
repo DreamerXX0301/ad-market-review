@@ -1,8 +1,11 @@
+.stock-limit-summary-container {
+  container: stock-summary / inline-size;
+  margin: 0 0 14px;
+}
 .stock-limit-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
-  margin: 0 0 14px;
   position: relative;
 }
 .stock-limit-metric {
@@ -23,6 +26,7 @@
   display: grid;
   gap: 3px;
   min-width: 0;
+  flex: 1;
 }
 .stock-limit-metric > div > span {
   font-size: 11px;
@@ -54,10 +58,31 @@
   padding: 7px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--amber) 13%, transparent);
+  flex-shrink: 0;
+}
+.stock-limit-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+}
+.stock-limit-range > span {
+  white-space: nowrap;
 }
 .stock-limit-symbol.recent {
   color: var(--accent-secondary);
   background: color-mix(in srgb, var(--accent-secondary) 12%, transparent);
+}
+.stock-limit-symbol.daily {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 13%, transparent);
+}
+.stock-limit-metric.daily {
+  border-color: color-mix(in srgb, var(--blue) 32%, var(--border));
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--blue) 10%, var(--surface)),
+    var(--surface) 85%
+  );
 }
 .stock-limit-retry {
   grid-column: 1/-1;
@@ -76,7 +101,7 @@
   color: var(--amber);
   font-size: 10px;
 }
-@media (max-width: 650px) {
+@container stock-summary (max-width: 650px) {
   .stock-limit-metric {
     padding: 10px;
     gap: 7px;
@@ -110,8 +135,16 @@
 .stock-limit-metric strong.muted {
   color: var(--text);
 }
-@media (max-width: 1100px) {
+@container stock-summary (max-width: 900px) {
   .stock-limit-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stock-limit-metric.daily {
+    grid-column: 1 / -1;
+  }
+}
+@container stock-summary (max-width: 380px) {
+  .stock-limit-summary {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

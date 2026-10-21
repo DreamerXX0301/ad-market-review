@@ -78,6 +78,15 @@ def test_empty_list_never_reads_quotes(tmp_path):
     assert market.reads == 0
 
 
+def test_missing_calendar_context_cannot_poison_later_same_generation_quote(tmp_path):
+    clear_tracking_quote_cache();market=Market(tmp_path);day=CALENDAR[-1]
+    unknown=tracking_quotes(market,[round_()],[],day,strict_close=True)[(SYMBOL,day)]
+    assert unknown=={'close':market.data[-1]['close'],'change_pct':None}
+    valid=tracking_quotes(market,[round_()],CALENDAR,day,strict_close=True)[(SYMBOL,day)]
+    assert valid['close']==market.data[-1]['close'] and valid['change_pct'] is not None
+    assert market.reads==2
+
+
 @pytest.mark.parametrize('proof', [None, {SYMBOL: [{'date': None}]}, {SYMBOL: [{'date': 'not-a-date'}]}])
 def test_unknown_action_coverage_does_not_become_known_no_action(tmp_path, proof):
     clear_tracking_quote_cache(); market = Market(tmp_path)
@@ -94,3 +103,18 @@ def test_valid_actions_outside_calendar_do_not_erase_current_comparison(tmp_path
     day = CALENDAR[-1]
     value = tracking_quotes(market, [round_()], CALENDAR, day)[(SYMBOL, day)]
     assert value == {key: metrics_for(market.data, day, CALENDAR)[key] for key in ('close', 'change_pct')}
+
+
+@pytest.mark.parametrize('case',['duplicate','zero_volume'])
+def test_strict_personal_close_cache_is_separate_from_default_tracking_display(tmp_path,case):
+    clear_tracking_quote_cache();market=Market(tmp_path);day=CALENDAR[-1]
+    if case=='duplicate':market.data.append(deepcopy(market.data[-1]))
+    else:market.data[-1]['volume']=0
+    default=tracking_quotes(market,[round_()],CALENDAR,day)[(SYMBOL,day)]
+    strict=tracking_quotes(market,[round_()],CALENDAR,day,strict_close=True)[(SYMBOL,day)]
+    assert default['close'] is not None
+    assert strict=={'close':None,'change_pct':None}
+    assert market.reads==2
+    assert tracking_quotes(market,[round_()],CALENDAR,day,strict_close=True)[(SYMBOL,day)]==strict
+    assert tracking_quotes(market,[round_()],CALENDAR,day)[(SYMBOL,day)]==default
+    assert market.reads==2

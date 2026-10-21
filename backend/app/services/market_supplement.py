@@ -6,7 +6,7 @@ and may be retried manually without redownloading complete accepted dates.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -66,11 +66,131 @@ class SupplementCache:
         atomic_json(self.root/'accepted'/source/capability/(day+'.json'),{'version':VERSION,'signature':signature,'normalization_version':result.get('normalization_version',VERSION),'artifact':str(path.relative_to(self.root)),'sha256':hash_file(path)})
         return result
 
+    def pool_raw_evidence(self, day, pool_kind):
+        """Read old Fuyao evidence independently of its old context signature.
+
+        Returns raw pages and provenance only, never trusted normalized items.
+        A caller must run the current normalizer against the current market.
+        """
+        pool_spec(pool_kind)
+        if not isinstance(day,str) or date.fromisoformat(day).isoformat()!=day:
+            raise ValueError('原始证据日期无效')
+        pointer=_load(self.root/'accepted/fuyao'/pool_kind/(day+'.json'))
+        if pointer is None:return None
+        if not isinstance(pointer,dict) or pointer.get('version')!=VERSION:
+            raise ValueError('补充批次证据版本不匹配')
+        def checked(relative, expected, label):
+            path=(self.root/str(relative or '')).resolve()
+            if not path.is_relative_to(self.root.resolve()) or not path.is_file() or hash_file(path)!=expected:
+                raise ValueError(label+'缺失或SHA校验失败')
+            return _load(path)
+        record=checked(pointer.get('artifact'),pointer.get('sha256'),'补充批次缓存')
+        if not isinstance(record,dict) or record.get('date')!=day or record.get('pool_kind','limitup')!=pool_kind or record.get('source')!='fuyao' or record.get('validation_version')!=VERSION:
+            raise ValueError('补充批次证据的日期、来源或涨跌停类型不一致')
+        raw=checked(record.get('raw_artifact'),record.get('raw_sha256'),'补充原始证据')
+        if not isinstance(raw,list) or not 1<=len(raw)<=100 or any(not isinstance(page,dict) for page in raw):
+            raise ValueError('补充原始证据分页结构无效或超出100页预算')
+        return {'pages':raw,'signature':pointer.get('signature'),'fetched_at':record.get('fetched_at'),
+                'validated_at':record.get('validated_at'),'validation_context_id':record.get('validation_context_id')}
+
     def publish(self, document, guard=None):
         content=digest(document); path=self.root/'indexes'/(content+'.json')
         atomic_json(path,document)
         if guard:guard()
         atomic_json(self.root/'head.json',{'snapshot_id':document['snapshot_id'],'version':VERSION,'artifact':str(path.relative_to(self.root)),'sha256':hash_file(path),'published_at_ms':now_ms()})
+
+
+def _year_dates(calendar,target):
+    # At most two batches per retained date in this one calendar year; never
+    # discover arbitrary files or silently broaden to other historical years.
+    return sorted({day for day in calendar if isinstance(day,str) and day[:4]==target[:4] and day<=target and date.fromisoformat(day).isoformat()==day})
+
+
+def _pool_signature(day,source,closes,identity_hash,pool_kind=None):
+    value={'quotes':closes,'master':identity_hash,'day':day,'source':source}
+    if pool_kind=='limitdown':value['pool_kind']=pool_kind
+    return digest(value)
+
+
+def _revalidate_raw(cache,day,pool_kind,signature,closes,master,guard=None):
+    evidence=cache.pool_raw_evidence(day,pool_kind)
+    if evidence is None:return None
+    record,_=fetch_fuyao_pool(None,day,closes,master,payload_pages=evidence['pages'],pool_kind=pool_kind)
+    context=digest({'signature':signature,'normalization':NORMALIZATION_VERSION})
+    record.update(fetched_at=evidence['fetched_at'],validation_context_id=context,
+                  validated_at=evidence['validated_at'] if evidence.get('validation_context_id')==context else datetime.now(CHINA).isoformat())
+    if guard:guard()
+    return cache.accept('fuyao',pool_kind,day,signature,record,evidence['pages'])
+
+
+def _publish_document(doc,calendar,target,cache,guard=None,on_publish=None,sector_history=False):
+    doc['annual_coverage']=annual_coverage(doc,calendar,target)
+    doc['annual_down_coverage']=annual_coverage(doc,calendar,target,pool_kind='limitdown')
+    doc['quality']='partial' if doc['failures'] or not doc['annual_coverage']['complete'] or not doc['annual_down_coverage']['complete'] else 'complete'
+    doc['message']=('本地原始证据离线重验；' if doc.get('revalidate_only') else '来源池已核验；')+'年内涨停 '+str(doc['annual_coverage']['covered_days'])+'/'+str(doc['annual_coverage']['expected_days'])+'，跌停 '+str(doc['annual_down_coverage']['covered_days'])+'/'+str(doc['annual_down_coverage']['expected_days'])+' 个交易日完整；当年之外未回补，缺口保留并可重试'
+    if sector_history:
+        coverage=doc['sector_index_history'].get(target,{}).get('coverage',{})
+        doc['message']+='；板块日行情 '+str(coverage.get('accepted_count',0))+'/'+str(coverage.get('catalog_count',0))+' 个，历史成分另行核验'
+    if on_publish:on_publish('发布补充数据索引',doc['message'])
+    cache.publish(doc,guard)
+    return doc
+
+
+def revalidate_for_market(market,target,*,progress=None,guard=None,job_id=None):
+    """Explicit offline repair: only hash-checked local raw pages may be used."""
+    status=market.status();calendar=market.calendar()
+    if target not in calendar or target!=status.get('data_end'):raise ValueError('离线重验目标必须是当前已发布行情日')
+    root=_root();cache=SupplementCache(root);old=load_supplement()
+    days=_year_dates(calendar,target);total=len(days)*2
+    master=[row for row in market.instruments(limit=10000) if row.get('kind')=='stock']
+    identity_hash=digest({row['code']:row['instrument_id'] for row in master})
+    doc={'version':VERSION,'snapshot_id':status['snapshot_id'],'target_date':target,'job_id':job_id,'created_at_ms':now_ms(),
+         'revalidate_only':True,'public_pools':{},'annual_pools':{},'annual_down_pools':{},
+         'fund_flows':{day:record for day,record in old.get('fund_flows',{}).items() if day in calendar and day<=target},
+         'sector_index_history':{day:record for day,record in old.get('sector_index_history',{}).items() if day in calendar and day<=target},
+         'failures':[failure for failure in old.get('failures',[]) if failure.get('capability') not in ('year_limitup','year_limitdown','seal_details')]}
+    stats={'planned_batches':total,'completed_batches':0,'revalidated_batches':0,'missing_batches':0,'failed_batches':0}
+    def tick(stage,message):
+        if guard:guard()
+        if progress:progress(stage,min(99,int(stats['completed_batches']/max(1,total)*98)),message,
+                             {'actual_completed_batches':stats['completed_batches'],'actual_total_batches':total,'revalidate_only':True})
+    con=duckdb.connect(':memory:')
+    try:
+        con.execute("SET threads=1");con.execute("SET memory_limit='256MB'")
+        con.execute('CREATE TABLE quotes AS SELECT instrument_id,date,close FROM read_parquet(?) WHERE date>=? AND date<=?',
+                    [status['path']+'/daily.parquet',target[:4]+'-01-01',target])
+        def prices(day):return dict(con.execute('SELECT instrument_id,close FROM quotes WHERE date=?',[day]).fetchall())
+        tick('离线重验年内涨跌停','仅使用本地已留存原始证据，不读取凭据或发起网络请求')
+        for day in days:
+            closes=prices(day)
+            for kind in ('limitup','limitdown'):
+                if guard:guard()
+                spec=pool_spec(kind)
+                try:
+                    signature=_pool_signature(day,'fuyao',closes,identity_hash,kind)
+                    record=_revalidate_raw(cache,day,kind,signature,closes,master,guard)
+                    if record is None:
+                        stats['missing_batches']+=1
+                        doc['failures'].append({'capability':spec['failure_capability'],'pool_kind':kind,'date':day,'reason':'未留存该日来源池原始证据；离线重验不补拉，保持未知'})
+                    else:
+                        doc[spec['document_key']][day]=record;stats['revalidated_batches']+=1
+                except (ValueError,ProviderError) as error:
+                    stats['failed_batches']+=1
+                    doc['failures'].append({'capability':spec['failure_capability'],'pool_kind':kind,'date':day,'reason':'本地原始证据重验失败：'+str(error)})
+                stats['completed_batches']+=1
+                tick('离线重验年内涨跌停',day+' · '+spec['label']+' · '+str(stats['completed_batches'])+'/'+str(total))
+        # Existing public seal details are retained only under an exact current
+        # quote/identity signature; this repair never requests public providers.
+        for day in old.get('public_pools',{}):
+            if day not in calendar or day>target:continue
+            try:
+                record=cache.reuse('eastmoney','limitup',day,_pool_signature(day,'eastmoney-public',prices(day),identity_hash),allow_partial=True)
+                if record is not None and record.get('date')==day:doc['public_pools'][day]=record
+                else:doc['failures'].append({'capability':'seal_details','date':day,'reason':'封板明细当前签名未匹配；离线任务不联网补拉，保持未知'})
+            except ValueError as error:doc['failures'].append({'capability':'seal_details','date':day,'reason':str(error)})
+    finally:con.close()
+    doc['revalidation']=stats
+    return _publish_document(doc,calendar,target,cache,guard,tick)
 
 
 def fetch_history_for_market(public, market, target, cache, *, progress=None, guard=None):
@@ -125,55 +245,58 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         progress=lambda stage,pct,message=None,details=None: original_progress(stage,int(pct*.55),message,details)
     master=[r for r in market.instruments(limit=10000) if r.get('kind')=='stock']
     identity_hash=digest({r['code']:r['instrument_id'] for r in master})
-    dates=[d for d in calendar if d[:4]==target[:4] and d<=target] if year_history else [target]
+    history_dates=_year_dates(calendar,target)
+    dates=history_dates if year_history else [target]
     recent=calendar[max(0,calendar.index(target)-max(1,min(int(recent_days),30))+1):calendar.index(target)+1]
     pool_batches=len(dates)*2
-    planned=pool_batches+len(recent)+1; done=0
+    local_batches=len(history_dates)*2
+    planned=local_batches+pool_batches+len(recent)+1; done=0
     def tick(label,message=None):
         if guard:guard()
-        if done<pool_batches:pct=int(done/max(1,pool_batches)*60)
-        elif done<pool_batches+len(recent):pct=60+int((done-pool_batches)/max(1,len(recent))*15)
+        remote_done=done-local_batches
+        if done<local_batches:pct=int(done/max(1,local_batches)*10)
+        elif remote_done<pool_batches:pct=10+int(remote_done/max(1,pool_batches)*50)
+        elif remote_done<pool_batches+len(recent):pct=60+int((remote_done-pool_batches)/max(1,len(recent))*15)
         else:pct=98 if done>=planned else 75
         if progress:progress(label,pct,message or label,{'actual_completed_batches':done,'actual_total_batches':planned})
     con=duckdb.connect(':memory:')
     try:
         con.execute('CREATE TABLE quotes AS SELECT instrument_id,date,close FROM read_parquet(?)',[status['path']+'/daily.parquet'])
         def prices(day):return dict(con.execute('SELECT instrument_id,close FROM quotes WHERE date=?',[day]).fetchall())
-        def pool_signature(day,source,closes,pool_kind=None):
-            value={'quotes':closes,'master':identity_hash,'day':day,'source':source}
-            # Existing up signatures remain compatible. Down batches get an
-            # explicit kind as well as their separate accepted namespace.
-            if pool_kind=='limitdown':value['pool_kind']=pool_kind
-            return digest(value)
-        def signature_for(day,source,pool_kind=None):return pool_signature(day,source,prices(day),pool_kind)
+        def signature_for(day,source,pool_kind=None):return _pool_signature(day,source,prices(day),identity_hash,pool_kind)
         def validate_cached(record,day,pool_kind=None):
             if not record:return
             if record.get('date')!=day:raise ValueError('补充批次缓存日期与请求日期不符，拒绝复用')
             if pool_kind and record.get('pool_kind','limitup')!=pool_kind:raise ValueError('补充批次缓存涨跌停类型与请求不符，拒绝复用')
 
-        # A new base generation must not discard validated history, nor blindly
-        # inherit stale prices. Verify accepted chunks against its actual quotes.
-        for key,source,capability,signature_source in [('annual_pools','fuyao','limitup','fuyao'),('annual_down_pools','fuyao','limitdown','fuyao'),('public_pools','eastmoney','limitup','eastmoney-public')]:
-            for day in old.get(key,{}):
-                if day not in calendar or day>target or (key in ('annual_pools','annual_down_pools') and day[:4]!=target[:4]):continue
+        # Probe the bounded calendar, not only the previous head: older accepted
+        # evidence can outlive an index that omitted it after a context change.
+        for day in history_dates:
+            closes=prices(day)
+            for kind in ('limitup','limitdown'):
                 if guard:guard()
-                kind=capability if key in ('annual_pools','annual_down_pools') else None
-                signature=signature_for(day,signature_source,kind)
-                record=cache.reuse(source,capability,day,signature,allow_partial=True)
-                validate_cached(record,day,kind)
-                if record is not None and kind and record.get('normalization_version')!=NORMALIZATION_VERSION:
-                    try:
-                        cached=record;raw=_load(root/cached['raw_artifact'])
-                        # Revalidate inherited history locally, including dates
-                        # outside this manual incremental run's remote scope.
-                        record,_=fetch_fuyao_pool(None,day,prices(day),master,payload_pages=raw,pool_kind=kind)
-                        record.update(fetched_at=cached.get('fetched_at'),validated_at=datetime.now(CHINA).isoformat())
-                        record=cache.accept(source,capability,day,signature,record,raw)
-                    except (ValueError,ProviderError) as error:
-                        doc['failures'].append({'capability':pool_spec(kind)['failure_capability'],'pool_kind':kind,'date':day,'reason':'历史补充原始证据离线重验失败：'+str(error)})
-                        continue
-                if record is not None:doc[key][day]=record
-                else:doc['failures'].append({'capability':pool_spec(kind)['failure_capability'] if kind else 'seal_details','date':day,'reason':'基础行情或证券身份签名变化，该历史补充未继承；请手动运行年度补充以重验'})
+                spec=pool_spec(kind);signature=_pool_signature(day,'fuyao',closes,identity_hash,kind)
+                try:
+                    record=cache.reuse('fuyao',kind,day,signature,allow_partial=True)
+                    validate_cached(record,day,kind)
+                    if record is None or record.get('normalization_version')!=NORMALIZATION_VERSION:
+                        record=_revalidate_raw(cache,day,kind,signature,closes,master,guard)
+                    if record is not None:doc[spec['document_key']][day]=record
+                    elif day in old.get(spec['document_key'],{}):
+                        doc['failures'].append({'capability':spec['failure_capability'],'pool_kind':kind,'date':day,'reason':'签名变化且本地原始证据缺失，该日保持未知；需手动回补'})
+                except (ValueError,ProviderError) as error:
+                    doc['failures'].append({'capability':spec['failure_capability'],'pool_kind':kind,'date':day,'reason':'签名变化或历史证据无法核验，该日未继承：'+str(error)})
+                done+=1
+                tick('核验本地年内涨跌停证据',day+' · '+spec['label']+' · '+str(done)+'/'+str(local_batches))
+        for day in old.get('public_pools',{}):
+            if day not in calendar or day>target:continue
+            if guard:guard()
+            try:
+                record=cache.reuse('eastmoney','limitup',day,signature_for(day,'eastmoney-public'),allow_partial=True)
+                validate_cached(record,day)
+                if record is not None:doc['public_pools'][day]=record
+                else:doc['failures'].append({'capability':'seal_details','date':day,'reason':'基础行情或证券身份签名变化，该日封板明细未继承；需手动补充'})
+            except ValueError as error:doc['failures'].append({'capability':'seal_details','date':day,'reason':str(error)})
         if dates:
             from app.services.source_service import client
             adapter=client('fuyao')
@@ -182,19 +305,18 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
                 for pool_kind in ('limitup','limitdown'):
                     spec=pool_spec(pool_kind)
                     tick('回补年内'+spec['label']+'池',day+' · 校验分页、证券身份和收盘价')
-                    signature=pool_signature(day,'fuyao',closes,pool_kind);cached=None
+                    signature=_pool_signature(day,'fuyao',closes,identity_hash,pool_kind);cached=None
                     try:
                         record=cache.reuse('fuyao',pool_kind,day,signature,allow_partial=True)
                         validate_cached(record,day,pool_kind)
                         if record and record.get('normalization_version')!=NORMALIZATION_VERSION:
-                            cached=record;raw=_load(root/cached['raw_artifact'])
-                            record,_=fetch_fuyao_pool(adapter,day,closes,master,payload_pages=raw,pool_kind=pool_kind)
-                            record.update(fetched_at=cached.get('fetched_at'),validated_at=datetime.now(CHINA).isoformat())
-                            record=cache.accept('fuyao',pool_kind,day,signature,record,raw)
+                            cached=record
+                            record=_revalidate_raw(cache,day,pool_kind,signature,closes,master,guard)
                         elif record is None or not record.get('complete'):
                             record,raw=fetch_fuyao_pool(adapter,day,closes,master,pool_kind=pool_kind)
                             record=cache.accept('fuyao',pool_kind,day,signature,record,raw)
                         doc[spec['document_key']][day]=record
+                        doc['failures']=[failure for failure in doc['failures'] if not (failure.get('capability')==spec['failure_capability'] and failure.get('date')==day)]
                     except (ValueError,ProviderError) as error:
                         failure={'capability':spec['failure_capability'],'pool_kind':pool_kind,'date':day,'reason':str(error)}
                         captured=getattr(error,'raw_pages',None)
@@ -215,6 +337,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
                     raw=public.limit_pool(day); record=normalize_limit_pool(raw,day,closes,master)
                     record=cache.accept('eastmoney','limitup',day,signature,record,raw)
                 doc['public_pools'][day]=record
+                doc['failures']=[failure for failure in doc['failures'] if not (failure.get('capability')=='seal_details' and failure.get('date')==day)]
             except (ValueError,ProviderError) as error:
                 doc['failures'].append({'capability':'seal_details','date':day,'reason':str(error)})
             done+=1
@@ -222,7 +345,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         fund_total=0
         def fund_progress(processed,total,code):
             nonlocal planned,fund_total
-            fund_total=total;planned=pool_batches+len(recent)+total+1
+            fund_total=total;planned=local_batches+pool_batches+len(recent)+total+1
             if guard:guard()
             if progress:progress('核验行业日级资金',75+int(processed/max(1,total)*23),code+' · '+str(processed)+'/'+str(total),{'actual_completed_batches':done+processed,'actual_total_batches':planned,'fund_processed':processed,'fund_catalog_count':total})
         try:
@@ -236,7 +359,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
             fund_total=record.get('coverage',{}).get('selected_count',fund_total)
         except (ValueError,ProviderError) as error:
             doc['failures'].append({'capability':'fund_flow','date':target,'reason':str(error)})
-        planned=pool_batches+len(recent)+fund_total+1;done=planned
+        planned=local_batches+pool_batches+len(recent)+fund_total+1;done=planned
     finally:con.close()
     if sector_history:
         from app.services.sector_history import collect_sector_history
@@ -274,25 +397,23 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         except (ValueError,ProviderError) as error:
             doc['failures'].append({'capability':'sector_index_history','date':target,'reason':str(error)})
         progress=original_progress
-    doc['annual_coverage']=annual_coverage(doc,calendar,target)
-    doc['annual_down_coverage']=annual_coverage(doc,calendar,target,pool_kind='limitdown')
-    doc['quality']='partial' if doc['failures'] or not doc['annual_coverage']['complete'] or not doc['annual_down_coverage']['complete'] else 'complete'
-    doc['message']='来源池已核验；年内涨停 '+str(doc['annual_coverage']['covered_days'])+'/'+str(doc['annual_coverage']['expected_days'])+'，跌停 '+str(doc['annual_down_coverage']['covered_days'])+'/'+str(doc['annual_down_coverage']['expected_days'])+' 个交易日完整；当年之外未回补，缺口保留并可重试'
-    if sector_history:
-        coverage=doc['sector_index_history'].get(target,{}).get('coverage',{})
-        doc['message']+='；板块日行情 '+str(coverage.get('accepted_count',0))+'/'+str(coverage.get('catalog_count',0))+' 个，历史成分另行核验'
-    tick('发布补充数据索引',doc['message']);cache.publish(doc,guard)
-    return doc
+    return _publish_document(doc,calendar,target,cache,guard,tick,sector_history)
 
 
 def execute_supplement(job_id, progress=None):
     with connect() as connection:
         row=connection.execute('SELECT parameters_json,target_date FROM job WHERE job_id=?',(job_id,)).fetchone()
     if not row:raise ValueError('补充任务不存在')
-    params=json.loads(row['parameters_json']);market=get_market();target=row['target_date'] or market.status().get('data_end')
+    params=json.loads(row['parameters_json']);market=get_market();status=market.status();target=row['target_date'] or status.get('data_end')
+    if params.get('market_snapshot_id') is not None and params['market_snapshot_id']!=status.get('snapshot_id'):
+        raise ValueError('盘面补拉计划所用行情代际已变化，请核验新数据后重新提交')
+    expected_generation=status.get('snapshot_id')
     def guard():
         with connect() as connection:state=connection.execute('SELECT status FROM job WHERE job_id=?',(job_id,)).fetchone()
         if not state or state[0]=='cancelled':raise TaskCancelled()
         if state[0]=='paused':raise TaskPaused()
-        if get_market().status().get('snapshot_id')!=market.status().get('snapshot_id'):raise ValueError('基础行情代际已变化，补充任务保留缓存并需手动重试')
+        if get_market().status().get('snapshot_id')!=expected_generation:raise ValueError('基础行情代际已变化，补充任务保留缓存并需手动重试')
+    guard()
+    if params.get('revalidate_only') is True:
+        return revalidate_for_market(market,target,progress=progress,guard=guard,job_id=job_id)
     return refresh_for_market(market,target,year_history=bool(params.get('year_history',True)),recent_days=params.get('recent_days',20),progress=progress,guard=guard,job_id=job_id,sector_history=params.get('sector_history') is True)

@@ -9,7 +9,14 @@ import {
   trackingConditionAllowed,
 } from "./conditionScope";
 import type { ConditionScope } from "./conditionScope";
-import { historyCheckText, historyRuleSummary } from "./historicalRules";
+import {
+  historyCheckText,
+  historyRuleSummary,
+  conditionReasonText,
+  HIDDEN_CONDITION_TEXT,
+  isHiddenConditionField,
+  isHiddenConditionRule,
+} from "./historicalRules";
 import {
   conditionPeriodView,
   conditionPeriodSummary,
@@ -18,6 +25,7 @@ import {
   metricCycleLabel,
 } from "./conditionPeriod";
 export function ruleValue(field: string, value: any): string {
+  if (isHiddenConditionField(field)) return "—";
   if (field === "close_breakout_high") return `${textValue(value)}个交易日`;
   if (field === "board") {
     const boardNames: Record<string, string> = {
@@ -47,6 +55,7 @@ export const ruleOperator = (op: string) =>
   )[op] || op;
 export function fieldLabel(field: string, provided?: string): string {
   if (!field) return "组合条件";
+  if (isHiddenConditionField(field)) return "已隐藏的指标";
   if (field === "kd_cross") return "KDJ金叉（K线上穿D线）";
   if (field === "kd_dead_cross") return "KDJ死叉（K线下穿D线）";
   if (field === "close_breakout_high") return "收盘价突破前N日最高价";
@@ -60,7 +69,6 @@ export function fieldLabel(field: string, provided?: string): string {
     macd_hist: "MACD 柱",
     kdj_k: "KDJ K",
     kdj_d: "KDJ D",
-    kdj_j: "KDJ J",
     volume_ratio: "较前一可比周期量能倍数",
     close: "收盘价",
     open: "开盘价",
@@ -82,6 +90,8 @@ export function fieldLabel(field: string, provided?: string): string {
     close_below_entry: "跌破入池事件日收盘",
     close_below_entry_low: "收盘跌破本轮事件日最低价",
     close_above_entry_high: "收盘价高于本轮事件日最高价",
+    trading_age: "本轮跟踪交易日",
+    tracking_change_pct: "本轮跟踪涨幅 (%)",
     topic_ids: "题材归属",
     board: "上市板块",
     is_st: "当前 ST 标识",
@@ -155,10 +165,12 @@ export function summarizeChecks(checks: any, onlySatisfied = false): string {
                   : [];
   const all = flatten(checks);
   const leaves = onlySatisfied ? all.filter((c) => c.result === true) : all;
-  if (!leaves.length) return checks?.reason || "未提供逐项依据";
+  if (!leaves.length)
+    return conditionReasonText(checks?.reason) || "未提供逐项依据";
   return leaves
     .slice(0, 6)
     .map((c) => {
+      if (isHiddenConditionRule(c)) return HIDDEN_CONDITION_TEXT;
       if (c.type === "history_event") return historyCheckText(c);
       if (c.history_event) return historyRuleSummary(c, fieldLabel);
       if (c.field === "close_breakout_high") {
@@ -411,6 +423,7 @@ export default function Conditions({
     onChange(conditions.map((c, n) => (n === i ? { ...c, ...p } : c)));
   const candidateFields = fields.filter(
     (f) =>
+      !isHiddenConditionField(f.field) &&
       !f.hidden_in_builder &&
       trackingConditionAllowed(
         f.field,
@@ -432,6 +445,20 @@ export default function Conditions({
   return (
     <div className="conditions">
       {conditions.map((c, i) => {
+        if (isHiddenConditionRule(c))
+          return (
+            <div className="condition-row" key={i}>
+              <span className="condition-index">{i + 1}</span>
+              <span className="muted">{HIDDEN_CONDITION_TEXT}</span>
+              <button
+                className="icon-btn danger-text"
+                aria-label="删除已隐藏的指标条件"
+                onClick={() => onChange(conditions.filter((_, n) => n !== i))}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          );
         const isYearlyLimitCount = c.field === "limit_up_count_1y";
         const isNewHigh = c.field === "close_breakout_high";
         const field = fields.find((f) => f.field === c.field) || {
@@ -665,6 +692,7 @@ export default function Conditions({
                     {fields
                       .filter(
                         (f) =>
+                          !isHiddenConditionField(f.field) &&
                           f.type === "number" &&
                           f.field !== "limit_up_count_1y" &&
                           f.field !== "close_breakout_high" &&

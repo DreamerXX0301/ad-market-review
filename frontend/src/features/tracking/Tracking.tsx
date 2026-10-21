@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { visibleIndicatorData } from "../../lib/indicatorVisibility";
 import {
   Check,
   Clock3,
@@ -40,6 +41,8 @@ import { policyRuleTree, policyGroupFromTree } from "./policyRuleTree";
 import PolicyScope from "../strategies/PolicyScope";
 import TrackingFilters from "./TrackingFilters";
 import StrategyPicker from "./StrategyPicker";
+import TrackingTabs from "./TrackingTabs";
+import WatchlistButton from "../watchlist/WatchlistButton";
 import {
   createStockNavigation,
   trackingEventBaseline,
@@ -576,38 +579,46 @@ function StockTracking({
           : "")
       }
     >
-      <div className="tags">
+      <div className="tags tracking-topic-preview">
         {Array.isArray(value) && value.length ? (
           value
-            .slice(0, 4)
+            .slice(0, 2)
             .map((topic: Row) => (
               <Badge key={topic.topic_id}>{topic.name || topic.topic_id}</Badge>
             ))
         ) : (
           <span className="muted">暂无已确认归属</span>
         )}
-        {Array.isArray(value) && value.length > 4 && (
-          <Badge>另 {value.length - 4} 项</Badge>
-        )}
       </div>
       {row._topic_filter_state === "unknown" && (
         <Badge tone="warn">筛选归属待核验</Badge>
       )}
-      {Array.isArray(value) && value.length > 4 && (
-        <details>
-          <summary>展开全部归属</summary>
+      {Array.isArray(value) && value.length > 2 && (
+        <details className="tracking-topic-more">
+          <summary>+{value.length - 2} 项归属</summary>
           <div className="tags">
-            {value.slice(4).map((topic: Row) => (
+            {value.slice(2).map((topic: Row) => (
               <Badge key={topic.topic_id}>{topic.name || topic.topic_id}</Badge>
             ))}
           </div>
+          <small>
+            有效关系日 {row.current_topics_observed_date || "待核验"}
+          </small>
         </details>
       )}
-      <small>有效关系日 {row.current_topics_observed_date || "待核验"}</small>
     </div>
   );
+  const eventCondition = (row: Row) =>
+    row.evidence?.alerts
+      ? summarizeChecks(row.evidence.alerts, true)
+      : textValue(
+          row.condition ||
+            row.evidence?.condition ||
+            row.evidence?.reason ||
+            row.message,
+        );
   return (
-    <div className="page-stack">
+    <div className="page-stack stock-tracking-workspace">
       <div className="section-intro">
         <p>
           每个策略独立跟踪 · 入池基准冻结 · 期限按策略或单股设置 ·
@@ -649,22 +660,16 @@ function StockTracking({
           />
         }
       >
-        <div className="result-toolbar">
-          <div className="tabs">
-            {[
-              ["active", "跟踪中"],
-              ["alerts", "触发列表"],
-              ["history", "结束历史"],
-            ].map(([key, title]) => (
-              <button
-                className={tab === key ? "active" : ""}
-                key={key}
-                onClick={() => setTab(key)}
-              >
-                {title}
-              </button>
-            ))}
-          </div>
+        <div className="result-toolbar tracking-view-toolbar">
+          <TrackingTabs
+            value={tab}
+            onChange={setTab}
+            counts={{
+              active: result.data?.counts?.active,
+              alerts: eventsResult.data?.total,
+              history: result.data?.counts?.history,
+            }}
+          />
           {tab === "active" && (
             <label className="checkbox-label">
               <input
@@ -694,10 +699,14 @@ function StockTracking({
           <ErrorBox message={topicsResult.error} retry={topicsResult.reload} />
         )}
         {tab === "alerts" && (
-          <div className="panel-footnote">
-            仅展示最近已加载 {list(eventsResult.data).length} /{" "}
-            {eventsResult.data?.total ?? "—"}{" "}
-            条提醒记录；题材过滤按当前有效归属通过跟踪轮次关联，排序范围为这些已加载记录。
+          <div className="panel-footnote tracking-event-scope">
+            <span>
+              最近提醒 <strong>{list(eventsResult.data).length}</strong> /{" "}
+              {eventsResult.data?.total ?? "—"} 条 · 当前匹配 {rows.length} 条
+            </span>
+            <span>
+              今日涨幅按各条触发日计算；题材为当前归属。排序范围为已加载提醒。
+            </span>
           </div>
         )}
         {result.error ? (
@@ -711,9 +720,31 @@ function StockTracking({
             rows={rows}
             rowKey="event_id"
             columns={[
-              { key: "business_date" },
+              { key: "business_date", title: "触发日" },
               { key: "name" },
+              {
+                key: "today_change_pct",
+                title: "今日涨幅",
+                render: (value, row) => (
+                  <span
+                    className={tone(value)}
+                    title={`触发日 ${row.valuation_date || row.business_date}，较前一市场交易日；缺失或不可比时待核验`}
+                  >
+                    {percent(value)}
+                  </span>
+                ),
+              },
               { key: "strategy_name", title: "策略" },
+              {
+                key: "entry_business_date",
+                title: "入池 / 事件基准",
+                render: (value, row) => (
+                  <div className="tracking-entry-cell">
+                    <span>{value || "待核验"}</span>
+                    <small>事件日收盘 {num(row.entry_price)}</small>
+                  </div>
+                ),
+              },
               {
                 key: "current_topics",
                 title: "当前题材 / 行业",
@@ -724,29 +755,35 @@ function StockTracking({
               {
                 key: "condition",
                 title: "触发条件",
-                sortValue: (row) =>
-                  row.evidence?.alerts
-                    ? summarizeChecks(row.evidence.alerts, true)
-                    : textValue(
-                        row.condition ||
-                          row.evidence?.condition ||
-                          row.evidence?.reason ||
-                          row.message,
-                      ),
-                render: (v, r) =>
-                  r.evidence?.alerts
-                    ? summarizeChecks(r.evidence.alerts, true)
-                    : textValue(
-                        v ||
-                          r.evidence?.condition ||
-                          r.evidence?.reason ||
-                          r.message,
-                      ),
+                sortValue: eventCondition,
+                render: (_, row) => (
+                  <details className="tracking-condition-details">
+                    <summary>
+                      <span>{eventCondition(row)}</span>
+                      <small>展开依据</small>
+                    </summary>
+                    <p>{eventCondition(row)}</p>
+                  </details>
+                ),
               },
               {
                 key: "recorded_at_ms",
                 title: "发现时间",
                 render: (v) => dateTime(v),
+              },
+              {
+                key: "actions",
+                title: "自选",
+                sortable: false,
+                render: (_, row) => (
+                  <WatchlistButton
+                    instrumentId={row.instrument_id}
+                    trackingRoundId={row.round_id}
+                    sourceKind="tracking"
+                    sourceName={row.strategy_name}
+                    compact
+                  />
+                ),
               },
             ]}
             emptyTitle="还没有提醒触发"
@@ -824,7 +861,7 @@ function StockTracking({
                 },
               },
               { key: "entry_business_date" },
-              { key: "entry_price", title: "入池收盘" },
+              { key: "entry_price", title: "事件日收盘" },
               {
                 key: "latest_event",
                 title: "最新事件",
@@ -844,6 +881,13 @@ function StockTracking({
                 title: "操作",
                 render: (_, r) => (
                   <div className="button-group">
+                    <WatchlistButton
+                      instrumentId={r.instrument_id}
+                      trackingRoundId={r.round_id}
+                      sourceKind="tracking"
+                      sourceName={r.strategy_name}
+                      compact
+                    />
                     <button
                       className="icon-btn"
                       title="提醒与结束条件"
@@ -980,7 +1024,7 @@ function StockTracking({
                         {v?.comparison_reason || "查看指标与判断依据"}
                       </summary>
                       <pre className="material-json">
-                        {JSON.stringify(v, null, 2)}
+                        {JSON.stringify(visibleIndicatorData(v), null, 2)}
                       </pre>
                     </details>
                   ),

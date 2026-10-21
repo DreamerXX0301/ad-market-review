@@ -1,16 +1,19 @@
+import { isHiddenIndicatorField } from "../lib/indicatorVisibility";
+
 type RecordValue = Record<string, unknown>;
 
 export const chartIndicatorLabel = (field: string): string =>
-  (
-    ({
-      macd_dif: "DIF",
-      macd_dea: "DEA",
-      macd_hist: "MACD柱",
-      kdj_k: "K",
-      kdj_d: "D",
-      kdj_j: "J",
-    }) as Record<string, string>
-  )[field] || field.toUpperCase();
+  isHiddenIndicatorField(field)
+    ? ""
+    : (
+        {
+          macd_dif: "DIF",
+          macd_dea: "DEA",
+          macd_hist: "MACD柱",
+          kdj_k: "K",
+          kdj_d: "D",
+        } as Record<string, string>
+      )[field] || field.toUpperCase();
 
 /** A zero is a valid indicator value; missing display values need their cause. */
 export function chartIndicatorAvailability(
@@ -19,7 +22,9 @@ export function chartIndicatorAvailability(
   period: "D" | "W" | "M",
 ) {
   const missing = fields.filter(
-    (field) => typeof bar?.[field] !== "number" || !Number.isFinite(bar[field]),
+    (field) =>
+      !isHiddenIndicatorField(field) &&
+      (typeof bar?.[field] !== "number" || !Number.isFinite(bar[field])),
   );
   if (!bar || !missing.length) return { missing, label: "", reason: "" };
   const required = Math.max(

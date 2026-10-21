@@ -1,3 +1,4 @@
+import CopyStockCode from "../../components/CopyStockCode";
 import { useState } from "react";
 import { Check, X } from "lucide-react";
 import { post } from "../../lib/api";
@@ -66,7 +67,10 @@ export default function AssociationDialog({
             {instruments.map((row) => (
               <Badge key={row.instrument_id}>
                 {row.name || row.code || row.instrument_id} ·{" "}
-                {row.code || row.instrument_id}
+                <CopyStockCode
+                  code={row.code}
+                  instrumentId={row.instrument_id}
+                />
               </Badge>
             ))}
           </div>

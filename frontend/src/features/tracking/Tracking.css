@@ -1,5 +1,5 @@
 .tracking-filters {
-  padding: 12px 16px;
+  padding: 18px 22px;
   border-bottom: 1px solid var(--border-soft);
   display: grid;
   gap: 12px;
@@ -37,10 +37,164 @@
 }
 .tracking-topic-cell {
   display: grid;
-  gap: 5px;
+  gap: 6px;
   min-width: 120px;
+  max-width: 250px;
 }
 .tracking-topic-cell small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
+}
+.tracking-view-toolbar {
+  gap: 18px;
+  padding: 18px 22px;
+}
+.tracking-view-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--bg) 60%, var(--surface));
+}
+.tracking-view-tabs button {
+  min-height: 43px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 9px 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 150ms,
+    background 150ms,
+    border-color 150ms;
+}
+.tracking-view-tabs button strong {
+  min-width: 24px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  color: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.tracking-view-tabs button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent-secondary) 8%, transparent);
+}
+.tracking-view-tabs button.active {
+  border-color: color-mix(in srgb, var(--accent-secondary) 30%, transparent);
+  background: color-mix(in srgb, var(--accent-secondary) 17%, var(--surface));
+  color: var(--accent-secondary);
+  box-shadow: 0 2px 8px #00000010;
+}
+.tracking-view-tabs button:focus-visible {
+  outline: 2px solid var(--accent-secondary);
+  outline-offset: 2px;
+}
+.tracking-topic-preview {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.tracking-topic-preview .badge {
+  min-width: 0;
+  max-width: 115px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tracking-topic-more summary {
+  width: fit-content;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.tracking-topic-more[open] > .tags {
+  margin: 8px 0;
+}
+.tracking-entry-cell {
+  display: grid;
+  gap: 5px;
+  min-width: 115px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tracking-entry-cell small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.tracking-condition-details {
+  min-width: 190px;
+  max-width: 390px;
+}
+.tracking-condition-details summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.tracking-condition-details summary::-webkit-details-marker {
+  display: none;
+}
+.tracking-condition-details summary > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.7;
+}
+.tracking-condition-details summary > small {
+  flex: none;
+  padding-top: 2px;
+  color: var(--accent-secondary);
+  font-size: 11px;
+}
+.tracking-condition-details[open] summary > span {
+  display: none;
+}
+.tracking-condition-details p {
+  margin: 8px 0 0;
+  line-height: 1.8;
+}
+.tracking-event-scope {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+}
+.stock-tracking-workspace .table-wrap td {
+  padding-top: 15px;
+  padding-bottom: 15px;
+  vertical-align: top;
+}
+@media (max-width: 700px) {
+  .tracking-view-toolbar,
+  .tracking-filters {
+    padding: 14px;
+  }
+  .tracking-view-tabs {
+    display: flex;
+    width: 100%;
+    flex-wrap: nowrap;
+    gap: 3px;
+  }
+  .tracking-view-tabs button {
+    flex: 1;
+    gap: 6px;
+    padding: 8px;
+    font-size: 12px;
+  }
+  .tracking-view-tabs button > svg {
+    display: none;
+  }
 }

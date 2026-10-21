@@ -14,6 +14,7 @@ from app.domain.trade_rules import normalize_trade_rules
 from app.domain.history_events import nodes as history_nodes, current_names
 from app.services.history_events import contexts_for_batch, prepare_shared, batch_size as history_batch_size
 from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics
+from app.services import task_service as tasks
 ENGINE_VERSION="workspace-v8-bounded-history-events"
 
 
@@ -78,7 +79,7 @@ def strategy_view(c,sid):
     r=one(c,'SELECT * FROM strategy WHERE strategy_id=?',(sid,),'策略不存在')
     v=one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,r['current_version']))
     p=one(c,'SELECT * FROM tracking_policy_version WHERE strategy_id=? AND policy_version=?',(sid,r['current_policy_version']))
-    latest=c.execute('SELECT run_id,business_date,status FROM selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC LIMIT 1',(sid,)).fetchone()
+    latest=c.execute('SELECT run_id,business_date,status FROM selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1',(sid,)).fetchone()
     following,custom=active_policy_scope(c,sid)
     return {**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'definition':obj(v['definition_json'],{}),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom)}
 
@@ -200,10 +201,10 @@ def selection_history_batch(market,symbols,day):
     method=getattr(market,'condition_histories',None)
     return method(symbols,end=day) if callable(method) else {symbol:market.bars(symbol,as_of=day) for symbol in symbols}
 
-def run_strategy(sid,payload=None):
+def run_strategy(sid,payload=None,*,queued_job=None):
     payload=payload or {};key=str(payload.get('request_key') or new_id('selection-request'))
     if len(key)>200:fail('request_key过长')
-    job_id=new_id('job');rid=new_id('run');owner=api_lease_owner()
+    job_id=queued_job['job_id'] if queued_job else new_id('job');rid=new_id('run');owner=queued_job['lease_owner'] if queued_job else api_lease_owner()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         found=c.execute('SELECT r.run_id,r.strategy_id FROM selection_run r JOIN job j USING(job_id) WHERE j.request_key=?',(key,)).fetchone()
@@ -213,11 +214,25 @@ def run_strategy(sid,payload=None):
         day=current(c);st=ensure_evaluator_version(c,sid)
         if st['archived']:fail('策略已归档，不能运行')
         deps,primary=freeze_inputs(c);topics=topic_map(c,day);topic_dependencies_=topic_dependencies(st['definition']);complete_topics=complete_topic_ids(c,topic_dependencies_)
-        try:insert(c,'job',dict(job_id=job_id,request_key=key,logical_key=new_id('selection'),kind='selection',target_date=day,parameters_json=js({'strategy_id':sid,'version':st['version']}),parameters_hash=digest([sid,st['version'],day,deps]),status='running',phase='evaluating',lease_owner=owner,lease_expires_at_ms=now_ms()+120000,created_at_ms=now_ms()))
-        except sqlite3.IntegrityError:fail('已有任务正在运行，请稍后重试。',409)
+        if queued_job:
+            from .strategy_batches import validate_item
+            validate_item(c,queued_job,st,day,deps,primary)
+        else:
+            try:insert(c,'job',dict(job_id=job_id,request_key=key,logical_key=new_id('selection'),kind='selection',target_date=day,parameters_json=js({'strategy_id':sid,'version':st['version']}),parameters_hash=digest([sid,st['version'],day,deps]),status='running',phase='evaluating',lease_owner=owner,lease_expires_at_ms=now_ms()+120000,created_at_ms=now_ms()))
+            except sqlite3.IntegrityError:tasks.active_task_conflict(c)
         log(c,job_id,'info','evaluating','正在按已发布行情计算策略条件')
-    stop_lease=start_api_heartbeat(job_id,owner)
+    stop_lease=(lambda:None) if queued_job else start_api_heartbeat(job_id,owner)
+    def check_task(connection=None):
+        if queued_job:
+            from .strategy_batches import check_item_lease
+            if connection is not None: check_item_lease(queued_job, connection)
+            else:
+                with connect() as checked: check_item_lease(queued_job, checked)
+        else: check_api_task(job_id, connection)
+    def report(*args):
+        return tasks.progress(job_id, *args, lease_owner=owner if queued_job else None)
     try:
+        report('准备个股策略数据',0,'读取已发布行情、交易日历和策略依赖')
         market=get_market();calendar=market.calendar();master=identities(day);result=[];required=names(st['definition'])
         current_required=current_names(st['definition']);event_nodes=history_nodes(st['definition'])
         fast=st['period']=='D'
@@ -236,18 +251,19 @@ def run_strategy(sid,payload=None):
         limit_evidence=LimitConditionEvidence(market) if required & LIMIT_FIELDS or needs_count else None
         count_values=limit_evidence.batch_count_metrics(market,sorted(master),day,calendar,include_daily=bool(required & DAILY_LIMIT_FIELDS)) if needs_count else {}
         limit_quotes=batch_quote_indexes(market,sorted(master),day,calendar) if fast and limit_evidence and not needs_count else {}
-        check_api_task(job_id)
+        check_task()
         ordered=sorted(master);event_contexts={};history_batch=(history_batch_size([st['definition']]) if event_nodes else 256) if fast else 32
+        report('核验个股条件',0,f'准备核验 {len(ordered)} 只证券',{'actual_completed_batches':0,'actual_total_batches':len(ordered)})
         history_shared=prepare_shared(market,ordered,[st['definition']],calendar,day) if event_nodes else None
         batch_bars={}
         for sequence,ident in enumerate(ordered):
-            if sequence%128==0:check_api_task(job_id)
+            if sequence%128==0:check_task()
             if (not fast or extra_periods) and sequence%32==0:
                 batch_bars=selection_history_batch(market,ordered[sequence:sequence+32],day)
                 if limit_evidence and not needs_count:
                     limit_quotes=batch_quote_indexes(market,ordered[sequence:sequence+32],day,calendar,batch_bars)
             if event_nodes and sequence%history_batch==0:
-                event_contexts=contexts_for_batch(market,ordered[sequence:sequence+history_batch],[st['definition']],calendar,day,batch_bars if not fast else None,shared=history_shared)
+                event_contexts=contexts_for_batch(market,ordered[sequence:sequence+history_batch],[st['definition']],calendar,day,batch_bars if not fast else None,shared=history_shared,limit_evidence=limit_evidence)
             item=master[ident]
             if item.get('kind',item.get('asset_type','stock')) not in ('stock','equity','a_share','A'):continue
             topic_ids=[x['topic_id'] for x in topics.get(ident,[])]
@@ -272,21 +288,26 @@ def run_strategy(sid,payload=None):
                 ms.update(signal_date=ms.get('observed_date'),signal_close=ms.get('close'),current_daily_close=entry_close,entry_price_policy='business_day_close-v1')
             stored_metrics,stored_checks,stored_topics=compact_candidate(ms,check,topics.get(ident,[]),decision,st['definition'])
             result.append(dict(run_id=rid,instrument_id=ident,decision=decision,close_price_e8=e8(entry_close) if entry_close and entry_close>0 else None,checks_json=js(stored_checks),metrics_json=js(stored_metrics),topic_snapshot_json=js(stored_topics)))
+            if sequence%128==0 or sequence+1==len(ordered):
+                report('核验个股条件',min(95,round((sequence+1)/max(1,len(ordered))*95)),
+                    f'已核验 {sequence+1}/{len(ordered)} 只证券',
+                    {'actual_completed_batches':sequence+1,'actual_total_batches':len(ordered)})
+        report('保存策略结果',97,'条件已核验，正在保存本次运行与候选依据')
         with connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            check_api_task(job_id,c)
+            check_task(c)
             if current(c)!=day:fail('业务日已更新，请重新运行策略。',409)
             if freeze_inputs(c)!=(deps,primary):fail('行情或补充数据代际已更新，本次未保存混合来源结果，请重新运行策略。',409)
             insert(c,'selection_run',dict(run_id=rid,job_id=job_id,strategy_id=sid,strategy_version=st['version'],business_date=day,primary_snapshot_id=primary,input_snapshots_json=js(deps),input_sha256=digest([deps,st['definition'],day]),status='running',universe_definition_json=js({'scope':'currently_imported_stock_master','count':len(result),'survivorship_warning':True,'candidate_storage_contract':'sparse-nonmatches-v1'}),created_at_ms=now_ms()))
             for row in result:insert(c,'selection_candidate',row)
             c.execute("UPDATE selection_run SET status='completed',completed_at_ms=? WHERE run_id=?",(now_ms(),rid))
             for snap in set(deps.values()):pin(c,snap,'selection',rid)
-            c.execute("UPDATE job SET status='succeeded',phase='completed',finished_at_ms=?,accepted_batches=1,planned_batches=1 WHERE job_id=?",(now_ms(),job_id))
+            c.execute("UPDATE job SET status='succeeded',phase='completed',finished_at_ms=?,accepted_batches=100,planned_batches=100 WHERE job_id=?",(now_ms(),job_id))
             counts={k:sum(r['decision']==k for r in result) for k in ('matched','unmatched','unknown')};log(c,job_id,'info','completed','策略运行完成',counts)
         return get_run(rid)
     except Exception as e:
         with connect() as c:
-            c.execute("UPDATE job SET status='failed',phase='failed',finished_at_ms=?,error_summary=? WHERE job_id=? AND status='running'",(now_ms(),str(getattr(e,'detail',e))[:500],job_id))
+            c.execute("UPDATE job SET status='failed',phase='failed',finished_at_ms=?,error_summary=? WHERE job_id=? AND status='running' AND lease_owner=?",(now_ms(),str(getattr(e,'detail',e))[:500],job_id,owner))
             if c.execute('SELECT status FROM job WHERE job_id=?',(job_id,)).fetchone()[0]=='failed':log(c,job_id,'error','failed','策略运行失败',{'message':str(getattr(e,'detail',e))[:500]})
         raise
     finally:
@@ -302,6 +323,6 @@ def list_runs(sid=None,limit=50):
     with connect() as c:
         sql='SELECT r.run_id,r.strategy_id,r.strategy_version,r.business_date,r.status,r.created_at_ms,s.name strategy_name FROM selection_run r JOIN strategy s USING(strategy_id)';params=[]
         if sid:sql+=' WHERE r.strategy_id=?';params.append(sid)
-        sql+=' ORDER BY r.created_at_ms DESC LIMIT ?';params.append(min(max(limit,1),200));data=rows(c,sql,params)
+        sql+=' ORDER BY r.created_at_ms DESC,r.rowid DESC LIMIT ?';params.append(min(max(limit,1),200));data=rows(c,sql,params)
         for r in data:r['counts']={x['decision']:x['n'] for x in rows(c,'SELECT decision,count(*) n FROM selection_candidate WHERE run_id=? GROUP BY decision',(r['run_id'],))}
         return {'items':data,'total':len(data)}

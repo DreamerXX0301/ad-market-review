@@ -36,6 +36,29 @@ export function stockExtraMetrics(
   const valid = stockSummaryMatches(data, id, asOf),
     date = valid ? data!.data_date : asOf;
   const row = valid ? data! : {};
+  const dailyKnown =
+    row.quote_available === true &&
+    row.quote_date === date &&
+    row.change_pct_date === date &&
+    typeof row.change_pct === "number" &&
+    Number.isFinite(row.change_pct);
+  const daily = {
+    value: dailyKnown
+      ? `${row.change_pct > 0 ? "+" : ""}${row.change_pct.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+      : "待核验",
+    tone: dailyKnown
+      ? row.change_pct > 0
+        ? "up"
+        : row.change_pct < 0
+          ? "down"
+          : "muted"
+      : "muted",
+    known: dailyKnown,
+    note: dailyKnown ? `${date} · 较前日收盘` : "当日涨幅待核验",
+    reason:
+      row.change_pct_reason ||
+      "按观察日收盘与前一市场交易日的可比收盘计算；缺失报价不使用旧值代替",
+  };
   const exact =
     count(row.limit_up_ytd) && row.limit_up_ytd_coverage?.complete !== false;
   const observed =
@@ -65,7 +88,7 @@ export function stockExtraMetrics(
       ? count(row.sessions_since_limit_up)
         ? `距观察日 ${row.sessions_since_limit_up} 个交易日`
         : "交易日距离待核验"
-      : "未有可确认日期",
+      : "暂无已确认记录",
     qualifier: latest
       ? row.last_limit_up_complete === true
         ? "最近一次"
@@ -117,6 +140,7 @@ export function stockExtraMetrics(
   return {
     date,
     valid,
+    daily,
     annual,
     recent,
     ytd: historicalReturn("return_ytd", "当年涨幅"),

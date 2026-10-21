@@ -18,6 +18,17 @@ const {
   historyWindowText,
   ruleCount,
   validateVisualRule,
+  historyFieldsFallback,
+  isHiddenConditionField,
+  isHiddenConditionRule,
+  hasHiddenConditionRule,
+  HIDDEN_CONDITION_TEXT,
+  conditionReasonText,
+  historyWindowMode,
+  historyWindowForMode,
+  historyEventPreset,
+  historyPresetWhere,
+  appendTodayCondition,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
@@ -26,12 +37,60 @@ const first = newHistoryRule(),
 first.history_event.window.from = 8;
 assert.equal(
   second.history_event.window.from,
-  30,
+  1,
   "each event keeps its own binding",
 );
 assert.equal(validateVisualRule(second), null);
 assert.equal(second.history_event.where.all[0].period, "D");
 assert.equal(second.history_event.then.all[0].period, "D");
+assert.equal(second.history_event.window.to, 30);
+assert.equal(second.history_event.then.all[0].field, "change_pct");
+assert.equal(historyWindowMode(second.history_event.window), "recent");
+assert.equal(historyWindowMode({ from: 5, to: 20 }), "range");
+assert.equal(historyWindowMode({ from: 30, to: 30 }), "exact");
+assert.deepEqual(historyWindowForMode({ from: 5, to: 20 }, "recent"), {
+  from: 1,
+  to: 20,
+});
+assert.deepEqual(historyWindowForMode({ from: 1, to: 30 }, "exact"), {
+  from: 30,
+  to: 30,
+});
+assert.deepEqual(historyWindowForMode({ from: 5, to: 20 }, "range"), {
+  from: 5,
+  to: 20,
+});
+assert.equal(historyEventPreset(historyPresetWhere("volume")), "volume");
+assert.equal(historyEventPreset(historyPresetWhere("limit")), "limit");
+assert.equal(historyFieldsFallback.has("limit_up"), true);
+assert.equal(historyFieldsFallback.has("prev_limit_up"), false);
+assert.equal(
+  validateVisualRule({
+    history_event: {
+      ...second.history_event,
+      window: { from: 5, to: 20 },
+      where: historyPresetWhere("limit"),
+    },
+  }),
+  null,
+);
+const originalToday = {
+  any: [
+    { field: "macd_cross", op: "==", value: true, period: "D" },
+    { field: "kd_cross", op: "==", value: true, period: "D" },
+  ],
+};
+const appended = appendTodayCondition(originalToday, {
+  field: "change_pct",
+  op: ">",
+  value: 3,
+});
+assert.deepEqual(
+  appended.all[0],
+  originalToday,
+  "adding an AND clause preserves the existing OR group",
+);
+assert.equal(appended.all[1].period, "D");
 const oldEvent = {
   history_event: {
     window: { from: 30, to: 30 },
@@ -59,18 +118,15 @@ const normalized = normalizeRuleTree({
   ],
 });
 assert.equal(ruleCount(normalized), 3);
-assert.equal(
-  normalized.all[0].history_event.then.all[0].right_event_field,
-  "close",
-);
+assert.equal(normalized.all[0].history_event.then.all[0].field, "change_pct");
 assert.equal(normalized.all[1].any[1].field, "macd_cross");
 assert.equal(validateVisualRule(normalized), null);
 assert.match(
   historyRuleSummary(
-    normalized,
+    oldEvent,
     (field) => ({ close: "收盘价", high: "最高价" })[field] || field,
   ),
-  /观察日收盘价（日K） > 事件日收盘价/,
+  /收盘价 > ma30/,
 );
 assert.match(historyRuleSummary(normalized), / 或 /);
 assert.match(
@@ -104,7 +160,11 @@ for (const window of [
   assert.match(validateVisualRule(event), /历史范围/);
 }
 const wrong = newHistoryRule();
-wrong.history_event.then.all[0].field = "high";
+wrong.history_event.then.all[0] = {
+  field: "high",
+  op: ">",
+  right_event_field: "close",
+};
 assert.match(validateVisualRule(wrong), /观察日收盘价/);
 assert.match(
   validateVisualRule({ field: "close", op: ">", right_event_field: "high" }),
@@ -114,11 +174,60 @@ const nested = newHistoryRule();
 nested.history_event.where = { all: [newHistoryRule()] };
 assert.match(validateVisualRule(nested), /不能再次嵌套/);
 const ambiguous = newHistoryRule();
-ambiguous.history_event.then.all[0].value = 1;
+ambiguous.history_event.then.all[0].right_event_field = "close";
+ambiguous.history_event.then.all[0].field = "close";
 assert.match(validateVisualRule(ambiguous), /只能选择一种/);
 const empty = newHistoryRule();
 empty.history_event.where = { all: [] };
 assert.match(validateVisualRule(empty), /至少一项/);
+assert.equal(isHiddenConditionField("kdj_j"), true);
+assert.equal(isHiddenConditionField("kdj_k"), false);
+assert.equal(isHiddenConditionField("kdj_d"), false);
+assert.equal(historyFieldsFallback.has("kdj_j"), false);
+for (const period of ["D", "W", "M"]) {
+  for (const rule of [
+    { field: "kdj_j", op: ">", value: 54.78, period },
+    { field: "kdj_k", op: ">", right_field: "kdj_j", period },
+  ]) {
+    const snapshot = JSON.stringify(rule);
+    assert.equal(isHiddenConditionRule(rule), true);
+    assert.equal(historyRuleSummary(rule), HIDDEN_CONDITION_TEXT);
+    const event = newHistoryRule();
+    event.history_event.where = { all: [rule] };
+    const tree = { any: [event, current] };
+    assert.equal(hasHiddenConditionRule(tree), true);
+    assert.equal(historyRuleSummary(tree).includes("kdj_j"), false);
+    assert.equal(historyRuleSummary(tree).includes("54.78"), false);
+    assert.equal(
+      JSON.stringify(rule),
+      snapshot,
+      "presentation does not mutate saved execution",
+    );
+    assert.equal(
+      validateVisualRule(rule),
+      null,
+      "existing rules remain valid and retain semantics",
+    );
+    assert.deepEqual(normalizeRuleTree(rule), rule);
+  }
+}
+assert.equal(hasHiddenConditionRule({ all: [current] }), false);
+for (const reason of [
+  "kdj_j 预热不足",
+  "KDJ J 54.78",
+  "J值 54.78",
+  "J线待核验",
+])
+  assert.equal(conditionReasonText(reason), "部分指标条件已隐藏");
+assert.equal(conditionReasonText("周线预热不足"), "周线预热不足");
+assert.doesNotMatch(
+  historyCheckText({
+    result: null,
+    window: { from: 1, to: 30 },
+    reason: "kdj_j 54.78 待核验",
+  }),
+  /kdj_j|54\.78/,
+);
 console.log(
   "historical rules: isolated bindings, nested boolean roundtrip, dated summaries and invalid windows/RHS preserved safely",
 );

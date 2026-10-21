@@ -9,8 +9,10 @@ import {
 } from "lucide-react";
 import type { Row } from "../../lib/api";
 import { amount, dateTime, num, textValue } from "../../lib/format";
+import { isHiddenIndicatorField } from "../../lib/indicatorVisibility";
 import { Badge, Cell, Panel, Table } from "../../components/UI";
 import { fieldLabel } from "../strategies/Conditions";
+import CopyStockCode from "../../components/CopyStockCode";
 import "./Research.css";
 
 const finite = (value: unknown): value is number =>
@@ -238,7 +240,10 @@ export default function ResearchDetails({
             <span className="research-eyebrow">公司概览 · 已留存研究</span>
             <h2>
               {instrument.name || instrument.instrument_id || "公司研究"}{" "}
-              <code>{instrument.instrument_id || instrument.code || "—"}</code>
+              <CopyStockCode
+                code={instrument.code}
+                instrumentId={instrument.instrument_id}
+              />
             </h2>
             <p>
               {(
@@ -773,9 +778,9 @@ export default function ResearchDetails({
                   · 未复权。
                 </p>
                 <Table
-                  rows={Object.entries(trend.observations || {}).map(
-                    ([field, value]) => ({ field, value }),
-                  )}
+                  rows={Object.entries(trend.observations || {})
+                    .filter(([field]) => !isHiddenIndicatorField(field))
+                    .map(([field, value]) => ({ field, value }))}
                   columns={[
                     {
                       key: "field",

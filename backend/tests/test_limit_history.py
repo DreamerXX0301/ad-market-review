@@ -167,9 +167,13 @@ def test_annual_both_pools_then_increment_only_new_day_and_quote_signature_guard
     assert doc['annual_down_pools']['2026-01-05']['fetched_at']==fetched and doc['annual_down_pools']['2026-01-05']['raw_sha256']==raw_sha
     third=Market('market-revised',second.days,changed=True)
     doc=module.refresh_for_market(third,'2026-01-07',year_history=False)
-    assert len(calls)==6 and '2026-01-05' not in doc['annual_down_pools']
-    assert not doc['annual_down_coverage']['complete'] and '2026-01-05' in doc['annual_down_coverage']['missing_dates']
-    assert any(r['capability']=='year_limitdown' and '签名变化' in r['reason'] for r in doc['failures'])
+    assert len(calls)==6 and '2026-01-05' not in doc['annual_pools']
+    assert not doc['annual_coverage']['complete'] and '2026-01-05' in doc['annual_coverage']['missing_dates']
+    assert any(r['capability']=='year_limitup' and '签名变化' in r['reason'] for r in doc['failures'])
+    # Only A's price changed. B's down-pool raw evidence passes the current
+    # normalizer and is retained despite the full market signature changing.
+    assert doc['annual_down_coverage']['complete'] and doc['annual_down_coverage']['counts']=={B:3}
+    assert doc['annual_down_pools']['2026-01-05']['fetched_at']==fetched
 
 
 def test_increment_revalidates_legacy_inherited_date_conflict_offline(integration):

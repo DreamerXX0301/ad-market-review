@@ -29,9 +29,11 @@ import {
   statusText,
 } from "../lib/format";
 import type { Row } from "../lib/api";
+import { isHiddenIndicatorField } from "../lib/indicatorVisibility";
 import { isSortValue, sortTableRows } from "./tableSort";
 import type { SortValue, TableSort } from "./tableSort";
 import { canRestoreModalFocus, createModalLayers } from "./modalLayers";
+import CopyStockCode from "./CopyStockCode";
 const modalLayers = createModalLayers();
 const ModalParentContext = createContext<string | null>(null);
 export const ToastContext = createContext<
@@ -360,6 +362,7 @@ export type Column = {
   sortValue?: (row: Row) => SortValue;
 };
 export function Cell({ field, value }: { field: string; value: any }) {
+  if (isHiddenIndicatorField(field)) return null;
   if (value == null) return <span className="muted">—</span>;
   if (field === "status" || field === "decision")
     return <Status value={value} />;
@@ -442,6 +445,8 @@ export function Table({
   /** external: the caller already sorts the full server-side result. */
   sorting?: "auto" | "local" | "external" | "none";
 }) {
+  rows = rows.filter((row) => !isHiddenIndicatorField(row.field));
+  columns = columns.filter((column) => !isHiddenIndicatorField(column.key));
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<TableSort | null>(null);
   const customHeadings = columns.some(
@@ -597,17 +602,29 @@ export function Table({
                       ) : c.key === "name" &&
                         (onStock || onStockNavigate) &&
                         r.instrument_id ? (
-                        <button
-                          className="stock-link"
-                          onClick={() =>
-                            onStockNavigate
-                              ? onStockNavigate(r.instrument_id, sorted, r)
-                              : onStock?.(r.instrument_id)
-                          }
-                        >
-                          <strong>{r.name || r.code}</strong>
-                          <small>{r.code || r.instrument_id}</small>
-                        </button>
+                        <div className="stock-identity-cell">
+                          <button
+                            className="stock-link"
+                            onClick={() =>
+                              onStockNavigate
+                                ? onStockNavigate(r.instrument_id, sorted, r)
+                                : onStock?.(r.instrument_id)
+                            }
+                          >
+                            <strong>{r.name || r.code}</strong>
+                          </button>
+                          <CopyStockCode
+                            code={r.code}
+                            instrumentId={r.instrument_id}
+                          />
+                        </div>
+                      ) : ["code", "instrument_id"].includes(c.key) &&
+                        r.instrument_id ? (
+                        <CopyStockCode
+                          code={r[c.key]}
+                          instrumentId={r.instrument_id}
+                          variant={c.key === "instrument_id" ? "full" : "short"}
+                        />
                       ) : (
                         <Cell field={c.key} value={r[c.key]} />
                       )}
@@ -669,6 +686,8 @@ export function inferColumns(rows: Row[], prefer: string[] = []): Column[] {
   const ordered = [
     ...prefer.filter((k) => keys.includes(k)),
     ...keys.filter((k) => !prefer.includes(k)),
-  ].slice(0, 13);
+  ]
+    .filter((key) => !isHiddenIndicatorField(key))
+    .slice(0, 13);
   return ordered.map((key) => ({ key }));
 }

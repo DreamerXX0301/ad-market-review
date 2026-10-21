@@ -2,6 +2,12 @@ type DataRow = Record<string, any>;
 
 export function dataTaskTitle(task: DataRow) {
   const operation = task.parameters?.operation;
+  if (task.kind === "source_check" && operation === "local_coverage_check")
+    return "本地数据核验";
+  if (task.kind === "source_check" && operation === "quote_gap_source_check")
+    return "向来源核验报价缺口";
+  if (task.kind === "source_check" && operation === "listing_status_check")
+    return "上市身份核验";
   if (task.kind === "source_check" && operation === "sector_charts")
     return task.parameters?.mode === "increment"
       ? "板块K线尾部增量"
@@ -228,6 +234,231 @@ export function initializationTaskBlocked(
 
 export function visibleWarnings(items: unknown): unknown[] {
   return (Array.isArray(items) ? items : items ? [items] : []).filter(Boolean);
+}
+
+/** Coverage percentages need their own evidence and denominator, not row share. */
+export function datasetCoverageView(dataset: DataRow) {
+  const progress = dataset.coverage_progress || {};
+  const observed = countOrUnknown(progress.observed_count);
+  const expected = countOrUnknown(progress.expected_count);
+  const valid =
+    progress.state === "known" &&
+    observed !== null &&
+    expected !== null &&
+    expected > 0 &&
+    observed <= expected;
+  const percent = valid ? (observed / expected) * 100 : null;
+  const suppliedState =
+    progress.coverage_status || progress.display_coverage_state;
+  const displayState =
+    suppliedState === "on_demand" && !valid
+      ? "on_demand"
+      : !valid
+        ? "unknown"
+        : observed === expected
+          ? "covered"
+          : "partial";
+  const suppliedLabel =
+    progress.coverage_label || progress.display_coverage_label;
+  const displayLabel =
+    suppliedState === displayState &&
+    typeof suppliedLabel === "string" &&
+    suppliedLabel
+      ? suppliedLabel
+      : (
+          {
+            covered: "本项已覆盖",
+            partial: "存在缺口",
+            unknown: "待核验",
+            on_demand: "按需计算",
+          } as const
+        )[displayState];
+  const percentText =
+    percent === null
+      ? null
+      : percent === 100
+        ? "100%"
+        : percent > 99.99
+          ? "<100%"
+          : percent > 0 && percent < 0.01
+            ? "<0.01%"
+            : `${percent.toFixed(2)}%`;
+  return {
+    label: progress.label || "覆盖完整度",
+    observed,
+    expected,
+    percent,
+    unit: progress.unit || "条",
+    basis: progress.basis || "应有总量尚未核验，记录条数不用于推算完整度",
+    reason: progress.reason || (valid ? null : "覆盖比例待核验"),
+    known: valid,
+    displayState,
+    displayLabel,
+    percentText,
+    catalogCount: countOrUnknown(progress.catalog_count),
+    pendingListingCount: countOrUnknown(progress.pending_listing_count),
+    unknownIdentityCount: countOrUnknown(progress.unknown_count),
+  };
+}
+
+export function listingIdentityView(identities: DataRow | undefined | null) {
+  const catalog = countOrUnknown(
+    identities?.catalog_count ?? identities?.stock_count,
+  );
+  const listed = countOrUnknown(
+    identities?.listed_count ?? identities?.known_count,
+  );
+  const pending = countOrUnknown(identities?.pending_listing_count);
+  const unknown = countOrUnknown(identities?.unknown_count);
+  const consistent =
+    catalog !== null &&
+    listed !== null &&
+    pending !== null &&
+    unknown !== null &&
+    listed + pending + unknown === catalog;
+  const expected = consistent ? listed + unknown : null;
+  return {
+    catalog,
+    listed,
+    pending,
+    unknown,
+    expected,
+    complete: consistent && unknown === 0 && expected !== null && expected > 0,
+  };
+}
+
+export function listingConfirmationDraft(
+  text: string,
+  status: string,
+  reason: string,
+  evidence: string,
+  businessDate?: string,
+) {
+  const identifiers = [
+    ...new Set(
+      text
+        .toUpperCase()
+        .split(/[\s,，;；]+/)
+        .filter(Boolean),
+    ),
+  ];
+  if (!identifiers.length || identifiers.length > 128)
+    return { error: "每次请选择1至128只股票。" };
+  if (identifiers.some((id) => !/^\d{6}\.(SH|SZ|BJ)$/.test(id)))
+    return {
+      error: "请填写完整股票代码，例如000001.SZ；不能仅凭六位代码猜测交易所。",
+    };
+  if (!["pending", "unknown"].includes(status))
+    return { error: "请选择人工确认的身份状态。" };
+  if (!reason.trim() || reason.trim().length > 1000)
+    return { error: "请填写1至1000字的核验说明。" };
+  if (evidence.trim().length > 4000) return { error: "补充依据最多4000字。" };
+  if (!businessDate || !/^\d{4}-\d{2}-\d{2}$/.test(businessDate))
+    return { error: "当前业务日尚未读取，请刷新后再确认。" };
+  return {
+    error: null,
+    payload: {
+      instrument_ids: identifiers,
+      status,
+      reason: reason.trim(),
+      evidence: evidence.trim(),
+      observed_business_date: businessDate,
+    },
+  };
+}
+
+export function listingEvidenceLines(row: DataRow) {
+  const reference = row.reference;
+  if (typeof reference === "string") return reference.trim() ? [reference] : [];
+  if (!reference || typeof reference !== "object") return [];
+  const values: string[] = [];
+  const quote = reference.quote_presence;
+  if (countOrUnknown(quote?.valid_quote_count) !== null)
+    values.push(
+      `本代有效成交报价 ${quote.valid_quote_count} 条${quote.first_quote_date ? `；首次 ${quote.first_quote_date}` : ""}${quote.last_quote_date ? `，最近 ${quote.last_quote_date}` : ""}`,
+    );
+  const manual = reference.manual_confirmation;
+  if (typeof manual?.evidence === "string" && manual.evidence.trim())
+    values.push(manual.evidence.trim());
+  if (manual?.confirmation_id)
+    values.push(
+      `人工确认记录 ${manual.confirmation_id}${manual.observed_business_date ? ` · 观察业务日 ${manual.observed_business_date}` : ""}`,
+    );
+  return values;
+}
+
+export function gapEpisodeView(episode: DataRow) {
+  const source = episode.source_verification;
+  const labels: Record<string, string> = {
+    local_missing: "来源有可补报价",
+    partial: "来源部分返回报价",
+    source_no_quote: "来源同样无报价",
+    failed: "来源核验未完成",
+  };
+  const verified =
+    source && typeof source === "object" && typeof source.status === "string";
+  return {
+    label: verified
+      ? labels[source.status] || episode.type_label || "来源证据待核验"
+      : episode.type_label || "原因待核验",
+    reason:
+      verified && source.reason
+        ? source.reason
+        : episode.reason || "尚无能够确定原因的证据。",
+    impact: episode.impact || "该范围的严格日线信号和可比收益需要保留缺口。",
+    nextAction:
+      verified && source.next_action
+        ? source.next_action
+        : episode.next_action || "需明确来源或身份依据后再处理，不补造报价。",
+    source: verified ? source : null,
+  };
+}
+
+/** Only local report classifications are shown; a long blank interval never proves suspension. */
+export function filterGapDiagnosisStocks(
+  diagnosis: DataRow | null | undefined,
+  query: string,
+  sort: string,
+) {
+  const term = query.trim().toLowerCase();
+  const rows: DataRow[] = Array.isArray(diagnosis?.stocks)
+    ? diagnosis.stocks
+    : [];
+  const value = (row: DataRow) => countOrUnknown(row[sort]);
+  return rows
+    .filter(
+      (row) =>
+        !term ||
+        [
+          row.name,
+          row.code,
+          row.instrument_id,
+          ...(row.episodes || []).flatMap((episode: DataRow) => [
+            episode.start_date,
+            episode.end_date,
+            gapEpisodeView(episode).label,
+            gapEpisodeView(episode).reason,
+            ...(episode.dates || []),
+          ]),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(term),
+    )
+    .slice()
+    .sort((a, b) => {
+      const av = value(a),
+        bv = value(b);
+      return av === null
+        ? bv === null
+          ? String(a.instrument_id).localeCompare(String(b.instrument_id))
+          : 1
+        : bv === null
+          ? -1
+          : bv - av ||
+            String(a.instrument_id).localeCompare(String(b.instrument_id));
+    });
 }
 
 /** Server Beijing time is authoritative; missing clock metadata never opens sync. */

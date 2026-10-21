@@ -43,6 +43,16 @@ playwright-report/
 !/docs/数据库与数据流.md
 !/docs/数据源与权限.md
 !/docs/Docker部署.md
+!/docs/界面导览.md
+!/docs/images/
+/docs/images/*
+!/docs/images/overview.jpg
+!/docs/images/overview-light.jpg
+!/docs/images/stock-chart.jpg
+!/docs/images/strategies.jpg
+!/docs/images/strategy-editor.jpg
+!/docs/images/watchlist.jpg
+!/docs/images/data-coverage.jpg
 /deploy/*checks*.json
 /deploy/validation-report.json
 /frontend/api-contract-checks.json

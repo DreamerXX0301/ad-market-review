@@ -252,13 +252,13 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
             base['data_coverage']['notice'] += ' 当前数据上下文未提供市场交易日历，日期覆盖待核验。'
     if sort_by is not None:
         if kind != 'gainers':raise HTTPException(422,'该列表尚未开放服务端表头排序')
-        allowed={'name','topics','change_pct','change_30d_pct','limit_up_ytd','board_count','volume_ratio','technical_observation','risk_labels'}
+        allowed={'name','topics','change_pct','change_30d_pct','limit_up_ytd','last_limit_up_date','board_count','volume_ratio','technical_observation','risk_labels'}
         if sort_by not in allowed or sort_order not in ('asc','desc'):raise HTTPException(422,'排序字段或方向无效')
         def sort_value(row):
             value=row.get(sort_by)
             if sort_by in ('topics','risk_labels'):
                 return ' · '.join(sorted(str(t.get('name','')) if isinstance(t,dict) else str(t) for t in value)).casefold() if value else None
-            if sort_by in ('name','technical_observation'):return value.casefold() if isinstance(value,str) and value else None
+            if sort_by in ('name','technical_observation','last_limit_up_date'):return value.casefold() if isinstance(value,str) and value else None
             return value if number(value) and not isinstance(value,bool) else None
         known=[r for r in base['items'] if sort_value(r) is not None]
         unknown=[r for r in base['items'] if sort_value(r) is None]
@@ -318,6 +318,9 @@ def gainers_rows(market,reference,day,rows):
         if instrument.get('list_date') and instrument['list_date']>day:continue
         if instrument.get('end_date') and instrument['end_date']<day:continue
         result.append({**instrument,'change_pct':None,'return_30d':None,'change_30d_pct':None,'return_30d_start':baseline,'return_30d_end':day,'return_30d_reason':'该盘面日未留存报价，保留证券并标为未知','return_30d_quality':'unknown','topics':[],'technical_observation':'该日行情待核验','limit_up_ytd':None})
+    from app.services.topic_member_metrics import limit_metrics
+    limits=limit_metrics(market,day,[row['instrument_id'] for row in result],reference.get('_supplement',{}),reference)
+    for row in result:row.update(limits.get(row['instrument_id'],{}))
     result.sort(key=lambda r:(not number(r.get('return_30d')),-r['return_30d'] if number(r.get('return_30d')) else 0,r['instrument_id']))
     known=0
     for row in result:

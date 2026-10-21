@@ -8,7 +8,7 @@ export type StockNavigationItem = {
   eventBaseline?: ChartEventBaseline;
 };
 export type StockNavigation = {
-  source: "strategy" | "tracking";
+  source: "strategy" | "tracking" | "watchlist";
   scopeKey: string;
   label: string;
   asOf?: string;
@@ -65,7 +65,8 @@ export function createStockNavigation(
       id,
       name: typeof row.name === "string" ? row.name : undefined,
       code: typeof row.code === "string" ? row.code : undefined,
-      ...(scope.source === "tracking" && preferred.eventBaseline
+      ...((scope.source === "tracking" || scope.source === "watchlist") &&
+      preferred.eventBaseline
         ? { eventBaseline: { ...preferred.eventBaseline } }
         : {}),
     });
@@ -77,7 +78,10 @@ export function stockNavigationPosition(
   navigation: StockNavigation | undefined,
   id: string,
 ) {
-  if (!navigation || !["strategy", "tracking"].includes(navigation.source))
+  if (
+    !navigation ||
+    !["strategy", "tracking", "watchlist"].includes(navigation.source)
+  )
     return null;
   const index = navigation.items.findIndex(
     (item) => item.id === id.toUpperCase(),

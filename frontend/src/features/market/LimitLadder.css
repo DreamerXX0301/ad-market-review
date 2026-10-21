@@ -303,6 +303,13 @@
   text-align: left;
   color: var(--text);
 }
+.ladder-stock-identity-wrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 7px;
+  row-gap: 2px;
+}
 .ladder-stock-identity > strong {
   font-size: 14px;
   font-weight: 600;

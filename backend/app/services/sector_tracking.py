@@ -86,7 +86,7 @@ def _entry_basis(candidate, run, version):
             'source_checks': obj(candidate['checks_json'], {})}
 
 
-def add_tracking(payload):
+def add_tracking(payload, *, automatic=False, transaction_guard=None, on_commit=None):
     if not isinstance(payload, dict) or set(payload)-{'run_id', 'target_ids'}:
         fail('板块入池只接受run_id与target_ids')
     ids = payload.get('target_ids')
@@ -98,6 +98,7 @@ def add_tracking(payload):
     added = []; skipped = []
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE'); _guard(connection, context)
+        if transaction_guard: transaction_guard(connection)
         run = one(connection, 'SELECT * FROM sector_selection_run WHERE run_id=?', (payload['run_id'],), '板块运行不存在')
         strategy = one(connection, 'SELECT * FROM sector_strategy WHERE strategy_id=?', (run['strategy_id'],))
         if (run['status'] != 'completed' or run['business_date'] != context['day']
@@ -112,10 +113,15 @@ def add_tracking(payload):
             candidate = connection.execute('SELECT * FROM sector_selection_candidate WHERE run_id=? AND topic_code=?',
                                            (run['run_id'], code)).fetchone()
             if not candidate or candidate['decision'] != 'matched' or not candidate['close_price_e8']:
-                skipped.append({'target_id': code, 'reason': '未命中或没有当日入池点位'}); continue
+                skipped.append({'target_id': code, 'reason': '未命中或没有当日入池点位', 'reason_code': 'invalid_candidate'}); continue
             if connection.execute("SELECT 1 FROM sector_tracking_round WHERE strategy_id=? AND target_id=? AND status='tracking'",
                                   (run['strategy_id'], code)).fetchone():
-                skipped.append({'target_id': code, 'reason': '该策略已跟踪此板块，不重复入池'}); continue
+                skipped.append({'target_id': code, 'reason': '该策略已跟踪此板块，不重复入池', 'reason_code': 'already_tracking'}); continue
+            latest = connection.execute('SELECT status FROM sector_tracking_round WHERE strategy_id=? AND target_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1', (run['strategy_id'], code)).fetchone() if automatic else None
+            if latest and latest['status'] == 'manual_removed':
+                skipped.append({'target_id': code, 'reason': '已手动移除此板块，自动批次保留忽略状态', 'reason_code': 'ignored'}); continue
+            if automatic and connection.execute('SELECT 1 FROM sector_tracking_round WHERE origin_run_id=? AND target_id=?', (run['run_id'], code)).fetchone():
+                skipped.append({'target_id': code, 'reason': '本次运行已有跟踪轮次，保留原结束状态', 'reason_code': 'already_recorded'}); continue
             candidate = dict(candidate); basis = _entry_basis(candidate, run, version)
             identifier = new_id('sector-round'); stamp = now_ms()
             row = {'round_id': identifier, 'strategy_id': run['strategy_id'], 'entry_strategy_version': run['strategy_version'],
@@ -133,7 +139,9 @@ def add_tracking(payload):
             added.append({'round_id': identifier, 'target_id': code, 'topic_code': code,
                           'entry_business_date': context['day'], 'entry_price': money(candidate['close_price_e8']),
                           'status': 'tracking', 'target_type': 'sector'})
-    return {'items': added, 'added_count': len(added), 'skipped': skipped, 'business_date': context['day'], 'target_type': 'sector'}
+        result = {'items': added, 'added_count': len(added), 'skipped': skipped, 'business_date': context['day'], 'target_type': 'sector'}
+        if on_commit: on_commit(connection, result)
+    return result
 
 
 def _event(connection, row, kind, day, age, state, outcome, evidence, key=None, revision=None):
@@ -214,6 +222,8 @@ def list_tracking(strategy_id=None, status='tracking', triggered_only=False):
     with connect() as connection:
         sql = 'SELECT r.*,s.name strategy_name FROM sector_tracking_round r JOIN sector_strategy s USING(strategy_id) WHERE 1=1'; args = []
         if strategy_id: sql += ' AND r.strategy_id=?'; args.append(strategy_id)
+        grouped = rows(connection, 'SELECT status,count(*) AS count FROM sector_tracking_round'+(' WHERE strategy_id=?' if strategy_id else '')+' GROUP BY status', [strategy_id] if strategy_id else [])
+        counts = {'active': sum(row['count'] for row in grouped if row['status']=='tracking'), 'history': sum(row['count'] for row in grouped if row['status']!='tracking')}
         if status == 'ended': sql += " AND r.status<>'tracking'"
         elif status and status != 'all': sql += ' AND r.status=?'; args.append(status)
         data = rows(connection, sql+' ORDER BY r.created_at_ms DESC,r.round_id', args)
@@ -227,7 +237,7 @@ def list_tracking(strategy_id=None, status='tracking', triggered_only=False):
         if frozen is None and key not in cached: cached[key] = _metrics_for(context['market'], row['target_id'], valuation, periods)
         item = _view(row, context['day'], context['calendar'], frozen if frozen is not None else cached[key], policy, events)
         if not triggered_only or item['alerts']: output.append(item)
-    return {'items': output, 'total': len(output), 'business_date': context['day'], 'target_type': 'sector'}
+    return {'items': output, 'total': len(output), 'counts': counts, 'business_date': context['day'], 'target_type': 'sector'}
 
 
 def get_tracking(identifier):

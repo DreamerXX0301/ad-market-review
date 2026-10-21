@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 from app.core import APP_NAME,APP_ID,APP_VERSION,PROJECT_ROOT,ensure_ready
-from app.routers import platform,workspace,backtests
+from app.routers import platform,workspace,backtests,watchlist,chart_annotations
 
 @asynccontextmanager
 async def lifespan(app):
@@ -19,6 +19,8 @@ app.add_middleware(GZipMiddleware,minimum_size=1024,compresslevel=4)
 app.include_router(platform.router)
 app.include_router(workspace.router)
 app.include_router(backtests.router)
+app.include_router(watchlist.router)
+app.include_router(chart_annotations.router)
 
 @app.get('/health',include_in_schema=False)
 def health():return {'status':'ok','application':APP_ID,'app_name':APP_NAME,'version':APP_VERSION}

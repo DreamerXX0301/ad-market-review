@@ -4,12 +4,30 @@ import fs from "node:fs/promises";
 import ts from "typescript";
 async function moduleAt(path) {
   const source = await fs.readFile(new URL(path, import.meta.url), "utf8");
-  const compiled = ts.transpileModule(source, {
+  let compiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ES2022,
       target: ts.ScriptTarget.ES2022,
     },
   }).outputText;
+  if (/indicatorVisibility/.test(compiled)) {
+    const visibility = await fs.readFile(
+      new URL("../lib/indicatorVisibility.ts", import.meta.url),
+      "utf8",
+    );
+    const helper = ts.transpileModule(visibility, {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022,
+      },
+    }).outputText;
+    const url =
+      "data:text/javascript;base64," + Buffer.from(helper).toString("base64");
+    compiled = compiled.replace(
+      /(["'])\.{1,2}\/[^"']*indicatorVisibility\1/g,
+      JSON.stringify(url),
+    );
+  }
   return import(
     "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
   );
@@ -113,6 +131,18 @@ assert.match(
 );
 assert.equal(chartIndicatorLabel("macd_hist"), "MACD柱");
 assert.equal(chartIndicatorLabel("ma250"), "MA250");
+assert.equal(chartIndicatorLabel("kdj_j"), "");
+for (const period of ["D", "W", "M"]) {
+  assert.deepEqual(
+    chartIndicatorAvailability(
+      { kdj_k: 0, kdj_d: 0, kdj_j: null },
+      ["kdj_k", "kdj_d", "kdj_j"],
+      period,
+    ).missing,
+    [],
+    "a hidden indicator cannot create a visible warmup warning",
+  );
+}
 
 const rows = [
   { id: "up", pct: 10 },

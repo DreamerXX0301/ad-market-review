@@ -5,12 +5,42 @@ import os
 from pathlib import Path
 import subprocess
 import tarfile
+import zlib
 
 import pytest
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('package_release',ROOT/'scripts/package_release.py')
 package=importlib.util.module_from_spec(spec);spec.loader.exec_module(package)
+
+
+def png_chunk(kind, value):
+    return (len(value).to_bytes(4,'big')+kind+value
+            +(zlib.crc32(kind+value)&0xffffffff).to_bytes(4,'big'))
+
+
+def public_png(*metadata, pixels=b'\x00\x11\x22\x33\xff'):
+    header=(1).to_bytes(4,'big')*2+bytes([8,6,0,0,0])
+    return (package._PNG_SIGNATURE+png_chunk(b'IHDR',header)
+            +b''.join(png_chunk(kind,value) for kind,value in metadata)
+            +png_chunk(b'IDAT',zlib.compress(pixels))+png_chunk(b'IEND',b''))
+
+
+def jpeg_segment(marker, value):
+    return b'\xff'+bytes([marker])+(len(value)+2).to_bytes(2,'big')+value
+
+
+def public_jpeg(*metadata):
+    # One grayscale 1px JPEG: a zero DC coefficient and EOB, padded with ones.
+    # Its pixels are synthetic; no installed encoder or runtime data is needed.
+    jfif=b'JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00'
+    huffman=bytes([0,1])+b'\x00'*15+b'\x00'+bytes([0x10,1])+b'\x00'*15+b'\x00'
+    return (b'\xff\xd8'+jpeg_segment(0xe0,jfif)
+            +b''.join(jpeg_segment(kind,value) for kind,value in metadata)
+            +jpeg_segment(0xdb,b'\x00'+b'\x01'*64)
+            +jpeg_segment(0xc0,b'\x08\x00\x01\x00\x01\x01\x01\x11\x00')
+            +jpeg_segment(0xc4,huffman)+jpeg_segment(0xda,b'\x01\x01\x00\x00\x3f\x00')
+            +b'\x3f\xff\xd9')
 
 
 def git(repo,*args):
@@ -126,6 +156,122 @@ def test_public_changelog_is_included(repository,tmp_path):
     sha=commit(repo);result=package.package_release(repo,sha,tmp_path/'package')
     with tarfile.open(tmp_path/'package'/result['archive']) as archive:
         assert archive.extractfile('ad-market-review-0.1.0/CHANGELOG.md').read().startswith(b'# 0.1.0')
+
+
+def test_reviewed_public_png_is_included_reproducibly_with_content_hash(repository,tmp_path):
+    repo,_=repository;name='docs/images/overview-light.png';path=repo/name
+    path.parent.mkdir(parents=True);value=public_png((b'sRGB',b'\x00'),
+        (b'gAMA',(45455).to_bytes(4,'big')),(b'pHYs',b'\x00\x00\x0e\xc4'*2+b'\x01'),
+        (b'cHRM',b'\x00'*32));path.write_bytes(value);sha=commit(repo)
+    first=package.package_release(repo,sha,tmp_path/'first')
+    second=package.package_release(repo,sha,tmp_path/'second')
+    assert first['sha256']==second['sha256']
+    manifest=json.loads((tmp_path/'first/source-manifest.json').read_text())
+    image=next(item for item in manifest['files'] if item['path']==name)
+    assert image['sha256']==package.sha256(value).hexdigest() and image['bytes']==len(value)
+    with tarfile.open(tmp_path/'first'/first['archive']) as archive:
+        assert archive.extractfile('ad-market-review-0.1.0/'+name).read()==value
+
+
+@pytest.mark.parametrize('name',['docs/overview.png','frontend/src/overview.png',
+    'docs/images/nested/overview.png','docs/images/overview.jpg',
+    'docs/images/overview.PNG','docs/images/.hidden.png','docs/images/a b.png'])
+def test_public_png_exception_is_limited_to_its_reviewed_namespace(repository,tmp_path,name):
+    repo,_=repository;path=repo/name;path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_bytes(public_png());sha=commit(repo)
+    with pytest.raises(ValueError):package.package_release(repo,sha,tmp_path/'rejected')
+    assert not (tmp_path/'rejected').exists()
+
+
+@pytest.mark.parametrize('kind',[b'tEXt',b'iTXt',b'zTXt',b'eXIf',b'iCCP',b'acTL',b'PLTE',b'abCD'])
+def test_public_png_rejects_unreviewed_metadata_and_payload_chunks(kind):
+    with pytest.raises(ValueError,match='公开演示PNG'):
+        package.validate_content('docs/images/overview.png',public_png((kind,b'synthetic private metadata')))
+
+
+@pytest.mark.parametrize('value',[
+    b'not a PNG',public_png()+b'trailing payload',public_png()[:-1],
+    public_png()[:-8]+b'\x00'*8,public_png(pixels=b'\x05\x11\x22\x33\xff'),
+    public_png(pixels=b'\x00too long'),public_png(pixels=b'\x00'),
+    package._PNG_SIGNATURE+png_chunk(b'IHDR',b'invalid header')+png_chunk(b'IEND',b''),
+    package._PNG_SIGNATURE+png_chunk(b'IHDR',(1).to_bytes(4,'big')*2+bytes([8,6,0,0,0]))
+        +png_chunk(b'IDAT',b'invalid compressed data')+png_chunk(b'IEND',b''),
+])
+def test_public_png_rejects_corruption_and_non_image_bytes(value):
+    with pytest.raises(ValueError,match='公开演示PNG'):
+        package.validate_content('docs/images/overview.png',value)
+
+
+def test_public_png_has_its_own_bounded_size_budget():
+    with pytest.raises(ValueError,match='公开演示PNG'):
+        package.validate_content('docs/images/overview.png',
+            public_png()+b'\x00'*package.MAX_PUBLIC_PNG_BYTES)
+
+
+def test_public_png_namespace_does_not_bypass_secret_or_database_guards():
+    for name in ('docs/images/source.sqlite3','docs/images/secret.key','data/image.png'):
+        with pytest.raises(ValueError):package.validate_path(name)
+    with pytest.raises(ValueError,match='凭据'):
+        package.validate_content('docs/images-not-whitelisted/example.md',('sk-fu'+'yao-'+'A'*24).encode())
+
+
+def test_reviewed_public_jpeg_is_included_reproducibly_without_transcoding(repository,tmp_path):
+    repo,_=repository;name='docs/images/stock-chart.jpg';path=repo/name
+    path.parent.mkdir(parents=True);value=public_jpeg();path.write_bytes(value);sha=commit(repo)
+    first=package.package_release(repo,sha,tmp_path/'first')
+    second=package.package_release(repo,sha,tmp_path/'second')
+    assert first['sha256']==second['sha256']
+    manifest=json.loads((tmp_path/'first/source-manifest.json').read_text())
+    image=next(item for item in manifest['files'] if item['path']==name)
+    assert image['sha256']==package.sha256(value).hexdigest()
+    with tarfile.open(tmp_path/'first'/first['archive']) as archive:
+        assert archive.extractfile('ad-market-review-0.1.0/'+name).read()==value
+
+
+@pytest.mark.parametrize('name',['docs/overview.jpg','frontend/src/overview.jpg',
+    'docs/images/nested/overview.jpg','docs/images/overview.jpeg',
+    'docs/images/overview.JPG','docs/images/.hidden.jpg','docs/images/a b.jpg'])
+def test_public_jpeg_exception_is_limited_to_its_reviewed_namespace(repository,tmp_path,name):
+    repo,_=repository;path=repo/name;path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_bytes(public_jpeg());sha=commit(repo)
+    with pytest.raises(ValueError):package.package_release(repo,sha,tmp_path/'rejected')
+    assert not (tmp_path/'rejected').exists()
+
+
+@pytest.mark.parametrize('kind',[0xe1,0xe2,0xe3,0xed,0xee,0xef,0xfe])
+def test_public_jpeg_rejects_exif_icc_xmp_comments_and_other_application_metadata(kind):
+    with pytest.raises(ValueError,match='公开演示JPEG'):
+        package.validate_content('docs/images/overview.jpg',public_jpeg((kind,b'synthetic private metadata')))
+
+
+@pytest.mark.parametrize('value',[
+    b'not a JPEG',public_jpeg()+b'trailing payload',public_jpeg()[:-1],
+    public_jpeg()[:-2],public_jpeg()[2:],public_jpeg().replace(b'JFIF\x00',b'JFXX\x00',1),
+    public_jpeg().replace(b'\xff\xe0\x00\x10',b'\xff\xe0\xff\xff',1),
+    public_jpeg().replace(b'\xff\xc0\x00\x0b\x08\x00\x01',b'\xff\xc0\x00\x0b\x08\x00\x00',1),
+    public_jpeg().replace(b'\xff\xda\x00\x08',b'\xff\xda\x00\x02',1),
+    public_jpeg().replace(b'\xff\xdb',b'\xff\xe1',1),
+    b'\xff\xd8\xff\xd9',public_png(),
+])
+def test_public_jpeg_rejects_corrupt_frames_segments_missing_tables_and_non_images(value):
+    with pytest.raises(ValueError,match='公开演示JPEG'):
+        package.validate_content('docs/images/overview.jpg',value)
+
+
+def test_public_jpeg_has_its_own_bounded_size_budget():
+    with pytest.raises(ValueError,match='公开演示JPEG'):
+        package.validate_content('docs/images/overview.jpg',
+            public_jpeg()+b'\x00'*package.MAX_PUBLIC_JPEG_BYTES)
+
+
+@pytest.mark.parametrize('payload,reason',[
+    (('sk-fu'+'yao-'+'A'*24).encode(),'凭据'),
+    (('/Us'+'ers/alice/private/image').encode(),'绝对路径'),
+])
+def test_public_image_exception_retains_visible_secret_and_path_guards(payload,reason):
+    value=public_jpeg()[:-2]+payload+public_jpeg()[-2:]
+    with pytest.raises(ValueError,match=reason):
+        package.validate_content('docs/images/overview.jpg',value)
 
 
 @pytest.mark.parametrize('bad',['HEAD','main','-option','a'*39,'A'*40])

@@ -206,6 +206,10 @@ def dispatch(job):
         from app.services.workspace_automation import run_after_sync
         run_after_sync(identifier)
         _queue_followup(job,result)
+        from app.services.line_alerts import after_sync
+        after_sync(job)
+        from app.services.listing_status import after_sync as listing_after_sync
+        listing_after_sync(job)
     elif kind=='backtest':
         from app.analytics.backtest_store import execute_backtest
         execute_backtest(identifier,callback)
@@ -219,6 +223,19 @@ def dispatch(job):
         result=execute_topic_collection(identifier,callback)
         tasks.finish(identifier,'partial','真实当前题材库已发布')
         _queue_followup(job,result)
+    elif kind=='source_check' and _parameters(job).get('operation')=='local_coverage_check':
+        from app.services.local_coverage_check import execute_check
+        result=execute_check(identifier,callback)
+        tasks.finish(identifier,'partial' if result.get('quality')!='complete' else 'succeeded',result['message'])
+    elif kind=='source_check' and _parameters(job).get('operation')=='line_alert_check':
+        from app.services.line_alerts import execute_check
+        execute_check(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='listing_status_check':
+        from app.services.listing_status import execute_check
+        execute_check(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='quote_gap_source_check':
+        from app.services.quote_gap_source_check import execute_check
+        execute_check(job)
     elif kind=='source_check' and json.loads(job.get('parameters_json','{}')).get('operation')=='market_supplement':
         from app.services.market_supplement import execute_supplement
         result=execute_supplement(identifier,callback)
@@ -232,6 +249,15 @@ def dispatch(job):
         result=execute_batch_job(identifier,callback)
         tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',result.get('message','全量板块历史K线已核验并缓存'))
         _queue_followup(job,result)
+    elif kind=='selection' and _parameters(job).get('operation')=='strategy_batch_item':
+        from app.services.strategy_batches import execute_item
+        execute_item(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='strategy_batch_tracking':
+        from app.services.strategy_batches import execute_tracking
+        execute_tracking(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='strategy_batch':
+        from app.services.strategy_batches import finish_batch
+        finish_batch(job)
     else:raise ValueError('该任务类型尚未实现工作进程执行，请通过对应模块手动运行')
 
 
@@ -254,15 +280,19 @@ def run(once=False):
                 next_research_cleanup=time.monotonic()+3600
             set_setting('worker_heartbeat',{'owner':owner,'at_ms':now_ms()})
             recover_followups()
+            from app.services.line_alerts import recover_sync_followups
+            recover_sync_followups()
+            from app.services.listing_status import recover_sync_followups as recover_listing_followups
+            recover_listing_followups()
             job=tasks.claim_next(owner)
             if not job:
                 if once:return
                 stop.wait(1.5);continue
             heartbeat_stop=threading.Event()
-            def heartbeat(identifier=job['job_id'],stop_event=heartbeat_stop):
+            def heartbeat(identifier=job['job_id'],stop_event=heartbeat_stop,lease_owner=job['lease_owner']):
                 while not stop_event.wait(15):
                     with connect() as c:
-                        c.execute("UPDATE job SET lease_expires_at_ms=? WHERE job_id=? AND status='running' AND lease_owner=?",(now_ms()+60_000,identifier,owner))
+                        c.execute("UPDATE job SET lease_expires_at_ms=? WHERE job_id=? AND status='running' AND lease_owner=?",(now_ms()+60_000,identifier,lease_owner))
                     set_setting('worker_heartbeat',{'owner':owner,'at_ms':now_ms(),'task_id':identifier})
             thread=threading.Thread(target=heartbeat,daemon=True);thread.start()
             try:
@@ -274,7 +304,7 @@ def run(once=False):
                 # Never log URLs, signed downloads, request headers or arbitrary remote bodies.
                 message=str(error) if isinstance(error,(ProviderError,ValueError)) else '任务未完成：'+type(error).__name__
                 logger.error('%s %s',job['job_id'],message)
-                tasks.finish(job['job_id'],'failed',message,message)
+                tasks.finish(job['job_id'],'failed',message,message,lease_owner=job['lease_owner'])
             finally:
                 heartbeat_stop.set();thread.join(timeout=2)
             if once:return

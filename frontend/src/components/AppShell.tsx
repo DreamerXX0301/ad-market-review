@@ -18,6 +18,7 @@ import {
   Search,
   ShieldAlert,
   Sun,
+  Star,
   Target,
   TrendingUp,
   X,
@@ -27,6 +28,7 @@ import type { ReactNode } from "react";
 import type { Row } from "../lib/api";
 import InstrumentSearch from "./InstrumentSearch";
 import MarketDatePicker from "./MarketDatePicker";
+import ActiveTaskBanner from "./ActiveTaskBanner";
 import { Badge } from "./UI";
 import "./Brand.css";
 export const navigation = [
@@ -49,6 +51,7 @@ export const navigation = [
       { id: "topics", name: "题材库", icon: Network },
       { id: "strategy", name: "策略管理", icon: Settings2 },
       { id: "tracking", name: "策略跟踪", icon: Target },
+      { id: "watchlist", name: "我的自选", icon: Star },
       { id: "research", name: "个股研究", icon: BookOpen },
       { id: "backtest", name: "策略回测", icon: FlaskConical },
     ],
@@ -72,6 +75,8 @@ export default function AppShell({
   onDate,
   dates,
   dataDate,
+  dataLoading = false,
+  dataError = false,
   theme,
   onTheme,
   onStock,
@@ -84,6 +89,8 @@ export default function AppShell({
   onDate: (date: string) => void;
   dates: string[];
   dataDate?: string;
+  dataLoading?: boolean;
+  dataError?: boolean;
   theme: string;
   onTheme: () => void;
   onStock: (id: string) => void;
@@ -235,8 +242,14 @@ export default function AppShell({
               <MarketDatePicker value={date} dates={dates} onChange={onDate} />
             ) : (
               <div className="current-business-date">
-                <span className="status-dot good" />
-                行情截止 {dataDate || "未初始化"}
+                <span className={`status-dot${dataDate ? " good" : ""}`} />
+                行情截止{" "}
+                {dataDate ||
+                  (dataLoading
+                    ? "读取中…"
+                    : dataError
+                      ? "读取失败"
+                      : "未初始化")}
               </div>
             )}
             <button className="avatar" title="本机个人研究空间">
@@ -268,6 +281,7 @@ export default function AppShell({
           </div>
         )}
         <div className="page-container">
+          <ActiveTaskBanner onNavigate={onNavigate} />
           {isMarket && date && dataDate && date !== dataDate && (
             <div className="historical-banner">
               <CalendarDays size={14} />

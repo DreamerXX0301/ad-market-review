@@ -38,6 +38,49 @@ function coverage(name, d) {
         new Set(c.available_dates).size === c.available_dates.length,
     );
 }
+function validLineAlert(event, asOf) {
+  return (
+    event &&
+    typeof event.event_id === "string" &&
+    typeof event.instrument_id === "string" &&
+    typeof event.annotation_id === "string" &&
+    Number.isSafeInteger(event.annotation_revision) &&
+    event.annotation_revision >= 1 &&
+    ["support", "resistance"].includes(event.line_type) &&
+    [
+      "support_reclaim",
+      "support_breakdown",
+      "pressure_close_breakout",
+      "pressure_touch",
+    ].includes(event.rule) &&
+    isDate(event.trade_date) &&
+    event.trade_date <= asOf &&
+    numeric(event.line_price) &&
+    event.line_price > 0 &&
+    numeric(event.comparison_line_price) &&
+    event.comparison_line_price > 0 &&
+    ["none", "forward_event_affine"].includes(event.price_basis) &&
+    (event.anchor_date === null || isDate(event.anchor_date)) &&
+    ["open", "high", "low", "close", "previous_close"].every((key) =>
+      nullable(event[key]),
+    ) &&
+    ["triggered", "invalidated"].includes(event.state) &&
+    typeof event.title === "string" &&
+    typeof event.reason === "string" &&
+    typeof event.added_to_watchlist === "boolean" &&
+    [
+      "added",
+      "already_present",
+      "disabled",
+      "capacity_reached",
+      "not_eligible",
+      "missing_current_quote",
+    ].includes(event.watchlist_add_state) &&
+    numeric(event.created_at_ms) &&
+    (event.rule !== "support_breakdown" ||
+      (event.state === "invalidated" && event.added_to_watchlist === false))
+  );
+}
 try {
   const boot = await get("/bootstrap");
   check(
@@ -54,6 +97,98 @@ try {
   );
   const date = boot.data_date;
   const overview = await get("/market/overview?date=" + date);
+  const watchlist = await get("/watchlist");
+  page("personal watchlist", watchlist);
+  check("watchlist current business day", watchlist.business_date === date);
+  check(
+    "watchlist per-stock latest line alert is explicit, historical and nullable",
+    watchlist.items.every(
+      (row) =>
+        Object.hasOwn(row, "latest_line_alert") &&
+        (row.latest_line_alert === null ||
+          (validLineAlert(row.latest_line_alert, date) &&
+            row.latest_line_alert.instrument_id === row.instrument_id)),
+    ),
+  );
+  const lineAlerts = await get(
+    `/watchlist/line-alerts?as_of=${date}&limit=100`,
+  );
+  page("line alerts", lineAlerts);
+  check(
+    "line alert observation day isolation",
+    lineAlerts.business_date === date &&
+      lineAlerts.items.every((event) => validLineAlert(event, date)),
+  );
+  check(
+    "line alert configured rules and unknown evidence are explicit",
+    Number.isSafeInteger(lineAlerts.rules_total) &&
+      lineAlerts.rules_total >= 0 &&
+      Array.isArray(lineAlerts.unknowns) &&
+      lineAlerts.unknowns.every(
+        (row) =>
+          typeof row.instrument_id === "string" &&
+          typeof row.annotation_id === "string" &&
+          typeof row.reason === "string",
+      ),
+  );
+  check(
+    "line alert persisted check receipt is nullable",
+    lineAlerts.latest_check === null ||
+      (typeof lineAlerts.latest_check?.job_id === "string" &&
+        numeric(lineAlerts.latest_check.checked_at_ms) &&
+        ["checked_rules", "trigger_count", "unknown_count"].every(
+          (key) =>
+            Number.isSafeInteger(lineAlerts.latest_check[key]) &&
+            lineAlerts.latest_check[key] >= 0,
+        ) &&
+        typeof lineAlerts.latest_check.market_snapshot_id === "string"),
+  );
+  check(
+    "line alert receipt marks stale rules or published inputs explicitly",
+    lineAlerts.latest_check === null ||
+      (typeof lineAlerts.latest_check.stale === "boolean" &&
+        typeof lineAlerts.latest_check.is_current === "boolean" &&
+        lineAlerts.latest_check.stale !== lineAlerts.latest_check.is_current &&
+        (!lineAlerts.latest_check.stale ||
+          typeof lineAlerts.latest_check.stale_reason === "string")),
+  );
+  const annotationInstrument =
+    watchlist.items[0]?.instrument_id || overview.top_amount[0]?.instrument_id;
+  if (annotationInstrument) {
+    const annotations = await get(
+      `/instruments/${encodeURIComponent(annotationInstrument)}/annotations`,
+    );
+    page("chart annotations", annotations);
+    check(
+      "chart annotation instrument scope",
+      annotations.instrument_id === annotationInstrument &&
+        annotations.items.every(
+          (line) => line.instrument_id === annotationInstrument,
+        ),
+    );
+    const allowedModes = {
+      reference: [],
+      support: ["support_reclaim", "support_breakdown"],
+      resistance: ["pressure_close_breakout", "pressure_touch"],
+    };
+    check(
+      "chart annotations have explicit line types, reminder rules and immutable revisions",
+      annotations.items.every(
+        (line) =>
+          Object.hasOwn(allowedModes, line.line_type) &&
+          Array.isArray(line.alert_modes) &&
+          new Set(line.alert_modes).size === line.alert_modes.length &&
+          line.alert_modes.every((mode) =>
+            allowedModes[line.line_type].includes(mode),
+          ) &&
+          typeof line.auto_watchlist === "boolean" &&
+          Number.isSafeInteger(line.revision) &&
+          line.revision >= 1 &&
+          (line.line_type !== "reference" ||
+            (line.alert_modes.length === 0 && line.auto_watchlist === false)),
+      ),
+    );
+  }
   coverage("overview", overview);
   check("market overview date isolation", overview.date === date);
   check("four indices", overview.indices.length === 4);
@@ -816,6 +951,89 @@ try {
     check("closed trades count", r.trades.length === r.stats.trade_count);
   }
   const data = await get("/data/status");
+  const listingStatus = await get("/data/listing-status");
+  const identities = listingStatus.identities;
+  check(
+    "listing identity catalog and applicable denominator are separate",
+    listingStatus.business_date === date &&
+      typeof listingStatus.summary_is_current === "boolean" &&
+      identities &&
+      [
+        "catalog_count",
+        "stock_count",
+        "listed_count",
+        "known_count",
+        "pending_listing_count",
+        "unknown_count",
+      ].every(
+        (key) => Number.isSafeInteger(identities[key]) && identities[key] >= 0,
+      ) &&
+      identities.catalog_count === identities.stock_count &&
+      identities.listed_count === identities.known_count &&
+      identities.listed_count +
+        identities.pending_listing_count +
+        identities.unknown_count ===
+        identities.catalog_count,
+  );
+  check(
+    "pending identities carry explicit source or user evidence, unknowns stay separate",
+    Array.isArray(identities?.pending_listing) &&
+      identities.pending_listing.length === identities.pending_listing_count &&
+      identities.pending_listing.every(
+        (row) =>
+          row.listing_status === "pending" &&
+          ["source_list_date", "manual_user_confirmation"].includes(
+            row.evidence_kind,
+          ) &&
+          typeof row.source === "string" &&
+          typeof row.reason === "string" &&
+          typeof row.can_edit === "boolean" &&
+          row.reference &&
+          typeof row.reference === "object",
+      ) &&
+      Array.isArray(identities?.unknown) &&
+      identities.unknown.length === identities.unknown_count &&
+      identities.unknown.every((row) =>
+        ["unknown", "quoted_unknown_date"].includes(row.listing_status),
+      ),
+  );
+  const gapSource = await get("/data/quote-gap-source");
+  check(
+    "quote-gap source check is a small read-only plan, not an implicit task",
+    typeof gapSource.available === "boolean" &&
+      (gapSource.available
+        ? typeof gapSource.plan_id === "string" &&
+          typeof gapSource.diagnosis_id === "string" &&
+          typeof gapSource.snapshot_id === "string" &&
+          Number.isSafeInteger(gapSource.stock_count) &&
+          Number.isSafeInteger(gapSource.missing_sessions) &&
+          typeof gapSource.is_current === "boolean"
+        : typeof gapSource.reason === "string"),
+  );
+  check(
+    "saved source evidence separates subset scope and retains publication",
+    gapSource.evidence === null ||
+      (gapSource.is_current === true &&
+        [
+          "planned_stocks",
+          "checked_stocks",
+          "failed_stocks",
+          "checked_sessions",
+          "fillable_sessions",
+          "source_absent_sessions",
+          "overlap_difference_sessions",
+        ].every(
+          (key) =>
+            Number.isSafeInteger(gapSource.evidence?.[key]) &&
+            gapSource.evidence[key] >= 0,
+        ) &&
+        gapSource.evidence.checked_stocks <=
+          gapSource.evidence.planned_stocks &&
+        gapSource.evidence.publication_changed === false &&
+        gapSource.evidence.fillable_sessions +
+          gapSource.evidence.source_absent_sessions ===
+          gapSource.evidence.checked_sessions),
+  );
   check(
     "data center status shape",
     isDate(data.business_date) &&
@@ -823,6 +1041,18 @@ try {
       numeric(data.summary.row_count),
   );
   const tasks = await get("/tasks");
+  const activity = await get("/tasks/activity");
+  check(
+    "compact task activity exposes display-only operation for cross-page completion",
+    Array.isArray(activity.items) &&
+      numeric(activity.active_count) &&
+      numeric(activity.observed_at_ms) &&
+      activity.items.every(
+        (task) =>
+          Object.hasOwn(task, "operation") &&
+          (task.operation === null || typeof task.operation === "string"),
+      ),
+  );
   page("task history", tasks);
   check(
     "progress is percentage points",

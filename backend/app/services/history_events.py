@@ -1,29 +1,44 @@
 """Bounded local history preparation. No HTTP, tasks or business mutations."""
 from datetime import date
 
-from app.domain.history_events import HistoryContext, read_start, retain_start, nodes, warmup
+from app.domain.history_events import HistoryContext, read_start, retain_start, nodes, preparation_warmup, prepared_fields
 
 BATCH_SIZE = 256
 
 
 def batch_size(trees):
-    return 32 if any(warmup(event['where']) is None for tree in trees for event in nodes(tree)) else BATCH_SIZE
+    return 32 if any(preparation_warmup(event) is None for tree in trees for event in nodes(tree)) else BATCH_SIZE
 
 
 def prepare_shared(market, symbols, trees, calendar, day):
     """One vectorized preparation per selection run, never once per batch."""
-    from app.domain.conditions import names
     method = getattr(market, 'history_condition_metrics', None)
     if not callable(method) or not symbols: return None
-    fields = set().union(*(names(event['where']) for tree in trees for event in nodes(tree)))
-    return method(symbols, start=retain_start(trees, calendar, day), end=day, fields=fields)
+    fields = prepared_fields(trees)
+    # Closing-pool events are verified by the local source adapter, never by an
+    # unverified flag carried on a price panel. Keep the vectorized price path.
+    prepared = method(symbols, start=retain_start(trees, calendar, day), end=day, fields=fields - {'limit_up'})
+    if prepared is not None: prepared['fields'] |= fields
+    return prepared
 
 
-def contexts_for_batch(market, symbols, trees, calendar, day, histories=None, shared=None):
+def attach_limit_events(context, symbol, trees, evidence):
+    """Fill only retained exact dates; no source I/O or price history reads."""
+    from app.domain.conditions import names
+    if context is not None and evidence is not None and any('limit_up' in names(event['where']) for tree in trees for event in nodes(tree)):
+        for day, metrics in context.daily.items():
+            metrics.update(evidence.historical_metrics(symbol, day, context.quotes.get(day)))
+    return context
+
+
+def contexts_for_batch(market, symbols, trees, calendar, day, histories=None, shared=None, limit_evidence=None):
     if len(symbols) > batch_size(trees): raise ValueError('历史事件准备每批超出有界证券数量')
     if not symbols: return {}
+    if 'limit_up' in prepared_fields(trees) and limit_evidence is None:
+        from app.services.strategy_limits import LimitConditionEvidence
+        limit_evidence = LimitConditionEvidence(market)
     if shared is not None:
-        return {symbol: HistoryContext.from_prepared(shared, symbol) for symbol in symbols}
+        return {symbol: attach_limit_events(HistoryContext.from_prepared(shared, symbol), symbol, trees, limit_evidence) for symbol in symbols}
     start = read_start(trees, calendar, day)
     method = getattr(market, 'history_for_instruments', None)
     records = ({symbol: [row for row in histories.get(symbol, []) if start <= str(row.get('date', '')) <= day] for symbol in symbols}
@@ -55,5 +70,5 @@ def contexts_for_batch(market, symbols, trees, calendar, day, histories=None, sh
             if 'corporate_action_coverage_known' not in row or 'corporate_action' not in row:
                 row.update(corporate_action_coverage_known=known, corporate_action=row.get('date') in action_dates)
             values.append(row)
-        result[symbol] = HistoryContext(values, calendar, day, snapshot, retain_start=retain_start(trees, calendar, day))
+        result[symbol] = attach_limit_events(HistoryContext(values, calendar, day, snapshot, retain_start=retain_start(trees, calendar, day)), symbol, trees, limit_evidence)
     return result

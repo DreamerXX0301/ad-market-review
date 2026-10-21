@@ -1,3 +1,8 @@
+import {
+  HIDDEN_INDICATOR_CONDITION_TEXT,
+  isHiddenIndicatorField,
+} from "../../lib/indicatorVisibility";
+
 export type SectorRow = Record<string, any>;
 export const sectorPeriodLabel = (value: string) =>
   (({ D: "日K", W: "周K", M: "月K" }) as Record<string, string>)[value] ||
@@ -10,13 +15,25 @@ export const sectorKindLabel = (value: string) =>
     >
   )[value] || "分类待核验";
 export const sectorFieldLabel = (field: string, fields: SectorRow[]) =>
-  fields.find((item) => item.field === field)?.label || field;
+  isHiddenIndicatorField(field)
+    ? HIDDEN_INDICATOR_CONDITION_TEXT
+    : fields.find((item) => item.field === field)?.label || field;
+export function sectorConditionHidden(value: SectorRow): boolean {
+  return [value?.field, value?.right_field, value?.right_event_field].some(
+    isHiddenIndicatorField,
+  );
+}
+export function sectorSelectableFields(fields: SectorRow[]): SectorRow[] {
+  return fields.filter((field) => !isHiddenIndicatorField(field.field));
+}
 export function sectorDefaultLeaf(
   fields: SectorRow[],
   period = "D",
 ): SectorRow {
+  const visible = sectorSelectableFields(fields);
   const spec =
-    fields.find((field) => field.field === "close_breakout_high") || fields[0];
+    visible.find((field) => field.field === "close_breakout_high") ||
+    visible[0];
   if (!spec) return {};
   return {
     field: spec.field,
@@ -118,7 +135,12 @@ export function validateSectorRule(
 export function sectorCheckLeaves(value: any): SectorRow[] {
   if (Array.isArray(value)) return value.flatMap(sectorCheckLeaves);
   if (!value || typeof value !== "object") return [];
-  if (value.field) return [value];
+  if (value.field)
+    return [
+      sectorConditionHidden(value)
+        ? { hidden: true, description: HIDDEN_INDICATOR_CONDITION_TEXT }
+        : value,
+    ];
   return sectorCheckLeaves(value.checks || value.all || value.any || []);
 }
 export function sectorLeafEditorKind(field: SectorRow | undefined): string {
@@ -138,6 +160,7 @@ export function sectorRuleText(
       .map((child) => `(${sectorRuleText(child, fields, defaultPeriod)})`)
       .join(value.any ? " 或 " : " 且 ");
   if (!value?.field) return "尚未配置条件";
+  if (sectorConditionHidden(value)) return HIDDEN_INDICATOR_CONDITION_TEXT;
   const spec = fields.find((field) => field.field === value.field);
   const period = value.period || spec?.fixed_period || defaultPeriod;
   if (value.field === "close_breakout_high")

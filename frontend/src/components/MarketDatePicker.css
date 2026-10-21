@@ -9,7 +9,65 @@
   background: var(--surface);
   height: 34px;
 }
-.market-date-trigger,
+.date-picker {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+}
+.date-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.date-picker-trigger > span {
+  flex: 1;
+  text-align: left;
+}
+.date-picker-trigger > .placeholder {
+  color: var(--muted);
+}
+.date-picker-trigger > svg:first-child {
+  color: var(--blue);
+}
+.date-picker-trigger > svg:last-child {
+  color: var(--muted);
+}
+.date-picker-trigger:not(:disabled):hover,
+.date-picker-trigger.is-open {
+  border-color: var(--blue);
+  background: var(--blue-bg);
+}
+.date-picker-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.date-picker.is-compact {
+  width: auto;
+}
+.date-picker.is-compact > .date-picker-trigger {
+  height: 27px;
+  padding: 0 7px;
+  gap: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 11px;
+}
+.date-picker.is-compact > .date-picker-trigger:hover,
+.date-picker.is-compact > .date-picker-trigger.is-open {
+  background: var(--blue-bg);
+}
 .market-date-step {
   display: inline-flex;
   align-items: center;
@@ -19,27 +77,11 @@
   border-radius: 4px;
   height: 27px;
 }
-.market-date-trigger {
-  gap: 6px;
-  padding: 0 7px;
-  color: var(--text);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.market-date-trigger > svg:first-child {
-  color: var(--blue);
-}
-.market-date-trigger > svg:last-child {
-  color: var(--muted);
-}
 .market-date-step {
   width: 23px;
   padding: 0;
   color: var(--subtle);
 }
-.market-date-trigger:hover,
-.market-date-trigger.is-open,
 .market-date-step:not(:disabled):hover {
   background: var(--blue-bg);
   color: var(--blue);
@@ -49,7 +91,7 @@
 }
 .market-date-popup {
   position: fixed;
-  z-index: 95;
+  z-index: 160;
   max-height: calc(100dvh - 24px);
   overflow: auto;
   overscroll-behavior: contain;
@@ -253,12 +295,13 @@
   .market-date-picker {
     height: 31px;
   }
-  .market-date-trigger {
+  .date-picker.is-compact > .date-picker-trigger {
+    height: 25px;
     font-size: 10px;
     gap: 4px;
     padding: 0 4px;
   }
-  .market-date-trigger > svg:first-child {
+  .date-picker.is-compact > .date-picker-trigger > svg:first-child {
     width: 12px;
   }
   .market-date-step {

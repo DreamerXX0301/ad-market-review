@@ -94,23 +94,30 @@ class MarketData:
         self._head_cached = {}
 
     def _load(self):
-        target=(self.data_dir/'published'/'market-head.json' if self._fixed_snapshot is None else self.data_dir/'published'/self._fixed_snapshot/'manifest.json' if self._fixed_snapshot else None)
-        try:
-            stat=target.stat() if target is not None else None
-        except FileNotFoundError:stat=None
-        signature=(str(target),stat.st_ino,stat.st_mtime_ns,stat.st_ctime_ns,stat.st_size) if stat else None
-        if signature is None:head={}
-        elif signature==self._head_signature:head=self._head_cached
-        else:
-            document=load_json(target,{})
-            head=document if self._fixed_snapshot is None else document.get('summary',{})
+        # calendar()/instrument()/reference() also enter here without an outer
+        # lock. Publishing the snapshot before its reference was loaded exposed
+        # a transient empty calendar to concurrent first requests, which could
+        # become a persisted unknown watchlist baseline and a negative quote.
+        with self._lock:
+            target=(self.data_dir/'published'/'market-head.json' if self._fixed_snapshot is None else self.data_dir/'published'/self._fixed_snapshot/'manifest.json' if self._fixed_snapshot else None)
+            try:
+                stat=target.stat() if target is not None else None
+            except FileNotFoundError:stat=None
+            signature=(str(target),stat.st_ino,stat.st_mtime_ns,stat.st_ctime_ns,stat.st_size) if stat else None
+            if signature is None:head={}
+            elif signature==self._head_signature:head=self._head_cached
+            else:
+                document=load_json(target,{})
+                head=document if self._fixed_snapshot is None else document.get('summary',{})
+            snapshot = head.get('snapshot_id')
+            if snapshot != self._snapshot:
+                meta=load_json(self.data_dir/'published'/snapshot/'reference.json', {}) if snapshot else {}
+                # Materialize reference first, then publish the coherent head,
+                # metadata and empty derived caches inside one reentrant lock.
+                self._snapshot=snapshot;self._meta=meta
+                self._frame = None; self._symbol_ranges={}; self._panels.clear();self._breadth=None;self._turnover=None;self._actions=None;self._panel_inputs=None
             self._head_signature=signature;self._head_cached=head
-        snapshot = head.get('snapshot_id')
-        if snapshot != self._snapshot:
-            self._snapshot = snapshot
-            self._meta = load_json(self.data_dir/'published'/snapshot/'reference.json', {}) if snapshot else {}
-            self._frame = None; self._symbol_ranges={}; self._panels.clear();self._breadth=None;self._turnover=None;self._actions=None;self._panel_inputs=None
-        return head
+            return head
 
     def status(self):
         with self._lock:

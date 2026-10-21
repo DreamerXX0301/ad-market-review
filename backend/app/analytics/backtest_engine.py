@@ -80,7 +80,11 @@ def universe_availability(ast):
 
 def availability(market,strategy,exit_ma=0):
     ast,rules,dependencies=strategy_predicates(strategy);fields=names(dependencies);cal=market.calendar();period=strategy.get('period','D')
-    reason='；'.join(UNSUPPORTED[f] for f in sorted(fields & UNSUPPORTED.keys()))
+    blocked=fields & UNSUPPORTED.keys()
+    # Historical event-day closing pools have their own exact-date adapter.
+    # Current-day limit predicates retain their existing backtest restriction.
+    if 'limit_up' not in current_names(dependencies):blocked.discard('limit_up')
+    reason='；'.join(UNSUPPORTED[f] for f in sorted(blocked))
     universe=universe_availability({'all':[ast,rules['entry']]} if rules['entry'] is not None else ast)
     reason='；'.join(value for value in (reason,universe['reason']) if value)
     warnings=list(WARNINGS)
@@ -133,6 +137,11 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
     excluded=defaultdict(int);signals=defaultdict(list);quotes=defaultdict(dict);signal_rows=[];eligible=[];unknown=0;evaluated=0
     ast,rules,dependencies=strategy_predicates(strategy)
     needs_history=bool(history_nodes(dependencies))
+    needs_history_limits=any('limit_up' in names(event['where']) for event in history_nodes(dependencies))
+    if needs_history_limits:
+        from app.services.strategy_limits import LimitConditionEvidence
+        from app.services.history_events import attach_limit_events
+        limit_evidence=LimitConditionEvidence(market)
     buy_ast={'all':[ast,rules['entry']]} if rules['entry'] is not None else ast
     exit_unknown=0
     total=market.status().get('symbols',0)
@@ -156,6 +165,7 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
         if prev:quotes['_previous'][symbol]=prev
         daily_indicators=enrich_bars(rows,cal)
         history_context=HistoryContext(rows,cal,end,market.status().get('snapshot_id'),retain_start=history_retain_start([dependencies],cal,start)) if needs_history else None
+        if needs_history_limits:attach_limit_events(history_context,symbol,[dependencies],limit_evidence)
         default_period=strategy.get('period','D')
         required_periods=periods_for(dependencies,default_period)|{default_period}
         daily_breakout={row['date']:row for row in daily_indicators} if default_period in ('W','M') and names(dependencies)&{'close_breakout_high','intraday_high_change_pct'} else {}

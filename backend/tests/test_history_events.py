@@ -177,7 +177,7 @@ def test_tracking_uses_identical_history_binding_without_serializing_context():
     lambda node:node['history_event']['window'].update({'to':751}),
     lambda node:node['history_event']['window'].update({'from':31}),
     lambda node:node['history_event'].update(match='any'),
-    lambda node:node['history_event'].update(where={'field':'limit_up','op':'==','value':True}),
+    lambda node:node['history_event'].update(where={'field':'prev_limit_up','op':'==','value':True}),
     lambda node:node['history_event'].update(where={'field':'is_st','op':'==','value':False}),
     lambda node:node['history_event'].update(where={'field':'close','op':'>','right_event_field':'close'}),
     lambda node:node['history_event'].update(then={'field':'high','op':'>','right_event_field':'close'}),
@@ -192,9 +192,9 @@ def test_invalid_or_recursive_event_ast_is_rejected(mutation):
 def test_event_rhs_is_scoped_and_specs_explain_supported_historical_fields():
     with pytest.raises(ValueError):validate({'field':'close','op':'>','right_event_field':'close'})
     fields={row['field']:row for row in specs()}
-    for field in ('open','high','low','close','volume_ratio','macd_cross','kd_dead_cross','ma250'):
+    for field in ('open','high','low','close','volume_ratio','macd_cross','kd_dead_cross','ma250','limit_up'):
         assert fields[field]['historical_event_supported'] is True
-    for field in ('topic_ids','board','is_st','limit_up','tracking_change_pct'):
+    for field in ('topic_ids','board','is_st','prev_limit_up','tracking_change_pct'):
         assert fields[field]['historical_event_supported'] is False
 
 

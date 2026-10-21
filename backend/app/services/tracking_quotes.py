@@ -7,6 +7,7 @@ security's MA/MACD/KDJ. Mutable policies, events and memberships stay uncached.
 from collections import OrderedDict
 from copy import deepcopy
 from datetime import date as date_type
+import math
 from pathlib import Path
 from threading import RLock
 
@@ -15,6 +16,7 @@ from app.domain.conditions import metrics_for
 _cache = OrderedDict()
 _lock = RLock()
 MAX_QUOTES = 4096
+CACHE_METHOD = 'exact-calendar-quotes-v2'
 
 
 def _valid_day(value):
@@ -29,7 +31,7 @@ def clear_tracking_quote_cache():
         _cache.clear()
 
 
-def tracking_quotes(market, rounds, calendar, day):
+def tracking_quotes(market, rounds, calendar, day, *, strict_close=False):
     status = market.status() if callable(getattr(market, 'status', None)) else {}
     generation = status.get('snapshot_id')
     folder = getattr(market, 'data_dir', None)
@@ -40,9 +42,9 @@ def tracking_quotes(market, rounds, calendar, day):
     positions = {date: index for index, date in enumerate(calendar)}
     output = {}; missing = []
     for pair in pairs:
-        key = (namespace, generation, *pair)
+        key = (namespace, generation, CACHE_METHOD, strict_close, *pair)
         with _lock:
-            saved = _cache.get(key) if cacheable else None
+            saved = _cache.get(key) if cacheable and pair[1] in positions else None
             if saved is not None:
                 _cache.move_to_end(key)
         if saved is not None:
@@ -80,12 +82,20 @@ def tracking_quotes(market, rounds, calendar, day):
                 # the real batch reader has the exact two-day raw contract.
             metrics = metrics_for(bars, date, calendar)
             quote = {'close': metrics.get('close'), 'change_pct': metrics.get('change_pct')}
+            if strict_close:
+                current=[row for row in bars if row.get('date')==date]
+                volume=current[0].get('volume') if len(current)==1 else None
+                if len(current)!=1 or isinstance(volume,bool) or not isinstance(volume,(int,float)) or not math.isfinite(volume) or volume<=0:
+                    quote={'close':None,'change_pct':None}
             if bulk and not actions_known:
                 quote['change_pct'] = None
             output[(symbol, date)] = quote
-            if cacheable:
+            # A caller without a valid market calendar cannot establish a
+            # dated immutable result. Never poison a later valid same-generation
+            # read with that provisional missing-context result.
+            if cacheable and date in positions:
                 with _lock:
-                    key = (namespace, generation, symbol, date)
+                    key = (namespace, generation, CACHE_METHOD, strict_close, symbol, date)
                     _cache[key] = deepcopy(quote); _cache.move_to_end(key)
                     while len(_cache) > MAX_QUOTES:
                         _cache.popitem(last=False)

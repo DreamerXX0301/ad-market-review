@@ -9,6 +9,26 @@
 - `data_coverage` 含 `label/start/end/basis/notice/selected_date_available/partial/available_dates`。basis 是可读口径；日期列表仅表示明确留存日，不保证中间连续完整。
 - 主行情、来源涨跌停池、资金、异常名单和成员快照分别披露范围。缺来源不填零，不以抓取时间冒充数据日。
 
+`GET /data/status` 的每个 `datasets[]` 新增 `coverage_progress`：`label/observed_count/expected_count/percent/unit/dimension/basis/state/reason`。`row_count` 仍表示已留存物理记录，与完整度分子分开；只有同一口径分母明确、分子不超过分母且分母大于零时 percent 才是 0–100，其他为 null。
+
+`coverage_progress.coverage_status/coverage_label` 区分 `covered`（当前范围已覆盖）、`partial`（当前范围有缺口）、`unknown`（覆盖待核验）、`on_demand`（按需计算）；`scope_complete` 对前两者为 true/false，其余为 null。判断完整使用原始整数分子与分母相等，不能由显示百分比四舍五入推定。上述状态和标签同时复制在 dataset 顶层，供覆盖卡展示。
+
+`status` 兼容保留不可变快照原始发布质量，同时通过 `snapshot_quality/snapshot_quality_label/snapshot_quality_note` 明确其来源和范围。某一当前维度100%可以与发布时整体 `partial` 并存：例如当前目录成员组完整不证明历史每日成员归属完整。不得因此修改快照质量或任务状态，也不能把按需指标计算当作下载未完成；任务终态单独读取任务接口。
+
+日历比例限冻结窗口已核验来源交易日（早期来源推导不冒充完整官方历史日历）；证券名录比例为本次名录中的上市日期字段完整度；题材比例为同代际目录中来源明确完整的成员组；盘面比例限当日涨停、跌停、炸板三来源池，不包含异动及历史事件全集。逐股日行情缺上市/退市日期或应有总量、公司行动缺来源总事件数时保持未知；按需计算的日/周/月技术指标不将输入行情条数冒充已可用指标数。统计只读快照元信息、目录和来源回执，不扫描全历史行情、不取数。
+
+`GET /data/status.coverage_check` 只读当前代际的小型本地核验报告摘要。股票上市日期分母剔除指数。显式核验后，日行情可返回“已知上市范围报价出现率”：分子为有效期内已留存市场日的唯一有效报价，分母为已知上市/退市区间与已留存日历形成的证券交易日机会；未知身份不进入分母。无报价机会可能是真实停牌、来源缺报或身份变化，出现率不能等同全市场数据完整率，也不能为了100%补造价格。
+
+`GET /data/coverage/check` 读取计划与完整核验报告（逐股无报价日列表最多20,000个日期，截断明确标注）；GET不建任务、不写表、不扫描全量日K。`POST /data/coverage/check {plan_id?,request_key?}` 创建唯一worker执行的 `source_check/operation=local_coverage_check`，校验当前文件SHA/结构、有效期报价日期和公司行动已提供字段，不访问凭据或联网，不修改任何发布快照的内容/quality。报告绑定行情代际、发布heads、文件stat和来源SHA；输入变化后不复用。 公司行动报告分别提供 `window_rows/window_ready/window_schema_verified/window_invalid_rows` 与 `file_rows/file_ready/file_invalid_rows`；`ready/invalid_rows`兼容全文件状态。特殊负送转不擅改原值，保留 `file_special_rows/window_special_rows/outside_window_special_rows`，`special_items/invalid_items`合计最多20条含股票、日期、范围与原因；窗口外特殊行动不描述为当前窗口损坏。公司行动的本地字段核验与来源全市场应有总量分别披露，缺外部总量始终不计算虚构完整率。
+
+核验报告的 `repair_plan` 明确已有 `/sync/market-supplement` 任务的联网范围：年度不完整或缺失来源池、当前日封板明细及近期行业资金，不重复整库板块K线。手动提交须携带 `coverage_plan_id` 和计划中的year_history/sector_history/recent_days；创建与执行前检查冻结代际，过期或改变范围拒绝。来源空响应和未提供上市日期、无报价日不会被此任务填零或假称修复。
+
+日K与分析行情共用同一 `report.daily.gap_diagnosis`，不创建两份缺口任务。它按连续市场交易日归并 `stocks[].episodes[]`，每段有固定 `gap_id`、起止日/天数、前后实际报价日、形态、`reason/impact/next_action` 和本地原始包对照；孤立、连续及至少5个市场日的较长连续形态均不证明停牌。摘要统计完整范围；明细最多20,000个日期、10,000段，`details_complete=false`明确截断。`GET /data/status`只带统计；完整核验GET才带股票及区间，读取不扫描Parquet或取数。
+
+显式来源核验保存的回执仅在 `snapshot_id/source_signature/diagnosis_id` 全部匹配时，以派生视图附到区间 `source_verification`，携带来源、时间、结果、返回/未返回/差异日期和回执ID/SHA；原本地报告不改写。`source_no_quote`只说明该来源本次无报价，`confirmed_suspension`仍为null；旧回执标 `source_verification_stale`，不冒充当前结论。
+
+上市名录独立披露 `catalog_count/listed_count/pending_listing_count/unknown_count`。已上市日期覆盖分母为已上市与身份未知之和；有可溯源证据且当前代际无真实成交报价的待上市证券剔除，未知仍占分母。逐股报价日聚合一次后复用上市分类；人工状态revision进入核验计划签名，改动即作废旧报告与来源对照，不在GET补查行情。
+
 ## 入口与检索
 
 | 接口 | 返回与边界 |
@@ -42,9 +62,15 @@
 
 `gainers` 的检索/排序对完整候选集合执行后再分页，null 升降序都最后；年内次数下界不参与精确次数排序。`flow` 的近若干日是跨日趋势，不是全天盘中资金时序，也不推断机构真实决策。
 
+`gainers` 同时返回 `last_limit_up_date/last_limit_up_complete/last_limit_up_coverage/sessions_since_limit_up`，含义与成分股、个股统计一致；支持按 `last_limit_up_date` 对全部榜内候选排序后分页。它使用观察日之前的逐日来源涨停池与该证券当日唯一原始收盘批量核验，每批最多256只、仅从最早留存事件源日读取，不逐股调用详情或据涨幅推算涨停。不完整年内统计只在已确认次数大于0时展示下界；已确认0且仍有缺口展示待核验，完整核验的0仍显示0次。没有可核验封板分钟时此列只展示日期。
+
+成员、个股摘要与涨幅榜的年内已确认次数下界，包含逐股同日原始收盘核验通过的 reference 历史池、年度池及公开补充池正例，跨源按日期去重，仅计观察日之前本年事件。补充正例不能把来源池缺席变为否定证据，也不能将不完整年度总数变成精确次数。
+
 `sentiment.market/short_term` 含状态、范围、指标、样本与缺口。`sample_count` 为有效可比数，`observed_count` 为观察候选数，`unknown_count` 为差额；收益样本覆盖不等于来源全集完整。晋级率证据不全时为 null，已知价格反馈不冒充接力晋级结论。
 
 ## 个股/指数图表
+
+`GET /instruments/{id}/tracking-baselines?as_of=` 只读该个股已保存的跟踪事件基准，按观察日排除更晚入池和退出信息，最多返回最近100个轮次并标明截断。默认最近仍在跟踪的轮次，否则最近历史轮次；返回原策略、轮次、冻结入池日期、原始收盘价与价格口径。全局搜索打开个股时也可选择这些基准，不创建跟踪或重算选股；从特定跟踪/自选来源打开仍优先原轮次，连续切股不沿用上一只基准。
 
 `GET /instruments/{id}/chart?period=D|W|M&as_of=&price_basis=none|forward&indicator_continuity=quotes|market_sessions`。
 
@@ -60,10 +86,14 @@
 
 ## 统一个股统计
 
+个股图表支持独立的个人水平线：`GET/POST /instruments/{id}/annotations`，`PATCH/DELETE /instruments/{id}/annotations/{annotation_id}`。价格、名称与颜色写入业务库，不修改来源K线、指标、策略或跟踪状态。只接受已留存个股，每只最多64条；未复权水平线跨日/周/月共用，前复权水平线固定记录锚定日。切换价格口径或锚定日时隐藏不相符的线，并在管理列表保留说明，不能直接把原价水平线画到复权价格轴上。
+
 `GET /instruments/{id}/summary?as_of=` 仅适用于已留存股票，不用于指数/板块。返回身份、`board/board_label/as_of/data_date/quote_date/snapshot_id/quote_available/close` 及：
 
 | 字段 | 含义 |
 | --- | --- |
+| `change_pct` | 观察日收盘相对精确前一市场交易日收盘的涨幅，与未复权日K的严格日比较算法相同；无可比价格或公司行动证据时为 null |
+| `change_pct_date` / `change_pct_previous_date` | 本次涨幅对应的观察日 / 前一市场交易日；前一交易日未留存时后者为 null |
 | `return_ytd_pct` | 上年末已核验最后交易日为基准的年内收益；不能用年初首根代替 |
 | `change_30d_pct` / `return_30d_pct` | 精确 T/T−30 市场交易日收益，不能改成最近 31 条报价 |
 | `return_mtd_pct` | 以上月末为基准的本月收益，与 30 日收益不同 |
@@ -71,7 +101,7 @@
 | `last_limit_up_date` / `sessions_since_limit_up` | 最近已确认事件日期及交易日距离；当日距离为 0 |
 | `last_limit_up_complete` | 事件后缀证据是否足以确认确为最近；不是历史从未涨停声明 |
 
-各组另有 reason/coverage；收益需端点与可比公司行动证据，缺当天报价为未知。次数只统计不晚于观察日的原始收盘核验事件。兼容别名 `annual_return_pct/annual_limit_up_count/latest_limit_up_date` 等不改变语义。成员与个股详情复用同一统计服务，无 N+1 来源请求。
+当日涨幅另有 `change_pct_reason`，缺观察日报价、前一市场交易日报价、公司行动覆盖，或观察日存在未复权公司行动时保持未知；不改用更早的可见报价，不随图表周/月切换改变为周期涨幅。其余各组另有 reason/coverage；收益需端点与可比公司行动证据，缺当天报价为未知。次数只统计不晚于观察日的原始收盘核验事件。兼容别名 `annual_return_pct/annual_limit_up_count/latest_limit_up_date` 等不改变语义。成员与个股详情复用同一统计服务，无 N+1 来源请求。
 
 ## 板块 K 线与成员
 
@@ -82,3 +112,11 @@
 - 成员返回 `membership_as_of/quote_as_of/members_complete`、board 和上述收益/事件字段；`stock_entry_baseline=null`。展开成员不会创建个股跟踪，也不会把板块入池点位套给股票。
 
 精确字段与校验入口见[平台路由](../backend/app/routers/platform.py)、[工作区路由](../backend/app/routers/workspace.py)及[市场服务](../backend/app/services/market_service.py)。
+
+## 报价缺口的显式来源核验
+
+`GET /data/quote-gap-source` 只读当前本地核验计划与已保存的小摘要，返回 `available/plan_id/diagnosis_id/snapshot_id/stock_count/missing_sessions/is_current/stale/evidence`。`evidence` 包括计划与已核验股票数、失败数、逐缺口核验日数、来源未返回报价数、发现可补实际报价数、重叠报价差异数、时间、任务ID；不查询远端、不扫描全部日K、不修改快照质量。
+
+`POST /data/quote-gap-source {plan_id,request_key?,instrument_ids?}` 显式创建 `source_check / quote_gap_source_check` 任务。省略股票范围则核验当前报告全部缺口股票，提供时只能选择该报告中的股票。计划冻结行情代际、身份版本、本地诊断ID和凭据版本；变更后旧任务不继续提交。请求只覆盖含缺口的短日期窗口，保留上下文报价作对照，严格验证股票、原始日K口径、OHLCV和量额。逐股原始响应与SHA验收后可幂等恢复，暂停/取消及旧租约阻止提交；失败保持待核验。
+
+完整本地核验视图在同一 `source_signature/snapshot_id/diagnosis_id` 下将已保存证据附到每段 `source_verification`，不改写原本地核验文件。状态区分 `source_no_quote/local_missing/partial/failed`，附本次未返回与有效返回日期、响应证据与下一步。`source_no_quote` 只说明本次来源未返回该日报价，不证明停牌；`local_missing` 只表明有可进入单独发布核验的实际报价。此操作不修改当前不可变Parquet、不填造停牌K线，也不把出现率伪报为100%。

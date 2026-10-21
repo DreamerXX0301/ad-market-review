@@ -10,6 +10,7 @@ import {
   searchResultView,
 } from "./searchPresentation";
 import "./InstrumentSearch.css";
+import CopyStockCode from "./CopyStockCode";
 export default function InstrumentSearch({
   onSelect,
   placeholder = "搜索股票 / 指数 / 代码",
@@ -145,7 +146,18 @@ export default function InstrumentSearch({
           setOpen(true);
         }}
         onKeyDown={(e) => {
-          if (e.key === "Tab") setOpen(false);
+          if (e.key === "Tab") {
+            const copyButton =
+              visible && !e.shiftKey
+                ? popup.current?.querySelector<HTMLButtonElement>(
+                    `[data-search-index="${activeIndex}"] [data-copy-stock-code]`,
+                  )
+                : null;
+            if (copyButton) {
+              e.preventDefault();
+              copyButton.focus();
+            } else setOpen(false);
+          }
           if (e.key === "Escape") {
             e.stopPropagation();
             setOpen(false);
@@ -200,6 +212,15 @@ export default function InstrumentSearch({
             className="instrument-search-popover"
             style={layout}
             onMouseDown={(event) => event.preventDefault()}
+            onBlur={(event) => {
+              const next = event.relatedTarget as Node | null;
+              if (
+                next &&
+                !popup.current?.contains(next) &&
+                !container.current?.contains(next)
+              )
+                setOpen(false);
+            }}
           >
             {searching ? (
               <div className="search-hint">
@@ -212,28 +233,43 @@ export default function InstrumentSearch({
               <div className="search-hint">没有匹配的标的</div>
             ) : (
               rows.map((r, index) => (
-                <button
-                  type="button"
+                <div
+                  className="instrument-search-result"
                   key={searchResultView(r).key}
-                  title={searchResultView(r).title}
-                  aria-label={searchResultView(r).title}
-                  id={`${listId}-${index}`}
-                  role="option"
-                  aria-selected={index === activeIndex}
-                  tabIndex={-1}
+                  data-search-index={index}
+                  data-active={index === activeIndex}
                   onMouseEnter={() => setActiveIndex(index)}
-                  onClick={() => choose(r)}
                 >
-                  <span>
-                    <strong>{r.name}</strong>
-                    <small
-                      className={`search-result-type type-${searchResultView(r).kind}`}
-                    >
-                      {searchResultView(r).label}
-                    </small>
-                  </span>
-                  <code>{r.code || r.topic_code || r.instrument_id}</code>
-                </button>
+                  <button
+                    type="button"
+                    className="instrument-search-choose"
+                    title={searchResultView(r).title}
+                    aria-label={searchResultView(r).title}
+                    id={`${listId}-${index}`}
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    tabIndex={-1}
+                    onClick={() => choose(r)}
+                  >
+                    <span>
+                      <strong>{r.name}</strong>
+                      <small
+                        className={`search-result-type type-${searchResultView(r).kind}`}
+                      >
+                        {searchResultView(r).label}
+                      </small>
+                    </span>
+                    {searchResultView(r).sector && (
+                      <code>{r.code || r.topic_code}</code>
+                    )}
+                  </button>
+                  {!searchResultView(r).sector && (
+                    <CopyStockCode
+                      code={r.code}
+                      instrumentId={r.instrument_id}
+                    />
+                  )}
+                </div>
               ))
             )}
           </div>,

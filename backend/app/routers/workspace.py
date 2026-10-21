@@ -1,7 +1,7 @@
 """HTTP adapters for independent research. Domain rules never depend on market view date."""
 from fastapi import APIRouter,Body,Query
 from app.services import topics,strategies,tracking,topic_members as membership_service
-from app.services import sector_strategies,sector_tracking
+from app.services import sector_strategies,sector_tracking,strategy_batches
 from app.domain.conditions import specs
 
 router=APIRouter(prefix='/api/v1',tags=['workspace'])
@@ -37,6 +37,12 @@ def topic_history(topic_id:str):return topics.topic_history(topic_id)
 
 @router.get('/strategies')
 def strategy_list():return strategies.list_strategies()
+@router.post('/strategy-batches')
+def strategy_batch_create(payload:dict=Body(...)):return strategy_batches.create_batch(payload)
+@router.get('/strategy-batches')
+def strategy_batch_list(target_type:str='stock',limit:int=Query(10,ge=1,le=20)):return strategy_batches.list_batches(target_type,limit)
+@router.get('/strategy-batches/{batch_id}')
+def strategy_batch_get(batch_id:str):return strategy_batches.get_batch(batch_id)
 @router.post('/strategies')
 def strategy_create(payload:dict=Body(...)):return strategies.create_strategy(payload)
 @router.post('/strategies/bootstrap')

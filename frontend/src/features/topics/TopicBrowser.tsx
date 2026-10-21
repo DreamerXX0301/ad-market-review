@@ -22,6 +22,7 @@ import {
   Warnings,
 } from "../../components/UI";
 import AssociationDialog from "./AssociationDialog";
+import WatchlistButton from "../watchlist/WatchlistButton";
 import { topicKindLabel } from "./TopicDirectory";
 import {
   HistoryReturnCell,
@@ -430,6 +431,26 @@ export default function TopicBrowser({
                 key: "industries",
                 title: "行业",
                 render: (value) => <MemberTags names={value || []} />,
+              },
+              {
+                key: "watchlist",
+                title: "自选",
+                sortable: false,
+                render: (_, row) => (
+                  <WatchlistButton
+                    instrumentId={row.instrument_id}
+                    sourceKind="topic"
+                    sourceId={single?.topic_id}
+                    sourceName={selectedTopics
+                      .map((topic) => topic.name)
+                      .join("、")
+                      .slice(0, 200)}
+                    observedDate={
+                      data?.quote_date || data?.business_date || businessDate
+                    }
+                    compact
+                  />
+                ),
               },
               ...(single
                 ? [

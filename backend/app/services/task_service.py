@@ -104,6 +104,82 @@ def list_tasks(limit=50):
     return {"items": [task_view(i) for i in ids], "total": total}
 
 
+def _activity_view(connection, row):
+    """Small display-only receipt; never serialize credentials or full event history."""
+    item = dict(row)
+    parameters = json.loads(item['parameters_json'])
+    event = connection.execute(
+        'SELECT stage,message,details_json FROM job_event WHERE job_id=? ORDER BY seq DESC LIMIT 1',
+        (item['job_id'],)).fetchone()
+    details = json.loads(event['details_json']) if event else {}
+    target = 'sector' if parameters.get('target_type') == 'sector' else 'stock'
+    strategy_id = parameters.get('strategy_id')
+    strategy_name = None
+    if strategy_id:
+        table = 'sector_strategy' if target == 'sector' else 'strategy'
+        strategy = connection.execute('SELECT name FROM '+table+' WHERE strategy_id=?', (strategy_id,)).fetchone()
+        strategy_name = strategy['name'] if strategy else None
+    operation = parameters.get('operation')
+    title = {
+        'initialise': '首次初始化', 'increment': '盘后增量', 'research': '个股研究',
+        'backtest': '策略回测', 'topic_init': '本地题材导入', 'topic_refresh': '题材库同步',
+        'tracking_review': '板块跟踪核对' if target == 'sector' else '个股跟踪核对',
+        'selection': '板块策略筛选' if target == 'sector' else '个股策略选股',
+        'source_check': {'sector_chart': '单板块历史K线', 'sector_charts': '板块K线尾部增量' if parameters.get('mode') == 'increment' else '全库板块历史K线',
+                         'market_supplement': '盘面补充', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
+                         'strategy_batch_tracking': '板块命中自动入池' if target == 'sector' else '个股命中自动入池'}.get(operation, '数据来源任务'),
+    }.get(item['kind'], '后台任务')
+    # accepted_batches is a weighted percentage only after progress() reports.
+    # A freshly started job with the schema default 0 has no measured progress.
+    reported = item['accepted_batches'] > 0 or any(key in details for key in
+        ('weighted_stage_progress', 'actual_total_batches', 'total_count'))
+    progress = 100 if item['status'] in {'succeeded', 'no_change', 'partial'} else (
+        min(99, item['accepted_batches']) if reported or item['status'] == 'queued' else None)
+    receipt = {
+        'job_id': item['job_id'], 'task_id': item['job_id'], 'request_key': item['request_key'],
+        'kind': item['kind'], 'operation': operation, 'title': title, 'target_type': target,
+        'strategy_id': strategy_id, 'strategy_name': strategy_name,
+        'status': item['status'], 'stage': item['phase'], 'progress': progress,
+        'message': item['error_summary'] if item['status'] == 'failed' else (event['message'] if event else None),
+        'actual_completed_batches': details.get('actual_completed_batches'),
+        'actual_total_batches': details.get('actual_total_batches'),
+        'target_date': item['target_date'], 'created_at_ms': item['created_at_ms'],
+        'finished_at_ms': item['finished_at_ms'],
+    }
+    if operation == 'strategy_batch' and item['kind'] == 'source_check':
+        from .strategy_batches import _view as batch_view
+        batch = batch_view(connection, row)
+        receipt.update(status=batch['status'], progress=batch['progress'],
+            actual_completed_batches=batch['completed_steps'], actual_total_batches=batch['total_steps'])
+        if batch['auto_add']:
+            receipt['title'] = '板块策略筛选并跟踪' if target == 'sector' else '个股策略选股并跟踪'
+        if batch['current_strategy']:
+            current_item = batch['current_strategy']
+            receipt.update(strategy_id=current_item['strategy_id'], strategy_name=current_item['name'],
+                stage=current_item['stage'], message=f'已完成策略 {batch["completed_count"]}/{batch["total_count"]} · 步骤 {batch["completed_steps"]}/{batch["total_steps"]} · 正在运行：{current_item["name"]}')
+    return receipt
+
+
+def task_activity():
+    """Active work is never hidden behind a history page; recent terminals are bounded."""
+    with connect() as connection:
+        active_filter = "status IN ('running','queued') AND NOT (status='queued' AND coalesce(json_extract(parameters_json,'$.operation'),'') IN ('strategy_batch_item','strategy_batch_tracking'))"
+        active = connection.execute('SELECT * FROM job WHERE '+active_filter+" ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END,created_at_ms LIMIT 200").fetchall()
+        recent = connection.execute("SELECT * FROM job WHERE status NOT IN ('running','queued') ORDER BY coalesce(finished_at_ms,created_at_ms) DESC,created_at_ms DESC,rowid DESC LIMIT 5").fetchall()
+        return {'items': [_activity_view(connection, row) for row in active+recent],
+                'active_count': connection.execute('SELECT count(*) FROM job WHERE '+active_filter).fetchone()[0],
+                'observed_at_ms': now_ms()}
+
+
+def active_task_conflict(connection, fallback='已有任务正在运行，请查看任务进度后重试'):
+    row = connection.execute("SELECT * FROM job WHERE status='running' LIMIT 1").fetchone()
+    if row:
+        active = _activity_view(connection, row)
+        label = active['title'] + (' · '+active['strategy_name'] if active['strategy_name'] else '')
+        raise HTTPException(409, {'message': f'正在运行：{label}。请查看上方任务进度，完成后再运行。', 'active_task': active})
+    raise HTTPException(409, fallback)
+
+
 def _increment_frozen_target(identifier, declared_target):
     """Read a small checkpoint outside the SQLite write transaction."""
     path=raw_dir()/'sync'/identifier/'checkpoint.json'
@@ -122,6 +198,13 @@ def _increment_frozen_target(identifier, declared_target):
 
 
 def change_task(identifier: str, action: str):
+    with connect() as batch_check:
+        batch = batch_check.execute("SELECT kind,parameters_json FROM job WHERE job_id=?", (identifier,)).fetchone()
+    if batch and batch['kind']=='source_check' and json.loads(batch['parameters_json']).get('operation')=='strategy_batch':
+        from .strategy_batches import change_batch
+        return change_batch(identifier, action)
+    if batch and json.loads(batch['parameters_json']).get('operation') in ('strategy_batch_item','strategy_batch_tracking'):
+        raise HTTPException(422, '请在策略页控制整个批次；重试需新建批次，不能单独复制或恢复内部步骤')
     frozen_target=None
     if action in ('retry','resume'):
         with connect() as preparation:
@@ -178,15 +261,20 @@ def claim_next(owner: str):
         running = connection.execute("SELECT * FROM job WHERE status='running' LIMIT 1").fetchone()
         if running:
             if running["lease_expires_at_ms"] is not None and running["lease_expires_at_ms"] < now_ms():
-                if running['kind'] in ('selection','tracking_review'):
+                recoverable_selection = running['kind']=='selection' and json.loads(running['parameters_json']).get('operation')=='strategy_batch_item'
+                if running['kind'] in ('selection','tracking_review') and not recoverable_selection:
                     connection.execute("UPDATE job SET status='failed',phase='interrupted',finished_at_ms=?,error_summary='API计算进程中断，请手动重跑',lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?",(now_ms(),running['job_id']))
                     append_event(connection,running['job_id'],'interrupted','API计算租约已过期，请在原模块手动重跑','error')
                 else:
+                    if recoverable_selection or (running['kind']=='source_check' and json.loads(running['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_tracking','line_alert_check','listing_status_check','quote_gap_source_check')):
+                        owner = owner+':'+new_id('attempt')
+                    if recoverable_selection:
+                        connection.execute("UPDATE job SET accepted_batches=0,phase='recovery' WHERE job_id=?", (running['job_id'],))
                     connection.execute("UPDATE job SET lease_owner=?,lease_expires_at_ms=?,recovery_count=recovery_count+1 WHERE job_id=?", (owner, now_ms() + 60_000, running["job_id"]))
                     append_event(connection, running["job_id"], "recovery", "恢复已授权的中断任务，复用原任务与幂等批次")
                     return dict(connection.execute("SELECT * FROM job WHERE job_id=?", (running["job_id"],)).fetchone())
             else:return None
-        queued = connection.execute("SELECT * FROM job WHERE status='queued' ORDER BY created_at_ms LIMIT 1").fetchone()
+        queued = _next_queued(connection)
         # A legacy queue may predate the creation guard. Do not let a second
         # initialization replace an already published main dataset, and do not
         # block unrelated queued work behind that obsolete request.
@@ -194,18 +282,46 @@ def claim_next(owner: str):
             reason = initialization_state(connection)['reason']
             connection.execute("UPDATE job SET status='failed',phase='initialization_blocked',finished_at_ms=?,error_summary=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (now_ms(), reason, queued['job_id']))
             append_event(connection, queued['job_id'], 'initialization_blocked', reason, 'warning')
-            queued = connection.execute("SELECT * FROM job WHERE status='queued' ORDER BY created_at_ms LIMIT 1").fetchone()
+            queued = _next_queued(connection)
         if not queued:
             return None
+        if json.loads(queued['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_item','strategy_batch_tracking','line_alert_check','listing_status_check','quote_gap_source_check'):
+            owner = owner+':'+new_id('attempt')
         connection.execute("UPDATE job SET status='running',phase='starting',lease_owner=?,lease_expires_at_ms=? WHERE job_id=?", (owner, now_ms() + 60_000, queued["job_id"]))
         append_event(connection, queued["job_id"], "starting", "工作进程已领取任务")
         return dict(connection.execute("SELECT * FROM job WHERE job_id=?", (queued["job_id"],)).fetchone())
 
 
-def progress(identifier: str, stage: str, percent: int, message=None, details=None):
+def _next_queued(connection):
+    # Batch parents summarize only after their persisted children are terminal.
+    # Explicit rowid ordering keeps siblings ordered even within one millisecond.
+    return connection.execute("""SELECT j.* FROM job j WHERE j.status='queued'
+        AND NOT (j.kind='source_check' AND json_extract(j.parameters_json,'$.operation')='strategy_batch'
+            AND EXISTS (SELECT 1 FROM json_each(j.parameters_json,'$.items') i
+                LEFT JOIN job child ON child.job_id=json_extract(i.value,'$.job_id')
+                LEFT JOIN job tracked ON tracked.job_id=json_extract(i.value,'$.tracking_job_id')
+                WHERE child.status IN ('queued','running','paused') OR tracked.status IN ('queued','running','paused')))
+        AND (coalesce(json_extract(j.parameters_json,'$.operation'),'') NOT IN ('strategy_batch_item','strategy_batch_tracking')
+            OR EXISTS (SELECT 1 FROM job parent WHERE parent.job_id=json_extract(j.parameters_json,'$.batch_job_id')
+                AND parent.status IN ('queued','running')
+                AND NOT EXISTS (SELECT 1 FROM json_each(parent.parameters_json,'$.items') i
+                    LEFT JOIN job prior ON prior.job_id=json_extract(i.value,'$.job_id')
+                    LEFT JOIN job tracked ON tracked.job_id=json_extract(i.value,'$.tracking_job_id')
+                    WHERE json_extract(i.value,'$.sequence') < json_extract(j.parameters_json,'$.sequence')
+                        AND (prior.status IS NULL OR prior.status NOT IN ('succeeded','no_change','partial','failed','cancelled')
+                            OR json_extract(i.value,'$.tracking_job_id') IS NOT NULL AND (tracked.status IS NULL OR tracked.status NOT IN ('succeeded','no_change','partial','failed','cancelled'))))))
+        AND (coalesce(json_extract(j.parameters_json,'$.operation'),'')!='strategy_batch_tracking'
+            OR EXISTS (SELECT 1 FROM job selected WHERE selected.job_id=json_extract(j.parameters_json,'$.selection_job_id')
+                AND selected.status IN ('succeeded','no_change','partial','failed','cancelled')))
+        ORDER BY j.created_at_ms,j.rowid LIMIT 1""").fetchone()
+
+
+def progress(identifier: str, stage: str, percent: int, message=None, details=None, *, lease_owner=None):
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        row = connection.execute("SELECT status,accepted_batches FROM job WHERE job_id=?", (identifier,)).fetchone()
+        row = connection.execute("SELECT status,accepted_batches,lease_owner FROM job WHERE job_id=?", (identifier,)).fetchone()
+        if lease_owner is not None and (not row or row['status']!='running' or row['lease_owner']!=lease_owner):
+            raise TaskCancelled()
         if not row or row["status"] == "cancelled":
             raise TaskCancelled()
         if row["status"] == "paused":
@@ -215,10 +331,12 @@ def progress(identifier: str, stage: str, percent: int, message=None, details=No
         append_event(connection, identifier, stage, message or stage, details=details or {"weighted_stage_progress": percent})
 
 
-def finish(identifier: str, status="succeeded", message="任务完成", error=None):
+def finish(identifier: str, status="succeeded", message="任务完成", error=None, *, lease_owner=None):
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
-        row = connection.execute("SELECT status FROM job WHERE job_id=?", (identifier,)).fetchone()
+        row = connection.execute("SELECT status,lease_owner FROM job WHERE job_id=?", (identifier,)).fetchone()
+        if lease_owner is not None and (not row or row['status']!='running' or row['lease_owner']!=lease_owner):
+            return
         if not row or row["status"] in TERMINAL or row['status']=='paused':
             return
         connection.execute("UPDATE job SET status=?,phase=?,accepted_batches=CASE WHEN ? IN ('succeeded','no_change','partial') THEN 100 ELSE accepted_batches END,finished_at_ms=?,error_summary=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (status, status, status, now_ms(), error, identifier))

@@ -52,6 +52,7 @@ import {
   visibleWarnings,
 } from "./dataPresentation";
 import "./DataCenter.css";
+import CoveragePanel from "./CoveragePanel";
 const activeStatuses = ["queued", "pending", "running"];
 const publishedStatuses = [
   "completed",
@@ -950,65 +951,20 @@ export default function DataCenter({
         </Panel>
       )}
       {task.error && <ErrorBox message={task.error} retry={task.reload} />}
-      <Panel
-        title="数据覆盖"
-        subtitle="按模块查看实际范围、质量与缺口"
-        actions={
-          <button
-            className="icon-btn"
-            aria-label="刷新数据覆盖"
-            onClick={result.reload}
-          >
-            <RefreshCw size={14} />
-          </button>
-        }
-      >
-        {result.loading ? (
-          <Loading />
-        ) : data?.datasets?.length ? (
-          <div className="dataset-grid">
-            {data.datasets.map((dataset: Row, i: number) => (
-              <div
-                className="dataset-card"
-                key={dataset.module || dataset.name || i}
-              >
-                <div>
-                  <h3>{dataset.name || dataset.label || dataset.module}</h3>
-                  <Status
-                    value={dataset.status || dataset.quality || "unknown"}
-                  />
-                </div>
-                <strong>{integer(dataset.row_count ?? dataset.count)}</strong>
-                <p>
-                  {dataset.description || dataset.scope || "实际已发布数据"}
-                </p>
-                <footer>
-                  <span>
-                    起 <b>{dataset.first_date || dataset.data_start || "—"}</b>
-                  </span>
-                  <span>
-                    止 <b>{dataset.last_date || dataset.data_end || "—"}</b>
-                  </span>
-                </footer>
-                {dataset.reason && (
-                  <details className="data-dataset-gap">
-                    <summary>
-                      <ChevronRight size={12} />
-                      查看缺口说明
-                    </summary>
-                    <small>{dataset.reason}</small>
-                  </details>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <Empty
-            title="尚无已发布数据集"
-            description="配置来源并手动初始化；初始化完成后才更新各模块覆盖。"
-          />
-        )}
-      </Panel>
+      <CoveragePanel
+        datasets={data?.datasets || []}
+        audit={data?.coverage_check}
+        loading={result.loading}
+        disabled={!!busy || running}
+        remoteConfigured={!needsSource}
+        onReload={result.reload}
+        onTask={(next) => {
+          setSelectedId(next.task_id || next.job_id);
+          setFollowChain(false);
+          history.reload();
+          result.reload();
+        }}
+      />
       <Panel
         title={
           <>

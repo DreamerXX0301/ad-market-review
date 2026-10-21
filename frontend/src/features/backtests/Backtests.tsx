@@ -35,6 +35,7 @@ import {
   Warnings,
 } from "../../components/UI";
 import { EquityChart } from "../../components/Charts";
+import DatePicker from "../../components/DatePicker";
 import { TradeRuleSummary } from "../strategies/TradeRules";
 import { summarizeChecks } from "../strategies/Conditions";
 const defaultConfig = {
@@ -108,9 +109,13 @@ function BoundaryDetails({
 export default function Backtests({
   onStock,
   initialStrategyId,
+  marketDates = [],
+  dataVersion,
 }: {
   onStock: (id: string) => void;
   initialStrategyId?: string;
+  marketDates?: string[];
+  dataVersion?: string;
 }) {
   const strategies = useApi<Row>("/strategies"),
     history = useApi<Row>("/backtests");
@@ -133,6 +138,7 @@ export default function Backtests({
   const report = useApi<Row>(selectedId ? `/backtests/${selectedId}` : null);
   const toast = useToast(),
     checkId = useRef(0);
+  const availabilityScope = useRef("");
   useEffect(() => {
     if (initialStrategyId) setStrategyId(initialStrategyId);
   }, [initialStrategyId]);
@@ -147,14 +153,25 @@ export default function Backtests({
   useEffect(() => {
     if (!strategyId) return;
     const seq = ++checkId.current;
+    const scope = `${strategyId}:${strategyVersion || ""}`;
+    const keepDates = availabilityScope.current === scope;
     setChecking(true);
     setAvailability(null);
     post("/backtests/availability", { strategy_id: strategyId })
       .then((r) => {
         if (seq !== checkId.current) return;
         setAvailability(r);
-        setStart(r.default_start || r.min_date || "");
-        setEnd(r.default_end || r.max_date || "");
+        availabilityScope.current = scope;
+        setStart((current) =>
+          keepDates && current && current >= r.min_date && current <= r.max_date
+            ? current
+            : r.default_start || r.min_date || "",
+        );
+        setEnd((current) =>
+          keepDates && current && current >= r.min_date && current <= r.max_date
+            ? current
+            : r.default_end || r.max_date || "",
+        );
       })
       .catch((e) => {
         if (seq === checkId.current) setError(e.message);
@@ -162,7 +179,7 @@ export default function Backtests({
       .finally(() => {
         if (seq === checkId.current) setChecking(false);
       });
-  }, [strategyId, strategyVersion]);
+  }, [strategyId, strategyVersion, dataVersion]);
   const r = report.data;
   useEffect(() => {
     if (!r || !["queued", "running", "pending"].includes(r.status)) return;
@@ -249,23 +266,31 @@ export default function Backtests({
           </label>
           <label>
             起始交易日
-            <input
-              type="date"
+            <DatePicker
+              ariaLabel="回测起始交易日"
+              title="回测起始日期"
+              help="选择范围内日期，完成交易日与数据可用性由回测校验。"
               min={availability?.min_date}
               max={availability?.max_date}
+              allowedDates={marketDates.length ? marketDates : undefined}
               value={start}
-              onChange={(e) => setStart(e.target.value)}
+              onChange={setStart}
+              disabled={checking || !strategyId}
             />
           </label>
           <span className="date-range-separator">—</span>
           <label>
             结束交易日
-            <input
-              type="date"
+            <DatePicker
+              ariaLabel="回测结束交易日"
+              title="回测结束日期"
+              help="选择范围内日期，完成交易日与数据可用性由回测校验。"
               min={availability?.min_date}
               max={availability?.max_date}
+              allowedDates={marketDates.length ? marketDates : undefined}
               value={end}
-              onChange={(e) => setEnd(e.target.value)}
+              onChange={setEnd}
+              disabled={checking || !strategyId}
             />
           </label>
           <button

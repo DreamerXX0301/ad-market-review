@@ -5,6 +5,16 @@ from app.services import platform_service,market_service,task_service,source_ser
 
 router=APIRouter(prefix='/api/v1',tags=['platform'])
 
+@router.get('/data/quote-gap-source')
+def quote_gap_source_view():
+    from app.services.quote_gap_source_check import read_view
+    return json_clean(read_view())
+
+@router.post('/data/quote-gap-source')
+def quote_gap_source_check(payload:dict=Body(...)):
+    from app.services.quote_gap_source_check import create_check
+    return json_clean(create_check(payload))
+
 @router.get('/health')
 def health(): return {'status':'ok','application':APP_ID,'app_name':APP_NAME}
 
@@ -67,6 +77,11 @@ def instrument_summary(instrument_id:str,as_of:str|None=None):
     from app.services.stock_summary import get_summary
     return json_clean(get_summary(instrument_id,as_of))
 
+@router.get('/instruments/{instrument_id}/tracking-baselines')
+def instrument_tracking_baselines(instrument_id:str,as_of:str|None=None):
+    from app.services.chart_tracking import tracking_baselines
+    return json_clean(tracking_baselines(instrument_id,as_of))
+
 @router.get('/instruments/{instrument_id}')
 def instrument_detail(instrument_id:str,as_of:str|None=None):
     market,status,day=market_service.context(as_of)
@@ -79,6 +94,31 @@ def instrument_detail(instrument_id:str,as_of:str|None=None):
 
 @router.get('/data/status')
 def data_status():return json_clean(platform_service.data_status())
+
+@router.get('/data/coverage/check')
+def coverage_check():
+    from app.services.local_coverage_check import read_view
+    return json_clean(read_view(full=True))
+
+@router.post('/data/coverage/check')
+def coverage_check_create(payload:dict=Body(...)):
+    from app.services.local_coverage_check import create_check
+    return json_clean(create_check(payload))
+
+@router.get('/data/listing-status')
+def listing_status():
+    from app.services.listing_status import read_view
+    return json_clean(read_view())
+
+@router.post('/data/listing-status/confirm')
+def listing_status_confirm(payload:dict=Body(...)):
+    from app.services.listing_status import confirm
+    return json_clean(confirm(payload))
+
+@router.get('/data/listing-status/confirmations')
+def listing_status_confirmations(instrument_id:str|None=None,limit:int=Query(100,ge=1,le=1000)):
+    from app.services.listing_status import confirmation_history
+    return json_clean(confirmation_history(instrument_id,limit))
 
 @router.get('/sources')
 def sources():return source_service.list_sources()
@@ -97,6 +137,9 @@ def verify(source_id:str):return source_service.verify(source_id)
 
 @router.get('/tasks')
 def tasks(limit:int=Query(50,ge=1,le=200)):return task_service.list_tasks(limit)
+
+@router.get('/tasks/activity')
+def task_activity():return task_service.task_activity()
 
 @router.get('/tasks/{task_id}')
 def task(task_id:str,after_seq:int=Query(0,ge=0)):
@@ -126,7 +169,7 @@ def sync(payload:dict=Body(...)):
     if not adapter.key:raise HTTPException(422,'请先在数据源配置扶摇免费Key并验证连接')
     from app.services.history_window import resolve_initial_window
     window=resolve_initial_window(payload,for_new_task=True)['window'] if mode=='initialise' else None
-    parameters={'source_id':adapter.source_id,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1'})}
+    parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1',**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1'})}
     return task_service.create_task(mode,parameters,request_key=payload.get('request_key'))
 
 @router.post('/sync/sector-charts')
@@ -155,12 +198,22 @@ def market_supplement(payload:dict=Body(default={})):
     from app.core import get_market
     status=get_market().status()
     if not status.get('ready'):raise HTTPException(422,'请先初始化行情，再补充盘面事件')
+    revalidate_only=payload.get('revalidate_only',False)
+    if not isinstance(revalidate_only,bool):raise HTTPException(422,'revalidate_only须为布尔')
+    repair={}
+    if payload.get('coverage_plan_id') is not None:
+        from app.services.local_coverage_check import repair_parameters
+        repair=repair_parameters(payload['coverage_plan_id'])
+        if revalidate_only or any(payload.get(key)!=repair[key] for key in ('year_history','sector_history','recent_days')):
+            raise HTTPException(422,'盘面修补范围与已审阅核验计划不一致')
+    if revalidate_only:
+        return task_service.create_task('source_check',{'operation':'market_supplement','revalidate_only':True,'year_history':True,'sector_history':False,'recent_days':1,'source_id':'local-cache'},target_date=status['data_end'],request_key=payload.get('request_key'))
     year_history=payload.get('year_history',True)
     recent_days=payload.get('recent_days',1)
     sector_history=payload.get('sector_history',True)
     if not isinstance(year_history,bool) or not isinstance(sector_history,bool) or isinstance(recent_days,bool) or not isinstance(recent_days,int) or not 1<=recent_days<=30:raise HTTPException(422,'year_history和sector_history须为布尔，recent_days须为1至30整数')
     if (year_history or sector_history) and not source_service.client('fuyao').key:raise HTTPException(422,'年内来源池及板块日行情补充需要已配置的扶摇免费Key')
-    return task_service.create_task('source_check',{'operation':'market_supplement','year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'source_id':'fuyao' if year_history or sector_history else 'akshare-public'},target_date=status['data_end'],request_key=payload.get('request_key'))
+    return task_service.create_task('source_check',{'operation':'market_supplement','year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'source_id':'fuyao' if year_history or sector_history else 'akshare-public',**repair},target_date=status['data_end'],request_key=payload.get('request_key'))
 
 @router.post('/research/jobs')
 def research_create(payload:dict=Body(...)):return research_service.create(payload)

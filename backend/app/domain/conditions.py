@@ -78,7 +78,7 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
     spec=FIELDS[field]
     if scope=='event_where':
         from app.domain.history_events import supported_field
-        if not supported_field(field) or 'right_field' in node and not supported_field(node['right_field']):raise ValueError('历史事件条件目前仅支持日OHLCV、均线与技术指标；历史题材、身份、跟踪和涨停来源事件尚不支持')
+        if not supported_field(field) or 'right_field' in node and not supported_field(node['right_field']):raise ValueError('历史事件条件支持日OHLCV、均线、技术指标和同日已核验收盘涨停；历史题材、身份、跟踪与滚动涨停次数尚不支持')
     if op not in spec['operators']:raise ValueError('字段不支持比较符：'+str(op))
     if 'right_event_field' in node:
         if scope!='event_then' or field!='close' or node['right_event_field'] not in ('close','high','low') or 'value' in node or 'right_field' in node:raise ValueError('事件价格比较仅能在本事件then内使用观察日收盘价，对比事件日close/high/low')
@@ -135,7 +135,7 @@ def evaluate(node:dict, metrics:dict, history=None)->dict:
             elif op=='==':result=a==b
             elif op=='!=':result=a!=b
         except (TypeError,ValueError):result=None
-    extra={'evidence':metrics.get(node['field']+'_evidence')} if node['field'] in ('close_above_entry_high','close_below_entry_low','limit_up_1y') else {}
+    extra={'evidence':metrics.get(node['field']+'_evidence')} if node['field'] in ('close_above_entry_high','close_below_entry_low','limit_up_1y','limit_up','prev_limit_up') else {}
     if node['field']=='intraday_high_change_pct':extra.update(observation_date=metrics.get(node['field']+'_date'),observation_period='D')
     return {**node,'actual':a,'right_actual':b,'result':result,'reason':(metrics.get(node['field']+'_reason') or '数据/预热/历史身份不足，按未知处理') if result is None else None,**extra}
 

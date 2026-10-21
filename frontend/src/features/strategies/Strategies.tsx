@@ -31,6 +31,7 @@ import RuleTreeEditor from "./RuleTreeEditor";
 import RuleEvidence from "./RuleEvidence";
 import {
   historyRuleSummary,
+  hasHiddenConditionRule,
   normalizeRuleTree,
   ruleCount,
   validateVisualRule,
@@ -48,13 +49,34 @@ import type { StockNavigation } from "../../components/stockNavigation";
 import SectorStrategies from "../sector/SectorStrategies";
 import { sectorPeriodLabel } from "../sector/sectorPresentation";
 import "../sector/SectorWorkspace.css";
+import {
+  finishTaskRequest,
+  startTaskRequest,
+  strategyTaskBusy,
+  useTaskActivity,
+} from "../../components/taskActivity";
+import {
+  readStrategySelection,
+  rememberStrategySelection,
+  resolvedStrategyId,
+  savedRunNotice,
+} from "./strategyResultPresentation";
+import useSavedStrategyRun from "./useSavedStrategyRun";
+import StrategyBatchToolbar, {
+  useBatchStrategySelection,
+} from "./StrategyBatchToolbar";
+import StrategyResultTabs, { StrategyRunNotice } from "./StrategyResultTabs";
 type StrategiesProps = {
   onStock: (id: string, navigation?: StockNavigation) => void;
   onNavigate: (route: string, context?: Row) => void;
   onRefresh?: () => void;
+  dataDate?: string;
 };
 export default function Strategies(props: StrategiesProps) {
-  const [target, setTarget] = useState("stock");
+  const [target, setTarget] = useState(() =>
+    readStrategySelection("target") === "sector" ? "sector" : "stock",
+  );
+  useEffect(() => rememberStrategySelection("target", target), [target]);
   return (
     <div className="page-stack">
       <div className="sector-target-tabs" role="tablist" aria-label="策略目标">
@@ -78,7 +100,10 @@ export default function Strategies(props: StrategiesProps) {
       {target === "stock" ? (
         <StockStrategies {...props} />
       ) : (
-        <SectorStrategies onNavigate={props.onNavigate} />
+        <SectorStrategies
+          onNavigate={props.onNavigate}
+          dataDate={props.dataDate}
+        />
       )}
     </div>
   );
@@ -134,7 +159,11 @@ function StrategyEditor({
     }
     try {
       let definition: Row = definitionTree;
-      if (advanced) definition = JSON.parse(json);
+      if (advanced) {
+        definition = JSON.parse(json);
+        if (hasHiddenConditionRule(definition))
+          throw new Error("包含不再展示的指标条件，请使用可视化条件编辑");
+      }
       if (!advanced && ruleCount(definition)) {
         const problem = validateVisualRule(definition);
         if (problem) throw new Error(problem);
@@ -217,6 +246,12 @@ function StrategyEditor({
           <div className="button-group">
             <button
               className="btn small"
+              disabled={!advanced && hasHiddenConditionRule(definitionTree)}
+              title={
+                hasHiddenConditionRule(definitionTree)
+                  ? "已保存的隐藏条件按原配置保留，可在可视化编辑中移除"
+                  : undefined
+              }
               onClick={() => {
                 if (!advanced) {
                   setJson(JSON.stringify(definitionTree, null, 2));
@@ -224,6 +259,10 @@ function StrategyEditor({
                 } else {
                   try {
                     const tree = JSON.parse(json);
+                    if (hasHiddenConditionRule(tree)) {
+                      setError("包含不再展示的指标条件，请移除后切换编辑方式");
+                      return;
+                    }
                     setDefinitionTree(normalizeRuleTree(tree));
                     setAdvanced(false);
                   } catch {
@@ -308,10 +347,12 @@ function StockStrategies({
   onStock,
   onNavigate,
   onRefresh,
+  dataDate,
 }: {
   onStock: (id: string, navigation?: StockNavigation) => void;
   onNavigate: (route: string, context?: Row) => void;
   onRefresh?: () => void;
+  dataDate?: string;
 }) {
   const result = useApi<Row>("/strategies"),
     fieldsResult = useApi<Row>("/strategy-fields"),
@@ -320,26 +361,72 @@ function StockStrategies({
     fields = (
       list(fieldsResult.data).length ? list(fieldsResult.data) : fallbackFields
     ).map((f: Row): Row => ({ ...f, label: fieldLabel(f.field, f.label) }));
-  const [selectedId, setSelectedId] = useState(""),
+  const [selectedId, setSelectedId] = useState(() =>
+      readStrategySelection("stock"),
+    ),
     [editor, setEditor] = useState<Row | null | undefined>(undefined),
     [busy, setBusy] = useState(""),
-    [run, setRun] = useState<Row | null>(null),
     [decision, setDecision] = useState("matched"),
     [selected, setSelected] = useState<Set<string>>(new Set()),
     [error, setError] = useState("");
+  const batchSelection = useBatchStrategySelection(strategies);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchRunRequest, setBatchRunRequest] = useState<Row | null>(null);
   const history = useApi<Row>(
     selectedId ? `/strategy-runs?strategy_id=${selectedId}` : null,
   );
   const chosen =
     strategies.find((s) => s.strategy_id === selectedId) || strategies[0];
+  const saved = useSavedStrategyRun("stock", chosen);
+  const { run, setRun } = saved;
+  const taskActivity = useTaskActivity();
+  const runningChosen = strategyTaskBusy(taskActivity, chosen?.strategy_id);
+  const runningElsewhere =
+    taskActivity.tasks.some((task) => task.status === "running") ||
+    taskActivity.pending.length > 0;
   const toast = useToast();
+  const runNotice = savedRunNotice(
+    run,
+    chosen,
+    dataDate,
+    busy === "run" || runningChosen,
+  );
   useEffect(() => {
-    if (!selectedId && strategies[0]) setSelectedId(strategies[0].strategy_id);
-  }, [strategies]);
+    if (!strategies.length) return;
+    const id = resolvedStrategyId(strategies, selectedId);
+    if (id !== selectedId) setSelectedId(id);
+    rememberStrategySelection("stock", id);
+  }, [strategies, selectedId]);
   useEffect(() => {
-    setRun(null);
     setSelected(new Set());
+    setError("");
   }, [selectedId]);
+  useEffect(() => {
+    if (!batchRunRequest || chosen?.strategy_id !== batchRunRequest.strategy_id)
+      return;
+    const request = new AbortController();
+    setBusy("history");
+    api<Row>(`/strategy-runs/${encodeURIComponent(batchRunRequest.run_id)}`, {
+      signal: request.signal,
+    })
+      .then((data) => {
+        if (!request.signal.aborted) {
+          setRun(data);
+          setDecision("matched");
+          setSelected(new Set());
+        }
+      })
+      .catch((problem) => {
+        if (!request.signal.aborted) setError(problem.message);
+      })
+      .finally(() => {
+        if (!request.signal.aborted) {
+          setBusy("");
+          setBatchRunRequest(null);
+        }
+      });
+    return () => request.abort();
+  }, [batchRunRequest, chosen?.strategy_id, setRun]);
   async function bootstrap() {
     setBusy("bootstrap");
     try {
@@ -354,12 +441,23 @@ function StockStrategies({
     }
   }
   async function runStrategy() {
-    if (!chosen) return;
+    if (!chosen || busy || runningElsewhere || runningChosen || batchBusy)
+      return;
+    const key = requestKey();
+    const strategyId = chosen.strategy_id;
     setBusy("run");
     setError("");
+    startTaskRequest({
+      request_key: key,
+      kind: "selection",
+      title: "个股策略选股",
+      target_type: "stock",
+      strategy_id: strategyId,
+      strategy_name: chosen.name,
+    });
     try {
-      const data = await post(`/strategies/${chosen.strategy_id}/runs`, {
-        request_key: requestKey(),
+      const data = await post(`/strategies/${strategyId}/runs`, {
+        request_key: key,
       });
       setRun(data);
       setDecision("matched");
@@ -372,6 +470,7 @@ function StockStrategies({
     } catch (e: any) {
       setError(e.message);
     } finally {
+      finishTaskRequest(key);
       setBusy("");
     }
   }
@@ -421,6 +520,31 @@ function StockStrategies({
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
+      <StrategyBatchToolbar
+        target="stock"
+        strategies={strategies}
+        selection={batchSelection.selected}
+        onSelectAll={batchSelection.setAll}
+        disabled={!!busy || runningElsewhere}
+        dataDate={dataDate}
+        onBusyChange={setBatchBusy}
+        onUpdated={() => {
+          result.reload();
+          history.reload();
+        }}
+        onOpenRun={(item) => {
+          if (
+            !strategies.some(
+              (strategy) => strategy.strategy_id === item.strategy_id,
+            )
+          ) {
+            setError("该批次策略已不在当前列表，请在历史策略记录中查看。");
+            return;
+          }
+          setSelectedId(item.strategy_id);
+          setBatchRunRequest(item);
+        }}
+      />
       <div className="workspace-split">
         <Panel
           title="选股策略"
@@ -440,34 +564,47 @@ function StockStrategies({
           ) : strategies.length ? (
             <div className="strategy-list">
               {strategies.map((s) => (
-                <button
-                  className={
-                    "strategy-card " +
-                    (chosen?.strategy_id === s.strategy_id ? "active" : "")
-                  }
+                <div
+                  className={`strategy-select-card ${batchSelection.selected.has(s.strategy_id) ? "checked" : ""}`}
                   key={s.strategy_id}
-                  disabled={!!busy}
-                  onClick={() => setSelectedId(s.strategy_id)}
                 >
-                  <div>
-                    <strong>{s.name}</strong>
-                    <Badge>
-                      {sectorPeriodLabel(s.period)} · V{s.version}
-                    </Badge>
-                  </div>
-                  <p>
-                    {ruleCount(s.definition)} 项条件 ·{" "}
-                    {s.definition?.logic === "OR" || s.definition?.any
-                      ? "任一满足"
-                      : "全部满足"}
-                  </p>
-                  <footer>
-                    <span>
-                      跟踪中 <b>{s.tracking_count ?? 0}</b>
-                    </span>
-                    <ArrowRight size={14} />
-                  </footer>
-                </button>
+                  <label className="strategy-select-checkbox">
+                    <input
+                      type="checkbox"
+                      aria-label={`选择策略：${s.name}`}
+                      checked={batchSelection.selected.has(s.strategy_id)}
+                      disabled={!!busy || batchBusy || !!s.archived}
+                      onChange={() => batchSelection.toggle(s.strategy_id)}
+                    />
+                  </label>
+                  <button
+                    className={
+                      "strategy-card " +
+                      (chosen?.strategy_id === s.strategy_id ? "active" : "")
+                    }
+                    disabled={!!busy}
+                    onClick={() => setSelectedId(s.strategy_id)}
+                  >
+                    <div>
+                      <strong>{s.name}</strong>
+                      <Badge>
+                        {sectorPeriodLabel(s.period)} · V{s.version}
+                      </Badge>
+                    </div>
+                    <p>
+                      {ruleCount(s.definition)} 项条件 ·{" "}
+                      {s.definition?.logic === "OR" || s.definition?.any
+                        ? "任一满足"
+                        : "全部满足"}
+                    </p>
+                    <footer>
+                      <span>
+                        跟踪中 <b>{s.tracking_count ?? 0}</b>
+                      </span>
+                      <ArrowRight size={14} />
+                    </footer>
+                  </button>
+                </div>
               ))}
             </div>
           ) : (
@@ -510,10 +647,26 @@ function StockStrategies({
                   </button>
                   <button
                     className="btn primary"
-                    disabled={!!busy}
+                    disabled={
+                      !!busy || runningChosen || runningElsewhere || batchBusy
+                    }
                     onClick={runStrategy}
+                    title={
+                      runningElsewhere && !runningChosen
+                        ? "已有任务运行，可在页面上方查看当前任务"
+                        : undefined
+                    }
                   >
-                    {busy === "run" ? <Spinner /> : <Play size={14} />}运行选股
+                    {busy === "run" || runningChosen ? (
+                      <Spinner />
+                    ) : (
+                      <Play size={14} />
+                    )}
+                    {busy === "run" || runningChosen
+                      ? "选股运行中"
+                      : run || chosen.latest_run
+                        ? "刷新选股"
+                        : "运行选股"}
                   </button>
                 </>
               }
@@ -556,11 +709,14 @@ function StockStrategies({
             />
           )}
           {error && <ErrorBox message={error} />}
+          {saved.error && (
+            <ErrorBox message={saved.error} retry={saved.retry} />
+          )}
           <Panel
             title="运行结果"
             subtitle={
               run
-                ? `${run.business_date} · 策略 V${run.strategy_version} · ${run.run_id?.slice(0, 12)}`
+                ? `${run.business_date} · 规则 V${run.strategy_version} · 已保存`
                 : "运行后展示逐股命中依据"
             }
             actions={
@@ -583,33 +739,18 @@ function StockStrategies({
               ) : undefined
             }
           >
+            <StrategyRunNotice notice={runNotice} />
             {run ? (
               <>
                 <div className="result-toolbar">
-                  <div className="tabs">
-                    {[
-                      ["matched", "满足", run.matched_count],
-                      ["unknown", "待核验", run.unknown_count],
-                      ["unmatched", "未满足", run.unmatched_count],
-                    ].map(([key, name, count]) => (
-                      <button
-                        key={key}
-                        className={decision === key ? "active" : ""}
-                        onClick={() => {
-                          setDecision(String(key));
-                          setSelected(new Set());
-                        }}
-                      >
-                        {name}
-                        <span>
-                          {count ??
-                            (run.items || []).filter(
-                              (r: Row) => r.decision === key,
-                            ).length}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                  <StrategyResultTabs
+                    run={run}
+                    value={decision}
+                    onChange={(key) => {
+                      setDecision(key);
+                      setSelected(new Set());
+                    }}
+                  />
                   {decision === "matched" && (
                     <div className="button-group">
                       <button
@@ -694,10 +835,28 @@ function StockStrategies({
                   }
                 />
               </>
+            ) : result.loading ||
+              saved.restoring ||
+              busy === "run" ||
+              runningChosen ? (
+              <div className="saved-run-loading" role="status">
+                <Spinner />
+                <span>
+                  {result.loading || saved.restoring
+                    ? "正在读取上次已保存的选股结果"
+                    : "策略正在运行，完成后将保存结果；进度见页面上方"}
+                </span>
+              </div>
             ) : (
               <Empty
-                title="选择策略并运行选股"
-                description="运行与候选结果保存在后端，不会因为切换盘面日期而改变。"
+                title={
+                  saved.error ? "已保存结果暂未读出" : "还没有已保存的选股结果"
+                }
+                description={
+                  saved.error
+                    ? "请重试读取；已有结果不会因此丢失。"
+                    : "首次运行后会保存结果，返回页面或刷新浏览器可直接恢复。"
+                }
               />
             )}
           </Panel>

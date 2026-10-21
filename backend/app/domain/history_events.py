@@ -5,7 +5,7 @@ import json
 import re
 
 VERSION = 'daily-history-event-v1'
-UNSUPPORTED = {'topic_ids', 'board', 'is_st', 'limit_up', 'prev_limit_up',
+UNSUPPORTED = {'topic_ids', 'board', 'is_st', 'prev_limit_up',
                'limit_up_1y', 'limit_up_count_1y', 'turnover_ratio_pct',
                'tracking_change_pct', 'trading_age', 'close_below_entry',
                'close_above_entry_high', 'close_below_entry_low'}
@@ -43,10 +43,30 @@ def warmup(where):
     return max(count, daily_window(where))
 
 
+def daily_current_nodes(node):
+    if 'field' in node: return [node] if node.get('period') == 'D' else []
+    return [leaf for child in node.get('all', node.get('any', [])) for leaf in daily_current_nodes(child)]
+
+
+def prepared_fields(trees):
+    """Event fields plus explicitly daily 'today' inputs share the same seed.
+
+    Unscoped saved clauses retain the strategy-period interpretation. Their
+    inputs continue to come from the caller's current metrics, not this view.
+    """
+    from app.domain.conditions import names
+    return set().union(*(names(event['where']) | {field for leaf in daily_current_nodes(event['then']) for field in names(leaf) if supported_field(field)} for tree in trees for event in nodes(tree)))
+
+
+def preparation_warmup(event):
+    """Explicit daily today clauses may need more history than event matching."""
+    return warmup({'all': [event['where']] + daily_current_nodes(event['then'])})
+
+
 def read_start(trees, calendar, as_of):
     events = [event for tree in trees for event in nodes(tree)]
     if not events or as_of not in calendar: return as_of
-    periods = [warmup(event['where']) for event in events]
+    periods = [preparation_warmup(event) for event in events]
     if None in periods: return calendar[0]
     distance = max(event['window']['to'] + count - 1 for event, count in zip(events, periods))
     return calendar[max(0, calendar.index(as_of)-distance)]
@@ -97,6 +117,10 @@ class HistoryContext:
             if day > as_of or not valid_quote(raw): continue
             if retain_start is None or day >= retain_start:
                 self.daily[day] = metrics_from_enriched(row, previous)
+                # Raw price-panel flags are not accepted source-pool evidence.
+                # The service adapter fills this field only after exact-date,
+                # identity, raw closing-price and traded-volume verification.
+                self.daily[day].update(limit_up=None, limit_up_reason='历史涨停尚未核验同日来源收盘池与原始成交报价')
                 if self.daily[day].get('amount') is not None and self.daily[day]['amount'] < 0:
                     self.daily[day]['amount'] = None
             previous = row
@@ -153,6 +177,8 @@ class HistoryContext:
                 if 'close_breakout_high' in fields:
                     kept |= {'breakout_valid', 'breakout_previous_sessions', 'breakout_blocking_distance', 'new_high_current_close'}
                 context.daily[day] = {key: value for key, value in metrics.items() if key in kept}
+                if 'limit_up' in fields:
+                    context.daily[day].update(limit_up=None, limit_up_reason='历史涨停尚未核验同日来源收盘池与原始成交报价')
             previous = row
         return context
 

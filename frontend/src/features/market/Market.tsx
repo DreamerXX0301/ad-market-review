@@ -50,6 +50,10 @@ import {
   industryFundsSummary,
 } from "./marketPresentation";
 import type { MarketSort } from "./marketPresentation";
+import {
+  RecentLimitCell,
+  YearLimitCountCell,
+} from "../topics/MemberHistoryCells";
 const indexIds = ["000001.SH", "399001.SZ", "399006.SZ", "000688.SH"];
 const indexNames = ["上证指数", "深证成指", "创业板指", "科创50"];
 export function IndexCards({
@@ -539,6 +543,7 @@ const pageDetails: Record<
       "topics",
       "change_pct",
       "change_30d_pct",
+      "last_limit_up_date",
       "limit_up_ytd",
       "board_count",
       "volume_ratio",
@@ -1338,25 +1343,16 @@ export function MarketPage({
                     : {}),
                   ...(key === "limit_up_ytd"
                     ? {
-                        render: (value: any, row: Row) => (
-                          <span
-                            title={
-                              value == null
-                                ? `${row.limit_up_ytd_reason || "年内历史仍有缺口"}；完整覆盖 ${row.limit_up_ytd_coverage?.covered_days ?? 0} / ${row.limit_up_ytd_coverage?.expected_days ?? "未知"} 个交易日，仅显示已确认下限，不能把未知记为0`
-                                : "按已校验交易日涨停记录统计"
-                            }
-                          >
-                            {value == null ? (
-                              <Badge tone="warn">
-                                {row.limit_up_ytd_observed != null &&
-                                row.limit_up_ytd_coverage?.covered_days > 0
-                                  ? `已确认≥${integer(row.limit_up_ytd_observed)}次`
-                                  : "待补齐"}
-                              </Badge>
-                            ) : (
-                              integer(value)
-                            )}
-                          </span>
+                        render: (_value: any, row: Row) => (
+                          <YearLimitCountCell row={row} />
+                        ),
+                      }
+                    : {}),
+                  ...(key === "last_limit_up_date"
+                    ? {
+                        title: "最近一次涨停",
+                        render: (_value: any, row: Row) => (
+                          <RecentLimitCell row={row} />
                         ),
                       }
                     : {}),

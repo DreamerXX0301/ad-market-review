@@ -327,40 +327,7 @@
   margin-top: 12px;
   color: var(--amber);
 }
-.data-center .dataset-grid {
-  gap: 10px;
-  padding: 13px;
-}
-.data-center .dataset-card {
-  padding: 13px;
-  background: var(--surface2);
-}
-.data-center .dataset-card > strong {
-  font-size: 23px;
-  margin: 14px 0 5px;
-}
-.data-center .dataset-card > p {
-  min-height: 30px;
-  margin-bottom: 10px;
-}
-.data-dataset-gap {
-  margin-top: 10px;
-  color: var(--amber);
-  font-size: 9px;
-}
-.data-dataset-gap > summary {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  cursor: pointer;
-  list-style: none;
-}
-.data-dataset-gap small {
-  display: block;
-  margin-top: 6px;
-  font-size: 9px;
-  line-height: 1.8;
-}
+/* Deliberately independent of legacy .dataset-card > div flex rules. */
 .data-center-footnote {
   display: flex;
   gap: 6px;

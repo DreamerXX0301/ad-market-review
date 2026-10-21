@@ -22,6 +22,7 @@ from app.services.sync_clock import safe_completion_date, require_new_increment,
 
 CHINA=ZoneInfo('Asia/Shanghai')
 INDEX_REQUEST_PLAN = 'bounded-window-v2'
+MASTER_REQUEST_PARAMS = {'asset_type':'a-share','exchange':'SH,SZ,BJ','limit':10000,'offset':0}
 RAW_COLUMNS='thscode,currency,interval,adjusted,date_ms,open_price,high_price,low_price,close_price,volume,turnover'
 
 
@@ -31,6 +32,18 @@ def response_items(payload):
     rows=payload.get('data',{}).get('item')
     if not isinstance(rows,list):raise ValueError('来源item格式变化，拒绝将未知结构当空数据')
     return rows
+
+
+def frozen_master_request_params(plan):
+    # No marker means the exact legacy request. Adding exchange to an accepted
+    # old batch would change its signature and make paused jobs unresumable.
+    if 'master_request_params' not in plan:
+        return {'asset_type':'a-share','limit':10000,'offset':0}
+    params=plan['master_request_params']
+    if (not isinstance(params,dict) or params!={'asset_type':'a-share','exchange':'SH,SZ,BJ','limit':10000,'offset':0}
+            or type(params.get('limit')) is not int or type(params.get('offset')) is not int):
+        raise ValueError('冻结证券目录请求参数不受支持，拒绝改变已有请求签名')
+    return dict(params)
 
 
 def safe_payload(value):
@@ -220,6 +233,7 @@ def execute_sync(job_id,progress=None):
     if plan:
         if plan.get('kind')!=kind:raise ValueError('恢复任务检查点类型与任务不符')
         validate_frozen_target(plan.get('target'),now_china())
+        frozen_master_request_params(plan)
         if kind=='initialise' and plan.get('window') is not None:resolve_initial_window({'window':plan['window']})
     elif kind=='increment':require_new_increment(now_china())
     else:resolve_initial_window(params,for_new_task=True)
@@ -241,7 +255,7 @@ def execute_sync(job_id,progress=None):
         wanted=window_start(target,window) if historical_window else (date.fromisoformat(target)-timedelta(days=365)).isoformat()
         begin=old['data_begin'] if kind=='increment' else wanted if historical_window else next((d for d in completed if d>=wanted),completed[0])
         if kind=='initialise' and window=='near-one-year' and ((date.fromisoformat(target)-date.fromisoformat(begin)).days<330 or sum(begin<=d<=target for d in completed)<200):raise ValueError('来源交易日历不足近一年，不能冒充完成首次一年初始化')
-        plan={'target':target,'begin':begin,'wanted':wanted,'window':window,'kind':kind,'previous_generation':old.get('snapshot_id') if kind=='increment' else None,'previous_end':old.get('data_end') if kind=='increment' else None,'provider':'fuyao'}
+        plan={'target':target,'begin':begin,'wanted':wanted,'window':window,'kind':kind,'previous_generation':old.get('snapshot_id') if kind=='increment' else None,'previous_end':old.get('data_end') if kind=='increment' else None,'provider':'fuyao','master_request_params':dict(MASTER_REQUEST_PARAMS)}
         if window=='near-five-years' or (kind=='increment' and current.reference().get('coverage',{}).get('index_request_plan')==INDEX_REQUEST_PLAN):
             plan['index_request_plan']=INDEX_REQUEST_PLAN
             plan['index_request_begin']=wanted if kind=='initialise' else max(begin,source_calendar[0])
@@ -254,7 +268,8 @@ def execute_sync(job_id,progress=None):
     # reinterpret its accepted request signatures using the new default.
     historical_initial=kind=='initialise' and plan.get('window') in ('near-three-years','near-five-years','near-ten-years')
     cal=sorted(set(d for d in source_calendar+(prior.calendar() if prior else []) if begin<=d<=target))
-    master_payload=collector.request('master.json','/api/meta/tickers/list',{'asset_type':'a-share','limit':10000,'offset':0},5)
+    master_params=frozen_master_request_params(plan)
+    master_payload=collector.request('master.json','/api/meta/tickers/list',master_params,5)
     master=response_items(master_payload)
     if not master or len(master)>=10000:raise ValueError('证券代码表为空或达到分页上限，不能当完整名单')
     symbols=[row.get('thscode') for row in master]
@@ -263,7 +278,7 @@ def execute_sync(job_id,progress=None):
     prior_reference=(prior or current).reference() if old.get('ready') else {}
     prior_master=prior_reference.get('master',{})
     master,inherited_dates=recover_listing_dates(master,prior_master,plan.get('previous_generation') or old.get('snapshot_id'))
-    collector.canonical_json('fuyao_stock_master.json',{**master_payload,'data':{**master_payload['data'],'item':master},'identity_lineage':{'inherited_listing_dates':inherited_dates,'raw_evidence':'accepted/master.json'}})
+    collector.canonical_json('fuyao_stock_master.json',{**master_payload,'data':{**master_payload['data'],'item':master},'identity_lineage':{'inherited_listing_dates':inherited_dates,'raw_evidence':'accepted/master.json','master_request_params':master_params}})
     prior_symbols={symbol for symbol,row in prior_master.items() if row.get('kind')=='stock'}
     identity_changed=set(symbols)!=prior_symbols or any(any(row.get(key)!=prior_master.get(row['thscode'],{}).get(key) for key in ('name','list_date','end_date','exchange','asset_type')) for row in master)
     downloaded=collector.download('daily-k-10d' if prior else 'daily-k',12)
@@ -310,6 +325,7 @@ def execute_sync(job_id,progress=None):
     previous=Path(prior.status()['path'])/'raw-daily.parquet' if prior else None
     collector.tick('校验、合并历史行情与重叠修订',50)
     coverage=merge_daily(downloaded,previous,collector.root/'year.parquet',begin,target,cal,master)
+    coverage['master_request_params']=master_params
     coverage['inherited_listing_dates']=len(inherited_dates)
     if calendar_provenance:coverage['calendar_provenance']=calendar_provenance
     if plan.get('index_request_plan')==INDEX_REQUEST_PLAN:coverage['index_request_plan']=INDEX_REQUEST_PLAN

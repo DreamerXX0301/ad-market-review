@@ -33,9 +33,11 @@
 - `close_breakout_high` 使用 `op=new_high,value=N`（整数 1–750），观察日日收盘严格大于前 N 个市场交易日 high，排除今日；缺报/零量/行动不可比为未知。
 - `limit_up/prev_limit_up` 分别是当日收盘/前一市场交易日收盘来源事实，是/否均需证据。`limit_up_count_1y` 是截至昨日滚动自然一年次数，非负整数常量，不是年内次数；不完整 actual=null，有限上下界可证明的比较才成立。
 
-历史条件节点为 `{history_event:{window:{from:1,to:30},match:"latest",where:条件树,then:条件树}}`；恰好 N 日设置 from=to=N，范围 1–750。latest/earliest 指按距离从近/远优先，不跳过优先位置的未知去伪造匹配。where 支持日 OHLCV/指标自定义 all/any，不能嵌套 history_event，来源涨停/当前题材等未支持字段拒绝。
+历史条件节点为 `{history_event:{window:{from:1,to:30},match:"latest",where:条件树,then:条件树}}`。偏移均为前 N 个市场交易日、不含今天且含两端：近 N 日是 from=1,to=N，自定义前5—20日是 from=5,to=20，指定前 N 日是 from=to=N；范围 1–750。编辑器新建默认前1—30日，读取旧规则不改窗口或版本。latest/earliest 指按距离从近/远优先，不跳过优先位置的未知去伪造匹配；绑定后 then 不满足也不改选其他事件。where 支持日 OHLCV/指标与同日 `limit_up` 的自定义 all/any，不支持递归 history_event、prev_limit_up、历史题材/身份、滚动涨停次数或跟踪基准。
 
-then 可用 `{field:"close",op:">",right_event_field:"close"|"high"|"low",period:"D"}` 比较观察日收盘与本节点事件价；事件绑定互不串用。跨行动、缺中间有效日报价或来源覆盖不足保持未知。新编辑器历史内部固定 D；无显式 period 的旧 then 保留旧版本解释。checks 保存窗口、日期、偏移、原始价格与原因，不序列化完整历史上下文。
+then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3,period:"D"},{any:[{field:"macd_cross",op:"==",value:true,period:"D"},{field:"kd_cross",op:"==",value:true,period:"D"}]}]}`，不要求比较事件价；也可用 `{field:"close",op:">",right_event_field:"close"|"high"|"low",period:"D"}` 比较观察日收盘与本节点事件价。事件绑定互不串用。跨行动、缺中间有效日报价或来源覆盖不足时，事件价比较保持未知，独立今日涨幅/技术条件仍按自身覆盖判断。新编辑器历史内部固定 D；无显式 period 的旧 then 保留旧版本解释。共享历史预备同时保留 where 和显式日线 then 的依赖，保证批量与标量路径一致。
+
+历史 `limit_up` 在选股、跟踪和回测复用同一已发布代际的来源池核验器：逐日期编译来源代码索引与完整来源缺席证据，每只股票再核对该日唯一有效原始 OHLC、收盘、成交量和来源身份；既有日报价标志或 +10% 涨幅不能代替来源证据。缺来源、缺报、停牌、价格/方向冲突均保留 unknown，不用未来池回填。checks 保存来源路径、快照、窗口、日期、偏移、原始价格与原因，不序列化完整历史上下文。回测只为历史 where 放开同日涨停，普通当前涨停及滚动次数条件仍沿用原有回测边界。
 
 `trade_rules={entry:条件树|null,exit:条件树|null}` 与选股独立版本化：买入为选股 AND entry，exit 不要求仍满足选股。只接受已支持回测特征；不支持题材、未完整历史涨停或跟踪锚点，不因为 AST 能保存便保证可回测。
 
@@ -56,9 +58,23 @@ then 可用 `{field:"close",op:">",right_event_field:"close"|"high"|"low",period
 
 个股政策使用 alert_logic/exit_logic=`AND|OR`、alerts/exits、duration_sessions（默认 30）、事件日开关（默认 false）。D0 为入池日；未知交易日进度不补零。提醒不结束，死叉不等于“金叉=false”。本轮高/低锚点是原入池快照唯一日 K 的 high/low，不是跟踪累计值或周柱；严格高于/跌破，相等不触发，行动不可比时未知。
 
+个股/板块跟踪列表额外返回 `counts={active,history}`，是当前策略范围内、应用 status/triggered_only 前的真实轮次数；触发提醒数使用事件接口 total。前端分类以数量分段展示，题材只预览两项，完整归属和逐项触发依据按需展开。
+
+`GET /tracking-events` 每行含冻结的 `entry_business_date/entry_price/entry_basis` 和 `valuation_date/observed_close/today_change_pct`。事件行情按各条 `business_date` 与其精确前一市场交易日，从同代际本地批量读取、复用有界行情缓存；缺报、行动覆盖不明或价格不可比返回 null，不使用最新行情、结束日或历史证据中的近似值回填。没有有效市场日历的临时读取不写入报价缓存，以免污染同代际后续有效读取。此补充只用于浏览，不改已存事件、策略判断或冻结基准。触发列表中“今日涨幅”是该行触发日涨幅，排序仅覆盖接口已加载事件；当前题材仍使用当前有效关系。板块提醒的观察日行情使用其已冻结的日线证据，不把当前轮次报价套回过去。
+
 修改默认政策可显式 `apply_to_active_tracking=true`，仅迁移沿用默认的活动轮次，保留自定义与结束轮次。返回影响/跳过数量；缩短已到期不静默结束，需核对。历史事件和入池日/价不可改写。
 
 普通周/月信号日期与入池日分开。入池始终用业务日 T 的真实日收盘，不能拿最近周/月价冒充。运行与核对有任务租约、真实进度和取消；同步 API 用例不支持后台任务式暂停/重试。
+
+`GET /tasks/activity` 为全局任务提示提供轻量只读摘要：当前 running/queued（最多200项，`active_count` 为实际总数）及最近5个非活动任务；不返回完整日志或任务参数。行含 job_id/request_key、kind/title、target_type、strategy_id/strategy_name、status/stage、progress、实际批次数、日期和结束时间。刚开始且未回报测量时 progress=null，真实0%保留，完成为100%，失败不伪装完成。个股与板块选股因已有运行任务冲突返回409 `{detail:{message,active_task}}`，message包含当前任务与策略名称。
+
+策略列表的 `latest_run` 用于 GET 恢复最近已保存运行；返回页面、刷新浏览器或读取旧结果不创建任务。旧日期、旧规则版本保持原值，不能冒充当前结果；手动刷新失败或尚在运行时保留上次成功结果。浏览器仅记住个股/板块目标和各自策略ID偏好，候选与证据始终读取服务端。
+
+## 本地盘面证据重验
+
+`POST /sync/market-supplement {revalidate_only:true,request_key?}` 可显式创建本地原始证据重验任务。任务为 `source_check`、`operation=market_supplement`、`source_id=local-cache`，冻结当前业务行情日；不读取来源凭据、不构造远端客户端、不补拉封板/资金/板块行情。它仅探测当年已留存日历中每个交易日的涨停、跌停两批 accepted 回执（总批数为交易日数×2），校验规范化 artifact 与 raw SHA、请求日期、来源及池类型，然后用当前身份与当日原始收盘重新归一化。身份签名变化时不能直接复制旧 items；缺证据、缺报价、错价、空池及隔离项继续保持未知或部分覆盖。
+
+任务进度返回 `actual_completed_batches/actual_total_batches`，补充索引另存 `revalidation` 的 planned/completed/revalidated/missing/failed 批次数；revalidated 包含通过重验的部分池，不表示全池完整。按新签名保存已核验批次，全部处理结束并再次确认任务状态与行情代际后才原子发布索引。正常日增量也会先按同一本年日历探测旧 accepted 证据并在签名变化时离线重验，以保留仍可核验的历史；日增量的远端范围不因此扩展到旧日期。
 
 ## 独立板块策略与跟踪
 
@@ -82,3 +98,65 @@ then 可用 `{field:"close",op:">",right_event_field:"close"|"high"|"low",period
 撮合仅受限主板/创业板当前非 ST、有效上市日期、区间连续报价且无公司行动样本。收盘信号下一市场日开盘尝试；T+1、限价、费用、滑点、拒单均留记录，期末不强平。未知不成交；不完整上市身份可使回测在创建前不可用，不伪造权益。不是历史全市场无偏或完整复权账户回测。
 
 精确校验入口见[工作区路由](../backend/app/routers/workspace.py)、[个股条件](../backend/app/domain/conditions.py)和[板块条件](../backend/app/domain/sector_conditions.py)。
+
+## 我的自选池
+
+- `GET /watchlist?query=` 返回 `{items,total,matched_count,business_date}`。独立于策略轮次，持久化于业务 SQLite，最多 2000 只本地已核验 A 股；空安装返回空列表。行情读取本地已发布业务日，复用固定行情代际的批量两日报价缓存，不联网、不逐只计算全历史指标。
+- `GET /watchlist/ids` 返回 `{instrument_ids,total}`，供所有星标入口共用一次轻量读取；新增和移除在当前页面各入口之间同步。
+- `POST /watchlist {instrument_id,tracking_round_id?,source_kind?,source_id?,source_name?,observed_date?}` 返回 `{item,added,already_exists}`。source_kind 为 stock/tracking/sector/topic。跟踪来源必须提供个股轮次，服务端核验其股票并复制原 `entry_business_date`、`entry_price_e8` 和价格口径，忽略客户端价格；不重置、创建或结束策略跟踪。重复添加幂等，保留首次来源、加入时间和事件基准。
+- `DELETE /watchlist/{instrument_id}` 幂等移除自选，返回 `{instrument_id,removed}`，不修改原跟踪或题材成员。
+
+自选列表在今日涨幅旁展示 `watchlist_change_pct`（加入后涨幅）。其独立基准为首次加入自选业务日的唯一有效原始成交收盘，持久化 `watchlist_entry_price_e8/watchlist_entry_basis_json`；公开字段为 `watchlist_entry_date/price/price_basis/state/reason/basis`。原 `tracking_entry_date/event_close/event_date` 继续表示原策略轮次，不能用于加入后涨幅。重复收藏保留首次日期/价格/来源，移除后重新收藏是新的加入记录。
+
+`watchlist_change_state=ready|unknown` 与 `watchlist_change_reason` 解释比较；同日可计算真实0，跨日仅在已核验公司行动覆盖且期间无行动时按当前收盘/自选基准−1计算。有行动且无可核验冻结基准转换、缺少唯一有效成交报价或覆盖未知均返回null，不补0。读取仅访问已发布本地数据，不联网、不创建任务。
+
+013迁移只加字段及成功基准不可改写约束，不读取行情或迁移用户价格。旧行在首次列表读取时按原 `added_business_date` 分批核验、短事务CAS幂等补齐，最多128只一批；成功后不重写。某代际缺数记录未知，同一代际同一核验方法不重复回查，下一已发布行情代际可重新核验缺失基准。方法 `exact-published-added-session-close-v2` 可将旧方法的 null 基准在同代际安全重验一次，修复早期首次并发读取的临时缺日历回执；成功基准无论旧方法或新代际均保持原价与原回执。不能用今日价或原策略价冒充旧加入价。MarketData 首次加载在可重入锁内先完整读取 reference，再一起发布 head、snapshot 与 metadata，不能向其他请求暴露已切代但日历尚未加载的中间态。实时行情浏览与自选基准分别缓存/冻结，当前有效归属仍每次批读。
+
+新初始化/盘后增量在同步 plan 冻结 `master_request_params={asset_type:"a-share",exchange:"SH,SZ,BJ",limit:10000,offset:0}`，显式交易所范围用于来源返回证券上市日期；实际仍未知的日期保留未知。旧已有 plan 无此字段时使用原无exchange参数，保持 accepted/master.json 的请求签名与验收证据，不能升级时静默重写旧任务。原始响应继续留证，已验证同身份上市日期的恢复规则不变。
+- 行字段含 `source_kind/source_id/source_name`、`added_business_date/created_at_ms`、`observed_date`、`tracking_round_id/tracking_entry_date`、`event_date/event_close/event_price_basis`、`latest_price/today_change_pct/quote_date`。人工收藏且无原个股轮次时，事件日和事件价保持 null 并提供 `event_baseline_reason`；板块成员不套用板块指数的事件基准。
+- 每行 `current_topics` 为当前有效行业、概念与人工研究归属，`current_industries` 为行业子集；元素含 `topic_id/name/kind/source_observed_date/members_complete`。`current_topics_observed_date` 是业务日有效关系日期，不冒充来源采集日；逐来源日期见标签字段。归属使用题材库当前来源成员及人工修改批量读取，不缓存原收藏时归属，不查询逐股接口或扫描历史行情。缺少已知归属不推断不属于；`query` 同时匹配股票、代码、首次来源和全部行业/题材名称。界面合并为“行业 / 题材”一列，默认最多1枚行业和2枚概念标签，其余可展开且仍可搜索。
+- 自选股票详情可按筛选排序后的完整列表上一只/下一只；每只股票独立传递其冻结事件基准，切换到无事件来源股票时不会继承上一只的基准线。该导航的观察日期使用业务行情日，不受盘面历史日期影响。
+
+## 手动批量执行策略
+
+`POST /strategy-batches {target_type:"stock"|"sector",scope:"selected"|"all",strategy_ids?:string[],request_key?:string}` 手动创建持久化“筛选并自动跟踪”批次，所选需1—200个不同ID，全部只包含当前类型的未归档策略，不跨个股/板块标签。按侧栏顺序逐策略完成筛选→命中自动入池，再处理下一策略；仍需用户点击开始。新批次固定冻结 `auto_add:true/plan_version:"selection-and-tracking-v1"`，与策略版本、业务日、输入快照、本地题材修改签名和执行顺序共同留存，自动入池意图参与请求幂等签名。活动任务冲突409含可读 `message/active_task`，未结束批次冲突409含 `batch_id`。
+
+无此plan marker的旧排队/已完成批次继续只筛选，重放原request_key只返回原批次，不能升级时追加入池或追溯执行。新建新key才表示新操作。单策略原运行接口保持筛选后手动选择入池的流程。
+
+`GET /strategy-batches?target_type=stock|sector&limit=10` 和 `GET /strategy-batches/{batch_id}` 只读回执：`batch_id/job_id/request_key/target_type/status/business_date/items/total_count/completed_count/succeeded_count/failed_count/cancelled_count/current_strategy/progress/auto_add/plan_version` 及创建/结束时间。每项含 `strategy_id/name/version/sequence/job_id/tracking_job_id?/status/stage/progress/run_id/error/selection_status/tracking_status/matched_count/added_count/skipped_count/ignored_count`，sequence从1开始。汇总也提供四种计数；未回报为null，真实0单独保留。ignored是skipped的子集，命中数不冒充已入池数。item.status是筛选与自动入池的组合状态，completed_count只有整体步骤终结才增加；`completed_steps/total_steps` 分别统计已终结步骤与总步骤，自动批次每策略有筛选/入池两步，百分比按终结步骤/总步骤计算；策略completed_count仍只有整体终结才增加，当前步骤阶段/百分比独立展示。
+
+底层复用 `source_check(operation=strategy_batch)` 父任务、`selection(operation=strategy_batch_item)` 筛选子任务和 `source_check(operation=strategy_batch_tracking)` 入池步骤，无新schema。所有步骤同事务预建，唯一worker按冻结顺序运行；父项在所有步骤终结后才可汇总。一项失败继续下一项，筛选成功而入池失败仍保留独立run_id和错误。规则/日期/输入变化则未完成步骤失败，不能混用新输入。
+
+自动入池复用原个股/板块入池校验与冻结事件日价格；已跟踪、手工忽略、同次运行已生成过的结束轮次均跳过，既有轮次日期/价格/状态不被重置。板块自动批次也保留手动移除的忽略意图，不创建个股轮次。个股每块最多500、板块最多800；每块跟踪写入与 `auto_tracking_chunk` 计数回执在同一SQLite事务提交。崩溃在筛选保存后由已排队入池步骤继续，崩溃在入池提交后按已提交回执跳过，不重新筛选、不重复计数、不复活已结束轮次。每次领取有独立lease attempt，旧进程无权提交或结束恢复后的步骤。
+
+`POST /tasks/{batch_id}/pause|resume|cancel` 级联尚未完成的筛选与入池步骤；暂停/取消不自动继续，已保存结果和已入池轮次保留。继续需用户明确操作且冻结输入未变化。批次不支持通用retry，需明确新建批次。浏览器仅POST一次创建/明确控制，其余GET轮询；空闲/终态停止高频轮询，隐藏页面不持续拉取。
+
+## 显式个股划线提醒与自动自选
+
+水平线返回 `line_type:reference|support|resistance`、`alert_modes:string[]`、`auto_watchlist:boolean`、`revision`、`effective_business_date`。012旧线在015增量迁移后固定为 reference/[]/false，不根据名称猜规则，不扫描历史自动启用。新建或修改可提交上述显式字段；价格、类型、模式或自动收藏改变才递增revision并从当前业务日重新生效，纯名称/颜色不产生新触发版本。`alert_modes:[]`暂停规则，移出自选不暂停规则。
+
+支撑模式为 `support_reclaim`（严格前市场日收盘>=线、当日最低<=线、收盘>=线）与可选风险 `support_breakdown`（前收>=线、收盘<线）；压力模式为 `pressure_close_breakout`（前收<=线、收盘>线）和 `pressure_touch`（low<=线<=high，含等号，不需前收）。穿越模式不回退最近有报价日，缺少严格前市场日报价保持unknown。失守为 `state:invalidated`，单独提示风险，不视为回踩收回，不自动新增自选；其余命中为triggered。事件唯一键为annotation/revision/rule/trade_date，持续站上不重复产生收盘突破。
+
+启用规则保存与排队在同一SQLite事务。`POST /watchlist/line-alerts/evaluate {request_key?}` 显式创建标准source_check job（operation=line_alert_check）；浏览和GET不创建任务、不扫描行情。新手动初始化/增量任务冻结 `line_alert_check_version:explicit-local-line-alert-v1`，主行情成功后接续本地检查；恢复只补该新marker已授权的遗漏，不追溯旧已完成同步任务。暂停/取消与每次领取lease隔离，旧attempt无权续进度或提交。每次任务冻结行情head、规则签名/单调clock及输入快照，改线、删线或切代后旧任务停止提交。
+
+核验从规则生效日或最近已核验交易日起增量补跑至已发布业务日；新规则不看创建前日期，未知旧日期保留待核验并可在新代际重验。一次至多128条线涉及的股票，历史每次批读最多20个交易日及其前一交易日，逐日仍严格核对当日和前一市场交易日；另读取当前日及公司行动，不联网，不展开全市场Python历史。每条rule/day的结果持久化，可在中断后跳过已提交结果。离线多日补跑时event.trade_date保持真实历史触发日，若自动加入自选，added_business_date与独立收盘基准采用实际执行的当前业务日，不冒称历史已收藏。
+
+固定前复权锚水平线使用同一event_affine算法，按已核验公司行动将原锚线价与前收映射到事件日raw价基准；事件同时保存 `line_price` 原锚价和实际判定 `comparison_line_price`，两者不能混称。缺少行动证据、无效/重复行动或锚后转换失败保持unknown。none原始线在除权日不直接混比前收，touch可单独使用当日raw范围。
+
+`GET /watchlist/line-alerts?as_of=&limit=100` 返回所有股票（包括尚未自选）的已存事件、total、business_date、当前rules_total、latest_check和unknowns；历史只含trade_date<=as_of，不从当前行情反推旧事件。latest_check含job_id、checked_at_ms、market_snapshot_id、checked_rules（本次rule/day结果数）、trigger_count、unknown_count，以及 `is_current/stale/stale_reason`，行情日、head或规则改变后不能将旧完成回执冒充当前完成。
+
+事件保存event_id、instrument_id/name/code、annotation_id/revision、line_type/rule、trade_date、原价与判定价、price_basis/anchor_date、raw OHLC、严格前收/转换前收、转换依据、state/title/reason、创建时间和冻结market_snapshot_id/input_snapshots；引用快照以manual retention pin保存，删除水平线不删除历史证据。`/watchlist`每行latest_line_alert通过按股票分组的批量SQLite摘要返回，不依赖提醒列表limit或逐股GET。
+
+仅triggered且auto_watchlist启用时可自动收藏：事件与新自选同一短事务写入，已有自选保持原日期、来源与基准，新增source_kind=stock/source_name=划线提醒/source_id=annotation_id，无跟踪轮次时不伪造策略事件价。`added_to_watchlist/watchlist_add_state`分别记录added、already_present、disabled、not_eligible（失守）、capacity_reached、missing_current_quote；容量或当前收盘缺失仍保存可见事件和解释，不让整次核验失败。原事件重复核验不再次收藏，因此这些未入池事件可由用户手动收藏。unknowns只说明缺口，不伪造触发或价格。
+
+## 上市身份与人工确认
+
+`GET /data/listing-status` 返回 `business_date/market_snapshot_id/revision/summary_is_current/identities/confirmations`。identities含 `stock_count/catalog_count/listed_count/known_count/pending_listing_count/unknown_count/pending_listing/unknown/indices_excluded`，名录数量包括待上市，不将指数放入股票分母。已上市日期覆盖分母为listed+unknown，pending单列，不要求尚未上市证券已有历史K线。
+
+有效来源list_date不晚于观察日为listed；来源日期在未来且本代已核验无报价记录为source pending，若已有报价则保留身份冲突unknown。来源日期缺失时，仅显式人工pending确认且本代无报价记录可标pending；没有确认的缺报仍unknown。来源仍缺日期但已有报价为quoted_unknown_date，计入unknown，不以首根报价伪造上市日。重复、无效或仅存在于原始文件的报价也阻止宣称无报价，原始文件不可核验时同样不能确认pending；quote_presence分开记录valid_quote_count、analysis_observed_rows、raw_observed_rows、observed_quote_rows、ambiguous_quote_keys与absence_verified。新来源日期已到达时自动采用来源listed，历史人工确认仍保留。每行有 `instrument_id/name/listing_status/source_list_date/evidence_kind/source/confirmed_date/confirmed_at_ms/effective_business_date/reason/reference/can_edit`；confirmed_date兼容表示确认观察业务日，confirmed_at_ms为实际审计创建时间。reference保存本代报价计数/首末日以及所依据的人工审计，不把用户说明标成官方证据。
+
+`POST /data/listing-status/confirm {instrument_ids,status,reason,evidence?,observed_business_date?,request_key?}` 是明确人工操作。每次1至128只完整A股代码；status只接受pending或unknown，后者撤销人工pending判断；reason为1至1000字符，evidence最多4000字符。观察日期仅当前规范业务日，省略时由服务器冻结。禁止客户端填写上市日期；来源已提供有效上市日或本地出现唯一有效OHLCV/成交额报价（包括合法零量K线）的证券不能标pending。即使尚无唯一有效报价，只要原始包或分析序列留有异常、重复、非市场日等记录，也保持待核验；没有通过原始文件核验时不确认无报价。报价聚合在写锁外，提交核对head、业务日及人工revision，变化返回409，原始行情不改。请求key同参数重放返回原confirmation_ids，参数改变409；重复提交不添加新审计。响应为当前read view加confirmation_ids/already_exists。
+
+016迁移仅新增append-only `listing_status_confirmation`、单调revision及派生摘要，不硬编码股票、不填来源日期、不改行情文件或快照quality。`source_kind`固定manual_user_confirmation，记录用户说明、确认业务日、真实创建时间、原始行情head和无报价证据；unknown更正也是新记录。`GET /data/listing-status/confirmations?instrument_id=&limit=100` 提供全部更正历史（上限1000），不删除旧确认。当前GET只读小名录与SQLite摘要，不扫描历史行情、不联网或排队。
+
+派生摘要精确匹配primary daily_raw head、market generation、业务日、来源名录签名与人工revision。无匹配摘要时不复用旧代人工pending回执，分类保守待核验；人工确认变化使已有本地覆盖报告过期，需重新核验。显式本地覆盖检查可复用已有SQL报价聚合写该小摘要。新手动初始化/增量冻结 `listing_status_check_version:listing-evidence-v1`，成功后接续source_check(operation=listing_status_check)，仅对来源日期缺失/未来的证券分批SQL聚合本地报价，自动捕捉上市或首次报价后的转换；旧任务无marker不扩范围、不回溯自动执行。暂停/取消不自动恢复，领取nonce与head/day/revision共同阻止旧attempt提交。待上市不从远端行情采集股票范围排除，后续真实行情照常接纳。

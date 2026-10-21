@@ -1,7 +1,7 @@
 import type { Row } from "../../lib/api";
 import { num } from "../../lib/format";
 import { Badge } from "../../components/UI";
-import { historyWindowText } from "./historicalRules";
+import { conditionReasonText, historyWindowText } from "./historicalRules";
 import { summarizeChecks } from "./Conditions";
 
 function eventChecks(value: any): Row[] {
@@ -78,9 +78,13 @@ export default function RuleEvidence({ value }: { value: any }) {
                 {summarizeChecks(check.checks)}
               </p>
             )}
-            {check.reason && <p className="muted">{check.reason}</p>}
+            {check.reason && (
+              <p className="muted">{conditionReasonText(check.reason)}</p>
+            )}
             {check.evidence?.price_comparison_reason && (
-              <p className="muted">{check.evidence.price_comparison_reason}</p>
+              <p className="muted">
+                {conditionReasonText(check.evidence.price_comparison_reason)}
+              </p>
             )}
             <small>
               历史日线 · 观察日 {check.evidence?.as_of || "待核验"}
