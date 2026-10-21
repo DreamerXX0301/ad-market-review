@@ -100,8 +100,13 @@ def registry(tmp_path):
         if os.environ.get('REGISTRY_STATE')=='forbidden':print('403 Forbidden',file=sys.stderr);sys.exit(1)
         if os.environ.get('REGISTRY_STATE')=='missing':print('manifest unknown: not found',file=sys.stderr);sys.exit(1)
         print('Name: example\\nDigest: '+os.environ['INDEX_DIGEST'])
-    '''));docker.chmod(0o755)
-    env=os.environ|{'PATH':str(bin_dir)+os.pathsep+os.environ['PATH'],
+    '''));docker.chmod(0o600)
+    # Read the fake through Python, so noexec /tmp mounts cannot fall through
+    # PATH to a real Docker CLI. BASH_ENV applies only to these child shells.
+    shell_env=tmp_path/'fake-registry-shell.sh'
+    shell_env.write_text('docker() { "$FAKE_REGISTRY_PYTHON" "$FAKE_REGISTRY_SCRIPT" "$@"; }\n')
+    env=os.environ|{'BASH_ENV':str(shell_env),
+        'FAKE_REGISTRY_PYTHON':__import__('sys').executable,'FAKE_REGISTRY_SCRIPT':str(docker),
         'IMAGE':IMAGE,'GITHUB_SHA':REVISION,'GITHUB_OUTPUT':str(tmp_path/'output'),
         'GITHUB_STEP_SUMMARY':str(tmp_path/'summary'),'VERSION':'0.1.1',
         'AMD64_DIGEST':AMD,'ARM64_DIGEST':ARM,'INDEX_DIGEST':INDEX}
