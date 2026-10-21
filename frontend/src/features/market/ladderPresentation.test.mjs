@@ -1,0 +1,165 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import ts from "typescript";
+
+const source = await fs.readFile(
+  new URL("./ladderPresentation.ts", import.meta.url),
+  "utf8",
+);
+const compiled = ts.transpileModule(source, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
+const {
+  ladderTopics,
+  groupLadderRows,
+  filterLadderRows,
+  ladderClassificationCount,
+  themeCountText,
+} = await import(
+  "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
+);
+
+const full = Array.from({ length: 137 }, (_, index) => ({
+  instrument_id: `${index}.SH`,
+  board_count: (index % 8) + 1,
+  name: `股票${index}`,
+}));
+const original = structuredClone(full);
+const grouped = groupLadderRows(full);
+assert.deepEqual(
+  grouped.map((group) => group.height),
+  [8, 7, 6, 5, 4, 3, 2, 1],
+);
+assert.equal(
+  grouped.flatMap((group) => group.items).length,
+  137,
+  "all returned stocks remain represented, including beyond one hundred",
+);
+assert.deepEqual(full, original, "grouping does not mutate source rows");
+const incomplete = groupLadderRows([
+  { board_count: null },
+  { board_count: 0 },
+  { board_count: 1.5 },
+  { board_count: "1" },
+  { board_count: 1 },
+  { board_count: 3 },
+]);
+assert.deepEqual(
+  incomplete.map((group) => group.height),
+  [3, 1, null],
+);
+assert.equal(
+  incomplete.at(-1).items.length,
+  4,
+  "unknown height must never become first board",
+);
+
+const topics = ladderTopics({
+  topics: [
+    { topic_id: "a", name: "共同题材" },
+    { topic_id: "b", name: "共同题材" },
+    { topic_id: "a", name: "共同题材" },
+    "题材三",
+    "题材四",
+    "题材五",
+    "题材六",
+    "  ",
+    null,
+  ],
+});
+assert.equal(
+  topics.length,
+  6,
+  "all distinct topics remain visible; equal names with distinct IDs do not collapse",
+);
+const rows = [
+  {
+    instrument_id: "600001.SH",
+    name: "甲",
+    topics: [{ topic_id: "a", name: "共同题材" }],
+  },
+  {
+    instrument_id: "600002.SH",
+    name: "乙",
+    topics: [{ topic_id: "b", name: "共同题材" }],
+  },
+  { instrument_id: "600003.SH", name: "丙", topics: ["其他"] },
+];
+assert.deepEqual(
+  filterLadderRows(rows, "", topics[0]).map((row) => row.name),
+  ["甲"],
+);
+assert.deepEqual(
+  filterLadderRows(rows, "", { key: "name:共同题材", name: "共同题材" }).map(
+    (row) => row.name,
+  ),
+  ["甲", "乙"],
+);
+assert.deepEqual(
+  filterLadderRows(rows, "600002", null).map((row) => row.name),
+  ["乙"],
+);
+assert.equal(
+  filterLadderRows(rows, "乙", topics[0]).length,
+  0,
+  "topic and text filters compose over the full list",
+);
+assert.equal(filterLadderRows(full, "", null).length, 137);
+
+assert.equal(ladderClassificationCount([], null), null);
+assert.equal(
+  ladderClassificationCount([], {
+    examined_count: 0,
+    confirmed_count: 0,
+    unknown_count: 0,
+  }),
+  null,
+  "no candidates does not prove a zero",
+);
+assert.equal(
+  ladderClassificationCount([], {
+    examined_count: 5,
+    confirmed_count: 0,
+    unknown_count: 2,
+  }),
+  null,
+);
+assert.equal(
+  ladderClassificationCount([], {
+    examined_count: 5,
+    confirmed_count: 0,
+    unknown_count: 0,
+    complete: true,
+  }),
+  0,
+);
+assert.equal(
+  ladderClassificationCount([], {
+    examined_count: 5,
+    confirmed_count: 0,
+    unknown_count: 0,
+    complete: false,
+    source_scope_complete: false,
+  }),
+  null,
+  "incomplete candidate-source scope does not prove a classification zero",
+);
+assert.equal(
+  ladderClassificationCount(rows, { examined_count: 8, unknown_count: 5 }),
+  3,
+  "positive samples stay visible under partial coverage",
+);
+assert.equal(themeCountText({ limit_up_count: 0 }), "0只");
+assert.equal(
+  themeCountText({ limit_up_count: null, limit_up_observed_count: 4 }),
+  "已确认≥4只",
+);
+assert.equal(
+  themeCountText({ limit_up_count: null, limit_up_observed_count: 0 }),
+  "数量待核验",
+);
+assert.equal(themeCountText({}), "数量待核验");
+console.log("ladder presentation cases passed");

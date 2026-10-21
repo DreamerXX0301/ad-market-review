@@ -1,0 +1,335 @@
+.rule-tree-editor {
+  display: grid;
+  gap: 15px;
+}
+.visual-rule-group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.visual-rule-group.nested {
+  background: color-mix(in srgb, var(--workspace-accent) 3%, var(--surface));
+}
+.visual-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent-secondary) 10%, var(--surface));
+  color: var(--accent-secondary);
+  border-bottom: 1px solid var(--border-soft);
+}
+.visual-group-heading > select {
+  height: 28px;
+  color: var(--text);
+  font-size: 11px;
+  background: var(--surface);
+}
+.visual-group-heading > small {
+  color: var(--muted);
+}
+.visual-group-heading > .icon-btn {
+  margin-left: auto;
+}
+.visual-group-children {
+  display: grid;
+  gap: 12px;
+  padding: 13px;
+}
+.visual-rule-child > .conditions {
+  gap: 7px;
+}
+.visual-rule-child .condition-row {
+  padding: 0;
+}
+.visual-rule-child .condition-index {
+  display: none;
+}
+.visual-rule-child .condition-row > select:first-of-type {
+  flex: 1 1 190px;
+}
+.visual-rule-child .condition-row .rhs-type {
+  width: 112px;
+}
+.visual-rule-child .conditions small {
+  font-size: 10px;
+  line-height: 1.7;
+}
+.visual-rule-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 13px 13px;
+}
+.visual-rule-actions .history-add {
+  color: var(--cyan);
+  border-color: color-mix(in srgb, var(--cyan) 35%, var(--border));
+  background: color-mix(in srgb, var(--cyan) 8%, var(--surface));
+}
+.history-event-editor {
+  border: 1px solid color-mix(in srgb, var(--cyan) 34%, var(--border));
+  background: color-mix(in srgb, var(--cyan) 4%, var(--surface));
+  border-radius: 12px;
+  padding: 15px;
+}
+.history-event-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+.history-event-symbol {
+  display: grid;
+  place-items: center;
+  width: 35px;
+  height: 35px;
+  background: color-mix(in srgb, var(--cyan) 15%, var(--surface));
+  color: var(--cyan);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.history-event-heading > div {
+  flex: 1;
+}
+.history-event-heading strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text);
+}
+.history-event-heading small {
+  display: block;
+  font-size: 10px;
+  color: var(--subtle);
+  margin-top: 4px;
+}
+.history-window-controls {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding: 13px;
+  background: var(--surface);
+  border-radius: 9px;
+  border: 1px solid var(--border-soft);
+  margin-bottom: 17px;
+}
+.history-window-controls label {
+  display: grid;
+  gap: 7px;
+  font-size: 10px;
+  color: var(--subtle);
+  flex: 1 1 120px;
+}
+.history-window-controls label:first-child {
+  flex-basis: 175px;
+}
+.history-window-controls input {
+  width: 100%;
+}
+.history-session-unit {
+  font-size: 10px;
+  color: var(--muted);
+  padding-bottom: 10px;
+}
+.event-stage > header {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding-bottom: 11px;
+}
+.event-stage > header > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 15%, var(--surface));
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.event-stage > header strong {
+  display: block;
+  font-size: 12px;
+}
+.event-stage > header small {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.event-stage-current > header > span {
+  color: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-secondary) 15%, var(--surface));
+}
+.event-stage-connector {
+  display: flex;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  padding: 12px 9px;
+}
+.event-stage-connector > svg {
+  color: var(--cyan);
+}
+.history-rule-method {
+  margin-top: 13px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 11px;
+}
+.history-rule-method summary {
+  color: var(--subtle);
+  cursor: pointer;
+  font-size: 10px;
+}
+.history-rule-method p {
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 8px;
+}
+.visual-rule-preview {
+  padding: 13px 15px;
+  display: flex;
+  gap: 10px;
+  background: color-mix(in srgb, var(--accent-secondary) 9%, var(--surface));
+  border: 1px solid
+    color-mix(in srgb, var(--accent-secondary) 22%, var(--border));
+  border-radius: 9px;
+}
+.visual-rule-preview > svg {
+  flex-shrink: 0;
+  color: var(--accent-secondary);
+  margin-top: 2px;
+}
+.visual-rule-preview strong {
+  font-size: 11px;
+  color: var(--accent-secondary);
+}
+.visual-rule-preview p {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--subtle);
+  overflow-wrap: anywhere;
+}
+.unsupported-rule {
+  padding: 12px;
+  font-size: 11px;
+  color: var(--amber);
+}
+.unsupported-rule code {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 7px;
+}
+.saved-rule-summary {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+}
+.saved-rule-summary > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  background: color-mix(in srgb, var(--accent-secondary) 6%, var(--surface2));
+  border: 1px solid
+    color-mix(in srgb, var(--accent-secondary) 17%, var(--border));
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--subtle);
+}
+.saved-rule-summary svg {
+  color: var(--accent-secondary);
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.saved-rule-summary .history-summary {
+  background: color-mix(in srgb, var(--cyan) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--cyan) 25%, var(--border));
+}
+.saved-rule-summary .history-summary svg {
+  color: var(--cyan);
+}
+.historical-check-evidence {
+  min-width: 230px;
+  max-width: 540px;
+}
+.historical-check-evidence > summary {
+  cursor: pointer;
+  white-space: normal;
+  color: var(--subtle);
+}
+.historical-check-evidence > summary > span {
+  display: block;
+  color: var(--cyan);
+  font-size: 10px;
+  margin-top: 5px;
+}
+.historical-check-evidence > div {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+}
+.historical-check-evidence section {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--cyan) 25%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cyan) 5%, var(--surface));
+}
+.historical-check-evidence header {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+}
+.historical-check-evidence p {
+  margin-top: 8px;
+}
+.historical-check-evidence small {
+  display: block;
+  margin-top: 9px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.historical-event-prices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  padding: 9px;
+  margin-top: 8px;
+  background: var(--surface);
+  border-radius: 6px;
+  color: var(--subtle);
+}
+@media (max-width: 680px) {
+  .history-event-editor {
+    padding: 11px;
+  }
+  .visual-group-children {
+    padding: 10px;
+  }
+  .condition-row {
+    flex-wrap: wrap;
+  }
+  .visual-rule-child .condition-row > select:first-of-type {
+    flex-basis: 100%;
+  }
+}
+
+/* Keep the explicit cycle compact; the metric picker owns the flexible width. */
+.visual-rule-child .condition-row {
+  flex-wrap: wrap;
+}
+.visual-rule-child .condition-row > .condition-period {
+  flex: 0 1 144px;
+  min-width: 112px;
+}
+.visual-rule-child .condition-row > select[aria-label$="字段"] {
+  flex: 1 1 190px;
+}

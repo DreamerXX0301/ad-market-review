@@ -1,0 +1,234 @@
+.candle-plot {
+  position: relative;
+}
+.candle-pane-value {
+  position: absolute;
+  left: 64px;
+  right: 20px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  pointer-events: none;
+  font-size: 10px;
+  line-height: 17px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.candle-pane-value strong {
+  font-weight: 500;
+  color: var(--muted);
+}
+.candle-pane-value b {
+  color: var(--subtle);
+  font-weight: 500;
+}
+.candle-pane-value time {
+  margin-left: auto;
+  font-size: 9px;
+}
+.chart-price-basis {
+  font-size: 10px;
+  padding: 4px 6px;
+}
+.chart-index-basis {
+  color: var(--muted);
+  font-size: 10px;
+  padding: 4px 6px;
+}
+.chart-preferences-button {
+  white-space: nowrap;
+}
+.chart-preferences-form {
+  display: grid;
+  gap: 16px;
+}
+.chart-preferences-form p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.8;
+}
+.chart-preferences-form fieldset {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+.chart-preferences-form legend {
+  padding: 0 6px;
+  color: var(--subtle);
+  font-size: 11px;
+}
+.chart-preferences-mas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.chart-preferences-mas label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 11px;
+}
+.chart-waves-control {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 10px;
+  color: #b292f0;
+}
+.chart-wave-selectors {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 7px 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.chart-wave-selectors > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-wave-selectors select {
+  max-width: 330px;
+  padding: 4px 6px;
+  font-size: 10px;
+}
+.chart-wave-hint {
+  color: var(--muted);
+  font-size: 9px;
+}
+.chart-wave-summary {
+  margin: 5px 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+.chart-wave-summary p {
+  margin: 0;
+}
+.chart-wave-patterns {
+  display: grid;
+  gap: 5px;
+}
+.chart-wave-pattern {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-wave-pattern strong {
+  font-weight: 500;
+}
+.chart-wave-pattern.direction-up strong {
+  color: var(--red);
+}
+.chart-wave-pattern.direction-down strong {
+  color: var(--green);
+}
+.chart-wave-summary details {
+  margin-top: 5px;
+}
+.chart-wave-summary summary {
+  cursor: pointer;
+}
+.chart-wave-summary details > div {
+  padding-top: 5px;
+}
+.chart-wave-summary details p + p {
+  margin-top: 5px;
+}
+.chart-limit-control {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--subtle);
+}
+.chart-baseline-control {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: #c79136;
+  font-size: 10px;
+}
+.chart-baseline-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.chart-baseline-note strong {
+  color: #c79136;
+  font-weight: 500;
+}
+.chart-baseline-note.unavailable strong {
+  color: var(--muted);
+}
+.candle-limit-status {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.candle-limit-status > span {
+  font-weight: 500;
+}
+.candle-limit-status small {
+  font-size: 9px;
+  font-weight: 400;
+}
+.chart-limit-legend {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  padding: 4px 6px;
+  font-size: 9px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.chart-gap-explanation {
+  padding: 5px 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.chart-gap-repair {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.chart-gap-explanation summary {
+  cursor: pointer;
+}
+.chart-gap-explanation ul {
+  padding-left: 20px;
+  line-height: 1.8;
+  max-height: 180px;
+  overflow: auto;
+}
+@media (max-width: 700px) {
+  .candle-pane-value {
+    gap: 6px;
+    font-size: 9px;
+  }
+  .candle-pane-value time {
+    display: none;
+  }
+}

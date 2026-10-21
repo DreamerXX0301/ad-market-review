@@ -1,0 +1,454 @@
+/* Shared workspace palette. Red/green remain reserved for market direction. */
+:root {
+  --bg: #090f1d;
+  --sidebar: #101a2e;
+  --surface: #142239;
+  --surface2: #1b2b45;
+  --surface3: #273b5c;
+  --border: #304562;
+  --border-soft: #263954;
+  --text: #edf3ff;
+  --subtle: #bdcce2;
+  --muted: #91a5c2;
+  --blue: #7caaff;
+  --blue-bg: #213858;
+  --cyan: #65d5de;
+  --red: #f77a7d;
+  --green: #4ccda5;
+  --amber: #e6bd72;
+  --accent-secondary: #b5a0ff;
+  --primary-fill: #447bea;
+  --primary-hover: #5b8df1;
+  --radius: 12px;
+  --panel-shadow: 0 6px 22px #02081522;
+  --workspace-accent: var(--blue);
+  --workspace-glow: color-mix(in srgb, var(--blue) 11%, transparent);
+  background: var(--bg);
+  color: var(--text);
+}
+:root[data-theme="light"] {
+  --bg: #edf2fa;
+  --sidebar: #f9fbff;
+  --surface: #fff;
+  --surface2: #f0f5fd;
+  --surface3: #e3edfb;
+  --border: #cfdaeb;
+  --border-soft: #e0e8f4;
+  --text: #20324e;
+  --subtle: #49617e;
+  --muted: #647d9c;
+  --blue: #2b64ca;
+  --blue-bg: #e4edff;
+  --cyan: #087f94;
+  --red: #c84350;
+  --green: #0b8065;
+  --amber: #93620e;
+  --accent-secondary: #7851c9;
+  --primary-fill: #356dd7;
+  --primary-hover: #285bbd;
+  --panel-shadow: 0 5px 18px #3559890a;
+}
+.app-layout[data-workspace="strategy"] {
+  --workspace-accent: var(--accent-secondary);
+}
+.app-layout[data-workspace="data"] {
+  --workspace-accent: var(--cyan);
+}
+.app-layout[data-workspace="research"] {
+  --workspace-accent: var(--accent-secondary);
+}
+.app-layout {
+  --workspace-glow: color-mix(
+    in srgb,
+    var(--workspace-accent) 12%,
+    transparent
+  );
+  background:
+    radial-gradient(ellipse at 92% 0, var(--workspace-glow), transparent 48%),
+    var(--bg);
+}
+.sidebar {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--blue) 9%, var(--sidebar)),
+    var(--sidebar) 40%,
+    color-mix(in srgb, var(--accent-secondary) 5%, var(--sidebar))
+  );
+  box-shadow: 5px 0 26px #02071112;
+}
+.brand {
+  height: 86px;
+}
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  color: #fff;
+  background: linear-gradient(145deg, #568afa, #655acb);
+  border: 0;
+  box-shadow: 0 5px 18px #3d62b43d;
+}
+.brand strong {
+  font-weight: 650;
+}
+.sidebar-workspace {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  padding: 10px 8px;
+  border-radius: 8px;
+}
+.nav-group {
+  --nav-accent: var(--blue);
+  margin-bottom: 17px;
+}
+.nav-group[data-tone="strategy"] {
+  --nav-accent: var(--accent-secondary);
+}
+.nav-group[data-tone="data"] {
+  --nav-accent: var(--cyan);
+}
+.nav-group-title {
+  color: var(--nav-accent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.nav-item {
+  height: 38px;
+  border-radius: 7px;
+  margin: 3px 0;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.nav-item > svg {
+  color: color-mix(in srgb, var(--nav-accent) 74%, var(--muted));
+}
+.nav-item.active {
+  color: var(--text);
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--nav-accent) 25%, var(--sidebar)),
+    color-mix(in srgb, var(--nav-accent) 11%, var(--sidebar))
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--nav-accent) 28%, transparent);
+  font-weight: 600;
+}
+.nav-item.active:before {
+  height: 23px;
+  width: 3px;
+  background: var(--nav-accent);
+}
+.nav-item.active > svg {
+  color: var(--nav-accent);
+}
+.topbar {
+  height: 86px;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(18px);
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--workspace-accent) 18%,
+    var(--border-soft)
+  );
+}
+.page-heading-icon {
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border-radius: 12px;
+  color: var(--workspace-accent);
+  background: linear-gradient(
+    140deg,
+    color-mix(in srgb, var(--workspace-accent) 20%, var(--surface)),
+    color-mix(in srgb, var(--workspace-accent) 7%, var(--surface))
+  );
+  margin-right: 5px;
+  flex-shrink: 0;
+}
+.breadcrumb {
+  font-size: 10px;
+}
+.topbar h1 {
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+.current-business-date {
+  color: var(--subtle);
+  background: var(--surface);
+  padding: 9px 11px;
+  border-radius: 20px;
+  border: 1px solid var(--border-soft);
+}
+.page-container {
+  padding-top: 24px;
+}
+.page-stack {
+  gap: 18px;
+}
+.section-intro {
+  border-radius: 10px;
+  padding: 13px 16px;
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--workspace-accent) 12%, var(--surface)),
+    color-mix(in srgb, var(--surface) 70%, transparent)
+  );
+  border: 1px solid
+    color-mix(in srgb, var(--workspace-accent) 22%, var(--border-soft));
+}
+.section-intro > p {
+  color: var(--subtle);
+  font-size: 12px;
+}
+.panel {
+  box-shadow: var(--panel-shadow);
+}
+.panel-head {
+  padding: 15px 18px;
+  background: linear-gradient(
+    105deg,
+    color-mix(in srgb, var(--workspace-accent) 11%, var(--surface)),
+    var(--surface) 68%
+  );
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--workspace-accent) 14%,
+    var(--border-soft)
+  );
+}
+.panel-head h2 {
+  font-size: 14px;
+}
+.panel-head h2::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--workspace-accent);
+  flex-shrink: 0;
+}
+.btn {
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--workspace-accent) 5%, var(--surface2));
+  color: var(--subtle);
+}
+.btn.primary {
+  color: #fff;
+  background: linear-gradient(
+    115deg,
+    var(--primary-fill),
+    color-mix(in srgb, var(--primary-fill) 78%, #7656db)
+  );
+  border-color: color-mix(in srgb, var(--primary-fill) 70%, white);
+  box-shadow: 0 3px 9px #315fc426;
+}
+.btn.primary:hover {
+  background: var(--primary-hover);
+}
+.btn.dashed {
+  color: var(--workspace-accent);
+  background: color-mix(in srgb, var(--workspace-accent) 7%, var(--surface));
+}
+input,
+select,
+textarea {
+  border-radius: 7px;
+}
+.segmented {
+  background: color-mix(in srgb, var(--bg) 35%, var(--surface));
+  border-radius: 7px;
+}
+.segmented button {
+  border-radius: 5px;
+}
+.segmented button.active {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 18%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 16%, transparent);
+}
+.tabs {
+  gap: 4px;
+}
+.tabs button {
+  border-radius: 7px 7px 0 0;
+}
+.tabs button.active {
+  color: var(--workspace-accent);
+  background: color-mix(in srgb, var(--workspace-accent) 12%, var(--surface));
+  border-bottom-color: var(--workspace-accent);
+}
+.tabs button.active span {
+  background: color-mix(in srgb, var(--workspace-accent) 21%, var(--surface));
+  color: var(--workspace-accent);
+}
+.result-toolbar,
+.table-footer {
+  background: color-mix(in srgb, var(--workspace-accent) 4%, var(--surface));
+}
+th {
+  color: var(--subtle);
+  font-weight: 550;
+  height: 39px;
+  background: color-mix(in srgb, var(--workspace-accent) 9%, var(--surface));
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--workspace-accent) 23%,
+    var(--border)
+  );
+}
+td {
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--workspace-accent) 3%, transparent);
+}
+tbody tr:hover {
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+.stock-link strong {
+  font-size: 12px;
+}
+.badge {
+  border-radius: 5px;
+}
+.stats-grid > .stat,
+.summary-strip .stat {
+  --stat-accent: var(--blue);
+  background: linear-gradient(
+    130deg,
+    color-mix(in srgb, var(--stat-accent) 12%, var(--surface)),
+    var(--surface) 75%
+  );
+}
+.stats-grid > .stat:nth-child(3n + 2),
+.summary-strip .stat:nth-child(3n + 2) {
+  --stat-accent: var(--cyan);
+}
+.stats-grid > .stat:nth-child(3n),
+.summary-strip .stat:nth-child(3n) {
+  --stat-accent: var(--accent-secondary);
+}
+.stat-label {
+  color: var(--subtle);
+}
+.stat > strong {
+  font-size: 24px;
+}
+.index-card.selected {
+  background: linear-gradient(
+    130deg,
+    color-mix(in srgb, var(--blue) 20%, var(--surface)),
+    color-mix(in srgb, var(--cyan) 4%, var(--surface))
+  );
+  border-color: var(--blue);
+  box-shadow: 0 4px 16px #3767bc14;
+}
+.strategy-card.active {
+  background: linear-gradient(
+    125deg,
+    color-mix(in srgb, var(--accent-secondary) 19%, var(--surface)),
+    color-mix(in srgb, var(--blue) 6%, var(--surface))
+  );
+  border-color: var(--accent-secondary);
+}
+.logic-rail {
+  background: color-mix(in srgb, var(--accent-secondary) 15%, var(--surface));
+  color: var(--accent-secondary);
+  border-color: color-mix(in srgb, var(--accent-secondary) 28%, var(--border));
+}
+.rule-chip {
+  border-color: color-mix(in srgb, var(--accent-secondary) 20%, var(--border));
+  background: color-mix(in srgb, var(--accent-secondary) 6%, var(--surface2));
+}
+.form-section-title {
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 10px;
+}
+.modal {
+  background: var(--surface);
+  border-radius: 16px;
+}
+.modal-title {
+  background: linear-gradient(
+    115deg,
+    color-mix(in srgb, var(--workspace-accent) 12%, var(--surface)),
+    var(--surface)
+  );
+}
+.modal-title h2 {
+  font-size: 16px;
+}
+.modal-footer {
+  background: color-mix(in srgb, var(--workspace-accent) 5%, var(--surface));
+}
+.dataset-card,
+.source-card {
+  box-shadow: var(--panel-shadow);
+}
+.dataset-card > div:first-child {
+  color: var(--cyan);
+}
+.data-operation {
+  background: linear-gradient(
+    140deg,
+    color-mix(in srgb, var(--cyan) 8%, var(--surface)),
+    var(--surface) 75%
+  );
+}
+.data-operation-supplement {
+  background: linear-gradient(
+    140deg,
+    color-mix(in srgb, var(--accent-secondary) 12%, var(--surface)),
+    var(--surface) 75%
+  );
+}
+.task-progress {
+  background: linear-gradient(
+    140deg,
+    color-mix(in srgb, var(--cyan) 9%, var(--surface)),
+    var(--surface) 70%
+  );
+}
+.progress-bar i,
+.research-task-meter i {
+  background: linear-gradient(90deg, var(--blue), var(--cyan));
+}
+.research-report-hero,
+.research-task-panel {
+  background: linear-gradient(
+    130deg,
+    color-mix(in srgb, var(--accent-secondary) 10%, var(--surface)),
+    var(--surface) 72%
+  );
+}
+.notice {
+  background: color-mix(in srgb, var(--amber) 8%, var(--surface));
+}
+@media (max-width: 900px) {
+  .page-heading-icon {
+    width: 36px;
+    height: 36px;
+  }
+}
+@media (max-width: 680px) {
+  .page-heading-icon {
+    display: none;
+  }
+  .section-intro {
+    padding: 12px;
+    gap: 10px;
+  }
+  .topbar h1 {
+    font-size: 19px;
+  }
+  .current-business-date {
+    padding: 6px 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-item {
+    transition: none;
+  }
+}

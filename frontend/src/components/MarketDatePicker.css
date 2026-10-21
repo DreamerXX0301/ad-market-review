@@ -1,0 +1,276 @@
+.market-date-picker {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  height: 34px;
+}
+.market-date-trigger,
+.market-date-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  height: 27px;
+}
+.market-date-trigger {
+  gap: 6px;
+  padding: 0 7px;
+  color: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.market-date-trigger > svg:first-child {
+  color: var(--blue);
+}
+.market-date-trigger > svg:last-child {
+  color: var(--muted);
+}
+.market-date-step {
+  width: 23px;
+  padding: 0;
+  color: var(--subtle);
+}
+.market-date-trigger:hover,
+.market-date-trigger.is-open,
+.market-date-step:not(:disabled):hover {
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+.market-date-step:disabled {
+  opacity: 0.28;
+}
+.market-date-popup {
+  position: fixed;
+  z-index: 95;
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow:
+    var(--shadow),
+    0 0 0 1px color-mix(in srgb, var(--border) 35%, transparent);
+  color: var(--text);
+}
+.market-date-popup-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+.market-date-popup-title strong {
+  display: block;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+.market-date-popup-title span {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.market-date-close,
+.market-date-month > button {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--subtle);
+}
+.market-date-close:hover,
+.market-date-month > button:not(:disabled):hover {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+.market-date-jump {
+  margin-top: 17px;
+}
+.market-date-jump label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--subtle);
+  font-size: 10px;
+}
+.market-date-jump > div {
+  display: flex;
+  gap: 7px;
+}
+.market-date-jump input {
+  flex: 1;
+  width: 0;
+  height: 33px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.market-date-jump button,
+.market-date-popup-footer > button {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--blue) 40%, var(--border));
+  border-radius: 6px;
+  padding: 0 12px;
+  height: 33px;
+  background: var(--blue-bg);
+  color: var(--blue);
+  font-size: 11px;
+}
+.market-date-error {
+  color: var(--amber);
+  font-size: 10px;
+  line-height: 1.5;
+  min-height: 15px;
+  margin-top: 5px;
+}
+.market-date-month {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 8px;
+  border-top: 1px solid var(--border-soft);
+}
+.market-date-month > div {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+.market-date-month select {
+  height: 30px;
+  padding: 0 5px;
+  font-size: 12px;
+  border-color: transparent;
+  background: var(--surface);
+}
+.market-date-calendar {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 2px;
+}
+.market-date-calendar th {
+  height: 24px;
+  padding: 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+  background: none;
+  border: 0;
+}
+.market-date-calendar td {
+  padding: 0;
+  text-align: center;
+  border: 0;
+  background: none;
+}
+.market-date-calendar button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 33px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.market-date-calendar button:not(:disabled):hover {
+  background: var(--blue-bg);
+  border-color: color-mix(in srgb, var(--blue) 40%, transparent);
+  color: var(--blue);
+}
+.market-date-calendar button:disabled {
+  opacity: 1;
+  color: color-mix(in srgb, var(--muted) 55%, var(--surface));
+  background: none;
+}
+.market-date-calendar button.other-month {
+  color: color-mix(in srgb, var(--muted) 25%, var(--surface));
+}
+.market-date-calendar button.is-selected {
+  border-color: var(--blue);
+  background: var(--blue-bg);
+  color: var(--blue);
+  font-weight: 600;
+}
+.market-date-calendar button:focus-visible {
+  outline-offset: -2px;
+}
+.market-date-calendar i {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--blue);
+  bottom: 3px;
+  left: calc(50% - 1.5px);
+}
+.market-date-popup-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.market-date-popup-footer > span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.market-date-popup-footer small {
+  display: block;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.market-date-popup-footer > button {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+@media (max-width: 760px) {
+  .market-date-picker {
+    height: 31px;
+  }
+  .market-date-trigger {
+    font-size: 10px;
+    gap: 4px;
+    padding: 0 4px;
+  }
+  .market-date-trigger > svg:first-child {
+    width: 12px;
+  }
+  .market-date-step {
+    width: 20px;
+    height: 25px;
+  }
+}
+@media (max-width: 480px) {
+  .market-date-latest {
+    display: none;
+  }
+  .market-date-popup {
+    padding: 13px;
+  }
+}

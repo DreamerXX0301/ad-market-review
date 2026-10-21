@@ -1,0 +1,117 @@
+.stock-limit-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+  position: relative;
+}
+.stock-limit-metric {
+  min-width: 0;
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 12px 15px;
+  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--border));
+  border-radius: 10px;
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--amber) 10%, var(--surface)),
+    var(--surface) 85%
+  );
+}
+.stock-limit-metric > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.stock-limit-metric > div > span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+.stock-limit-metric strong {
+  font-size: 20px;
+  color: var(--amber);
+  letter-spacing: -0.35px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+.stock-limit-metric strong.unknown {
+  font-size: 16px;
+  color: var(--muted);
+}
+.stock-limit-metric small {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.stock-limit-metric span small {
+  margin-left: 7px;
+}
+.stock-limit-symbol {
+  color: var(--amber);
+  padding: 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--amber) 13%, transparent);
+}
+.stock-limit-symbol.recent {
+  color: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-secondary) 12%, transparent);
+}
+.stock-limit-retry {
+  grid-column: 1/-1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--amber);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.stock-limit-error {
+  grid-column: 1/-1;
+  color: var(--amber);
+  font-size: 10px;
+}
+@media (max-width: 650px) {
+  .stock-limit-metric {
+    padding: 10px;
+    gap: 7px;
+  }
+  .stock-limit-symbol {
+    display: none;
+  }
+  .stock-limit-metric strong {
+    font-size: 17px;
+  }
+  .stock-limit-metric span small {
+    display: block;
+    margin: 3px 0 0;
+  }
+}
+
+.stock-limit-metric.return {
+  border-color: color-mix(in srgb, var(--accent-secondary) 25%, var(--border));
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--accent-secondary) 7%, var(--surface)),
+    var(--surface) 85%
+  );
+}
+.stock-limit-metric strong.up {
+  color: var(--red);
+}
+.stock-limit-metric strong.down {
+  color: var(--green);
+}
+.stock-limit-metric strong.muted {
+  color: var(--text);
+}
+@media (max-width: 1100px) {
+  .stock-limit-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

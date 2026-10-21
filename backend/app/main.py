@@ -1,0 +1,53 @@
+"""Application assembly; imports never launch data synchronization or workers."""
+from contextlib import asynccontextmanager
+from urllib.parse import urlparse
+from fastapi import FastAPI,Request
+from fastapi.responses import FileResponse,JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.gzip import GZipMiddleware
+from app.core import APP_VERSION,PROJECT_ROOT,ensure_ready
+from app.routers import platform,workspace,backtests
+
+@asynccontextmanager
+async def lifespan(app):
+    ensure_ready()
+    yield
+
+app=FastAPI(title='市序 A股研究工作台',version=APP_VERSION,lifespan=lifespan)
+app.add_middleware(GZipMiddleware,minimum_size=1024,compresslevel=4)
+app.include_router(platform.router)
+app.include_router(workspace.router)
+app.include_router(backtests.router)
+
+@app.get('/health',include_in_schema=False)
+def health():return {'status':'ok','application':'shixu','version':APP_VERSION}
+
+@app.middleware('http')
+async def local_write_origin(request:Request,call_next):
+    origin=request.headers.get('origin')
+    if origin and request.method not in ('GET','HEAD','OPTIONS'):
+        parsed=urlparse(origin)
+        if parsed.netloc!=request.headers.get('host') and parsed.hostname not in ('localhost','127.0.0.1','::1'):
+            return JSONResponse({'detail':'跨站写请求被拒绝'},403)
+    return await call_next(request)
+
+@app.exception_handler(ValueError)
+async def invalid_request(request:Request,error:ValueError):
+    return JSONResponse({'detail':str(error)},422)
+
+@app.exception_handler(RequestValidationError)
+async def invalid_payload(request:Request,error:RequestValidationError):
+    return JSONResponse({'detail':[{'loc':e.get('loc'),'msg':e.get('msg')} for e in error.errors()]},422)
+
+dist=PROJECT_ROOT/'frontend/dist'
+if (dist/'assets').is_dir():app.mount('/assets',StaticFiles(directory=dist/'assets'),name='assets')
+
+@app.get('/{path:path}',include_in_schema=False)
+def frontend(path:str):
+    if path.startswith('api/'):
+        return JSONResponse({'detail':'接口不存在'},404)
+    candidate=(dist/path).resolve()
+    if candidate.is_relative_to(dist.resolve()) and candidate.is_file():return FileResponse(candidate)
+    if (dist/'index.html').is_file():return FileResponse(dist/'index.html')
+    return JSONResponse({'detail':'前端尚未构建，请在frontend执行npm ci && npm run build'},503)

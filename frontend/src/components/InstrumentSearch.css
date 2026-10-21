@@ -1,0 +1,70 @@
+/* This floating list is portalled out of panel overflow, not positioned in it. */
+.instrument-search-popover {
+  position: fixed;
+  z-index: 130;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  border-radius: 9px;
+  padding: 4px;
+}
+.instrument-search-popover > button {
+  border: 0;
+  background: transparent;
+  padding: 10px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  text-align: left;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.instrument-search-popover > button:hover,
+.instrument-search-popover > button[aria-selected="true"] {
+  background: var(--blue-bg);
+}
+.instrument-search-popover strong {
+  font-size: 13px;
+  color: var(--text);
+}
+.instrument-search-popover small {
+  font-size: 10px;
+  margin-left: 9px;
+  color: var(--muted);
+}
+.instrument-search-popover .search-result-type {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--blue);
+  background: var(--blue-bg);
+}
+.instrument-search-popover .search-result-type.type-industry {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+.instrument-search-popover .search-result-type.type-concept {
+  color: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-secondary) 13%, transparent);
+}
+.global-sector-tabs {
+  margin-bottom: 14px;
+  width: max-content;
+  max-width: 100%;
+}
+.instrument-search-popover code {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.instrument-search-popover .search-hint {
+  padding: 13px 11px;
+  font-size: 12px;
+  line-height: 1.6;
+}

@@ -1,0 +1,184 @@
+.sector-target-tabs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.sector-target-tabs button {
+  padding: 9px 20px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+.sector-target-tabs button.active {
+  color: var(--blue);
+  background: var(--blue-bg);
+}
+.sector-rule-group {
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--blue) 3%, var(--surface));
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.sector-rule-group header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.sector-rule-group header select {
+  width: auto;
+  min-width: 120px;
+}
+.sector-rule-child {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+}
+.sector-rule-child > .sector-rule-group,
+.sector-rule-child > .sector-rule-leaf {
+  flex: 1;
+  min-width: 0;
+}
+.sector-rule-leaf {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.sector-rule-leaf label {
+  min-width: 100px;
+  flex: 1;
+  font-size: 10px;
+  color: var(--muted);
+  display: grid;
+  gap: 5px;
+}
+.sector-rule-leaf label:nth-child(2) {
+  min-width: 190px;
+  flex: 2;
+}
+.sector-rule-leaf input,
+.sector-rule-leaf select {
+  width: 100%;
+  min-width: 0;
+}
+.sector-rule-leaf small {
+  flex-basis: 100%;
+  color: var(--subtle);
+}
+.sector-evidence ul {
+  padding-left: 18px;
+  color: var(--subtle);
+  font-size: 11px;
+  line-height: 1.9;
+}
+.sector-evidence summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--blue);
+  max-width: 370px;
+}
+.sector-workspace .strategy-sidebar {
+  min-width: 0;
+}
+.sector-workspace .strategy-card {
+  width: 100%;
+}
+.sector-asset-name {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+.sector-asset-name small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.sector-members-context {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 12px;
+  color: var(--subtle);
+  font-size: 12px;
+}
+.modal-backdrop:has(.sector-members-body) {
+  z-index: 65;
+}
+.sector-policy-section {
+  margin: 18px 0;
+  display: grid;
+  gap: 10px;
+}
+.sector-workspace .table-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.sector-workspace .table-link:hover {
+  color: var(--blue);
+}
+.sector-task-progress {
+  display: grid;
+  gap: 8px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--blue) 5%, var(--surface));
+}
+.sector-task-progress > div {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 12px;
+}
+.sector-task-progress b {
+  margin-left: auto;
+  color: var(--blue);
+}
+.sector-task-progress small {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.sector-task-progress progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--blue);
+}
+@media (max-width: 800px) {
+  .sector-workspace .workspace-split {
+    grid-template-columns: 1fr;
+  }
+  .sector-rule-group {
+    padding: 10px;
+  }
+  .sector-rule-leaf label {
+    min-width: 120px;
+  }
+  .sector-rule-child {
+    gap: 3px;
+  }
+  .sector-target-tabs button {
+    flex: 1;
+    padding: 9px;
+  }
+}

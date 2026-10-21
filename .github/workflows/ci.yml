@@ -1,0 +1,79 @@
+name: Source checks
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+# Fork PRs can test code but cannot write releases, packages or deployment state.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.1
+      - name: Locked dependencies, formatting, pure helpers and production build
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run format:check
+          count=0
+          while IFS= read -r -d '' test_file; do
+            node "$test_file"
+            count=$((count + 1))
+          done < <(find src -name '*.test.mjs' -print0 | sort -z)
+          [[ "$count" -gt 0 ]] || { echo 'No frontend helper tests found'; exit 1; }
+          printf 'Helper files passed: %s\n' "$count"
+          npm run build
+
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build the pinned production Python and patched SQLite runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --file deploy/Dockerfile --tag shixu-ci-runtime:test .
+          docker build --file deploy/Dockerfile.test --build-arg RUNTIME_IMAGE=shixu-ci-runtime:test --tag shixu-ci-tests:test .
+      - name: Run isolated backend, deployment and source-package tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Compose config tests need only the CLI/plugin; no Docker socket is
+          # exposed to tested application code, and no services are started.
+          compose_plugin=''
+          for candidate in "$HOME/.docker/cli-plugins/docker-compose" /usr/libexec/docker/cli-plugins/docker-compose /usr/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose; do
+            if [[ -x "$candidate" ]]; then compose_plugin="$candidate"; break; fi
+          done
+          [[ -n "$compose_plugin" ]] || { echo 'Compose plugin not found on runner'; exit 1; }
+          docker run --rm --network none --read-only --tmpfs /tmp:mode=1777 \
+            --env SHIXU_DATA_DIR=/tmp/shixu-ci-default \
+            --mount "type=bind,source=$(command -v docker),target=/usr/local/bin/docker,readonly" \
+            --mount "type=bind,source=$compose_plugin,target=/usr/local/lib/docker/cli-plugins/docker-compose,readonly" \
+            shixu-ci-tests:test
+      - name: Validate the checked-out source tree and produce an unsigned local source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/package_release.py --commit "$(git rev-parse HEAD)" --output "$RUNNER_TEMP/source-release"
+          cat "$RUNNER_TEMP/source-release/SHA256SUMS"
+          # No upload, release creation, GHCR push or deployment is performed.

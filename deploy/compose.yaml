@@ -1,0 +1,81 @@
+name: shixu-workbench
+x-runtime: &runtime
+  image: shixu-workbench:${SHIXU_IMAGE_TAG:-local}
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+    args:
+      NODE_IMAGE: ${SHIXU_NODE_IMAGE:-public.ecr.aws/docker/library/node:22.22.1-bookworm-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d}
+      PYTHON_IMAGE: ${SHIXU_PYTHON_IMAGE:-public.ecr.aws/docker/library/python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641}
+      UV_IMAGE: ${SHIXU_UV_IMAGE:-ghcr.io/astral-sh/uv:0.6.13@sha256:0b6dc79013b689f3bc0cbf12807cb1c901beaafe80f2ee10a1d76aa3842afb92}
+  environment: &environment
+    SHIXU_DATA_DIR: /var/lib/shixu
+    SHIXU_SQLITE_PATH: /var/lib/shixu/business/app.sqlite3
+    SHIXU_PUBLISHED_DIR: /var/lib/shixu/published
+    SHIXU_RAW_DIR: /var/lib/shixu/raw
+    SHIXU_WORK_DIR: /var/lib/shixu/work
+    SHIXU_CREDENTIAL_DIR: /var/lib/shixu/credentials
+    SHIXU_CREDENTIAL_MASTER_KEY_FILE: /run/secrets/shixu_master
+  init: true
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 40s
+services:
+  init:
+    <<: *runtime
+    user: "0:0"
+    command: [python, /app/deploy/init_volumes.py]
+    restart: "no"
+    volumes:
+      - business:/var/lib/shixu/business
+      - published:/var/lib/shixu/published
+      - raw:/var/lib/shixu/raw
+      - work:/var/lib/shixu/work
+      - credentials:/var/lib/shixu/credentials
+  api:
+    <<: *runtime
+    command: [python, -m, uvicorn, app.main:app, --host, 0.0.0.0, --port, "8788", --workers, "1"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    ports: ["127.0.0.1:${SHIXU_HTTP_PORT:-8788}:8788"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - business:/var/lib/shixu/business
+      - published:/var/lib/shixu/published:ro
+      - credentials:/var/lib/shixu/credentials
+    secrets: [shixu_master]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/health',timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+  worker:
+    <<: *runtime
+    command: [python, -m, app.worker]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    deploy:
+      replicas: 1
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - business:/var/lib/shixu/business
+      - published:/var/lib/shixu/published
+      - raw:/var/lib/shixu/raw
+      - work:/var/lib/shixu/work
+      - credentials:/var/lib/shixu/credentials:ro
+    secrets: [shixu_master]
+volumes:
+  business:
+  published:
+  raw:
+  work:
+  credentials:
+secrets:
+  shixu_master:
+    file: ${SHIXU_MASTER_KEY_FILE:?Set an absolute path to the separately stored master key}
