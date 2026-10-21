@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse,JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
-from app.core import APP_VERSION,PROJECT_ROOT,ensure_ready
+from app.core import APP_NAME,APP_ID,APP_VERSION,PROJECT_ROOT,ensure_ready
 from app.routers import platform,workspace,backtests
 
 @asynccontextmanager
@@ -14,14 +14,14 @@ async def lifespan(app):
     ensure_ready()
     yield
 
-app=FastAPI(title='市序 A股研究工作台',version=APP_VERSION,lifespan=lifespan)
+app=FastAPI(title=f'{APP_NAME} · A股研究工作台',version=APP_VERSION,lifespan=lifespan)
 app.add_middleware(GZipMiddleware,minimum_size=1024,compresslevel=4)
 app.include_router(platform.router)
 app.include_router(workspace.router)
 app.include_router(backtests.router)
 
 @app.get('/health',include_in_schema=False)
-def health():return {'status':'ok','application':'shixu','version':APP_VERSION}
+def health():return {'status':'ok','application':APP_ID,'app_name':APP_NAME,'version':APP_VERSION}
 
 @app.middleware('http')
 async def local_write_origin(request:Request,call_next):

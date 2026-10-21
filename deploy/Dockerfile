@@ -22,6 +22,16 @@ RUN curl --fail --location --retry 3 "https://www.sqlite.org/2026/${SQLITE_ARCHI
 
 FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE} AS runtime
+ARG APP_VERSION=0.1.1
+ARG VCS_REF=unknown
+ARG BUILD_DATE
+LABEL org.opencontainers.image.title="冒险的梦想家" \
+    org.opencontainers.image.description="A股盘面与策略研究工作台" \
+    org.opencontainers.image.source="https://github.com/DreamerXX0301/ad-market-review" \
+    org.opencontainers.image.url="https://github.com/DreamerXX0301/ad-market-review" \
+    org.opencontainers.image.version="${APP_VERSION}" \
+    org.opencontainers.image.revision="${VCS_REF}" \
+    org.opencontainers.image.created="${BUILD_DATE}"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     LD_LIBRARY_PATH=/opt/sqlite/lib \
     UV_PROJECT_ENVIRONMENT=/opt/venv UV_LINK_MODE=copy \
@@ -42,6 +52,7 @@ RUN uv sync --frozen --no-dev \
 COPY backend/app ./app
 COPY scripts/ /app/scripts/
 COPY deploy/init_volumes.py /app/deploy/init_volumes.py
+COPY deploy/create_secret.py /app/deploy/create_secret.py
 COPY --from=frontend /frontend/dist /app/frontend/dist
 USER 10001:10001
 EXPOSE 8788

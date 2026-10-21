@@ -1,7 +1,7 @@
 [project]
-name = "shixu-workbench-backend"
-version = "0.1.0"
-description = "市序 A股盘面与策略研究工作台"
+name = "ad-market-review-backend"
+version = "0.1.1"
+description = "冒险的梦想家 A股盘面与策略研究工作台"
 requires-python = ">=3.13,<3.15"
 dependencies = [
   "fastapi>=0.115,<1",

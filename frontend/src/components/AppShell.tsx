@@ -28,6 +28,7 @@ import type { Row } from "../lib/api";
 import InstrumentSearch from "./InstrumentSearch";
 import MarketDatePicker from "./MarketDatePicker";
 import { Badge } from "./UI";
+import "./Brand.css";
 export const navigation = [
   {
     label: "盘面研究",
@@ -118,8 +119,9 @@ export default function AppShell({
       />
       <aside className={"sidebar " + (mobileOpen ? "mobile-open" : "")}>
         <a
-          className="brand"
+          className="brand brand--dreamer"
           href="#market"
+          aria-label="冒险的梦想家 · 返回盘面总览"
           onClick={() => onNavigate("market")}
         >
           <div className="brand-mark">
@@ -132,8 +134,8 @@ export default function AppShell({
               />
             </svg>
           </div>
-          <div>
-            <strong>市序</strong>
+          <div className="brand-copy">
+            <strong>冒险的梦想家</strong>
             <span>行情 · 策略 · 研究</span>
           </div>
         </a>
@@ -202,8 +204,9 @@ export default function AppShell({
               <PageIcon size={23} strokeWidth={1.7} />
             </div>
             <div>
-              <div className="breadcrumb">
-                工作台 <ChevronRight size={11} />{" "}
+              <div className="breadcrumb dreamer-breadcrumb">
+                <span className="breadcrumb-product">冒险的梦想家</span>
+                <ChevronRight size={11} />{" "}
                 {isMarket
                   ? "盘面研究"
                   : route === "data" || route === "sources"
@@ -278,8 +281,14 @@ export default function AppShell({
             </div>
           )}
           {children}
-          <footer className="workspace-footer">
-            <span>市序 · 本地 A股研究工作台</span>
+          <footer className="workspace-footer dreamer-footer">
+            <span>
+              <strong>冒险的梦想家</strong>
+              <span className="footer-product-description">
+                {" "}
+                · 本地 A股研究工作台
+              </span>
+            </span>
             <span>
               数据来自已发布快照 · 未知数据不补零 · 研究结果不代表交易指令
             </span>

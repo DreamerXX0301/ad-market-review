@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 import threading
-from .infrastructure.config import APP_VERSION,PROJECT_ROOT,data_dir,sqlite_path,published_dir,raw_dir,work_dir
+from .infrastructure.config import APP_NAME,APP_ID,APP_VERSION,PROJECT_ROOT,data_dir,sqlite_path,published_dir,raw_dir,work_dir
 from .infrastructure.storage import now_ms,new_id,json_clean,dumps,digest,hash_file,atomic_json
 from .infrastructure.database import connect,ensure_ready,check_sqlite_runtime
 from .infrastructure.publication import publish_snapshot

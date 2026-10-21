@@ -26,3 +26,16 @@ dist
 .vscode
 **/*.pem
 **/*.parquet
+
+# Same local-only files are excluded from image build contexts.
+scripts/benchmark_api.py
+scripts/benchmark_history_windows.py
+scripts/benchmark_initial_import.py
+scripts/benchmark_ten_year.py
+scripts/check_ladder_trading_api.py
+scripts/import_audit.py
+scripts/validate_live_sources.py
+contracts/analytics.sql
+scripts/reinitialize_preserving_strategies.py
+backend/tests/test_strategy_preserving_reinitialization.py
+backend/tests/test_sector_strategy_preserving_reinitialization.py

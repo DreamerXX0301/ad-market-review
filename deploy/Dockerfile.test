@@ -8,11 +8,11 @@ WORKDIR /app/backend
 RUN uv sync --frozen \
  && python -c "import sqlite3,pytest; assert sqlite3.sqlite_version == '3.54.1'"
 COPY backend/tests /app/backend/tests
-COPY deploy/compose.yaml deploy/compose.release.yaml deploy/Dockerfile deploy/Dockerfile.test deploy/create_secret.py /app/deploy/
-COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml
+COPY deploy/compose.yaml deploy/compose.release.yaml deploy/docker-compose.yml deploy/Dockerfile deploy/Dockerfile.test deploy/create_secret.py /app/deploy/
+COPY .github/workflows/ci.yml .github/workflows/publish-image.yml /app/.github/workflows/
 COPY contracts /app/contracts
 COPY VERSION /app/VERSION
 WORKDIR /app
 USER 10001:10001
 # Runtime paths are not allowed to bypass per-test temporary SHIXU_DATA_DIRs.
-CMD ["sh", "-c", "python scripts/export_schema.py --check && exec env -u SHIXU_SQLITE_PATH -u SHIXU_PUBLISHED_DIR -u SHIXU_RAW_DIR -u SHIXU_WORK_DIR -u SHIXU_CREDENTIAL_DIR -u SHIXU_CREDENTIAL_MASTER_KEY_FILE python -m pytest -p no:cacheprovider backend/tests scripts/test_deployment.py scripts/test_upgrade.py scripts/test_package_release.py -q"]
+CMD ["sh", "-c", "python scripts/export_schema.py --check && exec env -u SHIXU_SQLITE_PATH -u SHIXU_PUBLISHED_DIR -u SHIXU_RAW_DIR -u SHIXU_WORK_DIR -u SHIXU_CREDENTIAL_DIR -u SHIXU_CREDENTIAL_MASTER_KEY_FILE python -m pytest -p no:cacheprovider backend/tests scripts/test_deployment.py scripts/test_upgrade.py scripts/test_package_release.py scripts/test_publish_image.py -q"]

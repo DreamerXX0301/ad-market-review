@@ -1,6 +1,6 @@
 # 前端调用与交互约定
 
-API 根路径 `/api/v1`，snake_case；成功直接返回业务对象，列表通常为 `{items,total}`，错误为 HTTP 状态与 `{detail}`。本页描述消费规则，字段与业务语义分别见 [Analytics API](analytics-api.md) 和 [Workspace API](workspace-api.md)。不把当前机器的验收数量或来源样本写成接口保证。
+API 根路径 `/api/v1`，snake_case；成功直接返回业务对象，列表通常为 `{items,total}`，错误为 HTTP 状态与 `{detail}`。本页描述消费规则，字段与业务语义分别见 [Analytics API](analytics-api.md) 和 [Workspace API](workspace-api.md)。
 
 ## 页面与日期域
 

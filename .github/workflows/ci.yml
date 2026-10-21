@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 # Fork PRs can test code but cannot write releases, packages or deployment state.
 permissions:
