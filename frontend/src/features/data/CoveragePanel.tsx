@@ -302,7 +302,13 @@ export default function CoveragePanel({
                           </>
                         )}
                       </td>
-                      <td>
+                      <td
+                        className={
+                          coverage.displayState === "covered"
+                            ? "coverage-measure-covered"
+                            : undefined
+                        }
+                      >
                         <div className="coverage-measure-line">
                           <span>{coverage.label}</span>
                           {coverage.percentText && (
@@ -325,6 +331,12 @@ export default function CoveragePanel({
                               {integer(coverage.observed)} /{" "}
                               {integer(coverage.expected)} {coverage.unit}
                             </small>
+                            {coverage.displayState === "covered" && (
+                              <small className="coverage-complete-state">
+                                <CheckCircle2 size={12} aria-hidden="true" />
+                                当前范围已覆盖
+                              </small>
+                            )}
                           </>
                         ) : (
                           <small>

@@ -103,6 +103,18 @@
   border-radius: inherit;
   background: var(--blue);
 }
+.coverage-measure-covered .coverage-measure-line > b,
+.coverage-measure-covered .coverage-complete-state {
+  color: var(--green);
+}
+.coverage-measure-covered .coverage-mini-meter > i {
+  background: var(--green);
+}
+.coverage-measure-covered .coverage-complete-state {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 .coverage-row-note {
   display: block;
   color: var(--muted);

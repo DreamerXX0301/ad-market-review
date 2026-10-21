@@ -187,6 +187,48 @@ assert.match(
 );
 assert.match(updated, /5,575 \/ 5,575/);
 assert.match(updated, /待上市 5 只/);
+const scopedCoverage = renderToStaticMarkup(
+  createElement(CoveragePanel, {
+    ...props,
+    datasets: [
+      ["market_review", 74, 74, "known"],
+      ["security_identity", 5575, 5575, "known"],
+      ["topics", 710, 710, "known"],
+      ["calendar", 9999999, 10000000, "known"],
+      ["daily_raw", 100, 100, "unknown"],
+    ].map(([module, observed, expected, state]) => ({
+      module,
+      name: module,
+      status: "partial",
+      coverage_progress: {
+        state,
+        observed_count: observed,
+        expected_count: expected,
+        // A claimed or rounded 100% must not override the validated counts/state.
+        percent: 100,
+        coverage_status: "covered",
+        reason: "当前维度不证明来源完整历史",
+      },
+    })),
+  }),
+);
+assert.equal(
+  (
+    scopedCoverage.match(
+      /<td class="coverage-measure-covered"><div class="coverage-measure-line">/g,
+    ) || []
+  ).length,
+  3,
+  "only exact counts with known coverage receive the completed style",
+);
+assert.equal((scopedCoverage.match(/当前范围已覆盖/g) || []).length, 3);
+assert.match(
+  scopedCoverage,
+  /<small class="coverage-complete-state"><svg[^>]*aria-hidden="true"/,
+  "completed coverage includes an icon and a visible scope label",
+);
+assert.match(scopedCoverage, /&lt;100%/);
+assert.match(scopedCoverage, /当前维度不证明来源完整历史/);
 const unknownMarkup = renderToStaticMarkup(
   createElement(ListingIdentityRows, {
     rows: [
