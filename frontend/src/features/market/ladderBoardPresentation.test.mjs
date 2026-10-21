@@ -25,6 +25,7 @@ const {
   ladderThemeIndex,
   buildLadderDisplayGroups,
   isStructuralLadderTopic,
+  ladderCardAttribution,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
@@ -224,4 +225,71 @@ assert.equal(noConcept.groups[0].topic, null);
 assert.equal(noConcept.groups[0].items.length, 60);
 console.log(
   "ladder board: unique complete deterministic partition, six-group cap, structural-label exclusions, unassigned greedy counts and separate source bounds passed",
+);
+
+const publishing = {
+  instrument_id: "601999.SH",
+  name: "出版传媒",
+  source_industry: "出版",
+  reason: "出版发行+AI应用+数智基金",
+  topics: [
+    { topic_id: "state", name: "国企改革", kind: "concept" },
+    { topic_id: "media", name: "文化传媒", kind: "industry" },
+    { topic_id: "publishing", name: "出版", kind: "industry" },
+    { topic_id: "margin", name: "融资融券", kind: "concept" },
+    { topic_id: "ai", name: "AI应用", kind: "concept" },
+  ],
+};
+const publishingBefore = structuredClone(publishing);
+const attribution = ladderCardAttribution(publishing, {
+  key: "id:state",
+  name: "国企改革",
+  kind: "concept",
+});
+assert.equal(attribution.sourceIndustry, "出版");
+assert.deepEqual(
+  attribution.industryTopics.map((topic) => topic.name),
+  ["出版", "文化传媒"],
+  "same-date source industry takes precedence over a broad concept partition",
+);
+assert.equal(attribution.sourceReason, "出版发行+AI应用+数智基金");
+assert.deepEqual(
+  attribution.conceptTopics.map((topic) => topic.name),
+  ["国企改革", "AI应用"],
+  "all dated concepts remain associations, separate from industry and reason",
+);
+assert.deepEqual(
+  attribution.otherTopics.map((topic) => topic.name),
+  ["融资融券"],
+);
+assert.deepEqual(publishing, publishingBefore);
+const missingCause = ladderCardAttribution({
+  name: "出版传媒",
+  topics: [{ topic_id: "state", name: "国企改革", kind: "concept" }],
+});
+assert.equal(missingCause.sourceReason, null);
+assert.equal(missingCause.sourceIndustry, null);
+assert.equal(missingCause.industryTopics.length, 0);
+assert.equal(
+  missingCause.conceptTopics[0].name,
+  "国企改革",
+  "never invent industry/cause from a stock name or concept count",
+);
+const distinct = ladderCardAttribution({
+  source_industry: "来源行业甲",
+  reason: " — ",
+  topics: [
+    { topic_id: "i-a", name: "同名行业", kind: "industry" },
+    { topic_id: "i-b", name: "同名行业", kind: "industry" },
+    { topic_id: "c", name: "同名行业", kind: "concept" },
+    { name: "未分类归属" },
+  ],
+});
+assert.equal(distinct.industryTopics.length, 2);
+assert.equal(distinct.conceptTopics.length, 1);
+assert.equal(distinct.sourceIndustry, "来源行业甲");
+assert.equal(distinct.sourceReason, null);
+assert.equal(distinct.otherTopics.length, 1);
+console.log(
+  "ladder attribution: industry, source reason and concept associations stay distinct",
 );
