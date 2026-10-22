@@ -163,11 +163,20 @@
   font-size: 12px;
 }
 .chart-line-pick,
-.chart-line-save {
+.chart-line-actions > .btn {
+  height: 38px;
   min-height: 38px;
 }
-.chart-line-save {
-  margin-left: 0;
+.chart-line-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-left: auto;
+}
+.chart-line-actions .btn.small {
+  min-width: 84px;
+  padding: 0 13px;
+  font-size: 11px;
 }
 .chart-line-colors {
   display: flex;
@@ -309,7 +318,11 @@
     flex-basis: 150px;
     max-width: none;
   }
-  .chart-line-save {
+  .chart-line-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+  .chart-line-actions > .btn {
     flex: 1;
   }
   .chart-annotation-heading {

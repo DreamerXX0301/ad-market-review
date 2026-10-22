@@ -305,27 +305,29 @@ export function ChartAnnotationPanel({
             </button>
           ))}
         </div>
-        <button
-          className="btn small primary chart-line-save"
-          onClick={state.save}
-          disabled={state.busy || !state.scope || state.result.loading}
-        >
-          {state.busy ? "保存中…" : state.editing ? "保存修改" : "保存划线"}
-        </button>
-        {state.editing && (
+        <div className="chart-line-actions">
           <button
-            className="btn small"
-            disabled={state.busy}
-            onClick={() => {
-              state.setEditing(null);
-              state.setPrice("");
-              state.setLabel("");
-              state.setSettings(newLineSettings());
-            }}
+            className="btn small primary chart-line-save"
+            onClick={state.save}
+            disabled={state.busy || !state.scope || state.result.loading}
           >
-            取消修改
+            {state.busy ? "保存中…" : state.editing ? "保存修改" : "保存划线"}
           </button>
-        )}
+          {state.editing && (
+            <button
+              className="btn small"
+              disabled={state.busy}
+              onClick={() => {
+                state.setEditing(null);
+                state.setPrice("");
+                state.setLabel("");
+                state.setSettings(newLineSettings());
+              }}
+            >
+              取消修改
+            </button>
+          )}
+        </div>
       </div>
       {state.settings.line_type !== "reference" && (
         <div className="chart-line-alert-settings">
