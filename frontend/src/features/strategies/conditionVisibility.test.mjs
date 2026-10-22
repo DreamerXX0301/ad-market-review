@@ -179,6 +179,90 @@ for (const window of [
 }
 for (const side of ["entry", "exit"])
   assert.doesNotMatch(trade.tradeRuleText(saved), /kdj_j|KDJ J|54\.78/);
+const technicalFields = [
+  "macd_cross",
+  "macd_dif",
+  "macd_dea",
+  "kd_cross",
+  "kdj_k",
+  "kdj_d",
+].map((field) => ({
+  field,
+  type: field.endsWith("cross") ? "boolean" : "number",
+  operators: ["==", ">", "<"],
+  supported_periods: ["D", "W", "M"],
+  historical_event_supported: true,
+}));
+for (const scope of ["selection", "alert", "exit", "trade-entry", "trade-exit"])
+  for (const period of ["D", "W", "M"]) {
+    const value = { any: [{ field: "kd_cross", op: "==", value: true }] };
+    const before = JSON.stringify(value);
+    const html = renderToStaticMarkup(
+      createElement(tree.default, {
+        value,
+        fields: technicalFields,
+        period,
+        scope,
+        onChange,
+      }),
+    );
+    assert.match(html, /MACD 水上金叉/);
+    assert.match(html, /KDJ 低位金叉/);
+    assert.match(html, /KDJ K &gt; D（持续状态）/);
+    assert.match(html, /当期 DIF、DEA 都严格大于 0/);
+    assert.match(html, /添加技术组合/);
+    assert.equal((html.match(/aria-label="技术组合"/g) || []).length, 1);
+    assert.equal(
+      JSON.stringify(value),
+      before,
+      "opening a shortcut never changes an existing OR rule",
+    );
+  }
+const technicalHistory = {
+  all: [
+    {
+      history_event: {
+        window: { from: 1, to: 30 },
+        match: "latest",
+        where: {
+          all: [{ field: "kd_cross", op: "==", value: true, period: "D" }],
+        },
+        then: {
+          all: [{ field: "macd_cross", op: "==", value: true, period: "D" }],
+        },
+      },
+    },
+  ],
+};
+const historyHtml = renderToStaticMarkup(
+  createElement(tree.default, {
+    value: technicalHistory,
+    fields: technicalFields,
+    period: "M",
+    onChange,
+  }),
+);
+assert.equal(
+  (historyHtml.match(/aria-label="技术组合"/g) || []).length,
+  3,
+  "top-level and two history stages expose one toolbar each, not every nested group",
+);
+assert.equal(
+  (historyHtml.match(/class="technical-preset-period">日K</g) || []).length,
+  2,
+);
+assert.match(historyHtml, /class="technical-preset-period">完整月K</);
+assert.doesNotMatch(
+  renderToStaticMarkup(
+    createElement(tree.default, {
+      value: { all: [{ field: "close", op: ">", value: 1 }] },
+      fields: [{ field: "close", type: "number", operators: [">"] }],
+      period: "D",
+      onChange,
+    }),
+  ),
+  /aria-label="技术组合"/,
+);
 console.log(
   "condition visibility: real stock, history, alert, exit and trade editors omit hidden indicator across D/W/M, preserving saved rules and K/D cross conditions",
 );

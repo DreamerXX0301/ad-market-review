@@ -26,6 +26,14 @@ import {
 } from "./historicalRules";
 import type { RuleNode, HistoryWindowMode } from "./historicalRules";
 import type { ConditionScope } from "./conditionScope";
+import { periodLabel } from "./conditionPeriod";
+import {
+  availableTechnicalPresets,
+  createTechnicalPreset,
+  appendTechnicalPreset,
+  technicalPresetInsertionError,
+} from "./technicalConditionPresets";
+import type { TechnicalPresetId } from "./technicalConditionPresets";
 import "./RuleTreeEditor.css";
 
 type EditorProps = {
@@ -39,10 +47,97 @@ type EditorProps = {
   allowTrackingConditions?: boolean;
 };
 type NodeProps = EditorProps & {
+  rootValue: RuleNode;
   context: "current" | "where" | "then";
   depth: number;
   onRemove?: () => void;
 };
+
+function TechnicalPresetControls({
+  value,
+  onChange,
+  rootValue,
+  fields,
+  period,
+  depth,
+}: {
+  value: RuleNode;
+  onChange: (next: RuleNode) => void;
+  rootValue: RuleNode;
+  fields: Row[];
+  period: string;
+  depth: number;
+}) {
+  const [selected, setSelected] =
+    useState<TechnicalPresetId>("macd-above-zero");
+  const [upper, setUpper] = useState<number | "">(20);
+  const available = availableTechnicalPresets(fields, period);
+  const preset = available.find((item) => item.id === selected) || available[0];
+  if (!preset) return null;
+  const invalidUpper =
+    preset.id === "kd-low-cross" &&
+    (upper === "" || !Number.isFinite(upper) || upper < 0 || upper > 100);
+  const rule = invalidUpper
+    ? null
+    : createTechnicalPreset(preset.id, period, upper === "" ? 20 : upper);
+  const error = invalidUpper
+    ? "KDJ低位上限请输入0—100的有限数值"
+    : technicalPresetInsertionError(rootValue, value, rule!, depth);
+  return (
+    <div className="technical-preset-controls">
+      <div className="technical-preset-fields">
+        <label>
+          技术组合
+          <select
+            aria-label="技术组合"
+            value={preset.id}
+            onChange={(event) =>
+              setSelected(event.target.value as TechnicalPresetId)
+            }
+          >
+            {available.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {preset.id === "kd-low-cross" && (
+          <label className="technical-preset-upper">
+            K、D低位上限
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="any"
+              aria-label="KDJ低位上限"
+              value={upper}
+              onChange={(event) =>
+                setUpper(
+                  event.target.value === "" ? "" : Number(event.target.value),
+                )
+              }
+            />
+          </label>
+        )}
+        <span className="technical-preset-period">{periodLabel(period)}</span>
+        <button
+          type="button"
+          className="btn small"
+          disabled={!!error}
+          onClick={() => {
+            if (rule && !error) onChange(appendTechnicalPreset(value, rule));
+          }}
+        >
+          <Plus size={13} /> 添加技术组合
+        </button>
+      </div>
+      <small className={error ? "technical-preset-error" : ""}>
+        {error || `${preset.description} 添加后可逐项修改，不改变已有条件。`}
+      </small>
+    </div>
+  );
+}
 
 function conditionFields(fields: Row[], context: NodeProps["context"]) {
   fields = fields.filter((field) => !isHiddenConditionField(field.field));
@@ -88,6 +183,7 @@ function HistoryEventNode({
   allowTrackingConditions,
   depth,
   onRemove,
+  rootValue,
 }: NodeProps) {
   const event = value.history_event;
   const [selectedWindowMode, setWindowMode] = useState<HistoryWindowMode>(
@@ -276,7 +372,19 @@ function HistoryEventNode({
           </label>
           <small>模板只修改历史事件；今日条件保持独立。</small>
         </div>
+        <TechnicalPresetControls
+          value={event.where || { all: [] }}
+          onChange={(where) => {
+            setCustomPreset(true);
+            update({ where });
+          }}
+          rootValue={rootValue}
+          fields={conditionFields(fields, "where")}
+          period="D"
+          depth={depth + 1}
+        />
         <RuleNodeEditor
+          rootValue={rootValue}
           value={event.where || { all: [] }}
           onChange={(where) => {
             setCustomPreset(true);
@@ -329,7 +437,16 @@ function HistoryEventNode({
             </button>
           ))}
         </div>
+        <TechnicalPresetControls
+          value={event.then || { all: [] }}
+          onChange={(then) => update({ then })}
+          rootValue={rootValue}
+          fields={conditionFields(fields, "then")}
+          period="D"
+          depth={depth + 1}
+        />
         <RuleNodeEditor
+          rootValue={rootValue}
           value={event.then || { all: [] }}
           onChange={(then) => update({ then })}
           fields={fields}
@@ -513,7 +630,16 @@ export default function RuleTreeEditor({
     normalized.all || normalized.any ? normalized : { all: [normalized] };
   return (
     <div className="rule-tree-editor">
+      <TechnicalPresetControls
+        value={group}
+        onChange={onChange}
+        rootValue={group}
+        fields={conditionFields(fields, "current")}
+        period={period}
+        depth={0}
+      />
       <RuleNodeEditor
+        rootValue={group}
         value={group}
         onChange={onChange}
         fields={fields}

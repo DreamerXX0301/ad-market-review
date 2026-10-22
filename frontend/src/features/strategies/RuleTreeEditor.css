@@ -2,6 +2,61 @@
   display: grid;
   gap: 15px;
 }
+.technical-preset-controls {
+  display: grid;
+  gap: 8px;
+  padding: 11px 13px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent-secondary) 4%, var(--surface));
+}
+.technical-preset-fields {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.technical-preset-fields > label {
+  display: grid;
+  gap: 5px;
+  min-width: 180px;
+  flex: 1 1 210px;
+  color: var(--subtle);
+  font-size: 10px;
+}
+.technical-preset-fields select {
+  width: 100%;
+}
+.technical-preset-fields > .technical-preset-upper {
+  min-width: 100px;
+  max-width: 135px;
+  flex: 0 1 120px;
+}
+.technical-preset-upper > input {
+  width: 100%;
+}
+.technical-preset-period {
+  padding: 0 2px 9px;
+  color: var(--subtle);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.technical-preset-controls > small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.technical-preset-controls > .technical-preset-error {
+  color: var(--amber);
+}
+.event-stage > .technical-preset-controls {
+  margin: 0 0 12px 33px;
+}
+@media (max-width: 600px) {
+  .event-stage > .technical-preset-controls {
+    margin-left: 0;
+  }
+}
 .visual-rule-group {
   border: 1px solid var(--border);
   border-radius: 10px;
