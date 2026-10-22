@@ -49,6 +49,10 @@ import {
   visibleRecycleRows,
 } from "../../components/recyclePresentation";
 import "./Backtests.css";
+import useBacktestAvailability, {
+  backtestStrategyOptions,
+  resolvedBacktestStrategyId,
+} from "./useBacktestAvailability";
 import { TradeRuleSummary } from "../strategies/TradeRules";
 import { summarizeChecks } from "../strategies/Conditions";
 const defaultConfig = {
@@ -146,10 +150,6 @@ export default function Backtests({
     "backtest_id",
   );
   const [strategyId, setStrategyId] = useState(initialStrategyId || ""),
-    [availability, setAvailability] = useState<Row | null>(null),
-    [checking, setChecking] = useState(false),
-    [start, setStart] = useState(""),
-    [end, setEnd] = useState(""),
     [config, setConfig] = useState<Row>(defaultConfig),
     [advanced, setAdvanced] = useState(false),
     [selectedId, setSelectedId] = useState(""),
@@ -160,22 +160,43 @@ export default function Backtests({
     [trade, setTrade] = useState<Row | null>(null);
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
-  const strategyVersion = list(strategies.data).find(
-    (s) => s.strategy_id === strategyId,
-  )?.version;
+  const strategyOptions = backtestStrategyOptions(list(strategies.data));
+  const chosenStrategy = strategyOptions.find(
+    (item) => item.strategy_id === strategyId,
+  );
+  const strategiesReady =
+    !!strategies.data && !strategies.loading && !strategies.error;
+  const {
+    availability,
+    checking,
+    error: availabilityError,
+    start,
+    setStart,
+    end,
+    setEnd,
+    canRun,
+  } = useBacktestAvailability({
+    strategy: chosenStrategy,
+    ready: strategiesReady,
+    dataVersion,
+  });
   const report = useApi<Row>(
     selectedId && !deletedHistory ? `/backtests/${selectedId}` : null,
   );
-  const toast = useToast(),
-    checkId = useRef(0);
-  const availabilityScope = useRef("");
+  const toast = useToast();
   useEffect(() => {
     if (initialStrategyId) setStrategyId(initialStrategyId);
   }, [initialStrategyId]);
   useEffect(() => {
-    if (!strategyId && list(strategies.data)[0])
-      setStrategyId(list(strategies.data)[0].strategy_id);
-  }, [strategies.data]);
+    if (!strategiesReady) return;
+    setStrategyId((current) =>
+      resolvedBacktestStrategyId(list(strategies.data), current),
+    );
+  }, [strategies.data, strategiesReady, strategyId]);
+  useEffect(
+    () => setError(""),
+    [strategyId, chosenStrategy?.version, dataVersion],
+  );
   useEffect(() => {
     if (deletedHistory || !history.data) return;
     const rows = visibleRecycleRows(list(history.data), false, "backtest_id");
@@ -183,36 +204,6 @@ export default function Backtests({
       current ? current : rows[0]?.backtest_id || "",
     );
   }, [history.data, deletedHistory]);
-  useEffect(() => {
-    if (!strategyId) return;
-    const seq = ++checkId.current;
-    const scope = `${strategyId}:${strategyVersion || ""}`;
-    const keepDates = availabilityScope.current === scope;
-    setChecking(true);
-    setAvailability(null);
-    post("/backtests/availability", { strategy_id: strategyId })
-      .then((r) => {
-        if (seq !== checkId.current) return;
-        setAvailability(r);
-        availabilityScope.current = scope;
-        setStart((current) =>
-          keepDates && current && current >= r.min_date && current <= r.max_date
-            ? current
-            : r.default_start || r.min_date || "",
-        );
-        setEnd((current) =>
-          keepDates && current && current >= r.min_date && current <= r.max_date
-            ? current
-            : r.default_end || r.max_date || "",
-        );
-      })
-      .catch((e) => {
-        if (seq === checkId.current) setError(e.message);
-      })
-      .finally(() => {
-        if (seq === checkId.current) setChecking(false);
-      });
-  }, [strategyId, strategyVersion, dataVersion]);
   const r = selectedBacktestReport(
     report.data,
     selectedId,
@@ -268,6 +259,10 @@ export default function Backtests({
   }
   async function run() {
     setError("");
+    if (!canRun) {
+      setError("请选择有效策略，并等待可用区间核验成功后运行");
+      return;
+    }
     if (!start || !end || start > end) {
       setError("请选择有效的回测起止日期");
       return;
@@ -335,7 +330,7 @@ export default function Backtests({
               onChange={(e) => setStrategyId(e.target.value)}
             >
               <option value="">请选择已有策略</option>
-              {list(strategies.data).map((s) => (
+              {strategyOptions.map((s) => (
                 <option key={s.strategy_id} value={s.strategy_id}>
                   {s.name} · V{s.version} · {s.period === "W" ? "周线" : "日线"}
                 </option>
@@ -353,7 +348,9 @@ export default function Backtests({
               allowedDates={marketDates.length ? marketDates : undefined}
               value={start}
               onChange={setStart}
-              disabled={checking || !strategyId}
+              disabled={
+                checking || !strategiesReady || !chosenStrategy || !availability
+              }
             />
           </label>
           <span className="date-range-separator">—</span>
@@ -368,22 +365,23 @@ export default function Backtests({
               allowedDates={marketDates.length ? marketDates : undefined}
               value={end}
               onChange={setEnd}
-              disabled={checking || !strategyId}
+              disabled={
+                checking || !strategiesReady || !chosenStrategy || !availability
+              }
             />
           </label>
           <button
             className="btn primary"
-            disabled={
-              !strategyId ||
-              busy ||
-              checking ||
-              availability?.available === false
-            }
+            disabled={busy || !canRun}
             onClick={run}
           >
             {busy ? <Spinner /> : <Play size={15} />}运行回测
           </button>
         </div>
+        {strategies.error && (
+          <ErrorBox message={strategies.error} retry={strategies.reload} />
+        )}
+        {availabilityError && <ErrorBox message={availabilityError} />}
         {checking ? (
           <div className="inline-hint">
             <Spinner />
@@ -420,14 +418,7 @@ export default function Backtests({
             summary={`受限研究样本 · 未复权撮合 · 排除区间分红送转${availability?.warmup_bars ? " · " + availability.warmup_bars + "期预热" : ""}`}
           />
         )}
-        <TradeRuleSummary
-          config={config}
-          value={
-            list(strategies.data).find(
-              (item) => item.strategy_id === strategyId,
-            )?.trade_rules
-          }
-        />
+        <TradeRuleSummary config={config} value={chosenStrategy?.trade_rules} />
         <div className="panel-footnote">
           买入、卖出条件在策略管理中编辑，并随策略版本冻结；止盈、止损与持有期限在“交易与费用参数”中设置。
         </div>
