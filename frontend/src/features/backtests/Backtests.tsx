@@ -42,9 +42,11 @@ import RecycleConfirm from "../../components/RecycleConfirm";
 import { frozenInitialCapital } from "../../components/equityCurve";
 import {
   deletionReason,
+  backtestSelectionForStrategies,
   restorationReason,
   recycleListWithout,
   selectedBacktestReport,
+  selectedBacktestTrade,
   selectionAfterRecycle,
   visibleRecycleRows,
 } from "../../components/recyclePresentation";
@@ -157,7 +159,10 @@ export default function Backtests({
     [error, setError] = useState(""),
     [tab, setTab] = useState("trades"),
     [orderFilter, setOrderFilter] = useState("all"),
-    [trade, setTrade] = useState<Row | null>(null);
+    [tradeSelection, setTrade] = useState<{
+      backtestId: string;
+      trade: Row;
+    } | null>(null);
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
   const strategyOptions = backtestStrategyOptions(list(strategies.data));
@@ -198,12 +203,25 @@ export default function Backtests({
     [strategyId, chosenStrategy?.version, dataVersion],
   );
   useEffect(() => {
-    if (deletedHistory || !history.data) return;
+    if (deletedHistory) return;
     const rows = visibleRecycleRows(list(history.data), false, "backtest_id");
     setSelectedId((current) =>
-      current ? current : rows[0]?.backtest_id || "",
+      backtestSelectionForStrategies(
+        current,
+        report.data,
+        rows,
+        list(strategies.data),
+        strategiesReady,
+      ),
     );
-  }, [history.data, deletedHistory]);
+  }, [
+    history.data,
+    deletedHistory,
+    report.data,
+    strategies.data,
+    strategiesReady,
+    selectedId,
+  ]);
   const r = selectedBacktestReport(
     report.data,
     selectedId,
@@ -211,6 +229,12 @@ export default function Backtests({
     report.error,
   );
   const capital = frozenInitialCapital(r);
+  const trade = selectedBacktestTrade(tradeSelection, selectedId, r);
+  useEffect(() => {
+    setTrade((current) =>
+      current?.backtestId === selectedId ? current : null,
+    );
+  }, [selectedId]);
   useEffect(() => {
     if (!r || !["queued", "running", "pending"].includes(r.status)) return;
     const timer = setTimeout(report.reload, 1500);
@@ -683,7 +707,12 @@ export default function Backtests({
                               render: (_, row) => (
                                 <button
                                   className="link"
-                                  onClick={() => setTrade(row)}
+                                  onClick={() =>
+                                    setTrade({
+                                      backtestId: r.backtest_id,
+                                      trade: row,
+                                    })
+                                  }
                                 >
                                   逐笔依据 <ChevronRight size={12} />
                                 </button>

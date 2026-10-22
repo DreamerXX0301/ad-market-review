@@ -59,3 +59,43 @@ export function selectedBacktestReport(
     ? report
     : null;
 }
+
+/** Only a known parent missing from the complete strategy list proves a cascade deletion. */
+export function backtestSelectionForStrategies(
+  current: string,
+  report: Item | null,
+  history: Item[],
+  strategies: Item[],
+  strategiesReady: boolean,
+): string {
+  if (!strategiesReady) return current;
+  // Archived strategies remain valid parents for immutable historical reports.
+  const parents = new Set(
+    strategies.filter((item) => !item.deleted).map((item) => item.strategy_id),
+  );
+  if (current) {
+    const parent =
+      (report?.backtest_id === current ? report.strategy_id : undefined) ||
+      history.find((item) => item.backtest_id === current)?.strategy_id;
+    // An off-page report or an unavailable detail response is not evidence of deletion.
+    if (!parent || parents.has(parent)) return current;
+  }
+  return (
+    history.find(
+      (item) =>
+        !item.deleted && item.backtest_id && parents.has(item.strategy_id),
+    )?.backtest_id || ""
+  );
+}
+
+/** A transaction dialog belongs to the report that opened it, even across retained pages. */
+export function selectedBacktestTrade(
+  selection: { backtestId: string; trade: Item } | null,
+  selectedId: string,
+  report: Item | null,
+): Item | null {
+  return selection?.backtestId === selectedId &&
+    report?.backtest_id === selectedId
+    ? selection.trade
+    : null;
+}
