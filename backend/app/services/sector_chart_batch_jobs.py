@@ -73,7 +73,7 @@ def create_batch_job(market, day, request_key=None, chain_parameters=None, mode=
     if chain_parameters:
         parameters.update({key: chain_parameters[key] for key in
                            ('initialization_chain', 'increment_chain', 'parent_sync_job_id',
-                            'previous_chain_job_id', 'data_chain_version') if key in chain_parameters})
+                            'previous_chain_job_id', 'data_chain_version', 'fund_request_budget_version') if key in chain_parameters})
     return tasks.create_task('source_check', parameters, target_date=day, request_key=request_key)
 
 

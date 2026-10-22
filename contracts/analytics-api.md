@@ -13,6 +13,8 @@
 
 `GET /data/status` 的每个 `datasets[]` 新增 `coverage_progress`：`label/observed_count/expected_count/percent/unit/dimension/basis/state/reason`。`row_count` 仍表示已留存物理记录，与完整度分子分开；只有同一口径分母明确、分子不超过分母且分母大于零时 percent 才是 0–100，其他为 null。
 
+新建在线补充、首次及增量同步的公开资金请求冻结 `fund_request_budget_version=public-fund-budget-v1`，随已授权题材/板块后续链原样传递。缺少该字段的旧任务及其重试保持旧两轮预算；不改写旧参数、任务哈希或暂停/取消状态。新预算最多3在途、两轮共享200逻辑请求/600传输尝试/60秒异步截止目标；同类connection/schema/5xx/限流/拒绝连续5次停止本轮后续请求。第二轮只请求暂时失败的明确代码；首轮目录暂时失败时，恢复目录后允许首次请求，永久数据缺口不重拉。首个已确认目录冻结代码/名称/分类指纹，二轮目录变化保留首轮分母、记录和缺口并标partial，不能因目录缩小而完整。覆盖保留 `logical_request_count/actual_transport_attempt_count/peak_inflight_requests/source_circuit_open/source_failure_kind/stop_reason/local_cache_validation_seconds` 等计数。逻辑请求按首次实际发起HTTP计，传输尝试按应用HTTP调用计，不代表DNS/TCP包数；未发起的代码单列，未请求不作零或完整。异步等待、响应体、退避及在途取消受共享截止约束，暂停会等待请求取消收尾；同步本地IO和平台DNS收尾可能超时，因此 `whole_phase_hard_deadline_guaranteed=false`，不承诺整个补充任务60秒结束。未知版本拒绝，不降级或自动取数。
+
 `coverage_progress.coverage_status/coverage_label` 区分 `covered`（当前范围已覆盖）、`partial`（当前范围有缺口）、`unknown`（覆盖待核验）、`on_demand`（按需计算）；`scope_complete` 对前两者为 true/false，其余为 null。判断完整使用原始整数分子与分母相等，不能由显示百分比四舍五入推定。上述状态和标签同时复制在 dataset 顶层，供覆盖卡展示。
 
 `status` 兼容保留不可变快照原始发布质量，同时通过 `snapshot_quality/snapshot_quality_label/snapshot_quality_note` 明确其来源和范围。某一当前维度100%可以与发布时整体 `partial` 并存：例如当前目录成员组完整不证明历史每日成员归属完整。不得因此修改快照质量或任务状态，也不能把按需指标计算当作下载未完成；任务终态单独读取任务接口。

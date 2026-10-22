@@ -15,6 +15,7 @@ import duckdb
 from app.core import atomic_json, connect, published_dir, digest, dumps, get_market, hash_file, now_ms
 from app.adapters.providers import ProviderError
 from app.adapters.public_market import PublicMarketClient, normalize_limit_pool
+from app.adapters.public_fund_budget import FundRequestBudget, validate_fund_budget_version
 from app.services.task_service import TaskCancelled, TaskPaused
 from app.services.limit_history import fetch_fuyao_pool, annual_coverage, pool_spec, _midnight, NORMALIZATION_VERSION
 
@@ -193,48 +194,85 @@ def revalidate_for_market(market,target,*,progress=None,guard=None,job_id=None):
     return _publish_document(doc,calendar,target,cache,guard,tick)
 
 
-def fetch_history_for_market(public, market, target, cache, *, progress=None, guard=None):
+def fetch_history_for_market(public, market, target, cache, *, progress=None, guard=None, request_budget_version=None):
     from app.adapters.public_fund_history import fetch_sector_fund_history
+    validate_fund_budget_version(request_budget_version)
+    budget=FundRequestBudget() if request_budget_version is not None else None
     calendar=market.calendar();expected=[d for d in calendar if d<=target][-20:]
     def identity(code):return digest({'source':'eastmoney-public','capability':'industry-fund-history','code':code,'target':target,'expected_dates':expected,'contract':'public-fund-history-v1'})
     def lookup(code,day):
         if guard:guard()
-        result=cache.reuse('eastmoney','fund-board',day+'-'+code,identity(code))
+        result=cache.reuse('eastmoney','fund-board',day+'-'+code,identity(code),allow_partial=budget is not None)
         return _load(cache.root/result['raw_artifact']) if result else None
     def save(code,day,normalized,raw):
         if guard:guard()
         cache.accept('eastmoney','fund-board',day+'-'+code,identity(code),{**normalized,'date':day,'topic_code':code,'complete':normalized['history_complete']},raw)
-    summaries=[];raw_rounds=[];used=0;result=None
+    summaries=[];raw_rounds=[];used=0;result=None;retry_codes=None;prior_failures={};directory_signature=None
     for round_no in (1,2):
         remaining=200-used
-        if remaining<2:break
+        if remaining<2 or budget is not None and not budget.available():break
         if guard:guard()
         def on_progress(done,total,code):
             if guard:guard()
             if progress:progress(done,total,'第'+str(round_no)+'轮'+('补缺' if round_no==2 else '采集')+' · '+code)
         try:
-            current=fetch_sector_fund_history(public,target,scope='industry',limit=None,max_requests=remaining,calendar=calendar,progress=on_progress,cache_lookup=lookup,cache_save=save)
+            policy={'request_budget':budget,'guard':guard,'retry_codes':retry_codes,'prior_failures':prior_failures} if budget is not None else {}
+            current=fetch_sector_fund_history(public,target,scope='industry',limit=None,max_requests=remaining,calendar=calendar,progress=on_progress,cache_lookup=lookup,cache_save=save,**policy)
         except ProviderError as error:
             # Directory I/O/shape failures happen before per-board calls. Count
             # that logical request too, and retain the failed round explicitly.
             current={'items':[],'history':[],'date':target,'source':'eastmoney-public','complete':False,'coverage':{'directory_count':None,'selected_count':0,'accepted_count':0,'failed_count':1,'unrequested_count':0,'cached_count':0,'logical_request_count':1,'complete':False,'history_20d_complete':False},'raw_pages':[],'failures':[{'stage':'directory','reason':str(error)}],'intraday_sequence_available':False}
-        coverage=current.get('coverage',{});spent=coverage.get('logical_request_count')
-        if isinstance(spent,bool) or not isinstance(spent,int) or not 1<=spent<=remaining:raise ProviderError('资金流适配器请求计数超出本任务剩余预算')
+        coverage=current.get('coverage',{});catalog_changed=False
+        if budget is not None and coverage.get('directory_signature'):
+            observed_signature=coverage['directory_signature']
+            if directory_signature is None:
+                directory_signature=observed_signature
+            elif directory_signature!=observed_signature:
+                catalog_changed=True;budget.stop_reason='directory_changed'
+                failure={'stage':'directory_changed','reason':'同任务两轮行业目录代码、名称或分类变化；保留首个已确认目录的记录及缺口，不缩小分母认定完整','failure_kind':'schema','retryable':False}
+                current['failures'].append(failure);current['complete']=False
+                coverage.update(complete=False,history_20d_complete=False,retry_eligible=False,
+                    failed_count=len(current['failures']),stop_reason='directory_changed',directory_scope_changed=True,
+                    frozen_directory_signature=directory_signature,observed_directory_signature=observed_signature)
+                # First-round records and gaps keep their original denominator.
+                # The changed round remains in raw_rounds, not a replacement
+                # scope silently able to hide the original failed industry.
+                result={**result,'complete':False,'failures':[*result.get('failures',[]),failure],
+                    'coverage':{**result.get('coverage',{}),'complete':False,'history_20d_complete':False,
+                        'retry_eligible':False,'failed_count':len(result.get('failures',[]))+1,
+                        'directory_scope_changed':True,'frozen_directory_signature':directory_signature,
+                        'observed_directory_signature':observed_signature}}
+        spent=coverage.get('logical_request_count')
+        if isinstance(spent,bool) or not isinstance(spent,int) or not (0 if budget is not None else 1)<=spent<=remaining:raise ProviderError('资金流适配器请求计数超出本任务剩余预算')
         used+=spent
         summary={'round':round_no,'budget_before':remaining,'logical_request_count':spent,'budget_remaining':200-used,'cached_count':coverage.get('cached_count',0),'accepted_count':coverage.get('accepted_count',0),'failed_count':coverage.get('failed_count',0),'unrequested_count':coverage.get('unrequested_count',0),'complete':bool(coverage.get('complete')),'history_20d_complete':bool(coverage.get('history_20d_complete')),'failures':list(current.get('failures',[]))}
+        if budget is not None:
+            summary.update(actual_transport_attempt_count=coverage.get('actual_transport_attempt_count',0),source_circuit_open=coverage.get('source_circuit_open',False),stop_reason=coverage.get('stop_reason'),retry_eligible=coverage.get('retry_eligible',False),elapsed_seconds=coverage.get('elapsed_seconds'))
         summaries.append(summary)
         raw_rounds.append({'kind':'fund_history_round','round':round_no,'coverage':dict(coverage),'failures':list(current.get('failures',[])),'pages':current.pop('raw_pages',[])})
         # A second round may fail to read its directory after the first already
         # accepted dated records. Keep that data and its explicit missing scope.
-        if result is None or current.get('items') or not result.get('items'):result=current
+        if not catalog_changed and (result is None or current.get('items') or not result.get('items')):result=current
         if coverage.get('complete') and coverage.get('history_20d_complete'):break
+        if budget is not None and not coverage.get('retry_eligible'):break
+        if budget is not None:
+            prior_failures={failure['topic_code']:dict(failure) for failure in current.get('failures',[]) if failure.get('topic_code')}
+            # A temporary directory failure has not attempted any history yet.
+            # Its recovery may make first attempts; a confirmed directory uses
+            # only the explicitly retryable failed codes on the second round.
+            retry_codes=None if coverage.get('directory_count') is None else {code for code,failure in prior_failures.items() if failure.get('retryable')}
     if result is None:raise ProviderError('资金流请求预算不足，未启动额外重试')
     result['rounds']=summaries;result['raw_pages']=raw_rounds
     result['coverage']={**result.get('coverage',{}),'logical_request_count':used,'max_logical_requests':200,'max_transport_attempts':600,'round_count':len(summaries),'retry_policy':'同任务最多两轮；第二轮仅补失败且复用已验SHA缓存；两轮合计最多200个逻辑请求','rounds':summaries}
+    if budget is not None:
+        result['coverage'].update(budget.snapshot(),round_count=len(summaries),rounds=summaries,
+            retry_policy='新冻结资金预算：两轮共享200逻辑/600传输上限、60秒异步网络截止；连续5次同类来源故障停发，第二轮仅重试暂时失败；未取得数据保留未知',
+            local_cache_validation_seconds=sum(r['coverage'].get('local_cache_validation_seconds',0) for r in raw_rounds))
     return result
 
 
-def refresh_for_market(market, target, *, year_history=False, recent_days=1, progress=None, guard=None, job_id=None, sector_history=False):
+def refresh_for_market(market, target, *, year_history=False, recent_days=1, progress=None, guard=None, job_id=None, sector_history=False, fund_request_budget_version=None):
+    validate_fund_budget_version(fund_request_budget_version)
     status=market.status(); calendar=market.calendar()
     if target not in calendar:raise ValueError('补充目标日期必须是已留存交易日')
     if target!=status['data_end']:raise ValueError('补充任务以当前冻结行情日为锚；历史盘面从该任务留存的逐日数据读取')
@@ -349,7 +387,17 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
             if guard:guard()
             if progress:progress('核验行业日级资金',75+int(processed/max(1,total)*23),code+' · '+str(processed)+'/'+str(total),{'actual_completed_batches':done+processed,'actual_total_batches':planned,'fund_processed':processed,'fund_catalog_count':total})
         try:
-            record=fetch_history_for_market(public,market,target,cache,progress=fund_progress,guard=guard)
+            record=fetch_history_for_market(public,market,target,cache,progress=fund_progress,guard=guard,request_budget_version=fund_request_budget_version)
+            if fund_request_budget_version is not None and progress:
+                statistics=record.get('coverage',{})
+                progress('行业资金请求阶段结束',98,'已留存实际请求计数；缺口保持未知',
+                    {'fund_request_budget_version':fund_request_budget_version,
+                     'fund_logical_requests':statistics.get('logical_request_count'),
+                     'fund_actual_transport_attempts':statistics.get('actual_transport_attempt_count'),
+                     'fund_request_elapsed_seconds':statistics.get('elapsed_seconds'),
+                     'fund_source_circuit_open':statistics.get('source_circuit_open'),
+                     'fund_stop_reason':statistics.get('stop_reason'),
+                     'fund_whole_phase_hard_deadline_guaranteed':False})
             raw=record.pop('raw_pages')
             record=cache.accept('eastmoney','fund-flow',target,digest({'day':target,'scope':'industry-history'}),record,raw)
             if record.get('items'):
@@ -404,7 +452,9 @@ def execute_supplement(job_id, progress=None):
     with connect() as connection:
         row=connection.execute('SELECT parameters_json,target_date FROM job WHERE job_id=?',(job_id,)).fetchone()
     if not row:raise ValueError('补充任务不存在')
-    params=json.loads(row['parameters_json']);market=get_market();status=market.status();target=row['target_date'] or status.get('data_end')
+    params=json.loads(row['parameters_json'])
+    validate_fund_budget_version(params.get('fund_request_budget_version'))
+    market=get_market();status=market.status();target=row['target_date'] or status.get('data_end')
     if params.get('market_snapshot_id') is not None and params['market_snapshot_id']!=status.get('snapshot_id'):
         raise ValueError('盘面补拉计划所用行情代际已变化，请核验新数据后重新提交')
     expected_generation=status.get('snapshot_id')
@@ -416,4 +466,4 @@ def execute_supplement(job_id, progress=None):
     guard()
     if params.get('revalidate_only') is True:
         return revalidate_for_market(market,target,progress=progress,guard=guard,job_id=job_id)
-    return refresh_for_market(market,target,year_history=bool(params.get('year_history',True)),recent_days=params.get('recent_days',20),progress=progress,guard=guard,job_id=job_id,sector_history=params.get('sector_history') is True)
+    return refresh_for_market(market,target,year_history=bool(params.get('year_history',True)),recent_days=params.get('recent_days',20),progress=progress,guard=guard,job_id=job_id,sector_history=params.get('sector_history') is True,fund_request_budget_version=params.get('fund_request_budget_version'))

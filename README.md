@@ -206,6 +206,7 @@ docker compose -p ad-market-review -f docker-compose.yml --profile worker up -d 
 | 选择数据源、理解权限     | [数据源与权限](docs/数据源与权限.md)                                                     |
 | 安装已发布镜像           | [Docker部署](docs/Docker部署.md)                                                         |
 | 配置进程、备份业务数据   | [部署与运维](docs/部署与运维.md)                                                         |
+| 查看容量与盘后增量优化   | [存储与盘后增量优化](docs/存储与盘后增量优化.md)                                         |
 | 更新已有安装或准备回滚   | [版本升级与回滚](docs/版本升级与回滚.md)                                                 |
 | 核对指标、价格与历史限制 | [实现范围与数据边界](docs/实现范围与数据边界.md)                                         |
 | 理解模块和本地存储       | [架构与模块边界](docs/架构与模块边界.md) · [数据库与数据流](docs/数据库与数据流.md)      |

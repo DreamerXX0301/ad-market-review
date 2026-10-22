@@ -112,34 +112,37 @@ def _queue_followup_once(job,completed_result=None):
     # Recovery can be the first code to freeze a no-change parent's date. Queue
     # its short children here too, before creating a long sector child.
     _queue_local_sync_checks(job)
+    from app.adapters.public_fund_budget import validate_fund_budget_version
+    fund_version=validate_fund_budget_version(parameters.get('fund_request_budget_version'))
+    fund_policy={'fund_request_budget_version':fund_version} if fund_version is not None else {}
     if job['kind']=='initialise':
         extra={'data_chain_version':'sector-charts-v1'} if parameters.get('data_chain_version')=='sector-charts-v1' else {}
-        child=tasks.create_task('topic_refresh',{'source_id':'fuyao','scope':'current-full-catalog','initialization_chain':True,'parent_sync_job_id':job['job_id'],**extra},target_date=target,request_key='topics-after-initialise:'+job['job_id'])
+        child=tasks.create_task('topic_refresh',{'source_id':'fuyao','scope':'current-full-catalog','initialization_chain':True,'parent_sync_job_id':job['job_id'],**extra,**fund_policy},target_date=target,request_key='topics-after-initialise:'+job['job_id'])
         message='历史行情已发布，完整题材库已排队；新初始化将接续板块历史K线，再补充年内统计、目标日封板与资金' if extra else '历史行情已发布，完整题材库已排队；题材完成后一次回补年内统计，并补充目标日封板与资金'
     elif job['kind']=='increment' and parameters.get('data_chain_version')=='sector-charts-increment-v1':
         from app.core import get_market
         from app.services.sector_chart_batch_jobs import create_batch_job
         child=create_batch_job(get_market(),target,request_key='sector-charts-after-sync:'+job['job_id'],mode='increment',
             chain_parameters={'increment_chain':True,'parent_sync_job_id':job['job_id'],
-                              'data_chain_version':'sector-charts-increment-v1'})
+                              'data_chain_version':'sector-charts-increment-v1',**fund_policy})
         message='主行情已发布，板块K线尾部增量已排队；只追加缺少交易日，再接续目标日盘面补充'
     elif job['kind']=='increment':
-        child=_supplement_child({'operation':'market_supplement','year_history':False,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':job['job_id']},target,'supplement-after-sync:'+job['job_id'])
+        child=_supplement_child({'operation':'market_supplement','year_history':False,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':job['job_id'],**fund_policy},target,'supplement-after-sync:'+job['job_id'])
         message='本次手动同步的封板、资金及板块日行情补充已排队；失败保留缺口，不阻止行情查询'
     elif job['kind'] in ('topic_init','topic_refresh') and parameters.get('data_chain_version')=='sector-charts-v1':
         from app.core import get_market
         from app.services.sector_chart_batch_jobs import create_batch_job
         child=create_batch_job(get_market(),target,request_key='sector-charts-after-initialise:'+parent,
             chain_parameters={'initialization_chain':True,'parent_sync_job_id':parent,
-                              'previous_chain_job_id':job['job_id'],'data_chain_version':'sector-charts-v1'})
+                              'previous_chain_job_id':job['job_id'],'data_chain_version':'sector-charts-v1',**fund_policy})
         message='完整题材已发布，行业概念历史K线全库补齐已排队；逐板块缓存后接续盘面补充'
     elif _increment_chart_chain(parameters):
         child=_supplement_child({'operation':'market_supplement','year_history':False,'sector_history':True,
-            'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent},target,'supplement-after-sync:'+parent)
+            'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,**fund_policy},target,'supplement-after-sync:'+parent)
         message='板块K线尾部增量已核验，目标日封板、资金及板块日行情补充已排队；历史缺口继续保留'
     else:
         request_key='full-supplement-after-initialise:'+parent
-        parameters={'operation':'market_supplement','year_history':True,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,'previous_chain_job_id':job['job_id']}
+        parameters={'operation':'market_supplement','year_history':True,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,'previous_chain_job_id':job['job_id'],**fund_policy}
         child=_supplement_child(parameters,target,request_key)
         message='完整题材已发布，年内涨跌停统计一次回补、目标日封板、资金及板块日行情补充已排队；日后增量会自动补当日，失败可单独补缺'
     with connect() as connection:
