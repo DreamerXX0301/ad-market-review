@@ -63,7 +63,7 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
         if set(node)!={'history_event'} or not isinstance(event,dict) or set(event)-{'window','match','where','then','price_path'}:raise ValueError('历史事件仅接受window/match/where/then/price_path')
         window=event.get('window');match=event.get('match','latest')
         if not isinstance(window,dict) or set(window)!={'from','to'} or any(not isinstance(v,int) or isinstance(v,bool) or not 1<=v<=750 for v in window.values()) or window['from']>window['to']:raise ValueError('历史事件窗口需1至750个市场交易日，from不能大于to')
-        if match not in ('latest','earliest'):raise ValueError('历史事件匹配规则仅支持latest/earliest')
+        if match not in ('latest','earliest','any'):raise ValueError('历史事件匹配规则仅支持latest/earliest/any')
         clean={'window':dict(window),'match':match,'where':validate(event.get('where'),depth+1,counter,'event_where'),'then':validate(event.get('then'),depth+1,counter,'event_then')}
         if 'price_path' in event:
             from app.domain.history_price_path import validate_price_path, validate_cross_cycle_event

@@ -79,6 +79,8 @@
 
 历史条件节点为 `{history_event:{window:{from:1,to:30},match:"latest",where:条件树,then:条件树}}`。偏移均为前 N 个市场交易日、不含今天且含两端：近 N 日是 from=1,to=N，自定义前5—20日是 from=5,to=20，指定前 N 日是 from=to=N；范围 1–750。编辑器新建默认前1—30日，读取旧规则不改窗口或版本。latest/earliest 指按距离从近/远优先，不跳过优先位置的未知去伪造匹配；绑定后 then 不满足也不改选其他事件。where 支持日 OHLCV/指标与同日 `limit_up` 的自定义 all/any，不支持递归 history_event、prev_limit_up、历史题材/身份、滚动涨停次数或跟踪基准。
 
+`match="any"` 表示范围内任意一次完整满足。按近到远检查，每个候选必须用同一事件的 where、then 和已启用 price_path；第一个整体为true的事件才成为 `selected_event`，停止继续搜索，不代表已经枚举所有满足事件。较近日期未知不妨碍较早的完整true证明存在；没有true但存在未知候选时结果为null，完整已知但均不满足时为false。false/null时不绑定回退事件、不生成命中横线。不能把一次事件守位成功与另一次事件收复成功拼成命中。它与where内部“倍量或涨停任一条件”是两层独立选择；旧规则不会自动切换为any。
+
 then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3,period:"D"},{any:[{field:"macd_cross",op:"==",value:true,period:"D"},{field:"kd_cross",op:"==",value:true,period:"D"}]}]}`，不要求比较事件价；也可用 `{field:"close",op:">",right_event_field:"close"|"high"|"low",period:"D"}` 比较观察日收盘与本节点事件价。事件绑定互不串用。跨行动、缺中间有效日报价或来源覆盖不足时，事件价比较保持未知，独立今日涨幅/技术条件仍按自身覆盖判断。新编辑器历史内部固定 D；无显式 period 的旧 then 保留旧版本解释。共享历史预备同时保留 where 和显式日线 then 的依赖，保证批量与标量路径一致。
 
 事件价格比较叶可追加 `right_event_change_pct=p`，只允许在本事件then的 `field=close` / `right_event_field=close|high|low` 形式使用，不与value/right_field混用。p为有限数值 `-100<p≤10000`；右侧阈值为 `事件价×(1+p/100)`，用未舍入十进制比较。例如p=3、op="<"指今收低于事件价上方3%；p=-3、op=">="指今收不低于事件价下方3%；它不等于只比较事件价的3%。0显式有效，缺少该键的旧叶结构、求值与证据保持。新证据增加原始 `event_price`、`threshold_decimal`、实际相对原价的 `event_change_pct` 与比较模型，`right_actual`为偏移后的阈值。无法安全表示的数值不输出非有限JSON，也不绕过原价可比守卫。上下界可用all组合，等号是否包含由各比较符决定。
@@ -103,16 +105,18 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 }
 ```
 
-- `price_path` 必须是非空对象，只接受 `guard` / `reclaim` / `cross_cycle`，可同时设置，所有已启用项 AND，再与 `then` AND。先按 where/window/match 绑定事件，过程失败不会重选事件。
+- `price_path` 必须是非空对象，只接受 `guard` / `reclaim` / `cross_cycle`，可同时设置，所有已启用项 AND，再与 `then` AND。latest/earliest先绑定事件，过程失败不会重选；any逐事件完成整套检查，直到找到最近的完整满足事件。
 - `guard.max_drawdown_pct=r` 为有限数值 `0≤r<100`；保护价 `F=事件日收盘价×(1−r/100)`，E之后到T的每个市场交易日收盘均须 `≥F`。不按显示位数或任意epsilon判断，百分比运算使用十进制未舍入值；中途破位后再收回仍不满足。`require_pullback` 为布尔值，省略默认false；启用时E之后至昨日须至少一次收盘低于事件收盘。`near_floor` 必须含 `sessions`（整数1–750）和 `band_pct`（有限0–100），检查最近N个交易日至昨日与E后区间的交集，至少一次收盘在 `[F,F×(1+band_pct/100)]` 且低于事件收盘；N=1指昨日，没有事后交易日时不满足。
 - `reclaim` 必须含 `event_field=close|high|low` 与 `mode`，基准来自本节点绑定事件。`close_at_or_above` 是今日收盘≥基准；`close_reclaim` 是昨收<基准且今收≥基准，昨日必须晚于E；`first_close_reclaim` 再要求此前没有E后的相同价格上穿；`high_at_or_above` 是今日最高≥基准；`touch` 是今日最低≤基准≤今日最高。跳空且全天在基准上方只满足最高达到，不算实际触及。
 - 首次判断从E→E+1的价格变化开始，按价格事件本身计数；不因当时技术条件或当前模板的额外门槛未满足而重置。以事件最高为基准时，即使E+1已上穿却没有独立的昨日回踩日，也会消耗首次，后来再次站上不能改称首次。当前重新收复仍需昨日晚于E，最早在E+2日触发。
-- `cross_cycle={indicator:"macd"|"kdj",require_dead_cross:true}` 核验E/T同类金叉及严格位于E与T之间的至少一次同类死叉；不含价格高低门槛。服务端限定 `window.from=1`、`match=latest`、where仅为对应D金叉等于true（单叶或单元素all），to仍可设1–750。where不能另加K范围、水上或价格限制，也不能用earliest或from>1跳过更近金叉；今日K范围与事件价门槛放在then。没有中间交易日或完整已知区间无死叉为false，缺信号预热/报价/行动可比证据保持unknown；不使用阻断后或T后的信号。新模板默认回看60个交易日，并以then显式加入今日同类金叉和close>事件收盘；用户可编辑价格门槛。所称“上次”限该窗口，未找到不能当作终身没有上次。
+- `cross_cycle={indicator:"macd"|"kdj",require_dead_cross:true}` 核验E/T同类金叉及严格位于E与T之间的至少一次同类死叉；不含价格高低门槛。服务端限定 `window.from=1`、`match=latest`、where仅为对应D金叉等于true（单叶或单元素all），to仍可设1–750。where不能另加K范围、水上或价格限制，也不能用earliest、any或from>1跳过更近金叉；今日K范围与事件价门槛放在then。没有中间交易日或完整已知区间无死叉为false，缺信号预热/报价/行动可比证据保持unknown；不使用阻断后或T后的信号。新模板默认回看60个交易日，并以then显式加入今日同类金叉和close>事件收盘；用户可编辑价格门槛。所称“上次”限该窗口，未找到不能当作终身没有上次。
 - 路径固定日线，只读E至当前T；不因外层W/M或回测预备到更晚日期而读取未来。缺报、重复、零量、未知行动或跨行动后的原价不可比，保留unknown。首个不可比点之前已证实的失守或更早价格收复仍可证明false；不把缺口后的低价冒充可比失守。所有子检查和then仍独立留证。
 
 事件结果的 `price_path_checks` 仅在新定义出现，未绑定事件时为null；绑定后含 `type=history_price_path`、路径模型、观察日、result、guard/reclaim/cross_cycle小证据。guard含公式、保护价、最小可比收盘及日期、首个破位、可比/应有天数、回落/近保护价命中或缺口；reclaim含基准、昨今价、触发方式和此前首次价格收复日期；cross_cycle含E/T金叉、期间死叉日期、已知/应有信号日与阻断原因。不给出全区间行情对象。选股、跟踪和受限回测共用求值器；新增定义与回测版本单独标记，旧保存结果不重写，无数据库迁移。
 
 价格过程为个股历史节点能力，板块条件不接受history_event。当前新回测引擎为 `restricted-next-open-v5-event-percent-cross-cycle`，input/logical key包含版本；不同冻结引擎的未完成任务不得被新请求复用或继续模拟发布，需手动新建，旧完成报告仍可读取。带百分比事件比较或cross_cycle的新定义使用 `workspace-v11-event-percent-cross-cycle`；只有原守位/收复的定义保留 `workspace-v10-history-price-path`，更早定义继续沿用其既有v8/v9，不自动重写旧版本。
+
+包含match=any的定义（包括买入或卖出规则）使用 `workspace-v12-history-any`，其历史事件证据模型为 `daily-history-event-v2-any`。只增加新AST语义，不改变旧latest/earliest定义的版本、求值或已保存运行；新AST与输入SHA已隔离。搜索摘要只记录有界计数与首个未知位置，不保存完整历史候选数组。
 
 历史 `limit_up` 在选股、跟踪和回测复用同一已发布代际的来源池核验器：逐日期编译来源代码索引与完整来源缺席证据，每只股票再核对该日唯一有效原始 OHLC、收盘、成交量和来源身份；既有日报价标志或 +10% 涨幅不能代替来源证据。缺来源、缺报、停牌、价格/方向冲突均保留 unknown，不用未来池回填。checks 保存来源路径、快照、窗口、日期、偏移、原始价格与原因，不序列化完整历史上下文。回测只为历史 where 放开同日涨停，普通当前涨停及滚动次数条件仍沿用原有回测边界。
 

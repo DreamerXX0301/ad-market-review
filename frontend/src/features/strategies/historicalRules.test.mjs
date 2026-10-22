@@ -26,6 +26,8 @@ const {
   conditionReasonText,
   historyWindowMode,
   historyWindowForMode,
+  historyMatchOptions,
+  historyMatchDescription,
   historyEventPreset,
   historyPresetWhere,
   appendTodayCondition,
@@ -41,6 +43,13 @@ assert.equal(
   "each event keeps its own binding",
 );
 assert.equal(validateVisualRule(second), null);
+assert.equal(second.history_event.match, "latest", "new ordinary rules keep the established default");
+assert.deepEqual(historyMatchOptions.map(item => item.value), ["latest", "earliest", "any"]);
+assert.match(historyMatchDescription("any"), /从近到远/);
+assert.match(historyMatchDescription("any"), /全部条件使用同一事件/);
+assert.match(historyMatchDescription("any"), /仍有事件无法判断整体是否满足/);
+assert.match(historyMatchDescription("latest"), /整体不满足时不会改选/);
+assert.match(historyMatchDescription("earliest"), /更早日期待核验/);
 assert.equal(second.history_event.where.all[0].period, "D");
 assert.equal(second.history_event.then.all[0].period, "D");
 assert.equal(second.history_event.window.to, 30);
@@ -106,6 +115,22 @@ assert.deepEqual(
 );
 assert.equal(historyWindowText({ from: 5, to: 5 }), "恰好5个交易日前");
 assert.equal(historyWindowText({ from: 1, to: 30 }), "距今1—30个交易日");
+const anyEvent = structuredClone(second);
+anyEvent.history_event.match = "any";
+const anyBefore = JSON.stringify(anyEvent);
+assert.equal(validateVisualRule(anyEvent), null);
+assert.deepEqual(normalizeRuleTree(anyEvent), anyEvent);
+assert.match(historyRuleSummary(anyEvent), /范围内任意一次满足/);
+assert.match(historyRuleSummary(anyEvent), /绑定从近到远找到的第一个已确认整体满足事件/);
+assert.match(historyRuleSummary(anyEvent), /全部条件使用同一事件/);
+assert.equal(JSON.stringify(anyEvent), anyBefore, "presentation and validation never rewrite a saved match");
+assert.match(validateVisualRule({ history_event: { ...anyEvent.history_event, match: "all" } }), /匹配方式/);
+assert.match(historyCheckText({ ...anyEvent, window: { from: 1, to: 30 }, result: true, selected_event: { date: "2026-10-12", offset: 6 } }), /2026-10-12 · 6个交易日前 · 最近一次已确认整体满足；整体条件满足/);
+for (const result of [false, null]) {
+  const summary = historyCheckText({ ...anyEvent, window: { from: 1, to: 30 }, result, selected_event: { date: "2026-10-12", offset: 6 } });
+  assert.match(summary, /范围内任意一次/);
+  assert.doesNotMatch(summary, /2026-10-12|最近一次已确认整体满足/, "unconfirmed any searches have no selected-event label");
+}
 const current = { field: "change_pct", op: ">=", value: 3 };
 const normalized = normalizeRuleTree({
   logic: "AND",

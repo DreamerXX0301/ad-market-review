@@ -25,6 +25,8 @@ def stored_period(period):
 
 def evaluator_for(definition,period,trade_rules=None):
     trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
+    if any(event.get('match')=='any' for tree in trees for event in history_nodes(tree)):
+        return 'workspace-v12-history-any'
     def relative_price(node):
         if 'right_event_change_pct' in node:return True
         if 'history_event' in node:return relative_price(node['history_event']['then'])

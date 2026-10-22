@@ -73,6 +73,7 @@ export function historicalChartEvents(value: unknown): HistoricalChartEvent[] {
         selected.date >= evidence.as_of ||
         selected.price_basis !== "none" ||
         evidence.price_basis !== "none" ||
+        (spec?.match === "any" && node.result !== true) ||
         !positive(selected.close)
       )
         return;
@@ -102,7 +103,12 @@ export function historicalChartEvents(value: unknown): HistoricalChartEvent[] {
           priceBasis: "none",
           priceField: field,
           label: name(spec?.where),
-          match: spec?.match === "earliest" ? "最早一次" : "最近一次",
+          match:
+            spec?.match === "any"
+              ? "最近一次已确认整体满足"
+              : spec?.match === "earliest"
+                ? "最早一次"
+                : "最近一次",
           observed: evidence.as_of,
         });
       }

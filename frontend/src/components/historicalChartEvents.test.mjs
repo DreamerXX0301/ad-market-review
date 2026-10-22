@@ -17,6 +17,10 @@ const frozen = {
 const event = collect({ checks: [{ field: "unrelated" }, { checks: [frozen] }] })[0];
 assert.equal(event.date, "2026-10-09"); assert.equal(event.rawClose, 10); assert.equal(event.rawPrice, 10.5); assert.equal(event.label, "倍量事件"); assert.equal(event.match, "最近一次");
 assert.equal(collect({ ...frozen, history_event: { ...frozen.history_event, match: "earliest" } })[0].match, "最早一次");
+const existential = { ...frozen, history_event: { ...frozen.history_event, match: "any" } };
+assert.equal(collect(existential)[0].match, "最近一次已确认整体满足");
+assert.equal(collect(existential)[0].date, frozen.selected_event.date, "any projects only the engine's frozen selected event, without reselecting");
+for (const result of [false, null]) assert.deepEqual(collect({ ...existential, result }), [], "an unsuccessful/unknown any search must not show a fallback event marker");
 assert.equal(collect({ ...frozen, result: null }).length, 1, "selected historical event remains visible when today's condition is unknown");
 for (const value of [undefined, { ...frozen, selected_event: null }, { ...frozen, event_checks: { result: null } }, { ...frozen, selected_event: { ...frozen.selected_event, price_basis: "forward" } }, { ...frozen, selected_event: { ...frozen.selected_event, date: "2026-10-22" } }, { ...frozen, selected_event: { ...frozen.selected_event, date: "2026-02-30" } }]) assert.deepEqual(collect(value), []);
 assert.equal(collect([frozen, { ...frozen, history_event: { match: "earliest", where: { field: "limit_up", op: "==", value: true } } }]).length, 2, "different rule references on the same date are not merged");

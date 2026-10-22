@@ -166,6 +166,37 @@ for (const indicator of ["macd", "kdj"]) {
   assert.match(invalidHtml, /role="alert"/);
   assert.match(invalidHtml, /历史条件只保留同类日K金叉/);
   assert.equal(JSON.stringify(invalid), invalidBefore);
+  assert.match(rules.previousCrossConfigurationError({ ...invalid, match: "any" }), /选择最近一次/, "existential search cannot change the dedicated previous-cross contract");
+}
+
+for (const match of ["latest", "earliest", "any"]) {
+  const value = rules.newHistoryRule();
+  value.history_event.match = match;
+  const before = JSON.stringify(value);
+  const html = renderToStaticMarkup(createElement(tree.default, { value, fields, period: "D", onChange: unchanged }));
+  assert.match(html, new RegExp(`<option value="${match}" selected="">`), "the saved match is selected, not silently migrated");
+  assert.match(html, /范围内任意一次满足/);
+  if (match === "any") {
+    assert.match(html, /从近到远逐个检查事件/);
+    assert.match(html, /全部条件使用同一事件，不跨日期拼接/);
+    assert.match(html, /绑定从近到远找到的第一个已确认整体满足事件/);
+    assert.doesNotMatch(html, /整体不满足时不会改选另一天/);
+  }
+  assert.equal(JSON.stringify(value), before);
+}
+for (const result of [true, false, null]) {
+  const check = {
+    type: "history_event", history_event: { match: "any" }, window: { from: 1, to: 30 }, result,
+    selected_event: { date: "2026-10-09", offset: 9, close: 3.81, high: 3.9, low: 3.7 },
+    event_checks: null, checks: [], evidence: { as_of: "2026-10-22" },
+  };
+  const html = renderToStaticMarkup(createElement(evidence.default, { value: check }));
+  assert.match(html, /范围内任意一次/);
+  if (result === true) assert.match(html, /绑定最近一次已确认整体满足事件/);
+  else {
+    assert.doesNotMatch(html, /2026-10-09|事件收盘|绑定最近一次已确认整体满足事件/, "negative and unknown any results never advertise a bound fallback");
+    if (result === false) assert.match(html, /范围内没有整体满足的事件日/);
+  }
 }
 
 const comparison = {

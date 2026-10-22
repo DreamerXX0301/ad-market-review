@@ -23,6 +23,8 @@ import {
   historyWindowMode,
   historyWindowForMode,
   historyWindowText,
+  historyMatchOptions,
+  historyMatchDescription,
   historyEventPreset,
   historyPresetWhere,
   appendTodayCondition,
@@ -605,14 +607,17 @@ function HistoryEventNode({
           </>
         )}
         <label>
-          多个事件匹配时
+          事件匹配方式
           <select
             aria-label="历史事件匹配顺序"
             value={event.match || "latest"}
             onChange={(e) => update({ match: e.target.value })}
           >
-            <option value="latest">选择最近一次</option>
-            <option value="earliest">选择最早一次</option>
+            {historyMatchOptions.map((item) => (
+              <option value={item.value} key={item.value}>
+                {item.label}
+              </option>
+            ))}
           </select>
         </label>
         <span className="history-session-unit">市场交易日 · 不含今日</span>
@@ -624,6 +629,8 @@ function HistoryEventNode({
             ? historyWindowText(event.window)
             : `前${event.window?.from ?? "?"}—${event.window?.to ?? "?"}个交易日内任一天`}
           <strong>不含今天</strong> · 昨日为前1日，前日为前2日，两端均包含
+          <br />
+          {historyMatchDescription(event.match || "latest")}
         </span>
       </p>
       <div className="history-window-quick">
@@ -820,7 +827,9 @@ function HistoryEventNode({
       <details className="history-rule-method">
         <summary>事件匹配口径与未知处理</summary>
         <p>
-          距离按市场交易日日历计算，范围1—750日，默认前1—30日且不含今天。多个历史日期满足时，按所选顺序绑定最近或最早一次；选定后今日条件不满足，不会改选另一个事件。更优先日期若待核验，保留未知。涨停仅使用同日已核验来源收盘池与原始成交报价，缺来源不按涨幅猜测。历史题材、身份、跟踪与滚动涨停次数暂不开放。事件价比较跨越未核验公司行动或缺报时保持待核验。
+          距离按市场交易日日历计算，范围1—750日，默认前1—30日且不含今天。
+          {historyMatchDescription(event.match || "latest")}
+          涨停仅使用同日已核验来源收盘池与原始成交报价，缺来源不按涨幅猜测。历史题材、身份、跟踪与滚动涨停次数暂不开放。事件价比较跨越未核验公司行动或缺报时保持待核验。
         </p>
       </details>
     </section>

@@ -176,7 +176,7 @@ def test_tracking_uses_identical_history_binding_without_serializing_context():
     lambda node:node['history_event']['window'].update({'from':0}),
     lambda node:node['history_event']['window'].update({'to':751}),
     lambda node:node['history_event']['window'].update({'from':31}),
-    lambda node:node['history_event'].update(match='any'),
+    lambda node:node['history_event'].update(match='unsupported'),
     lambda node:node['history_event'].update(where={'field':'prev_limit_up','op':'==','value':True}),
     lambda node:node['history_event'].update(where={'field':'is_st','op':'==','value':False}),
     lambda node:node['history_event'].update(where={'field':'close','op':'>','right_event_field':'close'}),

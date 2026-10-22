@@ -6,6 +6,7 @@ import json
 import re
 
 VERSION = 'daily-history-event-v1'
+ANY_VERSION = 'daily-history-event-v2-any'
 UNSUPPORTED = {'topic_ids', 'board', 'is_st', 'prev_limit_up',
                'limit_up_1y', 'limit_up_count_1y', 'turnover_ratio_pct',
                'tracking_change_pct', 'trading_age', 'close_below_entry',
@@ -210,6 +211,109 @@ class HistoryContext:
         return current['close'], None
 
 
+def _bind_candidate(result, spec, metrics, history, context, day, target, offset, check, *, skip_failed_path=False):
+    """All later clauses share exactly this candidate's event and price basis."""
+    from app.domain.conditions import evaluate
+    event = context.quotes[target]
+    result['selected_event'] = {field: event.get(field) for field in ('date', 'open', 'high', 'low', 'close')}
+    result['selected_event'].update(offset=offset, price_basis='none')
+    result['event_checks'] = check
+    current_price, price_reason = context.price_binding(event, day)
+    bound = {**history, 'event': event, 'current_price': current_price, 'price_reason': price_reason}
+    # New explicitly daily clauses read the observation day's own history
+    # context. Unscoped legacy clauses keep their strategy-period semantics.
+    then_metrics={**metrics,'_period_metrics':{**metrics.get('_period_metrics',{}),'D':context.daily.get(day,{})}}
+    then = evaluate(spec['then'], then_metrics, bound)
+    result.update(result=then['result'], checks=[then], reason=then.get('reason'))
+    if 'price_path' in spec and not (skip_failed_path and then['result'] is False):
+        from app.domain.history_price_path import evaluate_price_path, all_results
+        path = evaluate_price_path(spec['price_path'], context, event, day)
+        result['price_path_checks'] = path
+        state = all_results([then['result'], path['result']])
+        result.update(result=state, reason=(path.get('reason') if path['result'] is state else then.get('reason')) if state is not True else None)
+    result['evidence'].update(current_price=current_price, current_price_date=day, current_price_period='D',
+                              price_comparable=current_price is not None, price_comparison_reason=price_reason)
+    return result
+
+
+def _evaluate_any(result, spec, metrics, history, context, day, position):
+    """Existential three-valued matching; retain one proof, never all candidates."""
+    from app.domain.conditions import evaluate
+    from app.domain.history_price_path import all_results
+    summary = {'order': 'nearest_first', 'examined_sessions': 0, 'where_matches': 0,
+               'rejected_candidates': 0, 'unknown_event_sessions': 0, 'unknown_candidates': 0,
+               'stopped_after_match': False, 'complete_window_scan': False}
+    result['search_summary'] = summary
+    unbound_then = None
+
+    def independent_then_false():
+        nonlocal unbound_then
+        if unbound_then is None:
+            periods = dict(metrics.get('_period_metrics', {}))
+            if context is not None:
+                periods['D'] = context.daily.get(day, {})
+            bound = {**(history if isinstance(history, dict) else {}), 'event': None,
+                     'current_price': None, 'price_reason': '没有可绑定的事件报价，事件价保持未知'}
+            unbound_then = evaluate(spec['then'], {**metrics, '_period_metrics': periods}, bound)
+        return unbound_then['result'] is False
+
+    if position is None:
+        summary['context_unavailable'] = True
+        if independent_then_false():
+            summary['independent_then_false'] = True
+            result.update(result=False, reason='独立今日条件已不满足，无事件绑定也可确认范围内没有完整满足的候选')
+            return result
+        summary['first_unknown'] = {'date': None, 'offset': None, 'stage': 'context', 'reason': result['reason']}
+        return result
+
+    def unknown(target, offset, stage, reason):
+        summary.setdefault('first_unknown', {'date': target, 'offset': offset, 'stage': stage, 'reason': reason})
+
+    where_key = json.dumps(spec['where'], sort_keys=True, separators=(',', ':'))
+    for offset in range(spec['window']['from'], spec['window']['to'] + 1):
+        summary['examined_sessions'] += 1
+        target = context.calendar[position-offset] if position >= offset else None
+        if target is None or target not in context.daily:
+            summary['unknown_event_sessions'] += 1
+            if independent_then_false():
+                summary['rejected_candidates'] += 1
+                continue
+            summary['unknown_candidates'] += 1
+            unknown(target, offset, 'where', '事件位置缺少唯一有效日报价、公司行动覆盖或足够市场日历')
+            continue
+        key = (where_key, target)
+        if key not in context.event_cache:
+            context.event_cache[key] = evaluate(spec['where'], context.daily[target])
+            if len(context.event_cache) > 4096: context.event_cache.pop(next(iter(context.event_cache)))
+        check = context.event_cache[key]
+        if check['result'] is None:
+            summary['unknown_event_sessions'] += 1
+        if check['result'] is False:
+            continue
+        if check['result'] is True:
+            summary['where_matches'] += 1
+        candidate = _bind_candidate({**result, 'evidence': dict(result['evidence'])}, spec, metrics, history,
+                                    context, day, target, offset, check, skip_failed_path=True)
+        # A known false later clause disproves even an unconfirmed where.
+        # A provisional candidate is never returned as a selected event.
+        state = all_results([check['result'], candidate['result']])
+        if state is True:
+            summary.update(stopped_after_match=True, complete_window_scan=offset == spec['window']['to'])
+            return candidate
+        if state is None:
+            summary['unknown_candidates'] += 1
+            unknown(target, offset, 'where' if check['result'] is None else 'candidate',
+                    (check.get('reason') if check['result'] is None else candidate.get('reason'))
+                    or '同一事件的今日条件或价格过程尚未知')
+        else:
+            summary['rejected_candidates'] += 1
+    summary['complete_window_scan'] = True
+    state = None if summary['unknown_candidates'] else False
+    result.update(result=state, reason='范围内尚无事件整体满足，仍有事件条件或后续条件未知' if state is None
+                  else '完整检查的历史窗口内，没有同一事件同时满足事件、今日和价格过程条件')
+    return result
+
+
 def evaluate_event(tree, metrics, history):
     from app.domain.conditions import evaluate
     spec = tree['history_event']; window = spec['window']
@@ -218,7 +322,7 @@ def evaluate_event(tree, metrics, history):
     position = context.positions.get(day) if context else None
     offsets = range(window['from'], window['to']+1)
     if spec['match'] == 'earliest': offsets = reversed(offsets)
-    evidence = {'model': VERSION, 'snapshot_id': context.snapshot_id if context else None,
+    evidence = {'model': ANY_VERSION if spec['match']=='any' else VERSION, 'snapshot_id': context.snapshot_id if context else None,
                 'as_of': day, 'event_period': 'D', 'price_basis': 'none',
                 'current_observation_date': metrics.get('observed_date'),
                 'current_condition_period': metrics.get('indicator_period', 'D')}
@@ -232,6 +336,8 @@ def evaluate_event(tree, metrics, history):
               'reason': '没有准备历史日行情上下文，保持未知'}
     if 'price_path' in spec:
         result['price_path_checks'] = None
+    if spec['match'] == 'any':
+        return _evaluate_any(result, spec, metrics, history, context, day, position)
     if position is None: return result
     where_key = json.dumps(spec['where'], sort_keys=True, separators=(',', ':'))
     for offset in offsets:
@@ -250,26 +356,7 @@ def evaluate_event(tree, metrics, history):
             evidence.update(blocking_date=target, blocking_offset=offset)
             return result
         if check['result'] is False: continue
-        event = context.quotes[target]
-        result['selected_event'] = {field: event.get(field) for field in ('date', 'open', 'high', 'low', 'close')}
-        result['selected_event'].update(offset=offset, price_basis='none')
-        result['event_checks'] = check
-        current_price, price_reason = context.price_binding(event, day)
-        bound = {**history, 'event': event, 'current_price': current_price, 'price_reason': price_reason}
-        # New explicitly daily clauses read the observation day's own history
-        # context. Unscoped legacy clauses keep their strategy-period semantics.
-        then_metrics={**metrics,'_period_metrics':{**metrics.get('_period_metrics',{}),'D':context.daily.get(day,{})}}
-        then = evaluate(spec['then'], then_metrics, bound)
-        result.update(result=then['result'], checks=[then], reason=then.get('reason'))
-        if 'price_path' in spec:
-            from app.domain.history_price_path import evaluate_price_path, all_results
-            path = evaluate_price_path(spec['price_path'], context, event, day)
-            result['price_path_checks'] = path
-            state = all_results([then['result'], path['result']])
-            result.update(result=state, reason=(path.get('reason') if path['result'] is state else then.get('reason')) if state is not True else None)
-        evidence.update(current_price=current_price, current_price_date=day, current_price_period='D',
-                        price_comparable=current_price is not None, price_comparison_reason=price_reason)
-        return result
+        return _bind_candidate(result, spec, metrics, history, context, day, target, offset, check)
     result.update(result=False, reason='完整检查的历史窗口内没有满足事件条件的日期')
     return result
 

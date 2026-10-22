@@ -81,7 +81,8 @@ def _historical_event_checks(tree, as_of):
                 or not isinstance(offset, int) or isinstance(offset, bool) or not 1 <= offset <= 750
                 or not all(_price(value) for value in prices)
                 or event['high'] < max(prices) or event['low'] > min(prices)
-                or spec.get('match') not in ('latest', 'earliest')):
+                or spec.get('match') not in ('latest', 'earliest', 'any')
+                or (spec.get('match') == 'any' and node.get('result') is not True)):
             continue
         summary = {'match': spec['match']}
         try:

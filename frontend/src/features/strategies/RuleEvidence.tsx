@@ -350,87 +350,99 @@ export default function RuleEvidence({ value }: { value: any }) {
         <span>查看事件依据</span>
       </summary>
       <div>
-        {events.map((check, index) => (
-          <section key={index}>
-            <header>
-              <strong>{historyWindowText(check.window)}</strong>
-              <Badge
-                tone={
-                  check.result === true
-                    ? "good"
+        {events.map((check, index) => {
+          const anyMatch = check.history_event?.match === "any";
+          const selected =
+            anyMatch && check.result !== true ? null : check.selected_event;
+          return (
+            <section key={index}>
+              <header>
+                <strong>
+                  {historyWindowText(check.window)}
+                  {anyMatch ? " · 范围内任意一次满足" : ""}
+                </strong>
+                <Badge
+                  tone={
+                    check.result === true
+                      ? "good"
+                      : check.result === false
+                        ? "neutral"
+                        : "warn"
+                  }
+                >
+                  {check.result === true
+                    ? "满足"
                     : check.result === false
-                      ? "neutral"
-                      : "warn"
-                }
-              >
-                {check.result === true
-                  ? "满足"
-                  : check.result === false
-                    ? "未满足"
-                    : "待核验"}
-              </Badge>
-            </header>
-            <p>
-              {check.selected_event?.date ? (
-                <>
-                  绑定事件 <b>{check.selected_event.date}</b> ·{" "}
-                  {check.selected_event.offset}个交易日前
-                </>
-              ) : (
-                "尚未绑定可确认的事件日"
-              )}
-            </p>
-            {check.selected_event && (
-              <div className="historical-event-prices">
-                <span>
-                  事件收盘 <b>{num(check.selected_event.close)}</b>
-                </span>
-                <span>
-                  最高 <b>{num(check.selected_event.high)}</b>
-                </span>
-                <span>
-                  最低 <b>{num(check.selected_event.low)}</b>
-                </span>
-                <span>未复权原价</span>
-              </div>
-            )}
-            <p>
-              <span className="muted">历史事件：</span>
-              {check.event_checks
-                ? summarizeChecks(check.event_checks)
-                : "该位置报价或事件条件尚未核验"}
-            </p>
-            {check.checks?.length > 0 && (
+                      ? "未满足"
+                      : "待核验"}
+                </Badge>
+              </header>
               <p>
-                <span className="muted">当前条件：</span>
-                {summarizeChecks(check.checks)}
+                {selected?.date ? (
+                  <>
+                    {anyMatch ? "绑定最近一次已确认整体满足事件" : "绑定事件"}{" "}
+                    <b>{selected.date}</b> · {selected.offset}个交易日前
+                  </>
+                ) : anyMatch && check.result === false ? (
+                  "范围内没有整体满足的事件日"
+                ) : (
+                  "尚未绑定可确认的事件日"
+                )}
               </p>
-            )}
-            {check.price_path_checks && (
-              <HistoryPricePathEvidence value={check.price_path_checks} />
-            )}
-            {eventPriceOffsetChecks(check.checks).map((comparison, at) => (
-              <EventPriceOffsetEvidence key={at} value={comparison} />
-            ))}
-            {check.reason && (
-              <p className="muted">{conditionReasonText(check.reason)}</p>
-            )}
-            {check.evidence?.price_comparison_reason && (
-              <p className="muted">
-                {conditionReasonText(check.evidence.price_comparison_reason)}
+              {selected && (
+                <div className="historical-event-prices">
+                  <span>
+                    事件收盘 <b>{num(selected.close)}</b>
+                  </span>
+                  <span>
+                    最高 <b>{num(selected.high)}</b>
+                  </span>
+                  <span>
+                    最低 <b>{num(selected.low)}</b>
+                  </span>
+                  <span>未复权原价</span>
+                </div>
+              )}
+              <p>
+                <span className="muted">历史事件：</span>
+                {check.event_checks
+                  ? summarizeChecks(check.event_checks)
+                  : anyMatch
+                    ? "尚未绑定事件；范围内逐次完整核验，结果与缺口见说明"
+                    : "该位置报价或事件条件尚未核验"}
               </p>
-            )}
-            <small>
-              历史日线 · 观察日 {check.evidence?.as_of || "待核验"}
-              {check.evidence?.current_condition_period === "W"
-                ? " · 普通条件按完整周，事件价比较按观察日日K"
-                : ""}
-              {check.evidence?.blocking_date
-                ? ` · 优先待核验日 ${check.evidence.blocking_date}`
-                : ""}
-            </small>
-          </section>
-        ))}
+              {check.checks?.length > 0 && (
+                <p>
+                  <span className="muted">当前条件：</span>
+                  {summarizeChecks(check.checks)}
+                </p>
+              )}
+              {check.price_path_checks && (
+                <HistoryPricePathEvidence value={check.price_path_checks} />
+              )}
+              {eventPriceOffsetChecks(check.checks).map((comparison, at) => (
+                <EventPriceOffsetEvidence key={at} value={comparison} />
+              ))}
+              {check.reason && (
+                <p className="muted">{conditionReasonText(check.reason)}</p>
+              )}
+              {check.evidence?.price_comparison_reason && (
+                <p className="muted">
+                  {conditionReasonText(check.evidence.price_comparison_reason)}
+                </p>
+              )}
+              <small>
+                历史日线 · 观察日 {check.evidence?.as_of || "待核验"}
+                {check.evidence?.current_condition_period === "W"
+                  ? " · 普通条件按完整周，事件价比较按观察日日K"
+                  : ""}
+                {check.evidence?.blocking_date
+                  ? ` · 优先待核验日 ${check.evidence.blocking_date}`
+                  : ""}
+              </small>
+            </section>
+          );
+        })}
       </div>
     </details>
   );

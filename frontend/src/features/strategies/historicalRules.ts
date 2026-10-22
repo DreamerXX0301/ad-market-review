@@ -547,6 +547,32 @@ export function historyWindowText(window: any): string {
     to = window?.to ?? "?";
   return from === to ? `恰好${from}个交易日前` : `距今${from}—${to}个交易日`;
 }
+export const historyMatchOptions = [
+  {
+    value: "latest",
+    label: "选择最近一次",
+    description:
+      "先按历史条件绑定最近一次事件，再检查该事件的价格过程与今日条件；整体不满足时不会改选另一天。更近日期待核验时保留未知。",
+  },
+  {
+    value: "earliest",
+    label: "选择最早一次",
+    description:
+      "先按历史条件绑定最早一次事件，再检查该事件的价格过程与今日条件；整体不满足时不会改选另一天。更早日期待核验时保留未知。",
+  },
+  {
+    value: "any",
+    label: "范围内任意一次满足",
+    description:
+      "从近到远逐个检查事件的历史条件、价格过程与今日条件；有一次整体满足即可，绑定从近到远找到的第一个已确认整体满足事件。全部条件使用同一事件，不跨日期拼接。没有已满足事件，但仍有事件无法判断整体是否满足时，结果为待核验。",
+  },
+] as const;
+export function historyMatchDescription(match: unknown): string {
+  return (
+    historyMatchOptions.find((item) => item.value === match)?.description ||
+    "请选择有效的历史事件匹配方式"
+  );
+}
 export function ruleCount(node: RuleNode | undefined): number {
   if (!node) return 0;
   if (node.field || node.history_event) return 1;
@@ -562,6 +588,8 @@ export function historyRuleSummary(
   if (isHiddenConditionRule(node)) return HIDDEN_CONDITION_TEXT;
   if (node.history_event) {
     const event = node.history_event;
+    if (event.match === "any")
+      return `${historyWindowText(event.window)}${event.window?.from === event.window?.to ? "" : "内"}（不含今日），范围内任意一次满足：历史条件「${historyRuleSummary(event.where, (field) => (field === "limit_up" ? "事件日收盘涨停" : label(field)))}」${event.price_path ? `；${historyPricePathSummary(event.price_path)}` : ""}；同时满足今日条件「${historyRuleSummary(event.then, label)}」；从近到远逐次完整核验，绑定从近到远找到的第一个已确认整体满足事件，全部条件使用同一事件`;
     return `${historyWindowText(event.window)}${event.window?.from === event.window?.to ? "" : "内"}（不含今日），选择${event.match === "earliest" ? "最早" : "最近"}一次满足「${historyRuleSummary(event.where, (field) => (field === "limit_up" ? "事件日收盘涨停" : label(field)))}」的事件${event.price_path ? `；${historyPricePathSummary(event.price_path)}` : ""}；同时满足今日条件「${historyRuleSummary(event.then, label)}」`;
   }
   const group = node.all || node.any || node.conditions;
@@ -611,18 +639,19 @@ export function historyRuleSummary(
   return `${cycle}${node.right_event_field ? "观察日收盘价（日K）" : label(node.field)} ${operators[node.op] || node.op} ${value}${node.field === "close_breakout_high" ? "个交易日" : ""}`;
 }
 export function historyCheckText(check: RuleNode): string {
+  const anyMatch = check.history_event?.match === "any";
   const state =
     check.result === true
       ? "满足"
       : check.result === false
         ? "未满足"
         : "待核验";
-  const event = check.selected_event;
+  const event = anyMatch && check.result !== true ? null : check.selected_event;
   const path = check.price_path_checks;
   const pathText = path
     ? `；价格过程${path.result === true ? "满足" : path.result === false ? "未满足" : "待核验"}`
     : "";
-  return `历史事件（${historyWindowText(check.window)}）：${event?.date ? `${event.date}${Number.isInteger(event.offset) ? ` · ${event.offset}个交易日前` : ""}；${path ? "整体条件" : "当前条件"}${state}` : state}${pathText}${check.reason ? "；" + conditionReasonText(check.reason) : ""}`;
+  return `历史事件（${historyWindowText(check.window)}${anyMatch ? "；范围内任意一次" : ""}）：${event?.date ? `${event.date}${Number.isInteger(event.offset) ? ` · ${event.offset}个交易日前` : ""}${anyMatch ? " · 最近一次已确认整体满足" : ""}；${path || anyMatch ? "整体条件" : "当前条件"}${state}` : state}${pathText}${check.reason ? "；" + conditionReasonText(check.reason) : ""}`;
 }
 export function validateVisualRule(
   node: RuleNode,
@@ -638,8 +667,8 @@ export function validateVisualRule(
       window.from > window.to
     )
       return "历史范围请输入1—750的整数，最近距离不能大于最远距离";
-    if (!["latest", "earliest"].includes(match))
-      return "请选择历史事件的匹配顺序";
+    if (!historyMatchOptions.some((item) => item.value === match))
+      return "请选择历史事件的匹配方式";
     return (
       validateHistoryPricePath(node.history_event.price_path) ||
       previousCrossConfigurationError(node.history_event) ||
