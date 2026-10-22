@@ -276,6 +276,166 @@
   color: var(--accent-secondary);
   background: color-mix(in srgb, var(--accent-secondary) 15%, var(--surface));
 }
+.history-price-path-editor {
+  margin: 3px 0;
+  padding: 13px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--cyan) 3%, var(--surface));
+}
+.history-price-path-editor header em {
+  margin-left: 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 400;
+}
+.history-price-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0 0 12px 33px;
+}
+.history-price-presets > span,
+.history-price-presets > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.history-price-parts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+.history-price-parts > section {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.history-price-parts > section.enabled {
+  border-color: color-mix(in srgb, var(--cyan) 30%, var(--border));
+}
+.history-price-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.history-price-toggle > input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.history-price-toggle strong {
+  font-size: 11px;
+}
+.history-price-toggle small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.history-price-options {
+  display: grid;
+  gap: 10px;
+  padding-top: 13px;
+}
+.history-price-options > label:not(.checkbox-label),
+.history-price-near > label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--subtle);
+  font-size: 10px;
+}
+.history-price-options input[type="number"],
+.history-price-options select {
+  width: 100%;
+  min-width: 0;
+}
+.history-price-options > .checkbox-label {
+  white-space: normal;
+  align-items: flex-start;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.history-price-options > .checkbox-label input {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.history-price-options small,
+.history-price-formula,
+.history-price-age-note {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+.history-price-age-note {
+  margin-top: 11px;
+}
+.history-price-near {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 7px;
+  background: var(--surface2);
+}
+.history-price-error {
+  color: var(--amber);
+  font-size: 11px;
+  margin-top: 9px;
+}
+.history-price-evidence {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.history-price-evidence > div {
+  padding: 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.history-price-evidence h5 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+.history-price-evidence dl {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr);
+  gap: 7px 10px;
+  margin-top: 10px;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.history-price-evidence dt {
+  color: var(--muted);
+}
+.history-price-evidence dd {
+  margin: 0;
+  color: var(--subtle);
+  overflow-wrap: anywhere;
+}
+.history-price-evidence .path-subcheck {
+  padding-top: 9px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 10px;
+  line-height: 1.8;
+}
+@media (max-width: 760px) {
+  .history-price-parts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .history-price-presets {
+    margin-left: 0;
+  }
+}
 .event-stage-connector {
   display: flex;
   gap: 8px;

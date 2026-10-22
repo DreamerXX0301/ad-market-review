@@ -58,11 +58,15 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
     if 'history_event' in node:
         if scope is not None:raise ValueError('历史事件内部不能再嵌套历史事件')
         event=node['history_event']
-        if set(node)!={'history_event'} or not isinstance(event,dict) or set(event)-{'window','match','where','then'}:raise ValueError('历史事件仅接受window/match/where/then')
+        if set(node)!={'history_event'} or not isinstance(event,dict) or set(event)-{'window','match','where','then','price_path'}:raise ValueError('历史事件仅接受window/match/where/then/price_path')
         window=event.get('window');match=event.get('match','latest')
         if not isinstance(window,dict) or set(window)!={'from','to'} or any(not isinstance(v,int) or isinstance(v,bool) or not 1<=v<=750 for v in window.values()) or window['from']>window['to']:raise ValueError('历史事件窗口需1至750个市场交易日，from不能大于to')
         if match not in ('latest','earliest'):raise ValueError('历史事件匹配规则仅支持latest/earliest')
-        return {'history_event':{'window':dict(window),'match':match,'where':validate(event.get('where'),depth+1,counter,'event_where'),'then':validate(event.get('then'),depth+1,counter,'event_then')}}
+        clean={'window':dict(window),'match':match,'where':validate(event.get('where'),depth+1,counter,'event_where'),'then':validate(event.get('then'),depth+1,counter,'event_then')}
+        if 'price_path' in event:
+            from app.domain.history_price_path import validate_price_path
+            clean['price_path']=validate_price_path(event['price_path'])
+        return {'history_event':clean}
     if 'conditions' in node:
         logic=node.get('logic','AND')
         if logic not in ('AND','OR'):raise ValueError('logic只能为AND或OR')

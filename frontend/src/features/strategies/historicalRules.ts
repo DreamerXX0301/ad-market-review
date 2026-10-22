@@ -146,6 +146,164 @@ export function appendTodayCondition(then: RuleNode, leaf: RuleNode): RuleNode {
     ],
   };
 }
+export const historyReclaimModes = [
+  { value: "close_at_or_above", label: "今日收盘不低于事件价（持续状态）" },
+  { value: "close_reclaim", label: "今日重新收复（昨收低于、今收不低于）" },
+  { value: "first_close_reclaim", label: "事件后首次重新收复（只看价格首次）" },
+  { value: "high_at_or_above", label: "今日最高价达到或超过事件价" },
+  { value: "touch", label: "今日实际触及事件价（最低≤事件价≤最高）" },
+];
+export const historyEventPriceLabels: Record<string, string> = {
+  close: "收盘价",
+  high: "最高价",
+  low: "最低价",
+};
+export function defaultHistoryGuard(): RuleNode {
+  return { max_drawdown_pct: 5, require_pullback: true };
+}
+export function defaultHistoryReclaim(): RuleNode {
+  return { event_field: "close", mode: "close_reclaim" };
+}
+/** Only an explicit edit adds the optional path; disabling its last part removes it. */
+export function withHistoryPricePart(
+  event: RuleNode,
+  part: "guard" | "reclaim",
+  value?: RuleNode,
+): RuleNode {
+  const next = { ...event },
+    path = { ...event.price_path };
+  if (value === undefined) delete path[part];
+  else path[part] = value;
+  if (Object.keys(path).length) next.price_path = path;
+  else delete next.price_path;
+  return next;
+}
+export function applyHistoryPricePreset(
+  event: RuleNode,
+  preset: "guard-rebound" | "reclaim",
+): RuleNode {
+  if (preset === "reclaim")
+    return withHistoryPricePart(event, "reclaim", {
+      ...defaultHistoryReclaim(),
+      ...event.price_path?.reclaim,
+      mode: "close_reclaim",
+    });
+  const next = withHistoryPricePart(event, "guard", {
+    ...defaultHistoryGuard(),
+    ...event.price_path?.guard,
+    require_pullback: true,
+  });
+  const gain = { field: "change_pct", op: ">=", value: 2, period: "D" };
+  const isGain = (leaf: RuleNode) =>
+    leaf.field === gain.field &&
+    leaf.op === gain.op &&
+    leaf.value === gain.value &&
+    leaf.period === "D";
+  if (!(isGain(event.then || {}) || event.then?.all?.some(isGain)))
+    next.then = appendTodayCondition(event.then, gain);
+  return next;
+}
+export function historyPricePathSummary(path?: RuleNode): string {
+  if (!path) return "";
+  const parts: string[] = [];
+  if (path.guard) {
+    const guard = path.guard;
+    parts.push(
+      `事件后至今日每次收盘≥保护价（事件收盘×(1−${guard.max_drawdown_pct ?? "?"}%)）`,
+    );
+    if (guard.require_pullback) parts.push("事件后至昨日曾收盘低于事件收盘");
+    if (guard.near_floor) {
+      const near = guard.near_floor;
+      parts.push(
+        `${near.sessions === 1 ? "昨日" : `截至昨日近${near.sessions ?? "?"}个交易日内`}曾收盘落在保护价至其上方${near.band_pct ?? "?"}%、且低于事件收盘`,
+      );
+    }
+  }
+  if (path.reclaim) {
+    const reclaim = path.reclaim;
+    const mode =
+      historyReclaimModes.find((item) => item.value === reclaim.mode)?.label ||
+      "收复方式待核验";
+    parts.push(
+      `${mode}；参照事件日${historyEventPriceLabels[reclaim.event_field] || "价格待选择"}`,
+    );
+  }
+  return parts.length ? `价格过程（日K）：${parts.join("；且")}` : "";
+}
+export function validateHistoryPricePath(path: unknown): string | null {
+  if (path === undefined) return null;
+  if (!path || typeof path !== "object" || Array.isArray(path))
+    return "价格过程需要有效配置";
+  const rule = path as RuleNode;
+  if (
+    !Object.keys(rule).length ||
+    Object.keys(rule).some((key) => !["guard", "reclaim"].includes(key))
+  )
+    return "价格过程请选择守位或事件价收复";
+  const finiteRange = (
+    value: unknown,
+    min: number,
+    max: number,
+    inclusiveMax = true,
+  ) =>
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= min &&
+    (inclusiveMax ? value <= max : value < max);
+  if ("guard" in rule) {
+    const guard = rule.guard;
+    if (
+      !guard ||
+      typeof guard !== "object" ||
+      Array.isArray(guard) ||
+      Object.keys(guard).some(
+        (key) =>
+          !["max_drawdown_pct", "require_pullback", "near_floor"].includes(key),
+      )
+    )
+      return "保护价配置无效";
+    if (!finiteRange(guard.max_drawdown_pct, 0, 100, false))
+      return "允许回撤请输入0至小于100的百分比";
+    if (
+      guard.require_pullback !== undefined &&
+      typeof guard.require_pullback !== "boolean"
+    )
+      return "请选择是否要求实际回落";
+    if (guard.near_floor !== undefined) {
+      const near = guard.near_floor;
+      if (
+        !near ||
+        typeof near !== "object" ||
+        Array.isArray(near) ||
+        Object.keys(near).some((key) => !["sessions", "band_pct"].includes(key))
+      )
+        return "近保护价配置无效";
+      if (
+        !Number.isInteger(near.sessions) ||
+        near.sessions < 1 ||
+        near.sessions > 750
+      )
+        return "回踩范围请输入1—750个市场交易日的整数";
+      if (!finiteRange(near.band_pct, 0, 100))
+        return "保护价上方区间请输入0—100的百分比";
+    }
+  }
+  if ("reclaim" in rule) {
+    const reclaim = rule.reclaim;
+    if (
+      !reclaim ||
+      typeof reclaim !== "object" ||
+      Array.isArray(reclaim) ||
+      Object.keys(reclaim).some((key) => !["event_field", "mode"].includes(key))
+    )
+      return "事件价收复配置无效";
+    if (!Object.hasOwn(historyEventPriceLabels, reclaim.event_field))
+      return "请选择事件日收盘、最高或最低价";
+    if (!historyReclaimModes.some((item) => item.value === reclaim.mode))
+      return "请选择有效的事件价收复方式";
+  }
+  return null;
+}
 export function historyWindowText(window: any): string {
   const from = window?.from ?? "?",
     to = window?.to ?? "?";
@@ -166,7 +324,7 @@ export function historyRuleSummary(
   if (isHiddenConditionRule(node)) return HIDDEN_CONDITION_TEXT;
   if (node.history_event) {
     const event = node.history_event;
-    return `${historyWindowText(event.window)}${event.window?.from === event.window?.to ? "" : "内"}（不含今日），选择${event.match === "earliest" ? "最早" : "最近"}一次满足「${historyRuleSummary(event.where, (field) => (field === "limit_up" ? "事件日收盘涨停" : label(field)))}」的事件；同时满足今日条件「${historyRuleSummary(event.then, label)}」`;
+    return `${historyWindowText(event.window)}${event.window?.from === event.window?.to ? "" : "内"}（不含今日），选择${event.match === "earliest" ? "最早" : "最近"}一次满足「${historyRuleSummary(event.where, (field) => (field === "limit_up" ? "事件日收盘涨停" : label(field)))}」的事件${event.price_path ? `；${historyPricePathSummary(event.price_path)}` : ""}；同时满足今日条件「${historyRuleSummary(event.then, label)}」`;
   }
   const group = node.all || node.any || node.conditions;
   if (Array.isArray(group))
@@ -222,7 +380,11 @@ export function historyCheckText(check: RuleNode): string {
         ? "未满足"
         : "待核验";
   const event = check.selected_event;
-  return `历史事件（${historyWindowText(check.window)}）：${event?.date ? `${event.date}${Number.isInteger(event.offset) ? ` · ${event.offset}个交易日前` : ""}；当前条件${state}` : state}${check.reason ? "；" + conditionReasonText(check.reason) : ""}`;
+  const path = check.price_path_checks;
+  const pathText = path
+    ? `；价格过程${path.result === true ? "满足" : path.result === false ? "未满足" : "待核验"}`
+    : "";
+  return `历史事件（${historyWindowText(check.window)}）：${event?.date ? `${event.date}${Number.isInteger(event.offset) ? ` · ${event.offset}个交易日前` : ""}；${path ? "整体条件" : "当前条件"}${state}` : state}${pathText}${check.reason ? "；" + conditionReasonText(check.reason) : ""}`;
 }
 export function validateVisualRule(
   node: RuleNode,
@@ -241,6 +403,7 @@ export function validateVisualRule(
     if (!["latest", "earliest"].includes(match))
       return "请选择历史事件的匹配顺序";
     return (
+      validateHistoryPricePath(node.history_event.price_path) ||
       validateVisualRule(where || {}, "where") ||
       validateVisualRule(then || {}, "then")
     );

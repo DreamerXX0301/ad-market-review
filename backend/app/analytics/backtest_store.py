@@ -53,13 +53,13 @@ def create_backtest(payload):
     requested_key=payload.get('request_key')
     if requested_key is not None and (not isinstance(requested_key,str) or not requested_key.strip() or len(requested_key)>200):raise ValueError('request_key必须为1至200字符的非空字符串')
     request_key=requested_key if requested_key is not None else new_id('manual-backtest')
-    key=digest({'strategy':frozen,'config':config,'start':start,'end':end,'inputs':inputs})
+    key=digest({'strategy':frozen,'config':config,'start':start,'end':end,'inputs':inputs,'engine_version':VERSION})
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         previous=c.execute('SELECT j.kind,b.backtest_id,b.status,b.input_sha256 FROM job j LEFT JOIN backtest_run b ON b.job_id=j.job_id WHERE j.request_key=?',(request_key,)).fetchone()
         if previous:
             if previous['kind']!='backtest' or not previous['backtest_id']:raise BacktestRequestConflict('request_key已被其他任务占用，请使用新的请求键')
-            if previous['input_sha256']!=key:raise BacktestRequestConflict('request_key对应的策略、区间、参数或输入快照不同，请使用新的请求键')
+            if previous['input_sha256']!=key:raise BacktestRequestConflict('request_key对应的策略、区间、参数或输入快照不同，或冻结引擎版本不同，请使用新的请求键')
             return {'backtest_id':previous['backtest_id'],'status':previous['status'],'reused':True}
         active=c.execute("SELECT b.backtest_id,b.status FROM backtest_run b JOIN job j ON b.job_id=j.job_id WHERE j.logical_key=? AND j.status IN ('queued','running','paused')",('backtest:'+key,)).fetchone()
         if active:return {'backtest_id':active[0],'status':active[1],'reused':True}
@@ -109,9 +109,13 @@ def execute_backtest(job_id,progress=None):
         if row['status']=='queued':c.execute("UPDATE backtest_run SET status='running' WHERE backtest_id=?",(row['backtest_id'],))
         elif row['status']!='running':raise ValueError('仅恢复授权running回测；已失败/取消需手动新建')
     try:
+        if row['engine_version'] != VERSION:
+            raise ValueError('回测冻结引擎版本'+row['engine_version']+'与当前'+VERSION+'不同；保留旧任务与结果，请使用当前版本手动新建回测')
         frozen=json.loads(row['strategy_snapshot_json']);config=json.loads(row['execution_config_json'])
         market=MarketData(data_dir(),snapshot_id=frozen['market_snapshot_id'])
         result=run_backtest(market,frozen,{**config,'start_date':row['requested_start'],'end_date':row['requested_end']},progress)
+        if result.get('engine_version') != row['engine_version']:
+            raise ValueError('回测计算结果的引擎版本与冻结输入不同，拒绝发布')
         bid=row['backtest_id'];result.update(backtest_id=bid,job_id=job_id,status='completed',strategy_id=frozen['strategy_id'],strategy_name=frozen['name'],strategy_version=frozen['version'],input_snapshots=json.loads(row['input_snapshots_json']),market_snapshot_id=frozen['market_snapshot_id'],input_sha256=row['input_sha256'])
         folder=published_dir()/'backtests'/bid
         stage=published_dir()/'backtests'/('.staging-'+bid)

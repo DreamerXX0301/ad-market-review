@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { Row } from "../../lib/api";
 import Conditions, { fallbackFields, fieldLabel } from "./Conditions";
+import HistoryPricePathEditor from "./HistoryPricePathEditor";
 import {
   historyFieldsFallback,
   historyRuleSummary,
@@ -399,11 +400,20 @@ function HistoryEventNode({
       </div>
       <div className="event-stage-connector">
         <ArrowDown size={16} />
-        <span>同时满足（AND）· 今日条件可单独设置，也可选与事件日价格比较</span>
+        <span>同一次事件 · 可选检查期间价格过程</span>
+      </div>
+      <HistoryPricePathEditor
+        event={event}
+        onChange={(next) => onChange({ ...value, history_event: next })}
+        allowRebound={fields.some((field) => field.field === "change_pct")}
+      />
+      <div className="event-stage-connector">
+        <ArrowDown size={16} />
+        <span>同时满足（AND）· 再检查今日涨幅与技术条件</span>
       </div>
       <div className="event-stage event-stage-current">
         <header>
-          <span>2</span>
+          <span>3</span>
           <div>
             <strong>今日条件</strong>
             <small>

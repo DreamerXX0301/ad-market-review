@@ -22,7 +22,10 @@ def stored_period(period):
     return {'period':'D' if period=='M' else period,'signal_period':period}
 
 
-def evaluator_for(definition,period):
+def evaluator_for(definition,period,trade_rules=None):
+    trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
+    if any('price_path' in event for tree in trees for event in history_nodes(tree)):
+        return 'workspace-v10-history-price-path'
     return 'workspace-v9-multi-period' if period=='M' or periods_for(definition,period)-{period} else ENGINE_VERSION
 
 
@@ -104,7 +107,7 @@ def create_strategy(payload,strategy_id=None):
     with connect() as c:
         sid=strategy_id or new_id('strategy')
         insert(c,'strategy',dict(strategy_id=sid,name=name,created_at_ms=now_ms()))
-        insert(c,'strategy_version',dict(strategy_id=sid,version=1,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),evaluator_version=evaluator_for(definition,period),recorded_at_ms=now_ms()))
+        insert(c,'strategy_version',dict(strategy_id=sid,version=1,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),evaluator_version=evaluator_for(definition,period,trade_rules),recorded_at_ms=now_ms()))
         save_policy(c,sid,1,policy)
         c.execute('UPDATE strategy SET current_version=1,current_policy_version=1 WHERE strategy_id=?',(sid,))
         return strategy_view(c,sid)
@@ -126,7 +129,7 @@ def update_strategy(sid,payload):
         except ValueError as e:fail(str(e))
         if 'definition' in payload or 'period' in payload or 'trade_rules' in payload:
             version=old['version']+1
-            insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),evaluator_version=evaluator_for(definition,period),recorded_at_ms=now_ms()))
+            insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),evaluator_version=evaluator_for(definition,period,trade_rules),recorded_at_ms=now_ms()))
             c.execute('UPDATE strategy SET current_version=? WHERE strategy_id=?',(version,sid))
         if 'policy' in payload:
             following,custom=active_policy_scope(c,sid)
@@ -145,7 +148,7 @@ def update_strategy(sid,payload):
 def ensure_evaluator_version(c,sid):
     st=strategy_view(c,sid)
     old=one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,st['version']))
-    desired=evaluator_for(st['definition'],st['period'])
+    desired=evaluator_for(st['definition'],st['period'],st.get('trade_rules'))
     if old['evaluator_version']!=desired:
         version=c.execute('SELECT max(version)+1 FROM strategy_version WHERE strategy_id=?',(sid,)).fetchone()[0]
         insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(st['period']),definition_json=old['definition_json'],definition_sha256=old['definition_sha256'],trade_rules_json=old['trade_rules_json'],evaluator_version=desired,recorded_at_ms=now_ms()))

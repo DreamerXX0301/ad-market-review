@@ -221,6 +221,8 @@ def evaluate_event(tree, metrics, history):
     result = {**tree, 'type': 'history_event', 'result': None, 'selected_event': None,
               'event_checks': None, 'checks': [], 'window': actual_window, 'evidence': evidence,
               'reason': '没有准备历史日行情上下文，保持未知'}
+    if 'price_path' in spec:
+        result['price_path_checks'] = None
     if position is None: return result
     where_key = json.dumps(spec['where'], sort_keys=True, separators=(',', ':'))
     for offset in offsets:
@@ -250,6 +252,12 @@ def evaluate_event(tree, metrics, history):
         then_metrics={**metrics,'_period_metrics':{**metrics.get('_period_metrics',{}),'D':context.daily.get(day,{})}}
         then = evaluate(spec['then'], then_metrics, bound)
         result.update(result=then['result'], checks=[then], reason=then.get('reason'))
+        if 'price_path' in spec:
+            from app.domain.history_price_path import evaluate_price_path, all_results
+            path = evaluate_price_path(spec['price_path'], context, event, day)
+            result['price_path_checks'] = path
+            state = all_results([then['result'], path['result']])
+            result.update(result=state, reason=(path.get('reason') if path['result'] is state else then.get('reason')) if state is not True else None)
         evidence.update(current_price=current_price, current_price_date=day, current_price_period='D',
                         price_comparable=current_price is not None, price_comparison_reason=price_reason)
         return result

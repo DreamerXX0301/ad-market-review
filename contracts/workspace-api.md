@@ -77,6 +77,36 @@
 
 then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3,period:"D"},{any:[{field:"macd_cross",op:"==",value:true,period:"D"},{field:"kd_cross",op:"==",value:true,period:"D"}]}]}`，不要求比较事件价；也可用 `{field:"close",op:">",right_event_field:"close"|"high"|"low",period:"D"}` 比较观察日收盘与本节点事件价。事件绑定互不串用。跨行动、缺中间有效日报价或来源覆盖不足时，事件价比较保持未知，独立今日涨幅/技术条件仍按自身覆盖判断。新编辑器历史内部固定 D；无显式 period 的旧 then 保留旧版本解释。共享历史预备同时保留 where 和显式日线 then 的依赖，保证批量与标量路径一致。
 
+历史节点可追加可选 `price_path`，不带此键的旧定义保持原结构和解释。例如事件后守位、昨日回踩及今日回升：
+
+```json
+{
+  "history_event": {
+    "window": {"from": 2, "to": 30},
+    "match": "latest",
+    "where": {"field": "volume_ratio", "op": ">=", "value": 3, "period": "D"},
+    "price_path": {
+      "guard": {
+        "max_drawdown_pct": 5,
+        "require_pullback": true,
+        "near_floor": {"sessions": 1, "band_pct": 1}
+      }
+    },
+    "then": {"field": "change_pct", "op": ">=", "value": 2, "period": "D"}
+  }
+}
+```
+
+- `price_path` 必须是非空对象，只接受 `guard` / `reclaim`，两者可同时设置，所有已启用项 AND，再与 `then` AND。先按 where/window/match 绑定事件，过程失败不会重选事件。
+- `guard.max_drawdown_pct=r` 为有限数值 `0≤r<100`；保护价 `F=事件日收盘价×(1−r/100)`，E之后到T的每个市场交易日收盘均须 `≥F`。不按显示位数或任意epsilon判断，百分比运算使用十进制未舍入值；中途破位后再收回仍不满足。`require_pullback` 为布尔值，省略默认false；启用时E之后至昨日须至少一次收盘低于事件收盘。`near_floor` 必须含 `sessions`（整数1–750）和 `band_pct`（有限0–100），检查最近N个交易日至昨日与E后区间的交集，至少一次收盘在 `[F,F×(1+band_pct/100)]` 且低于事件收盘；N=1指昨日，没有事后交易日时不满足。
+- `reclaim` 必须含 `event_field=close|high|low` 与 `mode`，基准来自本节点绑定事件。`close_at_or_above` 是今日收盘≥基准；`close_reclaim` 是昨收<基准且今收≥基准，昨日必须晚于E；`first_close_reclaim` 再要求此前没有E后的相同价格上穿；`high_at_or_above` 是今日最高≥基准；`touch` 是今日最低≤基准≤今日最高。跳空且全天在基准上方只满足最高达到，不算实际触及。
+- 首次判断从E→E+1的价格变化开始，按价格事件本身计数；不因当时技术条件或当前模板的额外门槛未满足而重置。以事件最高为基准时，即使E+1已上穿却没有独立的昨日回踩日，也会消耗首次，后来再次站上不能改称首次。当前重新收复仍需昨日晚于E，最早在E+2日触发。
+- 路径固定日线，只读E至当前T；不因外层W/M或回测预备到更晚日期而读取未来。缺报、重复、零量、未知行动或跨行动后的原价不可比，保留unknown。首个不可比点之前已证实的失守或更早价格收复仍可证明false；不把缺口后的低价冒充可比失守。所有子检查和then仍独立留证。
+
+事件结果的 `price_path_checks` 仅在新定义出现，未绑定事件时为null；绑定后含 `type=history_price_path`、路径模型、观察日、result、guard/reclaim小证据。guard含公式、保护价、最小可比收盘及日期、首个破位、可比/应有天数、回落/近保护价命中或缺口；reclaim含基准、昨今价、触发方式和此前首次价格收复日期。不给出全区间行情对象。选股、跟踪和受限回测共用求值器；新增定义与回测版本单独标记，旧保存结果不重写，无数据库迁移。
+
+价格过程为个股历史节点能力，板块条件不接受history_event。新回测引擎为 `restricted-next-open-v4-history-price-path`，input/logical key包含版本；不同冻结引擎的未完成任务不得被新请求复用或继续模拟发布，需手动新建，旧完成报告仍可读取。新价格过程定义使用 `workspace-v10-history-price-path` 标记，旧定义继续沿用其既有v8/v9判定，不自动重写旧版本。
+
 历史 `limit_up` 在选股、跟踪和回测复用同一已发布代际的来源池核验器：逐日期编译来源代码索引与完整来源缺席证据，每只股票再核对该日唯一有效原始 OHLC、收盘、成交量和来源身份；既有日报价标志或 +10% 涨幅不能代替来源证据。缺来源、缺报、停牌、价格/方向冲突均保留 unknown，不用未来池回填。checks 保存来源路径、快照、窗口、日期、偏移、原始价格与原因，不序列化完整历史上下文。回测只为历史 where 放开同日涨停，普通当前涨停及滚动次数条件仍沿用原有回测边界。
 
 `trade_rules={entry:条件树|null,exit:条件树|null}` 与选股独立版本化：买入为选股 AND entry，exit 不要求仍满足选股。只接受已支持回测特征；不支持题材、未完整历史涨停或跟踪锚点，不因为 AST 能保存便保证可回测。
