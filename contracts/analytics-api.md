@@ -4,6 +4,8 @@
 
 ## 日期、身份与覆盖
 
+`GET /data/status` 的 `summary` 与 `/bootstrap` 的 `data_summary` 保留 `storage_bytes`，含义为本实例 `published` 中已计量普通文件的逻辑字节，新增 `storage_accounting` 明细。`scope=active_published_root`；`logical_bytes/allocated_bytes/file_count/complete` 与五个 `categories`（`current_market/old_market/supplement/backtests/metadata_other`）使用同一遍只读文件遍历，分类逻辑字节与文件数严格加总，`storage_bytes=logical_bytes`。当前行情按本实例SQLite主行情head识别，其他已有行情代际单列，旧代际不表示可删除。统计排除staging、符号链接及特殊文件；扫描失败时 `complete=false`，数值只是已计量小计。`allocated_bytes` 为可取得的每文件 `st_blocks*512` 之和，未知为null，不去重硬链接或共享块，不等于独占占用或可释放空间。界面默认十进制GB，详情列GiB与字节；业务库、raw、work、其他运行版本及备份不在此统计内。页面读取不递归统计其他实例或备份，不进行内容SHA重算或清理。
+
 - `date`/`as_of` 必须属于已发布范围内的完成市场交易日；未来、无效格式或越界日期拒绝。盘面日期不会修改业务时钟。
 - 股票/指数使用完整证券 ID，例如 `000001.SH` 与 `000001.SZ`；板块使用已核验目录的完整来源 `topic_code`。
 - `data_coverage` 含 `label/start/end/basis/notice/selected_date_available/partial/available_dates`。basis 是可读口径；日期列表仅表示明确留存日，不保证中间连续完整。

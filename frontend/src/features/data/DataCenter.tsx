@@ -16,7 +16,6 @@ import {
 import { api, list, post, requestKey, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
-  bytes,
   dateTime,
   duration,
   integer,
@@ -54,6 +53,8 @@ import {
 } from "./dataPresentation";
 import "./DataCenter.css";
 import CoveragePanel from "./CoveragePanel";
+import PublishedStorageDetails from "./PublishedStorageDetails";
+import { publishedStorageView } from "./storagePresentation";
 const activeStatuses = ["queued", "pending", "running"];
 const publishedStatuses = [
   "completed",
@@ -358,6 +359,7 @@ export default function DataCenter({
   const toast = useToast();
   const data = result.data,
     summary = data?.summary || data?.data_summary || {};
+  const storage = publishedStorageView(summary);
   const recent = list(history.data);
   const previousHistoryStatuses = useRef<Map<string, string> | null>(null);
   const chain = taskChainState(task.data);
@@ -610,9 +612,9 @@ export default function DataCenter({
           sub={`${summary.first_date || "—"} → ${summary.last_date || data?.business_date || "—"}`}
         />
         <Stat
-          label="压缩存储"
-          value={bytes(summary.storage_bytes)}
-          sub="仅以实际数据文件计量"
+          label="本实例已发布文件"
+          value={storage.value}
+          sub={storage.sub}
         />
         <Stat
           label="当前业务日"
@@ -620,6 +622,7 @@ export default function DataCenter({
           sub="各模块分别发布覆盖水位"
         />
       </div>
+      <PublishedStorageDetails view={storage} />
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}

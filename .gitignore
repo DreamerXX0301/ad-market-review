@@ -44,6 +44,7 @@ playwright-report/
 !/docs/数据源与权限.md
 !/docs/Docker部署.md
 !/docs/界面导览.md
+!/docs/存储与盘后增量优化.md
 !/docs/images/
 /docs/images/*
 !/docs/images/overview.jpg

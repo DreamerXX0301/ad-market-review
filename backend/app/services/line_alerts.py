@@ -5,6 +5,7 @@ queue checks; no scheduler, remote requests or historical strategy backfills.
 """
 from datetime import date
 import json
+import logging
 import math
 
 from fastapi import HTTPException
@@ -309,4 +310,7 @@ def after_sync(job):
 def recover_sync_followups():
     with connect() as connection:
         saved=[dict(row) for row in connection.execute("SELECT * FROM job j WHERE kind IN ('initialise','increment') AND status IN ('succeeded','partial','no_change') AND json_extract(parameters_json,'$.line_alert_check_version')=? AND NOT EXISTS(SELECT 1 FROM job_event e WHERE e.job_id=j.job_id AND e.stage='line_alert_check_queued') ORDER BY created_at_ms LIMIT 20",(VERSION,))]
-    for job in saved:after_sync(job)
+    for job in saved:
+        try:after_sync(job)
+        except Exception as error:
+            logging.getLogger(__name__).warning('划线核验补漏未完成 %s %s；保留原任务供下次核对',job['job_id'],type(error).__name__)

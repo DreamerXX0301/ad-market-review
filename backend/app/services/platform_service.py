@@ -15,9 +15,10 @@ MODULES = {
 
 
 def summary(market=None):
+    from .published_storage import published_storage
     status=(market or get_market()).status()
-    size=sum(p.stat().st_size for p in published_dir().rglob('*') if p.is_file() and not any(x.startswith('.staging') for x in p.parts))
-    return {'stock_count':status.get('symbols',0),'row_count':status.get('rows',0),'first_date':status.get('data_begin'),'last_date':status.get('data_end'),'storage_bytes':size}
+    accounting=published_storage(published_dir(),status.get('snapshot_id'))
+    return {'stock_count':status.get('symbols',0),'row_count':status.get('rows',0),'first_date':status.get('data_begin'),'last_date':status.get('data_end'),'storage_bytes':accounting['logical_bytes'],'storage_accounting':accounting}
 
 
 def bootstrap():

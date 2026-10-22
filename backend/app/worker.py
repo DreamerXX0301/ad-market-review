@@ -109,6 +109,9 @@ def _queue_followup_once(job,completed_result=None):
                 previous=connection.execute('SELECT status FROM job WHERE job_id=?',(parameters.get('previous_chain_job_id'),)).fetchone()
                 if not previous or previous[0] not in ('succeeded','partial','no_change'):return None
     target=_chain_target(job,completed_result)
+    # Recovery can be the first code to freeze a no-change parent's date. Queue
+    # its short children here too, before creating a long sector child.
+    _queue_local_sync_checks(job)
     if job['kind']=='initialise':
         extra={'data_chain_version':'sector-charts-v1'} if parameters.get('data_chain_version')=='sector-charts-v1' else {}
         child=tasks.create_task('topic_refresh',{'source_id':'fuyao','scope':'current-full-catalog','initialization_chain':True,'parent_sync_job_id':job['job_id'],**extra},target_date=target,request_key='topics-after-initialise:'+job['job_id'])
@@ -188,10 +191,39 @@ def recover_followups(limit=20):
     return result
 
 
+def _queue_local_sync_checks(job, completed_result=None):
+    """Queue short local checks before the sector chain, without changing FIFO."""
+    if job['kind'] not in ('initialise','increment'):return
+    from app.services import line_alerts,listing_status
+    parameters=_parameters(job)
+    if not (parameters.get('line_alert_check_version')==line_alerts.VERSION
+            or parameters.get('listing_status_check_version')==listing_status.VERSION):return
+    # A no-change request may not have a target. Freeze its own completed date
+    # before either child is created; never borrow a later global head on repair.
+    try:_chain_target(job,completed_result)
+    except Exception:
+        logger.warning('本地核验未排队 %s：同步日期未能冻结',job['job_id'])
+        return
+    for name,callback in (('line_alerts',line_alerts.after_sync),('listing_status',listing_status.after_sync)):
+        try:callback(job)
+        except Exception as error:
+            # An isolated local check must not suppress the other child or the
+            # already authorized data chain. Its existing recovery is idempotent.
+            logger.warning('本地核验排队稍后重试 %s %s %s',job['job_id'],name,type(error).__name__)
+            with connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                stage='local_check_queue_error:'+name
+                if not connection.execute('SELECT 1 FROM job_event WHERE job_id=? AND stage=?',(job['job_id'],stage)).fetchone():
+                    tasks.append_event(connection,job['job_id'],stage,'本地核验暂未排队；重启时按原授权补漏，不影响后续数据链','warning',
+                        {'check':name,'reason_code':type(error).__name__})
+
+
 def dispatch(job):
     with connect() as connection:state=connection.execute('SELECT status FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
     if not state or state[0] in tasks.TERMINAL:
-        if state and state[0] in ('succeeded','partial','no_change'):_queue_followup(job)
+        if state and state[0] in ('succeeded','partial','no_change'):
+            _queue_local_sync_checks(job)
+            _queue_followup(job)
         return
     if state[0]=='paused':raise tasks.TaskPaused()
     _authorize_chain(job)
@@ -203,13 +235,15 @@ def dispatch(job):
         result=execute_sync(identifier,callback)
         status='no_change' if result.get('no_change') or result.get('status')=='no_change' else 'partial' if result.get('quality')=='partial' else 'succeeded'
         tasks.finish(identifier,status,result.get('message','行情数据已校验并发布'))
+        _queue_local_sync_checks(job,result)
         from app.services.workspace_automation import run_after_sync
+        started=time.monotonic()
         run_after_sync(identifier)
+        with connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            tasks.append_event(connection,identifier,'workspace_followup_timing','主行情已可用，本地策略与跟踪核对已结束；轻量核验已先排队',
+                details={'elapsed_ms':round((time.monotonic()-started)*1000),'queue_order':'local-checks-before-sector-chain-v1'})
         _queue_followup(job,result)
-        from app.services.line_alerts import after_sync
-        after_sync(job)
-        from app.services.listing_status import after_sync as listing_after_sync
-        listing_after_sync(job)
     elif kind=='cleanup' and _parameters(job).get('operation')=='workspace_purge':
         from app.services.workspace_purge import execute
         execute(job)
@@ -282,11 +316,13 @@ def run(once=False):
                     logger.warning('个股研究缓存清理稍后重试')
                 next_research_cleanup=time.monotonic()+3600
             set_setting('worker_heartbeat',{'owner':owner,'at_ms':now_ms()})
-            recover_followups()
             from app.services.line_alerts import recover_sync_followups
-            recover_sync_followups()
             from app.services.listing_status import recover_sync_followups as recover_listing_followups
-            recover_listing_followups()
+            for name,recover in (('line_alerts',recover_sync_followups),('listing_status',recover_listing_followups)):
+                try:recover()
+                except Exception as error:
+                    logger.warning('本地核验补漏稍后重试 %s %s',name,type(error).__name__)
+            recover_followups()
             job=tasks.claim_next(owner)
             if not job:
                 if once:return
