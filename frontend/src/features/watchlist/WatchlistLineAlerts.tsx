@@ -141,7 +141,13 @@ export function LineAlertDialog({
           sourceName="划线提醒"
           observedDate={event.trade_date}
         />
-        <button className="btn primary small" onClick={() => onStock(event)}>
+        <button
+          className="btn primary small"
+          onClick={() => {
+            onClose();
+            onStock(event);
+          }}
+        >
           查看当日 K 线<ArrowUpRight size={14} />
         </button>
       </div>

@@ -94,6 +94,8 @@
 
 `GET /instruments/{id}/tracking-baselines?as_of=` 只读该个股已保存的跟踪事件基准，按观察日排除更晚入池和退出信息，最多返回最近100个轮次并标明截断。默认最近仍在跟踪的轮次，否则最近历史轮次；返回原策略、轮次、冻结入池日期、原始收盘价与价格口径。全局搜索打开个股时也可选择这些基准，不创建跟踪或重算选股；从特定跟踪/自选来源打开仍优先原轮次，连续切股不沿用上一只基准。
 
+每轮另含 `historical_event_checks`，仅投影本轮冻结 `entry_basis.entry_checks` 内的历史事件，不读取候选或行情、不重新求值。元素为 `{type:"history_event",result,reference_fields,selected_event:{date,open,high,low,close,offset,price_basis},event_checks:{result:true},history_event:{match,where?,price_path?:{reclaim:{event_field}}},evidence:{as_of,price_basis}}`。仅纳入事件条件明确满足、日期不晚于冻结入池观察日、有效有限正OHLC且原始未复权口径明确的已绑定事件；不要求其独立今日/价格过程最终result为true，保留原true/false/null，不能据此冒充新信号。where只为有界条件标签；无法按白名单读取时省略，原事件证据不推断。缺失、未知及未绑定证据返回空数组。扫描遵守既有100条件节点上限，异常超限时 `historical_event_checks_truncated=true` 并含 `historical_event_checks_reason`，不声称摘要完整。`reference_fields` 只从冻结then的all/any树抽取right_event_field，并合并price_path.reclaim.event_field，以close/high/low/open固定顺序去重；没有引用字段才默认 `["close"]`。事件日图标与每个参照字段的横线使用冻结事件原始OHLC，不能用入池收盘代替，也不能将±百分比比较阈值冒充原事件价格；百分比只在规则证据中解释。展示仍须遵守图表复权口径与锚定日的可比限制。
+
 `GET /instruments/{id}/chart?period=D|W|M&as_of=&price_basis=none|forward&indicator_continuity=quotes|market_sessions`。
 
 - 返回 `instrument/period/as_of/bars/snapshot_id/quality/warnings`、价格/量额单位、实际与请求价格口径、`adjustment/indicator_gaps/quote_gaps/waves` 及涨跌停事件覆盖。

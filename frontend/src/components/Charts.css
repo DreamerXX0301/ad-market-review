@@ -275,3 +275,26 @@
   margin-top: 6px;
   font-size: 10px;
 }
+.chart-history-events {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #bd96f3 25%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, #bd96f3 5%, var(--surface));
+  font-size: 12px;
+}
+.chart-history-events > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.chart-history-events strong {
+  color: #bd96f3;
+}
+.chart-history-events small,
+.chart-history-events .unavailable {
+  color: var(--muted);
+}

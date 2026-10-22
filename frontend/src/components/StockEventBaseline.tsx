@@ -2,7 +2,10 @@ import { useState } from "react";
 import { useApi, list } from "../lib/api";
 import type { Row } from "../lib/api";
 import type { ChartEventBaseline } from "./chartDisplay";
-import { resolveStockEventBaseline } from "./eventBaselineSelection";
+import {
+  resolveStockEventBaseline,
+  resolveStockHistoricalReference,
+} from "./eventBaselineSelection";
 import { num } from "../lib/format";
 import "./StockEventBaseline.css";
 
@@ -11,12 +14,15 @@ export function useStockEventBaseline(
   asOf: string | undefined,
   enabled: boolean,
   explicit?: ChartEventBaseline,
+  navigationHistoricalChecks?: unknown,
+  contextKey = "",
 ) {
-  const scope = `${id}:${asOf || "latest"}:${explicit?.roundId || ""}`;
+  const scope = `${id}:${asOf || "latest"}:${explicit?.roundId || ""}:${contextKey}`;
   const [selection, setSelection] = useState({
     scope: "",
     value: "",
     referenceId: "",
+    referenceChanged: false,
   });
   const result = useApi<Row>(
     enabled
@@ -40,11 +46,19 @@ export function useStockEventBaseline(
         (explicit ? explicit.roundId || "context" : payload?.default_round_id)
       : selectedId;
   const sourceBaseline = resolveStockEventBaseline(items, sourceId, explicit);
+  const historicalReference = resolveStockHistoricalReference(
+    items,
+    sourceId,
+    navigationHistoricalChecks,
+    selection.scope === scope && selection.referenceChanged,
+  );
   return {
     items,
     selectedId,
     baseline,
     sourceBaseline,
+    historicalChecks: historicalReference.checks,
+    historicalChecksReason: historicalReference.reason,
     explicit,
     loading: result.loading,
     error: result.error,
@@ -54,6 +68,9 @@ export function useStockEventBaseline(
         scope,
         value,
         referenceId: value === "none" ? sourceId || "" : value,
+        referenceChanged:
+          value !== "none" ||
+          (selection.scope === scope && selection.referenceChanged),
       }),
   };
 }

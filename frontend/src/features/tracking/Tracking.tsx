@@ -545,6 +545,8 @@ function StockTracking({
     const navigationRows = orderedRows.map((row) => ({
       ...row,
       eventBaseline: trackingEventBaseline(byRound.get(row.round_id) || row),
+      historicalChecks: (byRound.get(row.round_id) || row).entry_basis
+        ?.entry_checks,
     }));
     const navigation = createStockNavigation(
       navigationRows,
@@ -563,7 +565,11 @@ function StockTracking({
         label: `跟踪池 · ${tab === "alerts" ? "触发列表" : tab === "history" ? "结束历史" : "跟踪中"} · 当前筛选 · 已去重股票`,
         asOf: result.data?.business_date || undefined,
       },
-      { ...clickedRow, eventBaseline: trackingEventBaseline(round) },
+      {
+        ...clickedRow,
+        eventBaseline: trackingEventBaseline(round),
+        historicalChecks: round.entry_basis?.entry_checks,
+      },
     );
     onStock(id, round, navigation);
   };

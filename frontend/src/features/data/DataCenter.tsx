@@ -18,6 +18,7 @@ import type { Row } from "../../lib/api";
 import {
   bytes,
   dateTime,
+  duration,
   integer,
   label,
   num,
@@ -1034,9 +1035,10 @@ export default function DataCenter({
               },
               {
                 key: "duration_ms",
-                title: "耗时",
-                render: (v) =>
-                  v == null ? "—" : `${num(Number(v) / 1000, 0)} 秒`,
+                title: "总历时",
+                description:
+                  "从任务提交到完成或当前时刻，包含排队、暂停等等待时间，不等于纯执行耗时。",
+                render: (v) => duration(v),
               },
               {
                 key: "row_count",

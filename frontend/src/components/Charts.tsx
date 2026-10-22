@@ -112,6 +112,11 @@ import {
   wavePatternWindow,
 } from "./wavePresentation";
 import type { WaveMode } from "./wavePresentation";
+import {
+  historicalChartEvents,
+  projectHistoricalChartEvent,
+  eventPriceNames,
+} from "./historicalChartEvents";
 export type { ChartEventBaseline } from "./chartDisplay";
 echarts.use([
   BarChart,
@@ -196,6 +201,8 @@ export function CandleChart({
   onLoad,
   instrumentKind,
   eventBaseline,
+  historicalChecks,
+  historicalChecksReason,
   dataEndpoint,
   showStockSummary = true,
   showDataNotes = true,
@@ -207,6 +214,8 @@ export function CandleChart({
   onLoad?: (data: Row) => void;
   instrumentKind?: string;
   eventBaseline?: ChartEventBaseline;
+  historicalChecks?: unknown;
+  historicalChecksReason?: string;
   dataEndpoint?: string;
   showStockSummary?: boolean;
   showDataNotes?: boolean;
@@ -235,6 +244,7 @@ export function CandleChart({
     [wavePatternKey, setWavePatternKey] = useState("latest"),
     [panels, setPanels] = useState(["volume", "macd", "kdj", "breadth"]),
     [themeTick, setThemeTick] = useState(0);
+  const [showHistoricalEvents, setShowHistoricalEvents] = useState(true);
   const isIndex =
     knownIndex ||
     instrumentKind === "index" ||
@@ -302,6 +312,15 @@ export function CandleChart({
   );
   const baselinePrice = showEventBaseline ? baselineView.price : null;
   const baselineLabel = eventBaseline?.label || "入池事件价";
+  const historyEvents = useMemo(
+    () => historicalChartEvents(isIndex ? undefined : historicalChecks),
+    [historicalChecks, isIndex],
+  );
+  const historyViews = useMemo(
+    () =>
+      historyEvents.map((event) => projectHistoricalChartEvent(event, data)),
+    [historyEvents, data],
+  );
   const latestBars = useRef(bars);
   latestBars.current = bars;
   useEffect(() => setActiveDate(null), [instrumentId, asOf, period]);
@@ -497,6 +516,59 @@ export function CandleChart({
           }
         : {}),
     });
+    if (showHistoricalEvents)
+      historyViews.forEach((view, index) => {
+        if (view.price == null || view.closePrice == null || !view.slot) return;
+        const color = ["#bd96f3", "#4cbbe3", "#e8c16b"][index % 3];
+        const event = view.event;
+        series.push({
+          name: `${event.label} ${event.date}`,
+          type: "line",
+          data: [],
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          silent: true,
+          tooltip: { show: false },
+          markLine: {
+            silent: true,
+            symbol: "none",
+            animation: false,
+            lineStyle: { color, width: 1.3, type: "dashed" },
+            label: {
+              show: true,
+              color,
+              backgroundColor: pal.bg,
+              padding: [2, 4],
+              fontSize: 10,
+            },
+            data: [
+              {
+                yAxis: view.price,
+                label: {
+                  formatter: `${event.label} ${event.date} ${eventPriceNames[event.priceField]} · ${num(view.price)}`,
+                  position: "insideEndTop",
+                },
+              },
+              {
+                xAxis: view.slot,
+                lineStyle: { opacity: 0.45, type: "dotted" },
+                label: {
+                  formatter: `事件 ${event.date}`,
+                  position: "insideStartTop",
+                },
+              },
+            ],
+          },
+          markPoint: {
+            silent: true,
+            symbol: "pin",
+            symbolSize: 24,
+            itemStyle: { color },
+            label: { show: true, formatter: "事", color: pal.bg, fontSize: 9 },
+            data: [{ coord: [view.slot, view.closePrice], name: event.label }],
+          },
+        });
+      });
     if (annotations.visible.length)
       series.push({
         name: "我的水平线",
@@ -771,6 +843,8 @@ export function CandleChart({
     baselinePrice,
     baselineLabel,
     eventBaseline?.date,
+    historyViews,
+    showHistoricalEvents,
     annotations.visible,
   ]);
   return (
@@ -905,6 +979,15 @@ export function CandleChart({
             color="#c79136"
             checked={showEventBaseline}
             onChange={(value) => update({ showEventBaseline: value })}
+          />
+        )}
+        {!!historyEvents.length && (
+          <ChartToggle
+            label="历史事件标记"
+            title="显示本次选股或所选跟踪轮次实际绑定的历史事件日与事件价；不重新选择事件"
+            checked={showHistoricalEvents}
+            color="#bd96f3"
+            onChange={setShowHistoricalEvents}
           />
         )}
         <div className="chart-zoom">
@@ -1232,6 +1315,61 @@ export function CandleChart({
           · 拖拽平移 · 联动十字线
         </span>
       </div>
+      {(!!historyViews.length || historicalChecksReason) && (
+        <div className="chart-history-events" aria-label="策略历史事件参照">
+          <strong>历史事件 · 实际规则绑定</strong>
+          {historicalChecksReason && (
+            <span className="unavailable">{historicalChecksReason}</span>
+          )}
+          {historyViews.map((view) => (
+            <div
+              key={view.event.key}
+              className={view.price == null ? "unavailable" : ""}
+            >
+              <span>
+                {view.event.label} · {view.event.match} · {view.event.date}
+              </span>
+              <span>
+                冻结原始{eventPriceNames[view.event.priceField]}{" "}
+                {num(view.event.rawPrice)} 元
+              </span>
+              <span>
+                {view.price == null
+                  ? view.reason
+                  : `${view.converted ? "同图前复权" : "同图未复权"} ${num(view.price)} 元 · ${showHistoricalEvents ? "事件日与横线已显示" : "标记已隐藏"}`}
+              </span>
+              {view.price != null && (
+                <button
+                  className="btn small"
+                  onClick={() => {
+                    const index = bars.findIndex(
+                      (bar) => bar.date === view.slot,
+                    );
+                    if (index >= 0) {
+                      zoomTo(
+                        Math.max(
+                          0,
+                          ((index - 5) / Math.max(1, bars.length - 1)) * 100,
+                        ),
+                        100,
+                      );
+                      setActiveDate(view.slot);
+                    }
+                  }}
+                >
+                  定位事件
+                </button>
+              )}
+            </div>
+          ))}
+          <small>
+            历史条件的事件价与入池/自选基准分别保存；仅作规则参照，非成交价。
+            {period !== "D"
+              ? "周/月K标在事件所属周期，具体事件日期仍按日K。"
+              : ""}
+          </small>
+        </div>
+      )}
       {!isIndex && eventBaseline && (
         <div
           className={`chart-baseline-note${baselineView.price == null ? " unavailable" : ""}`}
@@ -1568,6 +1706,8 @@ export function StockDrawer({
     asOf,
     ["stock", "equity", "a_share", "A"].includes(meta.kind || meta.asset_type),
     explicitBaseline,
+    position?.current.historicalChecks,
+    position ? navigation?.scopeKey : undefined,
   );
   useEffect(() => {
     if (!capturedFocusRef.current) {
@@ -1755,6 +1895,8 @@ export function StockDrawer({
                 setLoaded({ id, asOf, data: next });
             }}
             eventBaseline={eventReference.baseline}
+            historicalChecks={eventReference.historicalChecks}
+            historicalChecksReason={eventReference.historicalChecksReason}
             showDataNotes={false}
           />
           <Panel title="资料与风险">

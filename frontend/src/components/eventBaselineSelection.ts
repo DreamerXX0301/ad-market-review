@@ -1,5 +1,23 @@
 import type { ChartEventBaseline } from "./chartDisplay";
 
+/** Keep markers and a user-selected round together; an empty selected round
+ * must not fall back to a previous navigation's event proofs.
+ */
+export function resolveStockHistoricalReference(
+  rounds: Record<string, any>[],
+  sourceId: string | undefined,
+  navigationChecks: unknown,
+  referenceChanged: boolean,
+) {
+  if (navigationChecks !== undefined && !referenceChanged)
+    return { checks: navigationChecks, reason: undefined };
+  const round = rounds.find((item) => item.round_id === sourceId);
+  return {
+    checks: round?.historical_event_checks,
+    reason: round?.historical_event_checks_reason,
+  };
+}
+
 export function resolveStockEventBaseline(
   rounds: Record<string, any>[],
   selectedId: string | undefined,

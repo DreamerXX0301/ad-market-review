@@ -6,6 +6,7 @@ export type StockNavigationItem = {
   name?: string;
   code?: string;
   eventBaseline?: ChartEventBaseline;
+  historicalChecks?: unknown;
 };
 export type StockNavigation = {
   source: "strategy" | "tracking" | "watchlist";
@@ -25,6 +26,9 @@ type NavigationRow = {
   name?: unknown;
   code?: unknown;
   eventBaseline?: ChartEventBaseline;
+  checks?: unknown;
+  entry_basis?: { entry_checks?: unknown };
+  historicalChecks?: unknown;
 };
 
 export function trackingEventBaseline(
@@ -65,6 +69,19 @@ export function createStockNavigation(
       id,
       name: typeof row.name === "string" ? row.name : undefined,
       code: typeof row.code === "string" ? row.code : undefined,
+      ...(preferred.historicalChecks ||
+      preferred.checks ||
+      preferred.entry_basis?.entry_checks
+        ? {
+            historicalChecks: JSON.parse(
+              JSON.stringify(
+                preferred.historicalChecks ||
+                  preferred.checks ||
+                  preferred.entry_basis?.entry_checks,
+              ),
+            ),
+          }
+        : {}),
       ...((scope.source === "tracking" || scope.source === "watchlist") &&
       preferred.eventBaseline
         ? { eventBaseline: { ...preferred.eventBaseline } }

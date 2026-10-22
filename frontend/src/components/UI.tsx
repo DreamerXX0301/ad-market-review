@@ -258,9 +258,13 @@ export function Modal({
             ].find((node) => node.dataset.modalLayer === currentId) ?? null)
           : null;
         const opener = openerRef.current;
-        if (opener !== document.body && canRestoreModalFocus(opener, current)) {
+        const drawer = document.querySelector<HTMLElement>(".stock-drawer");
+        if (
+          opener !== document.body &&
+          canRestoreModalFocus(opener, current || drawer)
+        ) {
           opener?.focus({ preventScroll: true });
-        } else if (!current && !document.querySelector(".stock-drawer")) {
+        } else if (!current && !drawer) {
           const main = document.querySelector<HTMLElement>("main");
           if (!main) return;
           const prior = main.getAttribute("tabindex");
@@ -309,6 +313,11 @@ export function Modal({
     <ModalParentContext.Provider value={layerId}>
       <div
         className="modal-backdrop"
+        hidden={escapeUnderStock && stockDrawerOpen}
+        style={
+          // The backdrop's display:flex rule otherwise overrides the browser's hidden style.
+          escapeUnderStock && stockDrawerOpen ? { display: "none" } : undefined
+        }
         onMouseDown={(e) => {
           if (
             e.target === e.currentTarget &&
@@ -356,6 +365,7 @@ export function Modal({
 export type Column = {
   key: string;
   title?: ReactNode;
+  description?: string;
   render?: (value: any, row: Row, index: number) => ReactNode;
   align?: string;
   sortable?: boolean;
@@ -511,6 +521,7 @@ export function Table({
               {columns.map((c) => (
                 <th
                   key={c.key}
+                  title={c.description}
                   className={c.align === "right" ? "text-right" : ""}
                   aria-sort={
                     sortable(c)
@@ -543,7 +554,12 @@ export function Table({
                               color: "inherit",
                               whiteSpace: "nowrap",
                             }}
-                            title="按原始值排序全部已加载记录后分页；未知值始终排末"
+                            title={[
+                              c.description,
+                              "按原始值排序全部已加载记录后分页；未知值始终排末",
+                            ]
+                              .filter(Boolean)
+                              .join("\n")}
                             aria-label={
                               "按" +
                               String(caption) +
