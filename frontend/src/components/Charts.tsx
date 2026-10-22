@@ -42,6 +42,7 @@ import {
   textValue,
 } from "../lib/format";
 import { candleChange } from "./candleChange";
+import { chartSinceReturn } from "./chartSinceReturn";
 import type { ChartPeriod } from "./candleChange";
 import {
   Badge,
@@ -81,7 +82,11 @@ import {
   stockPayloadMatches,
 } from "./stockNavigation";
 import type { StockNavigation } from "./stockNavigation";
-import { effectiveChartPriceBasis, MA_WINDOWS } from "./chartPreferences";
+import {
+  effectiveChartMas,
+  effectiveChartPriceBasis,
+  MA_WINDOWS,
+} from "./chartPreferences";
 import { useChartPreferences } from "./useChartPreferences";
 import { defaultChartWindow, projectEventBaseline } from "./chartDisplay";
 import { candleChartEndpoint } from "./chartEndpoint";
@@ -228,7 +233,8 @@ export function CandleChart({
     (resolvedKind?.id === instrumentId && resolvedKind.kind === "index");
   const priceBasis = effectiveChartPriceBasis(preferences, isIndex);
   const cycleLabel = period === "D" ? "日" : period === "W" ? "周" : "月";
-  const { mas, showLimits, showEventBaseline } = preferences;
+  const mas = effectiveChartMas(preferences, isIndex);
+  const { showLimits, showEventBaseline } = preferences;
   const setPriceBasis = (value: string) => {
     if (!isIndex)
       update({ stockPriceBasis: value === "forward" ? "forward" : "none" });
@@ -309,7 +315,11 @@ export function CandleChart({
     return () => window.removeEventListener("workbench-theme", f);
   }, []);
   const toggleMA = (n: number) =>
-    update({ mas: mas.includes(n) ? mas.filter((x) => x !== n) : [...mas, n] });
+    update({
+      [isIndex ? "indexMas" : "stockMas"]: mas.includes(n)
+        ? mas.filter((x) => x !== n)
+        : [...mas, n],
+    });
   const togglePanel = (key: string) =>
     setPanels((v) =>
       v.includes(key) ? v.filter((x) => x !== key) : [...v, key],
@@ -317,6 +327,7 @@ export function CandleChart({
   const last = bars.at(-1);
   const activeBar = bars.find((b) => b.date === activeDate) || last;
   const activeChange = candleChange(activeBar, period);
+  const activeSinceReturn = chartSinceReturn(activeBar, data);
   const activeMAState = chartIndicatorAvailability(
     activeBar,
     mas.map((window) => "ma" + window),
@@ -661,6 +672,7 @@ export function CandleChart({
               bars[candle?.dataIndex ?? entries[0]?.dataIndex];
           if (!b) return "";
           const change = candleChange(b, period);
+          const since = chartSinceReturn(b, data);
           const color =
             change.value == null
               ? pal.text
@@ -687,6 +699,7 @@ export function CandleChart({
             (change.value == null
               ? `<div style="max-width:260px;white-space:normal;font-size:10px">${escape(change.reason)}</div>`
               : "") +
+            `<div title="${escape(since.reason)}">至${since.end || "观察日"}涨跌幅　<span style="color:${since.value == null || since.value === 0 ? pal.text : since.value > 0 ? pal.up : pal.down}">${percent(since.value)}</span></div>` +
             entries
               .filter(
                 (p: any) => /^MA\d+$/.test(p.seriesName) && p.value != null,
@@ -870,7 +883,7 @@ export function CandleChart({
         )}
         <button
           className="btn small chart-preferences-button"
-          title="均线、个股复权与标记的全局默认；修改后自动保存"
+          title="指数与个股均线分别保存；个股复权和标记修改后自动保存"
           onClick={() => setPreferencesOpen(true)}
         >
           <Settings2 size={13} />
@@ -1014,6 +1027,15 @@ export function CandleChart({
                 原始收盘 <b>{num(activeBar.raw_close)}</b>
               </span>
             )}
+          <span title={activeSinceReturn.reason}>
+            至{activeSinceReturn.end || "观察日"}涨跌幅{" "}
+            <b className={tone(activeSinceReturn.value)}>
+              {percent(activeSinceReturn.value)}
+            </b>
+            {activeSinceReturn.value == null && (
+              <small className="muted">（待核验）</small>
+            )}
+          </span>
           <span className="muted">
             {period !== "D" && activeBar.complete === false
               ? (period === "M"
@@ -1407,16 +1429,18 @@ export function CandleChart({
       {showDataNotes && <DataNotes items={chartDataNotes(data?.warnings)} />}
       {preferencesOpen && (
         <Modal
-          title="图表偏好 · 全局默认"
+          title={`图表偏好 · ${isIndex ? "指数" : "个股"}均线`}
           onClose={() => setPreferencesOpen(false)}
         >
           <div className="modal-body chart-preferences-form">
             <p className="muted">
-              修改立即保存并同步到本工作台所有K线。切股、重开、刷新沿用；日 / 周
-              / 月周期和缩放范围由各张图独立设置。
+              均线按指数和个股分别保存，同类型图表同步。修改
+              {isIndex ? "指数" : "个股"}均线不会影响{isIndex ? "个股" : "指数"}
+              ；切换、重开和刷新沿用。日 / 周 /
+              月周期和缩放范围由各张图独立设置。
             </p>
             <fieldset>
-              <legend>默认均线</legend>
+              <legend>{isIndex ? "指数" : "个股"}默认均线</legend>
               <div className="chart-preferences-mas">
                 {MA_WINDOWS.map((n, i) => (
                   <ChartToggle
@@ -1429,6 +1453,9 @@ export function CandleChart({
                 ))}
               </div>
             </fieldset>
+            <p className="muted">
+              首次升级时，旧共享均线保留为指数设置；个股默认使用MA5、10、20、30，也可独立开启60、250。
+            </p>
             <label>
               个股默认价格口径
               <ChartSelect

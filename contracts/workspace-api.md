@@ -22,6 +22,45 @@
 
 批量关联 body 为 `{instrument_ids,topic_ids,reason?}`，最多 100 股、20 分类。全部验证后同事务追加 include，保留其他归属；已有有效关系 unchanged，被人工排除的可重新纳入。返回 added/unchanged 及数量。它按当前有效状态幂等，不承诺跨后续人工修改的请求重放。
 
+## 当日主线归因（手工证据 V0.1）
+
+与 `topic/topic_override`、静态行业、来源概念成员、涨停池原始原因独立，不根据名称、关键词、人数或事后涨幅自动归因。不联网、不创建采集或研究任务，不读取 worker active DuckDB，不写行情文件。
+
+| 接口 | 作用 |
+| --- | --- |
+| `GET /market/mainlines?date=YYYY-MM-DD&known_at_ms?` | 每只证券在该日的最新完整修订；可按真实系统记录时间截断 |
+| `GET /market/mainlines/history?date=&instrument_id=&limit=100&offset=0` | 指定日、证券的完整审计分页，按 revision 降序；limit 1–500 |
+| `POST /market/mainlines/revisions` | 一次原子追加全部归属状态；新增、更正、撤销均留历史 |
+
+写入体：`{date,instrument_id,expected_revision,action,change_reason,attributions}`。`expected_revision` 首次为0，之后必须等于服务端当前revision；冲突返回409 `{detail:{message,current_revision}}`，客户端保留草稿、读取当前版本并由用户核对后再提交，不能静默重试覆盖。`action=replace` 需要1–12条归属；`revoke` 需要空数组；两者均要求非空 `change_reason`（最多1000字）。撤销后当前状态为空，不删除旧记录；移除单条归属使用replace并保存其余完整状态。
+
+每条归属字段如下：
+
+| 字段 | 约束与含义 |
+| --- | --- |
+| `mainline_name` | 必填，1–80字；准确手工录入的该日主线名称，不连接或修改目录分类 |
+| `is_display_primary` | boolean，默认false；每股每日最多一条true，仅来源转述或用户判断可选 |
+| `role` | `unknown`（默认）/ `core_candidate` / `followup`；后两者为用户标记，不等于已验证龙头地位 |
+| `evidence_status` | `source_claim` 来源转述 / `user_judgment` 用户判断 / `unverified` 待核验（默认）/ `conflict` 显式冲突 |
+| `source_name` | 必填，1–200字；注明是用户转录何种材料，不将文字中的供应商名称变成官方认证 |
+| `source_reason` | 可空，最多2000字，保留来源原因原文，与主线名称、催化线索分开 |
+| `evidence_ref` | 必填，最多2000字；网页、附件ID或本地证据定位，只保存引用文本，不抓取、不上传、不保证文件已归档 |
+| `source_published_at` | 可空；带时区ISO时间，不晚于系统实际记录时刻；未知不得以交易日15:00填充 |
+| `evidence_sha256` | 可空；用户登记的64位十六进制，不表示系统已打开文件并核验内容 |
+| `catalyst_note` / `user_note` | 各可空、最多2000字；催化线索与用户解释分开，未经独立核验的公告/新闻说法不能标成已证因果 |
+
+所有写入均由服务器固定 `source_kind=manual_user_entry`。客户端不可设置 `revision_id/assertion_id/recorded_at_ms/first_known_at_ms`，不接受未声明字段；未知时间为null。API仅校验输入格式与来源说明，并不认证引用材料真实性。源码及017迁移没有真实主线种子、用户截图或预置证券归因。
+
+成功返回 `{date,instrument_id,instrument_name,revision,revision_id,action,source_kind,change_reason,recorded_at_ms,supersedes_revision_id,attributions,display_state,display_mainline,secondary_mainlines,display_basis}`。attributions另带服务器生成的 `assertion_id/first_known_at_ms`。只调整展示主组时保留连续修订中同一陈述版本的ID和首见时间；内容、证据、状态、角色、说明改变，或撤销后重新录入，产生新陈述版本，旧时间仍在审计中。首见时间描述该陈述版本首次进入系统的实际时刻，不能冒充材料原始发布时间。
+
+展示规则按证券去重：有任何显式conflict，进入单一 `conflict` 区；否则有唯一选定主组使用它，或只有一个可用名称（source_claim/user_judgment）时使用该组，状态 `attributed`。多个可用名称而未选主次为 `primary_pending`；只有待核验陈述或没有归属为 `unattributed`。同名主线的多来源保留全部证据，只占一个展示组；多归属本身不自动断言冲突。`secondary_mainlines` 为其他可用名称，未核验/冲突陈述完整保留在attributions中。
+
+列表返回 `{date,known_at_ms,items,total,notice}`，total为该日有历史修订的证券数量，含已撤销记录，**不是确认涨停家数**。历史返回 `{date,instrument_id,items,total,limit,offset,notice}`。GET只读SQLite，即使当前行情目录已滚动也可读取旧审计；`known_at_ms` 为正整数毫秒，按修订的 `recorded_at_ms<=known_at_ms` 选取当时最新状态，不按来源发布时间倒灌。毫秒相同的修订用revision排序；不能把毫秒精度当作更细的先后证明。
+
+首次写入在事务外校验本地已发布名录中的明确个股及交易日历；保存事务再校验 `date<=business_clock`、乐观锁、服务器时钟不倒退，并仅追加一行。现有记录可在名录滚动后继续更正/撤销，使用其既有审计证券身份；当前名录不证明历史上市状态。017新增STRICT表 `market_mainline_revision`、索引和追加链/防更新/防删除触发器，无来源、行情或任务回填。
+
+前端涨停页保留“连板梯队”“概念关联”，增加“当日主线”。仅把当前返回的确认涨停池按证据分组，每股一张卡；池外已存归因单列且不计涨停统计。反包、晋级失败、20cm三类继续直接展示，不依赖主线完整。日期切换隔离旧响应与编辑器；前端当前展示最新修订，时间截断回看通过上述API读取。操作见[当日主线复盘](../docs/界面导览.md#8-当日主线复盘)。
+
 ## 个股策略与条件
 
 `GET /strategy-fields` 返回字段 type/operators、周期、fixed_period、整数边界及场景限制；前端依白名单构建，服务端最终验证，不执行用户 Python/SQL/JS。

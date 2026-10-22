@@ -9,6 +9,8 @@ import re
 from statistics import mean, median
 
 from app.services.strategy_limits import LimitConditionEvidence, batch_quote_indexes
+from app.services.sentiment_context import (CONTEXT_VERSION, GROUP_LABELS, cohort_group,
+    dated_regime, dated_st_state, fingerprint, index_environment, provenance)
 
 MODEL = 'dated-return-cohort-v1'
 REFERENCES = [
@@ -111,16 +113,20 @@ def _complete_cohort_source(proof, day):
     return witness
 
 
-def short_term_cohort(market, reference, rows, day):
+def short_term_cohort(market, reference, rows, day, *, proof=None):
     calendar_method = getattr(market, 'calendar', None)
     calendar = sorted(set(value for value in calendar_method() if value <= day)) if callable(calendar_method) else []
     previous = calendar[-2] if len(calendar) >= 2 and calendar[-1] == day else None
-    proof = LimitConditionEvidence(market)
+    proof = proof or LimitConditionEvidence(market)
     proof.reference = reference; proof.supplement = reference.get('_supplement', {})
     identity_method = getattr(market, 'instruments', None)
     identities = identity_method(limit=10000) if callable(identity_method) else []
     by_code = {}
     for row in identities:
+        # A-share closing pools contain stocks, not indices. A same-code index
+        # (000688.SH) must not make the stock (000688.SZ) ambiguous. Genuine
+        # multiple stock identities still remain unresolved.
+        if row.get('kind') != 'stock': continue
         symbol = row.get('instrument_id')
         if isinstance(symbol, str): by_code[symbol[:6]] = symbol if symbol[:6] not in by_code else None
     yesterday, ambiguous = _candidates(proof, previous, by_code) if previous else ({}, set())
@@ -131,7 +137,9 @@ def short_term_cohort(market, reference, rows, day):
     for row in rows:
         symbol = row.get('instrument_id')
         indexed[symbol] = None if symbol in indexed else row
+    master = {row['instrument_id']: row for row in identities if row.get('instrument_id')}
     confirmed = []; unverified = 0; gains = []; promoted = failed = unknown_state = 0
+    members = []
     for symbol in yesterday:
         own = quotes.get(symbol, {})
         if proof._state(symbol, previous, own.get(previous))['state'] is not True:
@@ -139,13 +147,29 @@ def short_term_cohort(market, reference, rows, day):
         confirmed.append(symbol)
         current = own.get(day); prior = own.get(previous)
         present = indexed.get(symbol)
+        change = None
         if current and prior and present and comparable(present, day) and (finite(current.get('volume')) or 0) > 0 and (finite(current.get('close')) or 0) > 0 and (finite(prior.get('close')) or 0) > 0:
             change = (current['close']/prior['close']-1)*100
             if finite(change) is not None and abs(change-present['change_pct']) < 1e-7: gains.append(change)
+            else: change = None
         state = proof._state(symbol, day, current)['state']
         if state is True: promoted += 1
         elif state is False: failed += 1
         else: unknown_state += 1
+        identity = master.get(symbol, {})
+        group, reason = dated_regime(symbol, previous, identity, calendar,
+                                    dated_st_state(proof, symbol, previous, prior, identity))
+        current_group, current_reason = dated_regime(symbol, day, identity, calendar,
+                                    dated_st_state(proof, symbol, day, current, identity))
+        stable = group != 'unknown' and current_group == group
+        members.append({'instrument_id': symbol, 'group': group, 'identity_reason': reason,
+                        'current_identity_reason': current_reason, 'current_identity_known': stable,
+                        'listing_date': identity.get('list_date'),
+                        'prior_close': prior.get('close') if prior else None,
+                        'prior_volume': prior.get('volume') if prior else None,
+                        'current_close': current.get('close') if current else None,
+                        'current_change_pct': present.get('change_pct') if present else None,
+                        'return_pct': change if stable else None, 'promotion': state if stable else None})
     absence = proof._count_day(previous)['default']['state'] is False if previous else False
     source_complete = bool(previous and absence and _complete_cohort_source(proof, previous) and unverified == 0 and not ambiguous)
     entire = source_complete and bool(confirmed) and unknown_state == 0
@@ -162,14 +186,29 @@ def short_term_cohort(market, reference, rows, day):
         if height is not None and height >= 1 and int(height) == height and proof._state(symbol, day, current)['state'] is True:
             heights.append(int(height))
     no_gain = None if gains else '昨日确认涨停样本今日缺少可比有效收益；不以0或亏损替代'
+    identity_complete = not ambiguous and unverified == 0 and all(row['group'] != 'unknown' for row in members)
+    groups = []
+    for group_id in GROUP_LABELS:
+        group_members = [row for row in members if row['group'] == group_id]
+        group = cohort_group(group_id, group_members, source_complete=source_complete,
+                             identity_complete=identity_complete and group_id != 'unknown')
+        group.update(previous_date=previous, unallocated_candidate_count=unverified+len(ambiguous),
+                     cohort_fingerprint=fingerprint({'date': previous, 'group': group_id, 'members': group_members}))
+        groups.append(group)
     return {'label': '短线情绪', 'state': state, 'state_label': names[state],
             'scope': '前一市场交易日已确认收盘涨停队列，按当日收盘观察；非买入可成交收益',
             'previous_date': previous, 'sample_count': len(gains), 'observed_count': len(confirmed),
             'unknown_count': len(confirmed)-len(gains), 'coverage_pct': coverage,
             'cohort_candidate_count': len(yesterday)+len(ambiguous), 'previous_unverified_count': unverified+len(ambiguous),
             'cohort_source_complete': source_complete, 'promotion_unknown_count': unknown_state,
+            'default_group_id': 'ordinary_10', 'groups': groups,
+            'identity_complete': identity_complete,
+            'cohort_fingerprint': fingerprint({'date': previous, 'members': members}),
+            'promotion_bounds_pct': {'lower': promoted/len(confirmed)*100, 'upper': (promoted+unknown_state)/len(confirmed)*100} if source_complete and confirmed else None,
+            'promotion_bounds_reason': None if source_complete and confirmed else '昨日全集与逐股涨停确认未齐，完整分母未知',
             'metrics': [metric('previous_limit_up_avg_return_pct', '昨日涨停今均涨幅', average, '%', '昨日价格核验涨停队列中，今日可比收盘涨幅的等权均值', no_gain),
                         metric('previous_limit_up_median_return_pct', '昨日涨停今中位数', middle, '%', '上述可比队列今日收盘涨幅的中位数', no_gain),
+                        metric('positive_ratio_pct', '正反馈比例', sum(value > 0 for value in gains)/len(gains)*100 if gains else None, '%', '收益有效队列中收盘涨幅>0的数量/收益有效数；缺失不补零', no_gain),
                         metric('promotion_rate_pct', '完整队列晋级率', rate, '%', '昨日确认涨停且今日仍确认涨停数 ÷ 昨日完整确认涨停队列数 ×100；全集与逐股状态须齐备', rate_reason),
                         metric('promoted_count', '已确认晋级', promoted if confirmed else None, '家', '昨日、今日均经原始收盘和有效成交量核验涨停的队列数量；来源不齐时仅为观察下界', None if confirmed else '昨日没有可核验队列'),
                         metric('failed_count', '已确认未晋级', failed if confirmed else None, '家', '昨日确认涨停、今日有效报价及来源明确证明未涨停的数量；未知不计入', None if confirmed else '昨日没有可核验队列'),
@@ -179,9 +218,16 @@ def short_term_cohort(market, reference, rows, day):
 
 def describe_sentiment(market, reference, rows, day):
     broad = market_distribution(rows, day)
-    short = short_term_cohort(market, reference, rows, day)
-    return {'model': MODEL, 'date': day, 'scope': '当日市场价格分布与前日涨停队列反馈分开统计',
-            'market': broad, 'short_term': short,
+    proof = LimitConditionEvidence(market)
+    proof.reference = reference; proof.supplement = reference.get('_supplement', {})
+    short = short_term_cohort(market, reference, rows, day, proof=proof)
+    calendar_method = getattr(market, 'calendar', None)
+    calendar = calendar_method() if callable(calendar_method) else []
+    indices = index_environment(reference, calendar, day)
+    return {'model': CONTEXT_VERSION, 'legacy_cohort_model': MODEL, 'date': day, 'scope': '指数环境、当日个股广度、前日涨停队列反馈三轴并列，不合成总分',
+            'index_environment': indices, 'market': broad, 'short_term': short,
+            'provenance': provenance(market, proof, rows, day, short['previous_date'], indices,
+                                     cohort_fingerprint=short['cohort_fingerprint']),
             'atmosphere': {'label': '情绪氛围', 'summary': broad['state_label']+' · '+short['state_label']},
             'notice': '均为可核验价格样本的描述统计，不代表账户赚钱比例、心理预期、可成交收益或未来走势。没有通行统一的赚钱效应/情绪氛围公式，本项目公开计算样本与自定义描述阈值；炸板率需独立完整炸板池口径，本版未以开板次数或缺池强算。',
             'references': REFERENCES}

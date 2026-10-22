@@ -32,6 +32,9 @@ const replacements = {
   "./TopicMembersDialog": encode(
     "export default function Members(){return null;}",
   ),
+  "./DailyMainlines": encode(
+    "export default function Mainlines(){return null;}",
+  ),
   "./MarketTable": encode(
     `import {jsx} from ${JSON.stringify(runtime)};export function CurrencyCell({value}){return jsx('span',{children:value??'—'});}`,
   ),

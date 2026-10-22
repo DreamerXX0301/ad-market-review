@@ -60,6 +60,8 @@
 
 `GET /market/topic-members?date=&topic_id=`，或使用明确 `source_code/kind/source_name`，只读所选日可用的历史成员档案；找不到时明确不可用。不能按同名当前成员补档。
 
+`GET /market/mainlines?date=&known_at_ms?` 与 `GET /market/mainlines/history?date=&instrument_id=&limit=&offset=` 读取独立的逐日手工主线审计；不改变 `ladder` 的行业、概念和原始来源原因。它们只读SQLite，date是合法ISO审计日期，即使当前行情目录已滚动也可读旧记录；无记录为空，不由当前概念补全。列表total是有修订的证券数，含撤销，不是涨停家数；前端仅与当前确认池按完整ID关联后去重展示，池外记录单列。写入、更正、撤销、来源转述/用户判断/待核验/冲突以及真实记录时间契约见[Workspace API：当日主线](workspace-api.md#当日主线归因手工证据-v01)。
+
 `gainers` 的检索/排序对完整候选集合执行后再分页，null 升降序都最后；年内次数下界不参与精确次数排序。`flow` 的近若干日是跨日趋势，不是全天盘中资金时序，也不推断机构真实决策。
 
 `gainers` 同时返回 `last_limit_up_date/last_limit_up_complete/last_limit_up_coverage/sessions_since_limit_up`，含义与成分股、个股统计一致；支持按 `last_limit_up_date` 对全部榜内候选排序后分页。它使用观察日之前的逐日来源涨停池与该证券当日唯一原始收盘批量核验，每批最多256只、仅从最早留存事件源日读取，不逐股调用详情或据涨幅推算涨停。不完整年内统计只在已确认次数大于0时展示下界；已确认0且仍有缺口展示待核验，完整核验的0仍显示0次。没有可核验封板分钟时此列只展示日期。
@@ -67,6 +69,26 @@
 成员、个股摘要与涨幅榜的年内已确认次数下界，包含逐股同日原始收盘核验通过的 reference 历史池、年度池及公开补充池正例，跨源按日期去重，仅计观察日之前本年事件。补充正例不能把来源池缺席变为否定证据，也不能将不完整年度总数变成精确次数。
 
 `sentiment.market/short_term` 含状态、范围、指标、样本与缺口。`sample_count` 为有效可比数，`observed_count` 为观察候选数，`unknown_count` 为差额；收益样本覆盖不等于来源全集完整。晋级率证据不全时为 null，已知价格反馈不冒充接力晋级结论。
+
+### 情绪三轴上下文
+
+`sentiment.model=dated-three-axis-context-v1`，原全体昨日涨停队列口径保留在 `market/short_term`，并返回 `legacy_cohort_model`。新增指数环境、制度分组和证据摘要，不合成统一温度或正式六阶段。
+
+- `index_environment.indices[]` 按四个指数分别返回 `instrument_id/name/date/state/state_label/scope`、`sample_count/observed_count/unknown_count/coverage_pct`、窗口边界、缺失/重复日期、`window_fingerprint` 与同形 `metrics[]`。指标键是 `index_daily_return_pct/index_20d_return_pct/index_ma20_distance_pct/index_20d_volatility_pct`。后3项必须有T及T−20之间21个严格市场交易日唯一有效收盘，不能用最近21根替代；MA20按最后20个收盘，波动为20个日对数收益的样本标准差×100、ddof=1、未年化。当前日缺失不退回更早报价；来源冲突、无效日历或预热不足保留null。收益和相对MA可为负，波动不按0—100比例封顶。
+- `short_term.metrics` 增加 `positive_ratio_pct`，分母为收益有效队列，不称完整队列正反馈率。`short_term.groups[]` 按P日有据身份冻结，含 `id/label/state/state_label/scope`、同形指标、`sample_count/observed_count/unknown_count/coverage_pct`、`candidate_count/confirmed_count/unverified_count`、`unallocated_candidate_count`、`cohort_source_complete/identity_complete/current_identity_unknown_count`、`promoted_count/failed_count/promotion_unknown_count`、`cohort_fingerprint`、`promotion_bounds_pct/positive_ratio_bounds_pct/median_bounds_pct` 和 `promotion_bounds_reason`。
+- 分组ID为 `ordinary_10/twenty_20/thirty_30/st/listing/unknown`，默认 `default_group_id=ordinary_10`。普通组必须有P日明确非ST证据及上市阶段排除，不能从当前名称或涨幅猜测。T日身份不明或已变制度时，组内T日收益/晋级保留未知；全体队列的独立价格观察仍保留。ST单列但不假定统一涨跌幅；上市前五个留存市场日作保守隔离，不声称各市场新股例外完全相同。存在P日未分组候选时，不能证明普通组完整分母。
+- `promotion_bounds_pct={lower,upper}` 的单位是百分数，仅昨日全集和该组分母可证明时返回 `[A/N,(A+U)/N]×100`；未知不能取中点。U=0才有精确 `promotion_rate_pct`。缺完整分母返回null并解释。正反馈区间把收益未知分别按全负/全正计，中位数区间把未知放在排序两端；中位数某端无界时为null，不能当0。各组仅分配已确认P日成员，未确认候选另列 `unallocated_candidate_count`，不能把分组相加当原始来源全集。
+- `provenance` 返回 `model/rule_version/trade_date/mode/label/input_snapshot_ids/input_fingerprint/computed_at`、`source_records[]`、`market_collected_at/first_known_at/known_time_complete/notice`。每个来源记录含交易日、池、来源路径、原有 `fetched_at/source_published_at/first_known_at/source_sha256` 及规范化内容指纹。原始SHA缺失时不拿派生指纹冒充原始SHA；抓取时间不重命名为首次可知。当前mode固定 `retained_retrospective`，缺逐日首知档案不声称历史当时可用。`computed_at`是本次真实计算时间，重复请求可不同；其余指纹只依赖对应日期留存输入。
+
+六阶段研究纯函数见 `app.services.sentiment_stage_research`，未接入HTTP情绪阶段、策略筛选或自动任务。`observation_from_group`只适配已有证据；`evaluate_stage_candidate`输出草案版本、参数指纹、逐谓词真/假/未知、候选与未知候选、历史分位上下界；`advance_stage_state/replay_stage_candidates`处理严格相邻确认、滞回和缺日中断。默认普通10%队列至少10只、收益可比率至少80%，缺证据不补值；晋级30%—50%跨过40%时高热谓词未知。阶段仅为 `offline_research_only`、`validated=false` 的待验草案，来源集中补采只能按当前留存回看。`as_known`模式要求每个交易日自己的带时区截止时间及完整首次可知证明，晚到材料不能进入早期时点。首次确认日在第2个满足日，结果不回填第1日；未知时只保留有日期的历史确认，不把旧阶段延续成当前。
+
+### 手动留存复盘上下文
+
+- `POST /market/sentiment-snapshots` 仅接受 `{date,expected_input_fingerprint}`；指纹必须与页面当前64位小写十六进制值一致，拒绝客户端payload、模型、时间和其他字段。服务器在SQLite写事务外从当前不可变发布源重算上下文，输入已变化时409且 `detail.current_input_fingerprint` 返回当前指纹，不能静默保存另一份证据。仅手动调用，不随GET浏览、日期切换、任务或定时自动创建。
+- 成功200返回 `snapshot_id/date/recorded_at_ms/record_mode/model/rule_version/input_fingerprint/content_sha256/payload/created/reused/notice`。`payload`为服务器计算的完整sentiment，`record_mode=manual_retained_capture`；`recorded_at_ms`是本次实际留存时间，不代表交易日T已知。payload中的 `provenance.mode` 仍为 `retained_retrospective`，来源的 `first_known_at`、`fetched_at`不改写。`content_sha256`为规范化UTF-8 JSON内容的SHA256。
+- 相同 `date+rule_version+input_fingerprint` 幂等返回原记录（`created=false,reused=true`），保持原payload、内容SHA与原留存时间。新输入/规则追加新记录，不覆盖旧记录。事务内校验实际时间不早于计算前检查时刻及全表已留存最大时刻，回退409且不伪造递增毫秒。018迁移建立独立append-only表、唯一键、更新/删除/替换保护和跨日期时钟保护，不填入任何种子记录。
+- `GET /market/sentiment-snapshots?date=&known_at_ms=&limit=20&offset=0`：date与known_at_ms可省略，limit为1—100，offset为0—2147483647。按实际留存时间 `recorded_at_ms<=known_at_ms` 筛选，时间降序、ID降序稳定分页；返回 `date/known_at_ms/items/total/limit/offset/notice`。items是上述元数据摘要，不含payload。
+- `GET /market/sentiment-snapshots/{snapshot_id}`：返回上述元数据与原始payload，内容SHA不符409；找不到404。两种GET只读SQLite，不重算当前行情、不联网、不回填旧快照。它们证明某份复盘内容在留存时点已被记录，不证明该内容在历史T可用、来源当日首次发布或预测得到验证。
 
 ## 个股/指数图表
 

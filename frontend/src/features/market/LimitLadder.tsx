@@ -20,6 +20,7 @@ import {
 } from "../../components/UI";
 import MarketDataCoverage from "./MarketDataCoverage";
 import TopicMembersDialog from "./TopicMembersDialog";
+import DailyMainlines from "./DailyMainlines";
 import { CurrencyCell } from "./MarketTable";
 import CopyStockCode from "../../components/CopyStockCode";
 import { sortMarketRows } from "./marketPresentation";
@@ -367,7 +368,7 @@ export default function LimitLadder({
   const [query, setQuery] = useState("");
   const [selectedTopic, setSelectedTopic] = useState<LadderTopic | null>(null);
   const [memberTopic, setMemberTopic] = useState<Row | null>(null);
-  const [view, setView] = useState<"height" | "theme">("height");
+  const [view, setView] = useState<"height" | "theme" | "mainlines">("height");
   const [rawTopicsOpen, setRawTopicsOpen] = useState(false);
   const [sort, setSort] = useState<MarketSort>({
     key: "first_limit_time",
@@ -503,49 +504,55 @@ export default function LimitLadder({
         <Loading />
       ) : (
         <>
-          <div className="ladder-overview">
-            <div>
-              <span>已确认涨停样本</span>
-              <strong>
-                {main.length ? integer(main.length) : "—"}
-                <small>只</small>
-              </strong>
+          {view !== "mainlines" && (
+            <div className="ladder-overview">
+              <div>
+                <span>已确认涨停样本</span>
+                <strong>
+                  {main.length ? integer(main.length) : "—"}
+                  <small>只</small>
+                </strong>
+              </div>
+              <div>
+                <span>最高连板</span>
+                <strong>
+                  {highest ? integer(highest) : "—"}
+                  <small>板</small>
+                </strong>
+              </div>
+              <div>
+                <span>展示分组</span>
+                <strong>
+                  {displayPlan.groups.length
+                    ? integer(displayPlan.groups.length)
+                    : "—"}
+                  <small>组</small>
+                </strong>
+              </div>
+              <p>
+                同一盘面日 · 同一来源口径
+                <br />
+                展示分组不代表涨停主因，原始关联按需查看。
+              </p>
             </div>
-            <div>
-              <span>最高连板</span>
-              <strong>
-                {highest ? integer(highest) : "—"}
-                <small>板</small>
-              </strong>
-            </div>
-            <div>
-              <span>展示分组</span>
-              <strong>
-                {displayPlan.groups.length
-                  ? integer(displayPlan.groups.length)
-                  : "—"}
-                <small>组</small>
-              </strong>
-            </div>
-            <p>
-              同一盘面日 · 同一来源口径
-              <br />
-              展示分组不代表涨停主因，原始关联按需查看。
-            </p>
-          </div>
+          )}
           <div className="ladder-controls">
             <div className="ladder-view-switch" aria-label="切换涨停看板视图">
               {(
                 [
                   ["height", "连板梯队"],
                   ["theme", "概念关联"],
+                  ["mainlines", "当日主线"],
                 ] as const
               ).map(([key, text]) => (
                 <button
                   key={key}
                   aria-pressed={view === key}
                   className={view === key ? "active" : ""}
-                  onClick={() => setView(key)}
+                  onClick={() => {
+                    setView(key);
+                    if (key === "mainlines") setSelectedTopic(null);
+                  }}
                 >
                   {text}
                 </button>
@@ -555,53 +562,59 @@ export default function LimitLadder({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索股票、代码或题材…"
+                placeholder={
+                  view === "mainlines"
+                    ? "搜索股票、代码或主线…"
+                    : "搜索股票、代码或题材…"
+                }
                 aria-label="搜索涨停梯队股票或题材"
               />
             </label>
-            <div className="ladder-sort-controls">
-              <label>
-                组内排序
-                <select
-                  aria-label="涨停看板组内排序字段"
-                  value={sort.key}
-                  onChange={(event) =>
+            {view !== "mainlines" && (
+              <div className="ladder-sort-controls">
+                <label>
+                  组内排序
+                  <select
+                    aria-label="涨停看板组内排序字段"
+                    value={sort.key}
+                    onChange={(event) =>
+                      setSort({
+                        key: event.target.value,
+                        order: [
+                          "first_limit_time",
+                          "last_limit_time",
+                          "name",
+                          "code",
+                        ].includes(event.target.value)
+                          ? "asc"
+                          : "desc",
+                      })
+                    }
+                  >
+                    {sortChoices.map(([key, caption]) => (
+                      <option key={key} value={key}>
+                        {caption}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="btn small"
+                  onClick={() =>
                     setSort({
-                      key: event.target.value,
-                      order: [
-                        "first_limit_time",
-                        "last_limit_time",
-                        "name",
-                        "code",
-                      ].includes(event.target.value)
-                        ? "asc"
-                        : "desc",
+                      ...sort,
+                      order: sort.order === "asc" ? "desc" : "asc",
                     })
                   }
+                  aria-label={`切换为${sort.order === "asc" ? "降序" : "升序"}`}
                 >
-                  {sortChoices.map(([key, caption]) => (
-                    <option key={key} value={key}>
-                      {caption}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="btn small"
-                onClick={() =>
-                  setSort({
-                    ...sort,
-                    order: sort.order === "asc" ? "desc" : "asc",
-                  })
-                }
-                aria-label={`切换为${sort.order === "asc" ? "降序" : "升序"}`}
-              >
-                <ArrowDownUp size={12} />
-                {sort.order === "asc" ? "升序" : "降序"}
-              </button>
-            </div>
+                  <ArrowDownUp size={12} />
+                  {sort.order === "asc" ? "升序" : "降序"}
+                </button>
+              </div>
+            )}
           </div>
-          {searching && (
+          {searching && view !== "mainlines" && (
             <div className="ladder-filter-state">
               <span>
                 {selectedTopic ? `题材：${selectedTopic.name}` : ""}
@@ -620,7 +633,7 @@ export default function LimitLadder({
             </div>
           )}
           <div className="ladder-board-layout" id={baseId + "-main"}>
-            {view !== "theme" && (
+            {view === "height" && (
               <section className="ladder-main">
                 <header className="ladder-main-heading">
                   <div>
@@ -679,7 +692,7 @@ export default function LimitLadder({
                 )}
               </section>
             )}
-            {view !== "height" && (
+            {view === "theme" && (
               <section className="ladder-theme-board">
                 <header className="ladder-main-heading">
                   <div>
@@ -742,6 +755,15 @@ export default function LimitLadder({
                 )}
               </section>
             )}
+            {view === "mainlines" && (
+              <DailyMainlines
+                key={date}
+                date={date}
+                rows={main}
+                query={query}
+                onStock={onStock}
+              />
+            )}
           </div>
           <div
             className="ladder-supplemental-sections"
@@ -780,7 +802,7 @@ export default function LimitLadder({
             </summary>
             <div>
               <p>
-                未做人工核心地位评级，连板高度不等同于龙头。封板时间不等于全天封单稳定性；缺失字段以“—”显示，不补0。
+                连板高度不等同于龙头，当日主线中的角色仅为用户候选标记，不改变来源评级。封板时间不等于全天封单稳定性；缺失字段以“—”显示，不补0。
               </p>
               <p>
                 题材家数来自该盘面日已留存成员，多个分类可重叠。确认下界不当作完整数量；卡片没有家数时仅表示归属，不推算题材总数。

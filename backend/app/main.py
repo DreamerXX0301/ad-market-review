@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 from app.core import APP_NAME,APP_ID,APP_VERSION,PROJECT_ROOT,ensure_ready
-from app.routers import platform,workspace,backtests,watchlist,chart_annotations
+from app.routers import platform,workspace,backtests,watchlist,chart_annotations,market_mainlines,market_sentiment_snapshots
 
 @asynccontextmanager
 async def lifespan(app):
@@ -16,6 +16,9 @@ async def lifespan(app):
 
 app=FastAPI(title=f'{APP_NAME} · A股研究工作台',version=APP_VERSION,lifespan=lifespan)
 app.add_middleware(GZipMiddleware,minimum_size=1024,compresslevel=4)
+# Register the literal path before platform's /market/{kind} catch-all.
+app.include_router(market_mainlines.router)
+app.include_router(market_sentiment_snapshots.router)
 app.include_router(platform.router)
 app.include_router(workspace.router)
 app.include_router(backtests.router)

@@ -16,6 +16,8 @@ const {
   sentimentCount,
   sentimentCoverage,
   sentimentReferences,
+  sentimentPromotionBounds,
+  sentimentKnownTime,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
@@ -25,6 +27,9 @@ for (const key of [
   "median_return_pct",
   "previous_limit_up_avg_return_pct",
   "previous_limit_up_median_return_pct",
+  "index_daily_return_pct",
+  "index_20d_return_pct",
+  "index_ma20_distance_pct",
 ]) {
   assert.equal(metric({ key, value: 1.234, unit: "%" }).valueText, "+1.23");
   assert.equal(metric({ key, value: 1.234, unit: "%" }).tone, "up");
@@ -108,6 +113,39 @@ assert.deepEqual(
   ["来源"],
 );
 assert.deepEqual(sentimentReferences(null), []);
+assert.equal(
+  metric({ key: "index_20d_volatility_pct", value: 120, unit: "%" }).known,
+  true,
+);
+assert.equal(
+  metric({ key: "index_20d_volatility_pct", value: -1, unit: "%" }).known,
+  false,
+);
+assert.equal(
+  metric({ key: "index_20d_volatility_pct", value: 2.5, unit: "%" }).tone,
+  "",
+);
+assert.equal(sentimentPromotionBounds({ lower: 30, upper: 50 }), "30%—50%");
+assert.equal(sentimentPromotionBounds({ lower: 0, upper: 0 }), "0%");
+for (const bounds of [
+  null,
+  {},
+  { lower: 60, upper: 50 },
+  { lower: -1, upper: 100 },
+  { lower: 0, upper: 101 },
+  { lower: "30", upper: 50 },
+])
+  assert.equal(sentimentPromotionBounds(bounds), null);
+assert.equal(
+  sentimentKnownTime("2026-10-21"),
+  "未登记",
+  "a trade date cannot become a precise first-known time",
+);
+assert.equal(sentimentKnownTime(null), "未登记");
+assert.match(
+  sentimentKnownTime("2026-10-21T00:00:00Z"),
+  /2026\/10\/21 08:00:00 北京时间/,
+);
 console.log(
   "sentiment presentation: exact return color whitelist, neutral ratios/counts, unknown-not-zero, partial proofs and safe source links passed",
 );

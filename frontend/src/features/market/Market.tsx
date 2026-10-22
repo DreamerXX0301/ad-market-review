@@ -500,7 +500,7 @@ const pageDetails: Record<
 > = {
   emotion: {
     title: "市场情绪",
-    desc: "从市场赚钱效应与短线情绪两部分观察盘面；只展示可核验事实，缺少数据时保留未知。",
+    desc: "分别观察指数环境、个股广度与昨日涨停接力；对照三轴反馈，保留来源与未知。",
     columns: ["name", "value", "change_pct", "description"],
   },
   sectors: {

@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 16,
+  "migration_version": 18,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -62,15 +62,23 @@
     {
       "name": "016_listing_status.sql",
       "sha256": "dc8e44dcffcda6ccb403b5e961211d53be26d86cb4aa87750edfc67d30ce5411"
+    },
+    {
+      "name": "017_market_mainlines.sql",
+      "sha256": "a9978baccc2965efa7687857bd027a13dc12fae1aa2e17df09c1ce198dfd3df5"
+    },
+    {
+      "name": "018_market_sentiment_snapshots.sql",
+      "sha256": "6ffe051c931bcc3037649880443d50085b3d49affe18a06a3aada6d308305530"
     }
   ],
   "counts": {
-    "table": 43,
-    "index": 25,
+    "table": 45,
+    "index": 28,
     "view": 1,
-    "trigger": 85
+    "trigger": 92
   },
-  "schema_sha256": "c05c363adb6d87a1eabb9f61c03da9f267abfe5a8652d9f3ef9ef1bce71a7cd9",
+  "schema_sha256": "068ae4fc4957dc3533b67d3a62d62da4a432bd9a8a7e98cbcc66a9c0b81a3e3d",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -1553,6 +1561,198 @@
         }
       ],
       "triggers": []
+    },
+    "market_mainline_revision": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "revision_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "instrument_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "instrument_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "revision",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "action",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "source_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "change_reason",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "attributions_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "recorded_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "supersedes_revision_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "market_mainline_revision",
+          "from": "supersedes_revision_id",
+          "to": "revision_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "chain_mainline_revision",
+        "retain_mainline_revision_delete",
+        "retain_mainline_revision_update"
+      ]
+    },
+    "market_sentiment_snapshot": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "recorded_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "record_mode",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "model",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "rule_version",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "input_fingerprint",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "content_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "payload_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [],
+      "triggers": [
+        "retain_sentiment_snapshot_delete",
+        "retain_sentiment_snapshot_replace",
+        "retain_sentiment_snapshot_update",
+        "sentiment_snapshot_clock"
+      ]
     },
     "platform_setting": {
       "columns": [

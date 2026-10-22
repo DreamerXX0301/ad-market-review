@@ -17,6 +17,8 @@
 -- 014_tracking_baseline_lookup.sql sha256=4fa2720c656f343cdff78eb3f3bc0f4e7a4c61be72f83cd32086a9539fbd4eee
 -- 015_line_alerts.sql sha256=41f6eb06bc859a37919d818f31f5b5e95f52785519e0f7d298c87aaf984c8bce
 -- 016_listing_status.sql sha256=dc8e44dcffcda6ccb403b5e961211d53be26d86cb4aa87750edfc67d30ce5411
+-- 017_market_mainlines.sql sha256=a9978baccc2965efa7687857bd027a13dc12fae1aa2e17df09c1ce198dfd3df5
+-- 018_market_sentiment_snapshots.sql sha256=6ffe051c931bcc3037649880443d50085b3d49affe18a06a3aada6d308305530
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -217,6 +219,41 @@ CREATE TABLE listing_status_summary (
  presence_json TEXT NOT NULL CHECK(json_valid(presence_json)),
  checked_at_ms INTEGER NOT NULL,
  UNIQUE(primary_snapshot_id,market_snapshot_id,business_date,manual_revision,reference_hash)
+) STRICT;
+
+CREATE TABLE market_mainline_revision (
+ revision_id TEXT PRIMARY KEY,
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ instrument_id TEXT NOT NULL,
+ instrument_name TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ action TEXT NOT NULL CHECK(action IN ('replace','revoke')),
+ source_kind TEXT NOT NULL CHECK(source_kind='manual_user_entry'),
+ change_reason TEXT NOT NULL CHECK(length(trim(change_reason))>0),
+ attributions_json TEXT NOT NULL CHECK(json_valid(attributions_json) AND json_type(attributions_json)='array'),
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0),
+ supersedes_revision_id TEXT REFERENCES market_mainline_revision(revision_id),
+ UNIQUE(trade_date,instrument_id,revision),
+ CHECK((action='revoke' AND json_array_length(attributions_json)=0)
+    OR (action='replace' AND json_array_length(attributions_json) BETWEEN 1 AND 12))
+) STRICT;
+
+CREATE TABLE market_sentiment_snapshot (
+ snapshot_id TEXT PRIMARY KEY,
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0),
+ record_mode TEXT NOT NULL CHECK(record_mode='manual_retained_capture'),
+ model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 128),
+ rule_version TEXT NOT NULL CHECK(length(rule_version) BETWEEN 1 AND 128),
+ input_fingerprint TEXT NOT NULL CHECK(length(input_fingerprint)=64 AND input_fingerprint NOT GLOB '*[^0-9a-f]*'),
+ content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+ payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='object' AND length(payload_json)<=1048576),
+ UNIQUE(trade_date,rule_version,input_fingerprint),
+ CHECK(json_extract(payload_json,'$.date') IS trade_date),
+ CHECK(json_extract(payload_json,'$.model') IS model),
+ CHECK(json_extract(payload_json,'$.provenance.rule_version') IS rule_version),
+ CHECK(json_extract(payload_json,'$.provenance.input_fingerprint') IS input_fingerprint),
+ CHECK(json_extract(payload_json,'$.provenance.mode') IS 'retained_retrospective')
 ) STRICT;
 
 CREATE TABLE platform_setting (
@@ -609,6 +646,8 @@ CREATE INDEX listing_summary_lookup ON listing_status_summary(market_snapshot_id
 
 CREATE INDEX live_pins ON retention_pin(snapshot_id,expires_at_ms);
 
+CREATE INDEX mainline_by_date_known ON market_mainline_revision(trade_date,recorded_at_ms,instrument_id,revision);
+
 CREATE UNIQUE INDEX one_accepted_batch ON sync_batch(job_id,capability,batch_key) WHERE status='accepted';
 
 CREATE UNIQUE INDEX one_active_logical_job ON job(logical_key) WHERE status IN ('queued','running','paused');
@@ -628,6 +667,10 @@ CREATE INDEX sector_selection_run_strategy ON sector_selection_run(strategy_id,c
 CREATE INDEX sector_tracking_event_list ON sector_tracking_event(business_date DESC,event_type,round_id);
 
 CREATE INDEX sector_tracking_status ON sector_tracking_round(status,strategy_id,created_at_ms);
+
+CREATE INDEX sentiment_snapshot_by_date ON market_sentiment_snapshot(trade_date,recorded_at_ms DESC,snapshot_id DESC);
+
+CREATE INDEX sentiment_snapshot_by_known ON market_sentiment_snapshot(recorded_at_ms DESC,snapshot_id DESC);
 
 CREATE INDEX snapshots_by_module_date ON dataset_snapshot(module,scope_key,data_end DESC);
 
@@ -714,6 +757,16 @@ CREATE TRIGGER business_clock_update_gate BEFORE UPDATE ON business_clock BEGIN
 END;
 
 CREATE TRIGGER candidate_sealed_insert BEFORE INSERT ON selection_candidate WHEN (SELECT status FROM selection_run WHERE run_id=NEW.run_id)<>'running' BEGIN SELECT RAISE(ABORT,'completed candidate set is immutable'); END;
+
+CREATE TRIGGER chain_mainline_revision BEFORE INSERT ON market_mainline_revision
+BEGIN
+ SELECT CASE WHEN NEW.revision!=coalesce((SELECT max(revision) FROM market_mainline_revision WHERE trade_date=NEW.trade_date AND instrument_id=NEW.instrument_id),0)+1
+ THEN RAISE(ABORT,'daily mainline revision must append') END;
+ SELECT CASE WHEN NEW.supersedes_revision_id IS NOT (SELECT revision_id FROM market_mainline_revision WHERE trade_date=NEW.trade_date AND instrument_id=NEW.instrument_id ORDER BY revision DESC LIMIT 1)
+ THEN RAISE(ABORT,'daily mainline predecessor mismatch') END;
+ SELECT CASE WHEN NEW.recorded_at_ms<coalesce((SELECT recorded_at_ms FROM market_mainline_revision WHERE trade_date=NEW.trade_date AND instrument_id=NEW.instrument_id ORDER BY revision DESC LIMIT 1),0)
+ THEN RAISE(ABORT,'daily mainline clock moved backwards') END;
+END;
 
 CREATE TRIGGER completed_backtest_gate BEFORE UPDATE OF status ON backtest_run WHEN NEW.status='completed' BEGIN
  SELECT CASE WHEN OLD.status<>'running' THEN RAISE(ABORT,'backtest must run accepted range before completion') END;
@@ -844,8 +897,25 @@ CREATE TRIGGER retain_listing_confirmation_delete BEFORE DELETE ON listing_statu
 
 CREATE TRIGGER retain_listing_confirmation_update BEFORE UPDATE ON listing_status_confirmation BEGIN SELECT RAISE(ABORT,'retain listing confirmation audit'); END;
 
+CREATE TRIGGER retain_mainline_revision_delete BEFORE DELETE ON market_mainline_revision
+BEGIN SELECT RAISE(ABORT,'retain daily mainline audit'); END;
+
+CREATE TRIGGER retain_mainline_revision_update BEFORE UPDATE ON market_mainline_revision
+BEGIN SELECT RAISE(ABORT,'retain daily mainline audit'); END;
+
 CREATE TRIGGER retain_published_snapshot_metadata BEFORE DELETE ON dataset_snapshot
 WHEN OLD.state='published' BEGIN SELECT RAISE(ABORT,'retain publication metadata; GC artifacts separately'); END;
+
+CREATE TRIGGER retain_sentiment_snapshot_delete BEFORE DELETE ON market_sentiment_snapshot
+BEGIN SELECT RAISE(ABORT,'retain manual sentiment snapshot'); END;
+
+CREATE TRIGGER retain_sentiment_snapshot_replace BEFORE INSERT ON market_sentiment_snapshot
+WHEN EXISTS(SELECT 1 FROM market_sentiment_snapshot WHERE snapshot_id=NEW.snapshot_id
+ OR (trade_date=NEW.trade_date AND rule_version=NEW.rule_version AND input_fingerprint=NEW.input_fingerprint))
+BEGIN SELECT RAISE(ABORT,'retain manual sentiment snapshot'); END;
+
+CREATE TRIGGER retain_sentiment_snapshot_update BEFORE UPDATE ON market_sentiment_snapshot
+BEGIN SELECT RAISE(ABORT,'retain manual sentiment snapshot'); END;
 
 CREATE TRIGGER sector_tracking_entry_gate BEFORE INSERT ON sector_tracking_round BEGIN
  SELECT CASE WHEN NOT EXISTS(
@@ -901,6 +971,10 @@ END;
 CREATE TRIGGER selection_input_immutable BEFORE UPDATE ON selection_run
 WHEN NEW.strategy_id<>OLD.strategy_id OR NEW.strategy_version<>OLD.strategy_version OR NEW.business_date<>OLD.business_date OR NEW.primary_snapshot_id<>OLD.primary_snapshot_id OR NEW.input_snapshots_json<>OLD.input_snapshots_json OR NEW.input_sha256<>OLD.input_sha256 OR NEW.universe_definition_json<>OLD.universe_definition_json
 BEGIN SELECT RAISE(ABORT,'selection input is frozen at creation'); END;
+
+CREATE TRIGGER sentiment_snapshot_clock BEFORE INSERT ON market_sentiment_snapshot
+WHEN NEW.recorded_at_ms<coalesce((SELECT max(recorded_at_ms) FROM market_sentiment_snapshot),0)
+BEGIN SELECT RAISE(ABORT,'sentiment snapshot clock moved backwards'); END;
 
 CREATE TRIGGER snapshot_ready_coverage BEFORE UPDATE OF state ON dataset_snapshot WHEN NEW.state='published' AND NEW.quality='ready' BEGIN
  SELECT CASE WHEN EXISTS(SELECT 1 FROM snapshot_coverage WHERE snapshot_id=NEW.snapshot_id AND coverage_state<>'ready') THEN RAISE(ABORT,'ready snapshot cannot hide partial coverage') END;

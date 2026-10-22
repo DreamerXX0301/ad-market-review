@@ -5,6 +5,9 @@ const returnKeys = new Set([
   "median_return_pct",
   "previous_limit_up_avg_return_pct",
   "previous_limit_up_median_return_pct",
+  "index_daily_return_pct",
+  "index_20d_return_pct",
+  "index_ma20_distance_pct",
 ]);
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -17,9 +20,11 @@ export function sentimentMetricView(metric: Row) {
     finite(metric.value) &&
     (unit === "家" || unit === "板"
       ? Number.isInteger(metric.value) && metric.value >= 0
-      : unit === "%" && !isReturn
-        ? metric.value >= 0 && metric.value <= 100
-        : true);
+      : metric.key === "index_20d_volatility_pct"
+        ? metric.value >= 0
+        : unit === "%" && !isReturn
+          ? metric.value >= 0 && metric.value <= 100
+          : true);
   const reason = typeof metric.reason === "string" ? metric.reason.trim() : "";
   const formula =
     typeof metric.formula === "string" ? metric.formula.trim() : "";
@@ -76,4 +81,34 @@ export function sentimentReferences(value: unknown): Row[] {
     used.add(row.url);
     return true;
   });
+}
+
+export function sentimentPromotionBounds(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const { lower, upper } = value as Row;
+  if (
+    !finite(lower) ||
+    !finite(upper) ||
+    lower < 0 ||
+    upper > 100 ||
+    lower > upper
+  )
+    return null;
+  const fmt = (n: number) =>
+    n.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  return lower === upper
+    ? fmt(lower) + "%"
+    : fmt(lower) + "%—" + fmt(upper) + "%";
+}
+
+export function sentimentKnownTime(value: unknown) {
+  if (typeof value !== "string" || !/T.*(?:Z|[+-]\d\d:\d\d)$/.test(value))
+    return "未登记";
+  const time = new Date(value);
+  return Number.isFinite(time.getTime())
+    ? time.toLocaleString("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        hour12: false,
+      }) + " 北京时间"
+    : "未登记";
 }
