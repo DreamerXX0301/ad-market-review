@@ -111,7 +111,15 @@ export function historyWindowForMode(window: any, mode: HistoryWindowMode) {
 }
 export function historyEventPreset(
   where: RuleNode,
-): "volume" | "limit" | "custom" {
+):
+  | "volume"
+  | "limit"
+  | "change"
+  | "any-signal"
+  | "macd-cross"
+  | "kdj-cross"
+  | "custom" {
+  if (sameRule(where, historyPresetWhere("any-signal"))) return "any-signal";
   const leaves = where?.all || [where];
   if (leaves.length !== 1) return "custom";
   const leaf = leaves[0];
@@ -123,16 +131,226 @@ export function historyEventPreset(
     return "volume";
   if (leaf?.field === "limit_up" && leaf.op === "==" && leaf.value === true)
     return "limit";
+  if (
+    leaf?.field === "change_pct" &&
+    leaf.op === ">" &&
+    typeof leaf.value === "number"
+  )
+    return "change";
+  if (pureGoldenCross(where) === "macd") return "macd-cross";
+  if (pureGoldenCross(where) === "kdj") return "kdj-cross";
   return "custom";
 }
-export function historyPresetWhere(preset: "volume" | "limit"): RuleNode {
+export function historyPresetWhere(
+  preset: "volume" | "limit" | "change" | "any-signal",
+): RuleNode {
+  if (preset === "any-signal")
+    return {
+      any: [
+        { field: "volume_ratio", op: ">=", value: 3, period: "D" },
+        { field: "limit_up", op: "==", value: true, period: "D" },
+        { field: "change_pct", op: ">", value: 5, period: "D" },
+      ],
+    };
   return {
     all: [
       preset === "limit"
         ? { field: "limit_up", op: "==", value: true, period: "D" }
-        : { field: "volume_ratio", op: ">=", value: 3, period: "D" },
+        : preset === "change"
+          ? { field: "change_pct", op: ">", value: 5, period: "D" }
+          : { field: "volume_ratio", op: ">=", value: 3, period: "D" },
     ],
   };
+}
+function sameRule(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (
+    !a ||
+    !b ||
+    typeof a !== "object" ||
+    typeof b !== "object" ||
+    Array.isArray(a) !== Array.isArray(b)
+  )
+    return false;
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => Object.hasOwn(b, key) && sameRule(a[key], b[key]))
+  );
+}
+export function appendTodayRule(
+  then: RuleNode | undefined,
+  rule: RuleNode,
+): RuleNode {
+  if (
+    sameRule(then, rule) ||
+    then?.all?.some((child: RuleNode) => sameRule(child, rule))
+  )
+    return then!;
+  return {
+    all: [
+      ...(Array.isArray(then?.all)
+        ? then.all
+        : then?.field || then?.any
+          ? [then]
+          : []),
+      rule,
+    ],
+  };
+}
+export function appendTodayCrossAlternative(event: RuleNode): RuleNode {
+  return {
+    ...event,
+    then: appendTodayRule(event.then, {
+      any: [
+        { field: "macd_cross", op: "==", value: true, period: "D" },
+        { field: "kd_cross", op: "==", value: true, period: "D" },
+      ],
+    }),
+  };
+}
+export function pureGoldenCross(
+  where: RuleNode | undefined,
+): "macd" | "kdj" | null {
+  if (
+    Array.isArray(where?.all) &&
+    Object.keys(where!).some((key) => key !== "all")
+  )
+    return null;
+  const leaf =
+    Array.isArray(where?.all) && where.all.length === 1 ? where.all[0] : where;
+  if (
+    !leaf ||
+    leaf.op !== "==" ||
+    leaf.value !== true ||
+    leaf.period !== "D" ||
+    Object.keys(leaf).some(
+      (key) => !["field", "op", "value", "period"].includes(key),
+    )
+  )
+    return null;
+  return leaf.field === "macd_cross"
+    ? "macd"
+    : leaf.field === "kd_cross"
+      ? "kdj"
+      : null;
+}
+export function previousCrossConfigurationError(
+  event: RuleNode,
+): string | null {
+  const cycle = event.price_path?.cross_cycle;
+  if (!cycle) return null;
+  if (
+    event.window?.from !== 1 ||
+    event.match !== "latest" ||
+    pureGoldenCross(event.where) !== cycle.indicator
+  )
+    return "上次金叉过程须从昨日回看、选择最近一次，历史条件只保留同类日K金叉；请使用上次金叉模板，或先关闭金叉周期过程再编辑普通事件";
+  return null;
+}
+export function applyPreviousCrossPreset(
+  event: RuleNode,
+  indicator: "macd" | "kdj",
+): RuleNode {
+  const cross = {
+    field: indicator === "macd" ? "macd_cross" : "kd_cross",
+    op: "==",
+    value: true,
+    period: "D",
+  };
+  const then = appendTodayRule(appendTodayRule(event.then, cross), {
+    field: "close",
+    op: ">",
+    right_event_field: "close",
+    period: "D",
+  });
+  return {
+    ...event,
+    window: { from: 1, to: 60 },
+    match: "latest",
+    where: { all: [cross] },
+    then,
+    price_path: {
+      ...event.price_path,
+      cross_cycle: { indicator, require_dead_cross: true },
+    },
+  };
+}
+export function newPreviousCrossRule(indicator: "macd" | "kdj"): RuleNode {
+  return {
+    history_event: applyPreviousCrossPreset(
+      {
+        window: { from: 1, to: 60 },
+        match: "latest",
+        where: { all: [] },
+        then: { all: [] },
+      },
+      indicator,
+    ),
+  };
+}
+export type ComparisonObject = "value" | "field" | "event" | "event-percentage";
+export function conditionComparisonObject(
+  condition: RuleNode,
+): ComparisonObject {
+  return condition.right_event_field
+    ? Object.hasOwn(condition, "right_event_change_pct")
+      ? "event-percentage"
+      : "event"
+    : condition.right_field
+      ? "field"
+      : "value";
+}
+export function withConditionComparison(
+  condition: RuleNode,
+  kind: ComparisonObject,
+): RuleNode {
+  const next = { ...condition };
+  delete next.right_event_field;
+  delete next.right_event_change_pct;
+  if (kind === "event" || kind === "event-percentage") {
+    delete next.value;
+    delete next.right_field;
+    next.field = "close";
+    next.period = "D";
+    next.right_event_field = ["close", "high", "low"].includes(
+      condition.right_event_field,
+    )
+      ? condition.right_event_field
+      : "close";
+    if (kind === "event-percentage")
+      next.right_event_change_pct = Object.hasOwn(
+        condition,
+        "right_event_change_pct",
+      )
+        ? condition.right_event_change_pct
+        : 0;
+  } else if (kind === "field") {
+    delete next.value;
+    next.right_field = condition.right_field || "ma30";
+  } else {
+    delete next.right_field;
+    next.value = condition.value ?? 3;
+  }
+  return next;
+}
+export function eventPriceOffsetError(value: unknown): string | null {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value > -100 &&
+    value <= 10000
+    ? null
+    : "事件价偏移请输入大于−100且不超过10000的有限百分比";
+}
+export function eventPriceTargetText(
+  node: RuleNode,
+  label: (field: string) => string = (field) =>
+    historyEventPriceLabels[field] || field,
+): string {
+  const base = `事件日${label(node.right_event_field)}`;
+  if (!Object.hasOwn(node, "right_event_change_pct")) return base;
+  const pct = node.right_event_change_pct;
+  return `${base} × (1 ${typeof pct === "number" && pct < 0 ? "−" : "+"} ${typeof pct === "number" && Number.isFinite(pct) ? Math.abs(pct) : "未填写"}/100)`;
 }
 export function appendTodayCondition(then: RuleNode, leaf: RuleNode): RuleNode {
   return {
@@ -167,7 +385,7 @@ export function defaultHistoryReclaim(): RuleNode {
 /** Only an explicit edit adds the optional path; disabling its last part removes it. */
 export function withHistoryPricePart(
   event: RuleNode,
-  part: "guard" | "reclaim",
+  part: "guard" | "reclaim" | "cross_cycle",
   value?: RuleNode,
 ): RuleNode {
   const next = { ...event },
@@ -228,6 +446,10 @@ export function historyPricePathSummary(path?: RuleNode): string {
       `${mode}；参照事件日${historyEventPriceLabels[reclaim.event_field] || "价格待选择"}`,
     );
   }
+  if (path.cross_cycle)
+    parts.push(
+      `${path.cross_cycle.indicator === "macd" ? "MACD" : "KDJ"}金叉→中间死叉→今日再金叉；仅核验周期，价格高低另看今日条件`,
+    );
   return parts.length ? `价格过程（日K）：${parts.join("；且")}` : "";
 }
 export function validateHistoryPricePath(path: unknown): string | null {
@@ -237,9 +459,11 @@ export function validateHistoryPricePath(path: unknown): string | null {
   const rule = path as RuleNode;
   if (
     !Object.keys(rule).length ||
-    Object.keys(rule).some((key) => !["guard", "reclaim"].includes(key))
+    Object.keys(rule).some(
+      (key) => !["guard", "reclaim", "cross_cycle"].includes(key),
+    )
   )
-    return "价格过程请选择守位或事件价收复";
+    return "价格过程请选择守位、事件价收复或金叉周期";
   const finiteRange = (
     value: unknown,
     min: number,
@@ -302,6 +526,20 @@ export function validateHistoryPricePath(path: unknown): string | null {
     if (!historyReclaimModes.some((item) => item.value === reclaim.mode))
       return "请选择有效的事件价收复方式";
   }
+  if ("cross_cycle" in rule) {
+    const cycle = rule.cross_cycle;
+    if (
+      !cycle ||
+      typeof cycle !== "object" ||
+      Array.isArray(cycle) ||
+      Object.keys(cycle).some(
+        (key) => !["indicator", "require_dead_cross"].includes(key),
+      ) ||
+      !["macd", "kdj"].includes(cycle.indicator) ||
+      cycle.require_dead_cross !== true
+    )
+      return "金叉周期请选择MACD或KDJ，并要求中间确实发生死叉";
+  }
   return null;
 }
 export function historyWindowText(window: any): string {
@@ -343,7 +581,7 @@ export function historyRuleSummary(
     beijing: "北交所",
   };
   const value = node.right_event_field
-    ? `事件日${label(node.right_event_field)}`
+    ? eventPriceTargetText(node, label)
     : node.right_field
       ? label(node.right_field)
       : typeof node.value === "boolean"
@@ -404,6 +642,7 @@ export function validateVisualRule(
       return "请选择历史事件的匹配顺序";
     return (
       validateHistoryPricePath(node.history_event.price_path) ||
+      previousCrossConfigurationError(node.history_event) ||
       validateVisualRule(where || {}, "where") ||
       validateVisualRule(then || {}, "then")
     );
@@ -418,6 +657,12 @@ export function validateVisualRule(
     return null;
   }
   if (!node.field) return "未识别的规则请在结构化编辑中核对";
+  if (Object.hasOwn(node, "right_event_change_pct")) {
+    if (!node.right_event_field || context !== "then")
+      return "事件价百分比偏移仅用于历史事件的今日事件价比较";
+    const offsetError = eventPriceOffsetError(node.right_event_change_pct);
+    if (offsetError) return offsetError;
+  }
   if (node.right_event_field && context !== "then")
     return "事件价格只能用于历史事件的当前条件";
   if (node.right_event_field && node.field !== "close")

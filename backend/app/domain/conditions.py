@@ -16,6 +16,8 @@ FIELDS['limit_up_count_1y'].update(operators=['>=','>','==','<=','<','!='],integ
 FIELDS['close_above_entry_high'].update(tracking_only=True,alerts_only=True)
 FIELDS['close_below_entry_low'].update(tracking_only=True)
 FIELDS['close_breakout_high']={'type':'number','operators':['new_high'],'integer':True,'min':1,'max':750,'step':1,'constant_only':True,'parameter_kind':'lookback_sessions','default':60}
+FIELDS['close']['event_price_comparison']={'scope':'event_then','right_fields':['close','high','low'],
+    'change_pct':{'min_exclusive':-100,'max':10000,'default':0}}
 FIELDS['topic_ids']={'type':'topic','operators':['contains','not_contains']}
 FIELDS['board']={'type':'enum_set','operators':['in','not_in'],'choices':['main','chinext','star','beijing']}
 LABELS={'close':'收盘价','change_pct':'今日涨幅(%)','volume_ratio':'较昨日成交量倍数','macd_cross':'MACD金叉','kd_cross':'KDJ金叉（K线上穿D线）','limit_up':'今日是否涨停（收盘）','prev_limit_up':'昨日是否涨停（前一市场交易日）','limit_up_1y':'过去一年曾涨停（不含今日）','volume_expand':'今日放量','volume_shrink':'今日缩量','tracking_change_pct':'本轮跟踪涨幅(%)','trading_age':'本轮跟踪交易日','close_below_entry':'跌破本轮事件日价格','topic_ids':'题材包含'}
@@ -64,8 +66,9 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
         if match not in ('latest','earliest'):raise ValueError('历史事件匹配规则仅支持latest/earliest')
         clean={'window':dict(window),'match':match,'where':validate(event.get('where'),depth+1,counter,'event_where'),'then':validate(event.get('then'),depth+1,counter,'event_then')}
         if 'price_path' in event:
-            from app.domain.history_price_path import validate_price_path
+            from app.domain.history_price_path import validate_price_path, validate_cross_cycle_event
             clean['price_path']=validate_price_path(event['price_path'])
+            validate_cross_cycle_event(clean)
         return {'history_event':clean}
     if 'conditions' in node:
         logic=node.get('logic','AND')
@@ -76,7 +79,8 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
         if set(node)!={group}:raise ValueError('组合条件仅接受all或any')
         if not isinstance(node[group],list) or not node[group] or len(node[group])>50:raise ValueError('组合条件需要1至50个条件')
         return {group:[validate(c,depth+1,counter,scope) for c in node[group]]}
-    if set(node)-{'field','op','value','right_field','right_event_field'}:raise ValueError('条件包含不支持字段，不允许执行代码')
+    if set(node)-{'field','op','value','right_field','right_event_field','right_event_change_pct'}:raise ValueError('条件包含不支持字段，不允许执行代码')
+    if 'right_event_change_pct' in node and 'right_event_field' not in node:raise ValueError('事件价百分比仅能与本事件then的right_event_field一起使用')
     field=node.get('field');op=node.get('op');value=node.get('value')
     if field not in FIELDS:raise ValueError('不支持的策略字段：'+str(field))
     spec=FIELDS[field]
@@ -86,7 +90,13 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
     if op not in spec['operators']:raise ValueError('字段不支持比较符：'+str(op))
     if 'right_event_field' in node:
         if scope!='event_then' or field!='close' or node['right_event_field'] not in ('close','high','low') or 'value' in node or 'right_field' in node:raise ValueError('事件价格比较仅能在本事件then内使用观察日收盘价，对比事件日close/high/low')
-        return {'field':field,'op':op,'right_event_field':node['right_event_field']}
+        clean={'field':field,'op':op,'right_event_field':node['right_event_field']}
+        if 'right_event_change_pct' in node:
+            ratio=node['right_event_change_pct']
+            if not isinstance(ratio,(int,float)) or isinstance(ratio,bool) or not -100<ratio<=10000 or not isfinite(ratio):
+                raise ValueError('事件价变化百分比需大于-100且不超过10000的有限数值')
+            clean['right_event_change_pct']=ratio
+        return clean
     if 'right_field' in node:
         right=node['right_field']
         if spec.get('constant_only') or FIELDS.get(right,{}).get('constant_only'):raise ValueError('参数条件只支持有效常量整数，不支持字段比较')

@@ -7,6 +7,8 @@ import {
   historyReclaimModes,
   validateHistoryPricePath,
   withHistoryPricePart,
+  pureGoldenCross,
+  previousCrossConfigurationError,
 } from "./historicalRules";
 
 const inputNumber = (value: string) => (value === "" ? "" : Number(value));
@@ -22,6 +24,10 @@ export default function HistoryPricePathEditor({
 }) {
   const guard = event.price_path?.guard;
   const reclaim = event.price_path?.reclaim;
+  const cycle = event.price_path?.cross_cycle;
+  const previousIndicator = pureGoldenCross(event.where);
+  const canEnableCycle =
+    !!previousIndicator && event.window?.from === 1 && event.match === "latest";
   const error = validateHistoryPricePath(event.price_path);
   const updateGuard = (patch: RuleNode) =>
     onChange(withHistoryPricePart(event, "guard", { ...guard, ...patch }));
@@ -67,6 +73,59 @@ export default function HistoryPricePathEditor({
         <small>保留已有历史事件与今日技术条件</small>
       </div>
       <div className="history-price-parts">
+        {(cycle || previousIndicator) && (
+          <section
+            className={"history-price-cross-cycle " + (cycle ? "enabled" : "")}
+          >
+            <label className="history-price-toggle">
+              <input
+                type="checkbox"
+                aria-label="启用金叉死叉再金叉周期"
+                checked={!!cycle}
+                disabled={!cycle && !canEnableCycle}
+                onChange={(e) =>
+                  onChange(
+                    withHistoryPricePart(
+                      event,
+                      "cross_cycle",
+                      e.target.checked
+                        ? {
+                            indicator: previousIndicator,
+                            require_dead_cross: true,
+                          }
+                        : undefined,
+                    ),
+                  )
+                }
+              />
+              <span>
+                <strong>金叉→死叉→再金叉</strong>
+                <small>
+                  窗口内上次同类日K金叉，期间确实死叉，今日再次金叉；价格高低与K值范围另看今日条件。
+                </small>
+              </span>
+            </label>
+            {cycle ? (
+              <div className="history-price-options">
+                <small>
+                  核验 {cycle.indicator === "macd" ? "MACD" : "KDJ"}{" "}
+                  周期。历史仅按同类金叉选最近一次，不用今日K值或价格筛掉真正的上次。关闭本开关不会删除今日事件价比较。
+                </small>
+                {previousCrossConfigurationError(event) && (
+                  <p className="history-price-error" role="alert">
+                    {previousCrossConfigurationError(event)}
+                  </p>
+                )}
+              </div>
+            ) : (
+              !canEnableCycle && (
+                <p className="history-price-age-note">
+                  先在历史事件模板选择MACD或KDJ上次金叉，或手动设为前1日开始回看、最近一次、纯同类日K金叉，才能启用周期核验。
+                </p>
+              )
+            )}
+          </section>
+        )}
         <section className={guard ? "enabled" : ""}>
           <label className="history-price-toggle">
             <input

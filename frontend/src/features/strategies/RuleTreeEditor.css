@@ -49,6 +49,53 @@
 .technical-preset-controls > .technical-preset-error {
   color: var(--amber);
 }
+.technical-range-starts,
+.history-window-quick {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 10px;
+}
+.history-window-quick {
+  margin-bottom: 15px;
+}
+.technical-range-starts small {
+  flex-basis: 100%;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.history-add-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.history-add-control select {
+  height: 30px;
+  max-width: 260px;
+  font-size: 10px;
+}
+.history-add-control small {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 10px;
+}
+.event-price-offset-input {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  flex: 0 1 130px;
+  min-width: 100px;
+}
+.event-price-offset-input input {
+  width: 100%;
+}
+.event-price-offset-note {
+  line-height: 1.8;
+}
 .event-stage > .technical-preset-controls {
   margin: 0 0 12px 33px;
 }
@@ -317,6 +364,9 @@
 }
 .history-price-parts > section.enabled {
   border-color: color-mix(in srgb, var(--cyan) 30%, var(--border));
+}
+.history-price-parts > .history-price-cross-cycle {
+  grid-column: 1 / -1;
 }
 .history-price-toggle {
   display: flex;

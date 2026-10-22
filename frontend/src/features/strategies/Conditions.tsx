@@ -16,7 +16,12 @@ import {
   HIDDEN_CONDITION_TEXT,
   isHiddenConditionField,
   isHiddenConditionRule,
+  conditionComparisonObject,
+  withConditionComparison,
+  eventPriceTargetText,
+  eventPriceOffsetError,
 } from "./historicalRules";
+import type { ComparisonObject } from "./historicalRules";
 import {
   conditionPeriodView,
   conditionPeriodSummary,
@@ -187,6 +192,13 @@ export function summarizeChecks(checks: any, onlySatisfied = false): string {
       if (c.right_event_field) {
         const state =
           c.result === true ? "✓" : c.result === false ? "×" : "待核验";
+        if (Object.hasOwn(c, "right_event_change_pct")) {
+          const threshold =
+            typeof c.threshold_decimal === "string"
+              ? c.threshold_decimal
+              : num(c.right_actual, 6);
+          return `${state} 观察日收盘价（日K） ${num(c.actual)} ${c.op} ${eventPriceTargetText(c, fieldLabel)}（阈值 ${threshold}；实际相对事件价涨跌 ${c.event_change_pct_decimal ?? (c.event_change_pct == null ? "—" : String(c.event_change_pct))}%）${c.event_date ? ` · 事件 ${c.event_date}` : ""}${c.result == null && c.reason ? "；" + conditionReasonText(c.reason) : ""}`;
+        }
         return `${state} 观察日收盘价（日K） ${num(c.actual)} ${c.op} 事件日${fieldLabel(c.right_event_field)} ${num(c.right_actual)}${c.event_date ? `（事件 ${c.event_date}）` : ""}${c.result == null && c.reason ? "；" + c.reason : ""}`;
       }
       const value = c.right_event_field
@@ -239,6 +251,7 @@ export type Condition = {
   value?: any;
   right_field?: string;
   right_event_field?: string;
+  right_event_change_pct?: number | "";
   period?: string;
 };
 export const fallbackFields: Row[] = [
@@ -637,35 +650,22 @@ export default function Conditions({
                   <select
                     className="rhs-type"
                     aria-label="比较对象"
-                    value={
-                      c.right_event_field
-                        ? "event"
-                        : c.right_field
-                          ? "field"
-                          : "value"
-                    }
+                    value={conditionComparisonObject(c)}
                     onChange={(e) => {
-                      const next = { ...c };
-                      delete next.right_event_field;
-                      if (e.target.value === "field") {
-                        delete next.value;
-                        next.right_field = "ma30";
-                      } else if (e.target.value === "event") {
-                        delete next.value;
-                        delete next.right_field;
-                        next.right_event_field = "high";
-                        delete next.period;
-                      } else {
-                        delete next.right_field;
-                        next.value = 3;
-                      }
+                      const next = withConditionComparison(
+                        c,
+                        e.target.value as ComparisonObject,
+                      ) as Condition;
                       onChange(conditions.map((v, n) => (n === i ? next : v)));
                     }}
                   >
                     <option value="value">数值</option>
                     <option value="field">字段</option>
                     {allowEventReferences && c.field === "close" && (
-                      <option value="event">事件日价格</option>
+                      <>
+                        <option value="event">事件日价格</option>
+                        <option value="event-percentage">事件价偏移 (%)</option>
+                      </>
                     )}
                   </select>
                 )}
@@ -738,6 +738,26 @@ export default function Conditions({
                 )}
               </>
             )}
+            {c.right_event_field &&
+              Object.hasOwn(c, "right_event_change_pct") && (
+                <label className="event-price-offset-input">
+                  事件价上/下移 (%)
+                  <input
+                    type="number"
+                    min={-100}
+                    max={10000}
+                    step="any"
+                    aria-label="事件价偏移百分比"
+                    value={c.right_event_change_pct ?? ""}
+                    onChange={(e) =>
+                      update(i, {
+                        right_event_change_pct:
+                          e.target.value === "" ? "" : Number(e.target.value),
+                      })
+                    }
+                  />
+                </label>
+              )}
             <button
               className="icon-btn danger-text"
               aria-label="删除条件"
@@ -748,6 +768,23 @@ export default function Conditions({
           </div>
         );
       })}
+      {conditions.some((condition) =>
+        Object.hasOwn(condition, "right_event_change_pct"),
+      ) && (
+        <small className="event-price-offset-note">
+          比较阈值 = 事件参照价 × (1 + 偏移% /
+          100)。+3代表事件价上方3%，−3代表下方3%，不是今日涨幅；可用两条AND条件限定±3%。0保留原价，边界是否包含由比较关系决定。
+        </small>
+      )}
+      {conditions.some(
+        (condition) =>
+          Object.hasOwn(condition, "right_event_change_pct") &&
+          eventPriceOffsetError(condition.right_event_change_pct),
+      ) && (
+        <small className="danger-text" role="alert">
+          事件价偏移请输入大于−100且不超过10000的有限百分比；清空时不能保存。
+        </small>
+      )}
       {conditions.some((condition) =>
         ["limit_up", "prev_limit_up"].includes(condition.field),
       ) && (

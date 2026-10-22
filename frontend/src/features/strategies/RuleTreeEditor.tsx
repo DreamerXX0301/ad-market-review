@@ -24,6 +24,10 @@ import {
   historyEventPreset,
   historyPresetWhere,
   appendTodayCondition,
+  appendTodayCrossAlternative,
+  applyPreviousCrossPreset,
+  newPreviousCrossRule,
+  previousCrossConfigurationError,
 } from "./historicalRules";
 import type { RuleNode, HistoryWindowMode } from "./historicalRules";
 import type { ConditionScope } from "./conditionScope";
@@ -33,6 +37,9 @@ import {
   createTechnicalPreset,
   appendTechnicalPreset,
   technicalPresetInsertionError,
+  kdRangeStartingPoints,
+  validateKdRange,
+  ruleReplacementError,
 } from "./technicalConditionPresets";
 import type { TechnicalPresetId } from "./technicalConditionPresets";
 import "./RuleTreeEditor.css";
@@ -72,18 +79,27 @@ function TechnicalPresetControls({
   const [selected, setSelected] =
     useState<TechnicalPresetId>("macd-above-zero");
   const [upper, setUpper] = useState<number | "">(20);
+  const [rangeMin, setRangeMin] = useState<number | "">(0);
+  const [rangeMax, setRangeMax] = useState<number | "">(100);
   const available = availableTechnicalPresets(fields, period);
   const preset = available.find((item) => item.id === selected) || available[0];
   if (!preset) return null;
   const invalidUpper =
     preset.id === "kd-low-cross" &&
     (upper === "" || !Number.isFinite(upper) || upper < 0 || upper > 100);
-  const rule = invalidUpper
-    ? null
-    : createTechnicalPreset(preset.id, period, upper === "" ? 20 : upper);
+  const isRange = preset.id === "kd-cross-range" || preset.id === "kd-range";
+  const rangeError = isRange ? validateKdRange(rangeMin, rangeMax) : null;
+  const rule =
+    invalidUpper || rangeError
+      ? null
+      : createTechnicalPreset(preset.id, period, upper === "" ? 20 : upper, {
+          min: Number(rangeMin),
+          max: Number(rangeMax),
+        });
   const error = invalidUpper
     ? "KDJ低位上限请输入0—100的有限数值"
-    : technicalPresetInsertionError(rootValue, value, rule!, depth);
+    : rangeError ||
+      technicalPresetInsertionError(rootValue, value, rule!, depth);
   return (
     <div className="technical-preset-controls">
       <div className="technical-preset-fields">
@@ -121,6 +137,42 @@ function TechnicalPresetControls({
             />
           </label>
         )}
+        {isRange && (
+          <>
+            <label className="technical-preset-upper">
+              K值下限（含）
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="any"
+                aria-label="K值范围下限"
+                value={rangeMin}
+                onChange={(event) =>
+                  setRangeMin(
+                    event.target.value === "" ? "" : Number(event.target.value),
+                  )
+                }
+              />
+            </label>
+            <label className="technical-preset-upper">
+              K值上限（含）
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="any"
+                aria-label="K值范围上限"
+                value={rangeMax}
+                onChange={(event) =>
+                  setRangeMax(
+                    event.target.value === "" ? "" : Number(event.target.value),
+                  )
+                }
+              />
+            </label>
+          </>
+        )}
         <span className="technical-preset-period">{periodLabel(period)}</span>
         <button
           type="button"
@@ -133,6 +185,27 @@ function TechnicalPresetControls({
           <Plus size={13} /> 添加技术组合
         </button>
       </div>
+      {isRange && (
+        <div className="technical-range-starts">
+          <span>可编辑起点</span>
+          {kdRangeStartingPoints.map((point) => (
+            <button
+              type="button"
+              className="btn small"
+              key={point.label}
+              onClick={() => {
+                setRangeMin(point.min);
+                setRangeMax(point.max);
+              }}
+            >
+              {point.label} {point.min}—{point.max}
+            </button>
+          ))}
+          <small>
+            边界含等号，20与80可重合；不是互斥分类。KDJ仍使用原9、3、3算法。
+          </small>
+        </div>
+      )}
       <small className={error ? "technical-preset-error" : ""}>
         {error || `${preset.description} 添加后可逐项修改，不改变已有条件。`}
       </small>
@@ -161,6 +234,74 @@ function conditionFields(fields: Row[], context: NodeProps["context"]) {
             ? "事件日涨幅 (%)"
             : field.label,
     }));
+}
+function HistoryRuleAddControl({
+  rootValue,
+  value,
+  onChange,
+  fields,
+  depth,
+}: {
+  rootValue: RuleNode;
+  value: RuleNode;
+  onChange: (value: RuleNode) => void;
+  fields: Row[];
+  depth: number;
+}) {
+  const [template, setTemplate] = useState("standard");
+  const supported = (name: string) =>
+    conditionFields(fields, "where").some((item) => item.field === name);
+  const choices = [
+    { value: "standard", label: "普通历史事件＋今日条件" },
+    ...(supported("macd_cross") && fields.some((item) => item.field === "close")
+      ? [{ value: "macd", label: "MACD本次金叉价高于上次" }]
+      : []),
+    ...(supported("kd_cross") && fields.some((item) => item.field === "close")
+      ? [{ value: "kdj", label: "KDJ本次金叉价高于上次" }]
+      : []),
+  ];
+  const selected = choices.some((item) => item.value === template)
+    ? template
+    : "standard";
+  const next =
+    selected === "standard"
+      ? newHistoryRule()
+      : newPreviousCrossRule(selected as "macd" | "kdj");
+  const error = technicalPresetInsertionError(rootValue, value, next, depth);
+  return (
+    <div className="history-add-control">
+      <select
+        aria-label="新增历史规则模板"
+        value={selected}
+        onChange={(e) => setTemplate(e.target.value)}
+      >
+        {choices.map((item) => (
+          <option value={item.value} key={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className="btn small history-add"
+        disabled={!!error}
+        title={error || undefined}
+        onClick={() => {
+          if (!error) onChange(appendTechnicalPreset(value, next));
+        }}
+      >
+        <Clock3 size={13} />{" "}
+        {selected === "standard" ? "历史出现过＋今日满足" : "添加上次金叉模板"}
+      </button>
+      {selected !== "standard" && (
+        <small>
+          日K · 窗口内最近一次 ·
+          默认60日；只含金叉、周期与事件价比较，不附加今日涨幅。
+        </small>
+      )}
+      {error && <small className="technical-preset-error">{error}</small>}
+    </div>
+  );
 }
 function defaultLeaf(fields: Row[]): RuleNode {
   const field =
@@ -200,10 +341,25 @@ function HistoryEventNode({
           ? "range"
           : historyWindowMode(event.window);
   const [customPreset, setCustomPreset] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
   const exact = windowMode === "exact";
   const preset = customPreset ? "custom" : historyEventPreset(event.where);
-  const update = (patch: RuleNode) =>
+  const update = (patch: RuleNode) => {
+    setTemplateError(null);
     onChange({ ...value, history_event: { ...event, ...patch } });
+  };
+  const commitTemplate = (next: RuleNode) => {
+    const nextNode = { ...value, history_event: next };
+    const error = ruleReplacementError(rootValue, value, nextNode, depth);
+    setTemplateError(error);
+    if (!error) {
+      onChange(nextNode);
+      return true;
+    }
+    return false;
+  };
+  const supported = (name: string) =>
+    conditionFields(fields, "where").some((item) => item.field === name);
   return (
     <section className="history-event-editor">
       <div className="history-event-heading">
@@ -343,6 +499,32 @@ function HistoryEventNode({
           <strong>不含今天</strong> · 昨日为前1日，前日为前2日，两端均包含
         </span>
       </p>
+      <div className="history-window-quick">
+        <span>回看起点</span>
+        {[30, 60].map((sessions) => (
+          <button
+            type="button"
+            className="btn small"
+            key={sessions}
+            onClick={() => {
+              setWindowMode("recent");
+              update({ window: { from: 1, to: sessions } });
+            }}
+          >
+            近{sessions}个交易日
+          </button>
+        ))}
+      </div>
+      {templateError && (
+        <p className="history-price-error" role="alert">
+          {templateError}
+        </p>
+      )}
+      {previousCrossConfigurationError(event) && (
+        <p className="history-price-error" role="alert">
+          {previousCrossConfigurationError(event)}
+        </p>
+      )}
       <div className="event-stage event-stage-history">
         <header>
           <span>1</span>
@@ -359,19 +541,63 @@ function HistoryEventNode({
               value={preset}
               onChange={(e) => {
                 const next = e.target.value;
-                setCustomPreset(next === "custom");
-                if (next === "volume" || next === "limit")
-                  update({ where: historyPresetWhere(next) });
+                if (next === "macd-cross" || next === "kdj-cross") {
+                  if (
+                    commitTemplate(
+                      applyPreviousCrossPreset(
+                        event,
+                        next === "macd-cross" ? "macd" : "kdj",
+                      ),
+                    )
+                  ) {
+                    setCustomPreset(false);
+                    setWindowMode("recent");
+                  }
+                } else {
+                  if (next === "custom") setCustomPreset(true);
+                  if (
+                    next === "volume" ||
+                    next === "limit" ||
+                    next === "change" ||
+                    next === "any-signal"
+                  ) {
+                    if (
+                      commitTemplate({
+                        ...event,
+                        where: historyPresetWhere(next),
+                      })
+                    )
+                      setCustomPreset(false);
+                  }
+                }
               }}
             >
               <option value="volume">倍量事件 · 倍数可修改</option>
               {conditionFields(fields, "where").some(
                 (item) => item.field === "limit_up",
               ) && <option value="limit">收盘涨停事件</option>}
+              {supported("change_pct") && (
+                <option value="change">涨幅事件 · 默认 &gt;5%，可修改</option>
+              )}
+              {supported("volume_ratio") &&
+                supported("limit_up") &&
+                supported("change_pct") && (
+                  <option value="any-signal">
+                    倍量 / 涨停 / 涨幅任一（OR）
+                  </option>
+                )}
+              {supported("macd_cross") && (
+                <option value="macd-cross">MACD本次金叉价高于上次 · 日K</option>
+              )}
+              {supported("kd_cross") && (
+                <option value="kdj-cross">KDJ本次金叉价高于上次 · 日K</option>
+              )}
               <option value="custom">自定义事件条件</option>
             </select>
           </label>
-          <small>模板只修改历史事件；今日条件保持独立。</small>
+          <small>
+            普通模板只修改历史事件；上次金叉模板设为前1—60日/最近纯金叉，并追加今日同类金叉与事件价高于比较。已有今日条件全部保留（包括涨幅），请核对是否需要移除。
+          </small>
         </div>
         <TechnicalPresetControls
           value={event.where || { all: [] }}
@@ -446,6 +672,18 @@ function HistoryEventNode({
               {label}
             </button>
           ))}
+          {fields.some((item) => item.field === "macd_cross") &&
+            fields.some((item) => item.field === "kd_cross") && (
+              <button
+                type="button"
+                className="btn small"
+                onClick={() =>
+                  commitTemplate(appendTodayCrossAlternative(event))
+                }
+              >
+                <Plus size={12} /> KD或MACD金叉（OR）
+              </button>
+            )}
         </div>
         <TechnicalPresetControls
           value={event.then || { all: [] }}
@@ -613,13 +851,13 @@ function RuleNodeEditor(props: NodeProps) {
           </button>
         )}
         {context === "current" && depth < 4 && (
-          <button
-            className="btn small history-add"
-            onClick={() => onChange({ [logic]: [...group, newHistoryRule()] })}
-          >
-            <Clock3 size={13} />
-            历史出现过＋今日满足
-          </button>
+          <HistoryRuleAddControl
+            rootValue={props.rootValue}
+            value={value}
+            onChange={onChange}
+            fields={fields}
+            depth={depth}
+          />
         )}
       </div>
     </div>

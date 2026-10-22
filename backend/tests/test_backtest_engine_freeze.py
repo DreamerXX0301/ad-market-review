@@ -6,26 +6,31 @@ from app.analytics.backtest_engine import VERSION
 from test_backtests import creation_context
 
 
-def create_legacy(store, payload, monkeypatch):
+LEGACY_VERSIONS = ('restricted-next-open-v3-history-events',
+                   'restricted-next-open-v4-history-price-path')
+
+
+def create_legacy(store, payload, monkeypatch, version):
     # Model the previous factory at insertion time. Never disable the frozen
     # input trigger or mutate engine/hash fields on an existing run.
     original_digest = store.digest
     def old_digest(value):
-        if isinstance(value, dict) and 'engine_version' in value:
+        if version == LEGACY_VERSIONS[0] and isinstance(value, dict) and 'engine_version' in value:
             value = {key: item for key, item in value.items() if key != 'engine_version'}
         return original_digest(value)
     with monkeypatch.context() as legacy:
-        legacy.setattr(store, 'VERSION', 'restricted-next-open-v3-history-events')
+        legacy.setattr(store, 'VERSION', version)
         legacy.setattr(store, 'digest', old_digest)
         return store.create_backtest(payload)
 
 
-def test_new_engine_does_not_reuse_old_active_logical_key(creation_context, monkeypatch):
+@pytest.mark.parametrize('version', LEGACY_VERSIONS)
+def test_new_engine_does_not_reuse_old_active_logical_key(creation_context, monkeypatch, version):
     store, payload = creation_context
-    old = create_legacy(store, payload, monkeypatch)
+    old = create_legacy(store, payload, monkeypatch, version)
     with connect() as connection:
         connection.execute("UPDATE job SET status='paused' WHERE job_id=?", (old['job_id'],))
-    new = store.create_backtest({**payload, 'request_key': 'new-v4-click'})
+    new = store.create_backtest({**payload, 'request_key': 'new-version-click'})
     assert new['backtest_id'] != old['backtest_id'] and not new.get('reused')
     with connect() as connection:
         rows = connection.execute('SELECT engine_version,input_sha256 FROM backtest_run ORDER BY created_at_ms').fetchall()
@@ -36,9 +41,10 @@ def test_new_engine_does_not_reuse_old_active_logical_key(creation_context, monk
 
 
 @pytest.mark.parametrize('status', ['queued', 'running'])
-def test_old_incomplete_engine_refuses_calculation_and_publication(creation_context, monkeypatch, status):
+@pytest.mark.parametrize('version', LEGACY_VERSIONS)
+def test_old_incomplete_engine_refuses_calculation_and_publication(creation_context, monkeypatch, status, version):
     store, payload = creation_context
-    old = create_legacy(store, payload, monkeypatch)
+    old = create_legacy(store, payload, monkeypatch, version)
     with connect() as connection:
         connection.execute("UPDATE backtest_run SET status=? WHERE backtest_id=?", (status, old['backtest_id']))
         connection.execute("UPDATE job SET status='running' WHERE job_id=?", (old['job_id'],))
@@ -50,30 +56,31 @@ def test_old_incomplete_engine_refuses_calculation_and_publication(creation_cont
         store.execute_backtest(old['job_id'])
     saved = store.get_backtest(old['backtest_id'])
     assert saved['status'] == 'failed'
-    assert saved['engine_version'] == 'restricted-next-open-v3-history-events'
+    assert saved['engine_version'] == version
     assert '手动新建' in saved['error']
     assert not (published_dir()/'backtests').exists()
     with connect() as connection:
         assert connection.execute("SELECT count(*) FROM dataset_snapshot WHERE module='backtest_result'").fetchone()[0] == 0
 
 
-def test_old_completed_engine_remains_readable_without_execution(creation_context, monkeypatch):
+@pytest.mark.parametrize('version', LEGACY_VERSIONS)
+def test_old_completed_engine_remains_readable_without_execution(creation_context, monkeypatch, version):
     store, payload = creation_context
-    old = create_legacy(store, payload, monkeypatch)
+    old = create_legacy(store, payload, monkeypatch, version)
     with connect() as connection:
         connection.execute("UPDATE job SET status='running' WHERE job_id=?", (old['job_id'],))
-    report = {'engine_version': 'restricted-next-open-v3-history-events',
+    report = {'engine_version': version,
               'stats': {'total_return': 1.2, 'trade_count': 0}, 'data_quality': {},
               **{key: [] for key in ('signals', 'orders', 'fills', 'positions', 'trades', 'equity')}}
     # Produce the completed legacy result through the actual immutable publish
     # pipeline, rather than bypassing its completed-result database gates.
     with monkeypatch.context() as legacy:
-        legacy.setattr(store, 'VERSION', 'restricted-next-open-v3-history-events')
+        legacy.setattr(store, 'VERSION', version)
         legacy.setattr(store, 'MarketData', lambda *args, **kwargs: object())
         legacy.setattr(store, 'run_backtest', lambda *args, **kwargs: report)
         store.execute_backtest(old['job_id'])
     monkeypatch.setattr(store, 'run_backtest', lambda *args, **kwargs: pytest.fail('completed runs are never recomputed'))
     saved = store.get_backtest(old['backtest_id'])
-    assert saved['engine_version'] == 'restricted-next-open-v3-history-events'
+    assert saved['engine_version'] == version
     assert saved['stats']['total_return'] == 1.2
     assert store.execute_backtest(old['job_id']) == saved

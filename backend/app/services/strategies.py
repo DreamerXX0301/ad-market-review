@@ -24,6 +24,12 @@ def stored_period(period):
 
 def evaluator_for(definition,period,trade_rules=None):
     trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
+    def relative_price(node):
+        if 'right_event_change_pct' in node:return True
+        if 'history_event' in node:return relative_price(node['history_event']['then'])
+        return any(relative_price(child) for child in node.get('all',node.get('any',[])))
+    if any(relative_price(tree) or any('cross_cycle' in event.get('price_path',{}) for event in history_nodes(tree)) for tree in trees):
+        return 'workspace-v11-event-percent-cross-cycle'
     if any('price_path' in event for tree in trees for event in history_nodes(tree)):
         return 'workspace-v10-history-price-path'
     return 'workspace-v9-multi-period' if period=='M' or periods_for(definition,period)-{period} else ENGINE_VERSION

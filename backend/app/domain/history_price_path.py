@@ -20,8 +20,8 @@ def _number(value, low, high, *, inclusive_high=True):
 
 def validate_price_path(value):
     """No free-form expressions, extra keys, or implicit activation of paths."""
-    if not isinstance(value, dict) or not value or set(value)-{'guard', 'reclaim'}:
-        raise ValueError('价格过程仅接受非空guard/reclaim配置')
+    if not isinstance(value, dict) or not value or set(value)-{'guard', 'reclaim', 'cross_cycle'}:
+        raise ValueError('价格过程仅接受非空guard/reclaim/cross_cycle配置')
     result = {}
     if 'guard' in value:
         guard = value['guard']
@@ -52,7 +52,28 @@ def validate_price_path(value):
         if reclaim['event_field'] not in ('close', 'high', 'low') or reclaim['mode'] not in RECLAIM_MODES:
             raise ValueError('事件基准仅支持close/high/low，收复方式不受支持')
         result['reclaim'] = dict(reclaim)
+    if 'cross_cycle' in value:
+        cycle=value['cross_cycle']
+        if (not isinstance(cycle,dict) or set(cycle)!={'indicator','require_dead_cross'}
+                or cycle['indicator'] not in ('macd','kdj') or cycle['require_dead_cross'] is not True):
+            raise ValueError('金叉过程需indicator=macd/kdj及require_dead_cross=true')
+        result['cross_cycle']=dict(cycle)
     return result
+
+
+def cross_cycle_fields(indicator):
+    return ('macd_cross','macd_dead_cross') if indicator=='macd' else ('kd_cross','kd_dead_cross')
+
+
+def validate_cross_cycle_event(event):
+    cycle=event.get('price_path',{}).get('cross_cycle')
+    if cycle is None:return
+    where=event['where']
+    if set(where)=={'all'} and len(where['all'])==1:where=where['all'][0]
+    golden,_=cross_cycle_fields(cycle['indicator'])
+    expected={'field':golden,'op':'==','value':True,'period':'D'}
+    if event['window']['from']!=1 or event['match']!='latest' or where!=expected:
+        raise ValueError('上次金叉过程仅支持从昨日回看/最近一次/纯同类日K金叉')
 
 
 def all_results(values):
@@ -71,6 +92,8 @@ def evaluate_price_path(spec, context, event, day):
               'event_date': event.get('date'), 'observation_date': day,
               'observation_period': 'D', 'price_basis': 'none',
               'reason': '缺少已绑定事件或精确市场交易日，价格过程保持未知'}
+    if 'cross_cycle' in spec:
+        result['model']='daily-history-price-path-v2-cross-cycle'
     if start_position is None or end_position is None or start_position >= end_position or day > context.as_of:
         return result
 
@@ -95,9 +118,47 @@ def evaluate_price_path(spec, context, event, day):
         reclaim = _reclaim(spec['reclaim'], context, event, day, days, comparable,
                            blocking_date, blocking_reason)
         result['reclaim'] = reclaim; checks.append(reclaim)
+    if 'cross_cycle' in spec:
+        cycle=_cross_cycle(spec['cross_cycle'],context,event,day,days,comparable,blocking_date,blocking_reason)
+        result['cross_cycle']=cycle;checks.append(cycle)
     state = all_results([item['result'] for item in checks])
     result.update(result=state, reason=_first_reason(checks, state) if state is not True else None)
     return result
+
+
+def _cross_cycle(spec,context,event,day,days,comparable,blocking_date,blocking_reason):
+    """The cycle is technical only; the independent then tree owns prices."""
+    golden,dead=cross_cycle_fields(spec['indicator'])
+    def signal(observed,field):
+        value=context.daily.get(observed,{}).get(field)
+        return value if isinstance(value,bool) else None
+    event_cross=signal(event['date'],golden)
+    current_cross=signal(day,golden) if day in comparable else None
+    known=0;dead_date=intervening_cross=None;unknown_dead=unknown_golden=False
+    for observed in days[:-1]:
+        dead_value=signal(observed,dead) if observed in comparable else None
+        golden_value=signal(observed,golden) if observed in comparable else None
+        if isinstance(dead_value,bool) and isinstance(golden_value,bool):known+=1
+        if dead_value is None:unknown_dead=True
+        if golden_value is None:unknown_golden=True
+        if dead_value is True and dead_date is None:dead_date=observed
+        if golden_value is True and intervening_cross is None:intervening_cross=observed
+    has_dead=True if dead_date else None if unknown_dead else False
+    previous_confirmed=False if intervening_cross else None if unknown_golden else True
+    state=all_results([event_cross,current_cross,has_dead,previous_confirmed])
+    current_close=comparable.get(day)
+    reason=(None if state is True else
+            '绑定事件不是所选指标的已确认日线金叉' if event_cross is False else
+            '观察日未出现所选指标的已确认日线金叉' if current_cross is False else
+            '所选事件与今日之间还有更近的同类金叉，不能将旧事件当作上一次' if previous_confirmed is False else
+            '事件与今日之间没有已确认的同类死叉，尚未完成金叉→死叉→再金叉' if has_dead is False else
+            blocking_reason or '金叉、死叉或指标预热证据不足，不能把未知当作未发生')
+    return {**spec,'result':state,'event_cross':event_cross,'current_cross':current_cross,
+            'event_close':event['close'],'current_close':current_close,
+            'close_above_event':current_close>event['close'] if current_close is not None else None,
+            'dead_cross_result':has_dead,'dead_cross_date':dead_date,'expected_sessions':len(days)-1,
+            'known_signal_sessions':known,'intervening_cross_date':intervening_cross,
+            'previous_cross_confirmed':previous_confirmed,'blocking_date':blocking_date,'reason':reason}
 
 
 def _guard(spec, event, day, days, comparable, blocking_date, blocking_reason):

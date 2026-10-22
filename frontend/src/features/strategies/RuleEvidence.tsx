@@ -6,6 +6,7 @@ import {
   historyWindowText,
   historyEventPriceLabels,
   historyReclaimModes,
+  eventPriceTargetText,
 } from "./historicalRules";
 import { summarizeChecks } from "./Conditions";
 
@@ -33,25 +34,88 @@ function PrecisePrice({ value, exact }: { value: unknown; exact?: unknown }) {
   const exactTitle =
     typeof exact === "string" && exact.length ? exact : undefined;
   return (
-    <span title={ready ? exactTitle || String(value) : undefined}>
+    <span title={exactTitle || (ready ? String(value) : undefined)}>
       {ready
         ? value.toLocaleString("zh-CN", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 6,
           })
-        : "—"}
+        : exactTitle || "—"}
     </span>
   );
 }
 export function HistoryPricePathEvidence({ value }: { value: Row }) {
   const guard = value.guard,
-    reclaim = value.reclaim;
+    reclaim = value.reclaim,
+    cycle = value.cross_cycle;
   return (
     <div className="history-price-evidence">
       <header>
         <strong>事件后的价格过程 · 日K</strong>
         <PriceStateBadge result={value.result} />
       </header>
+      {cycle && (
+        <div>
+          <h5>
+            {cycle.indicator === "macd" ? "MACD" : "KDJ"} 金叉→死叉→再金叉{" "}
+            <PriceStateBadge result={cycle.result} />
+          </h5>
+          <dl>
+            <dt>事件日金叉</dt>
+            <dd>{priceState(cycle.event_cross)}</dd>
+            <dt>今日同类金叉</dt>
+            <dd>{priceState(cycle.current_cross)}</dd>
+            <dt>中间确实死叉</dt>
+            <dd>
+              {priceState(
+                Object.hasOwn(cycle, "dead_cross_result")
+                  ? cycle.dead_cross_result
+                  : cycle.dead_cross_date
+                    ? true
+                    : Number.isInteger(cycle.expected_sessions) &&
+                        cycle.known_signal_sessions === cycle.expected_sessions
+                      ? false
+                      : null,
+              )}
+              {cycle.dead_cross_date ? ` · ${cycle.dead_cross_date}` : ""}
+            </dd>
+            <dt>窗口内确为上次金叉</dt>
+            <dd>
+              {priceState(cycle.previous_cross_confirmed)}
+              {cycle.intervening_cross_date
+                ? `；另有更近金叉 ${cycle.intervening_cross_date}`
+                : ""}
+            </dd>
+            <dt>已核验中间日 / 应有日</dt>
+            <dd>
+              {Number.isInteger(cycle.known_signal_sessions)
+                ? cycle.known_signal_sessions
+                : "—"}{" "}
+              /{" "}
+              {Number.isInteger(cycle.expected_sessions)
+                ? cycle.expected_sessions
+                : "—"}
+            </dd>
+            <dt>事件收盘 / 今日收盘</dt>
+            <dd>
+              <PrecisePrice value={cycle.event_close} /> /{" "}
+              <PrecisePrice value={cycle.current_close} />
+            </dd>
+            {cycle.blocking_date && (
+              <>
+                <dt>待核验日期</dt>
+                <dd>{cycle.blocking_date}</dd>
+              </>
+            )}
+          </dl>
+          <p className="path-subcheck">
+            这里只核验同类金叉与中间死叉；事件价比较、百分比偏移与今日K值范围分别按今日条件判断，不影响上次金叉的选择。
+          </p>
+          {cycle.reason && (
+            <p className="muted">{conditionReasonText(cycle.reason)}</p>
+          )}
+        </div>
+      )}
       {guard && (
         <div>
           <h5>
@@ -224,6 +288,58 @@ export function HistoryPricePathEvidence({ value }: { value: Row }) {
     </div>
   );
 }
+function eventPriceOffsetChecks(value: any): Row[] {
+  if (Array.isArray(value)) return value.flatMap(eventPriceOffsetChecks);
+  if (!value || typeof value !== "object") return [];
+  if (value.right_event_field && Object.hasOwn(value, "right_event_change_pct"))
+    return [value];
+  return eventPriceOffsetChecks(
+    value.checks || value.all || value.any || value.conditions || [],
+  );
+}
+export function EventPriceOffsetEvidence({ value }: { value: Row }) {
+  const change = value.event_change_pct_decimal ?? value.event_change_pct;
+  return (
+    <div className="history-price-evidence">
+      <div>
+        <h5>
+          事件价偏移比较 <PriceStateBadge result={value.result} />
+        </h5>
+        <dl>
+          <dt>今日收盘</dt>
+          <dd>
+            <PrecisePrice value={value.actual} />
+          </dd>
+          <dt>原事件参照价</dt>
+          <dd>
+            <PrecisePrice value={value.event_price} />
+          </dd>
+          <dt>比较关系与公式</dt>
+          <dd>
+            {value.op} {eventPriceTargetText(value)}
+          </dd>
+          <dt>偏移后精确阈值</dt>
+          <dd>
+            <PrecisePrice
+              value={value.right_actual}
+              exact={value.threshold_decimal}
+            />
+          </dd>
+          <dt>实际相对事件价涨跌</dt>
+          <dd>
+            {change === null || change === undefined ? "—" : `${change}%`}
+          </dd>
+        </dl>
+        <small>
+          偏移作用于事件参照价；按未舍入阈值判断，悬停可看完整精度。
+        </small>
+        {value.reason && (
+          <p className="muted">{conditionReasonText(value.reason)}</p>
+        )}
+      </div>
+    </div>
+  );
+}
 export default function RuleEvidence({ value }: { value: any }) {
   const events = eventChecks(value);
   if (!events.length) return <>{summarizeChecks(value)}</>;
@@ -293,6 +409,9 @@ export default function RuleEvidence({ value }: { value: any }) {
             {check.price_path_checks && (
               <HistoryPricePathEvidence value={check.price_path_checks} />
             )}
+            {eventPriceOffsetChecks(check.checks).map((comparison, at) => (
+              <EventPriceOffsetEvidence key={at} value={comparison} />
+            ))}
             {check.reason && (
               <p className="muted">{conditionReasonText(check.reason)}</p>
             )}

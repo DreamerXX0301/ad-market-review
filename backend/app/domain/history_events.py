@@ -1,6 +1,7 @@
 """Daily historical event binding with explicit priority and no source I/O."""
 from bisect import bisect_right
 from math import isfinite
+from decimal import Decimal, localcontext
 import json
 import re
 
@@ -55,11 +56,19 @@ def prepared_fields(trees):
     inputs continue to come from the caller's current metrics, not this view.
     """
     from app.domain.conditions import names
-    return set().union(*(names(event['where']) | {field for leaf in daily_current_nodes(event['then']) for field in names(leaf) if supported_field(field)} for tree in trees for event in nodes(tree)))
+    from app.domain.history_price_path import cross_cycle_fields
+    result=set()
+    for tree in trees:
+        for event in nodes(tree):
+            result |= names(event['where']) | {field for leaf in daily_current_nodes(event['then']) for field in names(leaf) if supported_field(field)}
+            cycle=event.get('price_path',{}).get('cross_cycle')
+            if cycle:result.update(cross_cycle_fields(cycle['indicator']))
+    return result
 
 
 def preparation_warmup(event):
     """Explicit daily today clauses may need more history than event matching."""
+    if 'cross_cycle' in event.get('price_path',{}):return None
     return warmup({'all': [event['where']] + daily_current_nodes(event['then'])})
 
 
@@ -269,6 +278,8 @@ def evaluate_event_price(node, history):
     event = history.get('event') if isinstance(history, dict) else None
     current = history.get('current_price') if isinstance(history, dict) else None
     right = event.get(node['right_event_field']) if event else None
+    if 'right_event_change_pct' in node:
+        return _evaluate_relative_event_price(node,history,event,current,right)
     result = None
     if positive(current) and positive(right):
         result = {'>': lambda: current > right, '>=': lambda: current >= right,
@@ -278,3 +289,37 @@ def evaluate_event_price(node, history):
             'observation_date': history.get('as_of') if isinstance(history, dict) else None,
             'observation_period': 'D', 'event_date': event.get('date') if event else None,
             'reason': ((history.get('price_reason') if isinstance(history, dict) else None) or '尚无本节点绑定的历史事件及可比原始价格') if result is None else None}
+
+
+def _decimal_number(value,positive_only=False):
+    number=float(value)
+    return number if isfinite(number) and (not positive_only or number>0) else None
+
+
+def _evaluate_relative_event_price(node,history,event,current,right):
+    """Signed event return thresholds use exact decimal multiplication."""
+    threshold=relative=None;state=None
+    if positive(right):
+        with localcontext() as arithmetic:
+            # A finite binary64 percentage may be as small as 5e-324.
+            # 1024 significant digits preserve 1+p/100 and its product with
+            # every normalized finite price without a tolerance or cent rounding.
+            arithmetic.prec=1024
+            threshold=Decimal(str(right))*(1+Decimal(str(node['right_event_change_pct']))/100)
+            if positive(current):
+                actual=Decimal(str(current))
+                with localcontext() as display:
+                    display.prec=80
+                    relative=(actual/Decimal(str(right))-1)*100
+                state={'>':lambda:actual>threshold,'>=':lambda:actual>=threshold,
+                       '<':lambda:actual<threshold,'<=':lambda:actual<=threshold,
+                       '==':lambda:actual==threshold,'!=':lambda:actual!=threshold}[node['op']]()
+    return {**node,'actual':current,'right_actual':_decimal_number(threshold,True) if threshold is not None else None,
+            'event_price':right,'threshold_decimal':format(threshold,'f') if threshold is not None else None,
+            'event_change_pct':_decimal_number(relative) if relative is not None else None,
+            'event_change_pct_decimal':format(relative,'f') if relative is not None else None,
+            'comparison_model':'daily-event-relative-price-v1',
+            'observation_date':history.get('as_of') if isinstance(history,dict) else None,
+            'observation_period':'D','event_date':event.get('date') if event else None,
+            'reason':((history.get('price_reason') if isinstance(history,dict) else None) or '尚无本节点绑定的历史事件及可比原始价格') if state is None else None,
+            'result':state}
