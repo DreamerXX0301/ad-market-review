@@ -208,16 +208,11 @@ for (const scope of ["selection", "alert", "exit", "trade-entry", "trade-exit"])
         onChange,
       }),
     );
-    assert.match(html, /MACD 水上金叉/);
-    assert.match(html, /KDJ 低位金叉/);
-    assert.match(html, /KDJ K &gt; D（持续状态）/);
-    if (scope === "trade-exit") {
-      assert.match(html, /MACD 死叉/);
-      assert.match(html, /KDJ 高位死叉/);
-      assert.match(html, /前一期 DIF/);
-    } else assert.match(html, /当期 DIF、DEA 都严格大于 0/);
-    assert.match(html, /添加技术组合/);
-    assert.equal((html.match(/aria-label="技术组合"/g) || []).length, 1);
+    assert.match(html, /快捷添加条件/);
+    assert.match(html, /aria-expanded="false"/);
+    assert.doesNotMatch(html, /aria-label="快捷条件模板"/);
+    assert.doesNotMatch(html, /technical-preset-controls/);
+    assert.equal((html.match(/快捷添加条件<\/button>/g) || []).length, 1);
     assert.equal(
       JSON.stringify(value),
       before,
@@ -249,15 +244,32 @@ const historyHtml = renderToStaticMarkup(
   }),
 );
 assert.equal(
-  (historyHtml.match(/aria-label="技术组合"/g) || []).length,
+  (historyHtml.match(/快捷添加条件<\/button>/g) || []).length,
   3,
-  "top-level and two history stages expose one toolbar each, not every nested group",
+  "root and the two history condition groups each offer a collapsed shortcut",
 );
+assert.doesNotMatch(historyHtml, /aria-label="快捷条件模板"/);
+const leafHistory = {
+  all: [{
+    history_event: {
+      window: { from: 1, to: 60 },
+      match: "latest",
+      where: { field: "kd_cross", op: "==", value: true, period: "D" },
+      then: { field: "macd_cross", op: "==", value: true, period: "D" },
+    },
+  }],
+};
+const leafHistoryBefore = JSON.stringify(leafHistory);
+const leafHistoryHtml = renderToStaticMarkup(createElement(tree.default, {
+  value: leafHistory, fields: technicalFields, period: "M", onChange,
+}));
 assert.equal(
-  (historyHtml.match(/class="technical-preset-period">日K</g) || []).length,
-  2,
+  (leafHistoryHtml.match(/快捷添加条件<\/button>/g) || []).length,
+  3,
+  "saved historical stages with a single leaf retain their own shortcut",
 );
-assert.match(historyHtml, /class="technical-preset-period">完整月K</);
+assert.equal(JSON.stringify(leafHistory), leafHistoryBefore,
+  "rendering a historical leaf does not silently wrap the saved tree");
 assert.doesNotMatch(
   renderToStaticMarkup(
     createElement(tree.default, {
@@ -267,7 +279,7 @@ assert.doesNotMatch(
       onChange,
     }),
   ),
-  /aria-label="技术组合"/,
+  /快捷添加条件/,
 );
 console.log(
   "condition visibility: real stock, history, alert, exit and trade editors omit hidden indicator across D/W/M, preserving saved rules and K/D cross conditions",

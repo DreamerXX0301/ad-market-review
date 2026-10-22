@@ -65,6 +65,8 @@
 
 `GET /strategy-fields` 返回字段 type/operators、周期、fixed_period、整数边界及场景限制；前端依白名单构建，服务端最终验证，不执行用户 Python/SQL/JS。
 
+前端条件组的“快捷添加条件”默认收起且不预选模板。选择、修改参数、取消都不调用规则onChange；仅点“加入条件”才把预览的标准条件加入当前草稿，之后仍须保存策略。历史where/then各自有入口，单叶旧结构打开面板也不重写。all/any中的组合始终作为一个原子子组加入，不拆散到OR。
+
 - `GET/POST /strategies`、`GET/PATCH /strategies/{id}`：name、period=D/W/M、definition、policy、trade_rules；修改追加版本，旧运行冻结。
 - definition 为叶 `{field,op,value,period?}` / `{field,op,right_field,period?}`，或嵌套 `{all:[...]}` / `{any:[...]}`；兼容旧 logic/conditions 输入。
 - 普通叶默认策略周期，也可逐叶 D/W/M；W/M 使用最近应闭合且有效周期，不能缺最新后退到旧柱。固定日线字段必须 D。右字段只能是兼容白名单数值，常量专用字段不能当右字段。
@@ -125,11 +127,31 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 | `DELETE /strategies/{id}` | 同一SQLite短事务将策略及当前可见关联回测移入回收站 |
 | `POST /strategies/{id}/restore` | 恢复策略及本次策略删除带走的回测，幂等 |
 
-策略可见性另存于019新增的 `strategy_deletion`，关联回测的可见性另存于 `backtest_deletion`；不物理删除策略版本、运行、报告、任务或输入保留引用，不修改已完成回测内容。策略metadata含 `deleted/deleted_at_ms/can_delete/delete_blocked_reason/can_restore/restore_blocked_reason/backtest_count/related_backtests_count/cascade_backtest_count`；后两项表示本次会带走的当前可见回测数，总回测数另列。列表返回 `{items,total,limit,offset,has_more}`，未传limit时为null；删除/恢复返回 `{strategy_id,deleted,deleted_at_ms,affected_backtests}`。已删除策略详情404，PATCH为409。
+策略可见性另存于019新增的 `strategy_deletion`，关联回测的可见性另存于 `backtest_deletion`；不物理删除策略版本、运行、报告、任务或输入保留引用，不修改已完成回测内容。策略metadata含 `active_purge/deleted/deleted_at_ms/can_delete/delete_blocked_reason/can_restore/restore_blocked_reason/backtest_count/related_backtests_count/cascade_backtest_count`；后两项表示本次会带走的当前可见回测数，总回测数另列。列表返回 `{items,total,limit,offset,has_more}`，未传limit时为null；删除/恢复返回 `{strategy_id,deleted,deleted_at_ms,affected_backtests}`。已删除策略详情404，PATCH为409。
 
 删除前事务内检查相关选股、批次、跟踪核验和回测任务；排队、运行、暂停或尚未释放租约均409，不自动取消。已取消回测以任务终态及租约释放为准，不因其遗留计算状态仍为queued/running而永远无法清理。删除后禁止新建选股、回测、批次、自动选股或从旧运行新入池，原 `archived=false` 更新不能绕过恢复接口。旧归档策略语义保留，恢复时还原其删除前归档值。
 
 跟踪轮次、入池基准、政策和事件、自选及行情均保留；已有独立跟踪仍可继续核验，不自动结束。恢复不重跑任务、不追加策略版本、不重设基准，也不恢复删除策略之前已经单独移入回收站的回测。删除与恢复均是可见性变更，不构成磁盘空间回收。
+
+## 回收站逐项永久删除
+
+| 接口 | 作用 |
+| --- | --- |
+| `GET /strategies/{id}/purge-preview` | 只读核对策略及全部关联运行、跟踪、报告的永久删除范围 |
+| `GET /backtests/{id}/purge-preview` | 只读核对单份回测的专属清理范围 |
+| `POST /strategies/{id}/purge`、`POST /backtests/{id}/purge` | 提交名称与范围确认，排队交由唯一worker清理 |
+| `GET /workspace-purges?limit=20&offset=0&status=unfinished&target_kind=strategy`、`GET /workspace-purges/{id}` | 读取清理记录及当前状态；实体清理后仍可查 |
+| `POST /workspace-purges/{id}/retry` | 显式续执行原冻结授权，不扩大范围 |
+
+仅回收站中的对象可永久删除。preview返回 `target_kind/target_id/name/can_purge/blocked_reason/confirmation_token/confirmation_text/expires_at_ms/counts/files/protected_watchlist_count/protected_watchlist/retained`。counts包括策略、版本、政策、选股运行与候选、跟踪轮次与事件、政策应用、忽略项、执行设置（`execution_settings`）和回测（`backtests`）数量；files为 `exclusive_count/exclusive_bytes/shared_count`，字节数只指当前可清理的专属报告文件。preview本身不写授权、不清理文件；确认token绑定当前对象、证据、引用和文件范围，10分钟有效，不是身份认证凭据。
+
+提交体为 `{confirmation_token,confirmation_text}`，名称必须完整匹配。对象、引用、自选或文件范围变化、token过期、未在回收站、有相关活动任务或未释放租约均拒绝，不自动重算更大的授权。策略的任意现有或历史跟踪证券只要仍在独立自选，即使是手动收藏、并非该轮次加入，也阻止整条策略的永久删除；返回总数与最多20条保护明细。不能通过结束轮次或删除策略的可见性标记绕过。普通移入回收站继续保留原记录。
+
+确认受理只表示任务已入队。状态为 `queued/cleaning/completed/failed`，另返回 `task_id/business_deleted/counts/removed_file_count/removed_file_bytes/remaining_file_count/can_retry/can_reconfirm/superseded_by` 等。只有completed才表示本次清理完成。业务事务提交后文件清理失败，`business_deleted=true`，不得再宣称策略可恢复；失败重试只续原文件台账，已经缺失的文件不计作实际移除字节。业务尚未删除而原范围失效时，可重新预览、重新手输名称确认生成新授权；旧失败授权被标记superseded，不能重放，unfinished列表排除它。业务已删除则只能续原文件台账。列表支持limit 1–100及offset，返回items/total/limit/offset。已有备份保留，SQLite不会自动VACUUM，返回字节数不等于整个磁盘释放量。
+
+worker在业务事务内重新核对冻结范围、自选保护和任务租约。仅此连接、精确目标ID可通过020修改的八个DELETE守卫；其他连接保持拒绝，UPDATE不可变守卫不变。策略永久清理包括全部版本、政策、运行、候选、跟踪、事件、忽略项及全部关联回测；单份回测不删除策略和跟踪。仅解除本次对象拥有的retention_pin，且仅清理无其他引用的专属backtest_result文件及其本模块head。共享报告、输入行情、其他对象的pin、自选、划线与划线触发事件、任务及发布目录元数据、清理审计和已有备份保留。报告按白名单路径、类型、大小、SHA与实际归属核验，异常保留并报错。
+
+已确认排队/清理中的对象不能恢复，也不能通过恢复父策略间接恢复正在清理的报告。永久清理后的ID不得由初始化、内置策略种子、旧任务重试或旧请求键复活；可显式创建新ID的策略。永久删除没有回收站恢复操作，也不自动整理其他策略、自动发起取数或运行。
 
 ## 个股运行与跟踪
 
@@ -185,7 +207,7 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 
 `POST /backtests/availability {strategy_id}` 返回可用区间、预热、身份/条件限制；`POST /backtests` 冻结策略、规则、区间和配置，唯一 worker 执行；GET 列表/详情读取结果账本。七项 stats 为 total_return/annual_return/max_drawdown/win_rate/payoff_ratio/trade_count/final_equity，可无定义项保持 null。
 
-`GET /backtests?deleted=false&limit=100&offset=0` 返回正常历史，`deleted=true`只看回收站；limit为1–100，offset非负，返回items/total及分页信息。`DELETE /backtests/{id}` 可单独移入回收站，`POST /backtests/{id}/restore` 幂等恢复。metadata含删除状态、时间、可删除/恢复及阻断原因；活动任务或租约未释放409。父策略已删除时，单独恢复回测409，须先恢复策略；已删除报告的详情404。原request_key指向回收站记录时409，不能静默返回隐藏结果；用户可在恢复后重读，或明确使用新request_key新建。
+`GET /backtests?deleted=false&limit=100&offset=0` 返回正常历史，`deleted=true`只看回收站；limit为1–100，offset非负，返回items/total及分页信息。`DELETE /backtests/{id}` 可单独移入回收站，`POST /backtests/{id}/restore` 幂等恢复。metadata含删除状态、时间、可删除/恢复及阻断原因，另带本报告的active_purge；活动任务或租约未释放409。父策略已删除时，单独恢复回测409，须先恢复策略；已删除报告的详情404。原request_key指向回收站记录时409，不能静默返回隐藏结果；用户可在恢复后重读，或明确使用新request_key新建。
 
 曲线默认展示累计收益率，支持切换账户权益并保留下方回撤。累计收益率 `=(equity/initial_capital−1)×100`；initial_capital优先使用该报告冻结的 `stats.initial_capital`，它是引擎按十进制ROUND_HALF_UP到分后的实际起始权益。兼容旧报告仅在该字段缺失时用同一报告config的初始本金按分舍入；字段存在但非法不掩盖回退。绝不使用当前表单或第一条普通权益记录。零权益为−100%，缺值不填零；无有效本金时只展示权益并说明原因。百分比、金额与回撤提示统一单位和两位小数；切换视图不重算回测。
 

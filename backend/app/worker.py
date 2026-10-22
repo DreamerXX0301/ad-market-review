@@ -210,6 +210,9 @@ def dispatch(job):
         after_sync(job)
         from app.services.listing_status import after_sync as listing_after_sync
         listing_after_sync(job)
+    elif kind=='cleanup' and _parameters(job).get('operation')=='workspace_purge':
+        from app.services.workspace_purge import execute
+        execute(job)
     elif kind=='backtest':
         from app.analytics.backtest_store import execute_backtest
         execute_backtest(identifier,callback)

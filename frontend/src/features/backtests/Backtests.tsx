@@ -39,6 +39,14 @@ import {
 import { EquityChart } from "../../components/Charts";
 import DatePicker from "../../components/DatePicker";
 import RecycleConfirm from "../../components/RecycleConfirm";
+import PermanentDeleteDialog, {
+  PendingPurgeJobs,
+} from "../../components/PermanentDeleteDialog";
+import {
+  purgeBlocksRestore,
+  recyclePageOffset,
+} from "../../components/permanentDeletePresentation";
+import type { PurgeTarget } from "../../components/permanentDeletePresentation";
 import { frozenInitialCapital } from "../../components/equityCurve";
 import {
   deletionReason,
@@ -140,6 +148,7 @@ export default function Backtests({
   const [historyOffset, setHistoryOffset] = useState(0);
   const [historyGeneration, setHistoryGeneration] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<Row | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<PurgeTarget | null>(null);
   const [historyMutation, setHistoryMutation] = useState("");
   const [historyActionError, setHistoryActionError] = useState("");
   const strategies = useApi<Row>("/strategies"),
@@ -151,6 +160,11 @@ export default function Backtests({
     deletedHistory,
     "backtest_id",
   );
+  useEffect(() => {
+    setHistoryOffset((current) =>
+      recyclePageOffset(history.data?.total, current),
+    );
+  }, [history.data?.total]);
   const [strategyId, setStrategyId] = useState(initialStrategyId || ""),
     [config, setConfig] = useState<Row>(defaultConfig),
     [advanced, setAdvanced] = useState(false),
@@ -815,9 +829,17 @@ export default function Backtests({
           </div>
           <p className="backtest-history-hint">
             {deletedHistory
-              ? "删除记录可恢复；策略被删除时请先恢复所属策略。"
+              ? "删除记录可恢复，也可逐条永久删除。策略被删除时，请先恢复所属策略再恢复回测。"
               : "仅已结束且租约释放的记录可删除；删除策略可连带移入关联回测。"}
           </p>
+          {deletedHistory && (
+            <PendingPurgeJobs
+              kind="backtest"
+              refresh={historyGeneration}
+              onOpen={setPurgeTarget}
+              onChanged={() => setHistoryGeneration((current) => current + 1)}
+            />
+          )}
           {history.error && (
             <ErrorBox message={history.error} retry={history.reload} />
           )}
@@ -884,37 +906,63 @@ export default function Backtests({
                       </footer>
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className={`icon-btn history-action ${deletedHistory ? "restore" : ""}`}
-                    aria-label={`${deletedHistory ? "恢复回测" : "删除回测"}：${x.strategy_name || x.backtest_id}`}
-                    title={
-                      (deletedHistory
-                        ? restorationReason(x)
-                        : deletionReason(x)) ||
-                      (deletedHistory ? "恢复这条回测" : "移到回收站，可恢复")
+                  <div
+                    className={
+                      deletedHistory ? "backtest-purge-actions" : undefined
                     }
-                    disabled={
-                      !!historyMutation ||
-                      !!(deletedHistory
-                        ? restorationReason(x)
-                        : deletionReason(x))
-                    }
-                    onClick={() => {
-                      setHistoryActionError("");
-                      deletedHistory
-                        ? recycleBacktest(x, true)
-                        : setDeleteTarget(x);
-                    }}
                   >
-                    {historyMutation === x.backtest_id ? (
-                      <Spinner />
-                    ) : deletedHistory ? (
-                      <RotateCcw size={13} />
-                    ) : (
-                      <Trash2 size={13} />
+                    <button
+                      type="button"
+                      className={`icon-btn history-action ${deletedHistory ? "restore" : ""}`}
+                      aria-label={`${deletedHistory ? "恢复回测" : "删除回测"}：${x.strategy_name || x.backtest_id}`}
+                      title={
+                        (purgeBlocksRestore(x.active_purge)
+                          ? "请先查看永久删除清理状态"
+                          : deletedHistory
+                            ? restorationReason(x)
+                            : deletionReason(x)) ||
+                        (deletedHistory ? "恢复这条回测" : "移到回收站，可恢复")
+                      }
+                      disabled={
+                        !!historyMutation ||
+                        purgeBlocksRestore(x.active_purge) ||
+                        !!(deletedHistory
+                          ? restorationReason(x)
+                          : deletionReason(x))
+                      }
+                      onClick={() => {
+                        setHistoryActionError("");
+                        deletedHistory
+                          ? recycleBacktest(x, true)
+                          : setDeleteTarget(x);
+                      }}
+                    >
+                      {historyMutation === x.backtest_id ? (
+                        <Spinner />
+                      ) : deletedHistory ? (
+                        <RotateCcw size={13} />
+                      ) : (
+                        <Trash2 size={13} />
+                      )}
+                    </button>
+                    {deletedHistory && (
+                      <button
+                        type="button"
+                        className={`btn small ${x.active_purge ? "" : "danger"}`}
+                        disabled={!!historyMutation}
+                        onClick={() =>
+                          setPurgeTarget({
+                            kind: "backtest",
+                            id: x.backtest_id,
+                            name: `回测 ${x.backtest_id}`,
+                            purgeId: x.active_purge?.purge_id,
+                          })
+                        }
+                      >
+                        {x.active_purge ? "查看清理" : "永久删除"}
+                      </button>
                     )}
-                  </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -965,6 +1013,26 @@ export default function Backtests({
           error={historyActionError}
           onClose={() => setDeleteTarget(null)}
           onConfirm={() => recycleBacktest(deleteTarget)}
+        />
+      )}
+      {purgeTarget && (
+        <PermanentDeleteDialog
+          key={purgeTarget.purgeId || purgeTarget.id}
+          target={purgeTarget}
+          onStock={onStock}
+          onChanged={() => {
+            setHistoryGeneration((current) => current + 1);
+            setSelectedId((current) =>
+              current === purgeTarget.id ? "" : current,
+            );
+            setTrade((current) =>
+              current?.backtestId === purgeTarget.id ? null : current,
+            );
+          }}
+          onClose={() => {
+            setPurgeTarget(null);
+            setHistoryGeneration((current) => current + 1);
+          }}
         />
       )}
       {trade && (

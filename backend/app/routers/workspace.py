@@ -3,7 +3,7 @@ from fastapi import APIRouter,Body,Query
 from app.services import topics,strategies,tracking,topic_members as membership_service
 from app.services import sector_strategies,sector_tracking,strategy_batches
 from app.domain.conditions import specs
-from app.services import workspace_deletion
+from app.services import workspace_deletion, workspace_purge
 
 router=APIRouter(prefix='/api/v1',tags=['workspace'])
 
@@ -117,3 +117,15 @@ def sector_tracking_members(round_id:str,as_of:str|None=None,membership_scope:st
 def sector_members(topic_code:str,as_of:str|None=None,membership_scope:str='latest'):return sector_tracking.sector_members(topic_code,as_of,membership_scope)
 @router.get('/sector-tracking-events')
 def sector_tracking_events(strategy_id:str|None=None,event_type:str|None=None,business_date:str|None=None,limit:int=Query(100,ge=1,le=1000)):return sector_tracking.list_events(strategy_id,event_type,business_date,limit)
+
+
+@router.get('/strategies/{strategy_id}/purge-preview')
+def strategy_purge_preview(strategy_id:str):return workspace_purge.preview('strategy',strategy_id)
+@router.post('/strategies/{strategy_id}/purge')
+def strategy_purge(strategy_id:str,payload:dict=Body(...)):return workspace_purge.submit('strategy',strategy_id,payload)
+@router.get('/workspace-purges')
+def purge_list(limit:int=Query(20,ge=1,le=100),offset:int=Query(0,ge=0),status:str|None=None,target_kind:str|None=None):return workspace_purge.list_purges(limit,offset,status,target_kind)
+@router.get('/workspace-purges/{purge_id}')
+def purge_get(purge_id:str):return workspace_purge.get_purge(purge_id)
+@router.post('/workspace-purges/{purge_id}/retry')
+def purge_retry(purge_id:str):return workspace_purge.retry(purge_id)

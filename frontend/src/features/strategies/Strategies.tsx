@@ -29,6 +29,14 @@ import {
   Warning,
 } from "../../components/UI";
 import RecycleConfirm from "../../components/RecycleConfirm";
+import PermanentDeleteDialog, {
+  PendingPurgeJobs,
+} from "../../components/PermanentDeleteDialog";
+import {
+  purgeBlocksRestore,
+  recyclePageOffset,
+} from "../../components/permanentDeletePresentation";
+import type { PurgeTarget } from "../../components/permanentDeletePresentation";
 import {
   deletionReason,
   restorationReason,
@@ -368,6 +376,7 @@ function StockStrategies({
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashOffset, setTrashOffset] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<Row | null>(null);
+  const [purgeTarget, setPurgeTarget] = useState<PurgeTarget | null>(null);
   const [recycleBusy, setRecycleBusy] = useState("");
   const [recycleError, setRecycleError] = useState("");
   const trash = useApi<Row>(
@@ -376,6 +385,9 @@ function StockStrategies({
       : null,
   );
   const trashRows = visibleRecycleRows(list(trash.data), true, "strategy_id");
+  useEffect(() => {
+    setTrashOffset((current) => recyclePageOffset(trash.data?.total, current));
+  }, [trash.data?.total]);
   const result = useApi<Row>(
       `/strategies?deleted=false&_refresh=${strategyGeneration}`,
     ),
@@ -978,15 +990,36 @@ function StockStrategies({
           onConfirm={() => recycleStrategy(deleteTarget)}
         />
       )}
-      {trashOpen && (
+      {purgeTarget && (
+        <PermanentDeleteDialog
+          key={purgeTarget.purgeId || purgeTarget.id}
+          target={purgeTarget}
+          onStock={onStock}
+          onChanged={() => {
+            setStrategyGeneration((current) => current + 1);
+            onRefresh?.();
+          }}
+          onClose={() => {
+            setPurgeTarget(null);
+            setStrategyGeneration((current) => current + 1);
+          }}
+        />
+      )}
+      {trashOpen && !purgeTarget && (
         <Modal
           title="策略回收站"
           onClose={() => !recycleBusy && setTrashOpen(false)}
         >
           <div className="modal-body recycle-confirm-body">
             <p>
-              恢复策略时，仅恢复删除它时连带移入的回测。已有跟踪记录和基准价保留，可在跟踪页独立管理。
+              恢复时，仅恢复本次连带移入的回测。永久删除会清理专属跟踪与关联回测；涉及自选股票的策略受到保护。
             </p>
+            <PendingPurgeJobs
+              kind="strategy"
+              refresh={strategyGeneration}
+              onOpen={setPurgeTarget}
+              onChanged={() => setStrategyGeneration((current) => current + 1)}
+            />
             {trash.error && (
               <ErrorBox message={trash.error} retry={trash.reload} />
             )}
@@ -1004,22 +1037,45 @@ function StockStrategies({
                         {integer(item.backtest_count)} 条
                       </p>
                     </div>
-                    <button
-                      className="btn small"
-                      disabled={!!recycleBusy || !!restorationReason(item)}
-                      title={
-                        restorationReason(item) ||
-                        "恢复策略与本次连带删除的回测"
-                      }
-                      onClick={() => recycleStrategy(item, true)}
-                    >
-                      {recycleBusy === item.strategy_id ? (
-                        <Spinner />
-                      ) : (
-                        <RotateCcw size={13} />
-                      )}
-                      恢复
-                    </button>
+                    <div className="recycle-row-actions">
+                      <button
+                        className="btn small"
+                        disabled={
+                          !!recycleBusy ||
+                          purgeBlocksRestore(item.active_purge) ||
+                          !!restorationReason(item)
+                        }
+                        title={
+                          purgeBlocksRestore(item.active_purge)
+                            ? "请先查看永久删除清理状态"
+                            : restorationReason(item) ||
+                              "恢复策略与本次连带删除的回测"
+                        }
+                        onClick={() => recycleStrategy(item, true)}
+                      >
+                        {recycleBusy === item.strategy_id ? (
+                          <Spinner />
+                        ) : (
+                          <RotateCcw size={13} />
+                        )}
+                        恢复
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn small ${item.active_purge ? "" : "danger"}`}
+                        disabled={!!recycleBusy}
+                        onClick={() =>
+                          setPurgeTarget({
+                            kind: "strategy",
+                            id: item.strategy_id,
+                            name: item.name,
+                            purgeId: item.active_purge?.purge_id,
+                          })
+                        }
+                      >
+                        {item.active_purge ? "查看清理" : "永久删除"}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

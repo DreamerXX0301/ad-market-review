@@ -2,13 +2,82 @@
   display: grid;
   gap: 15px;
 }
+.technical-preset-entry {
+  min-width: 0;
+}
+.technical-preset-entry.open {
+  flex-basis: 100%;
+}
+.technical-preset-launcher {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.technical-preset-trigger {
+  color: var(--subtle);
+}
+.technical-preset-feedback {
+  color: var(--green);
+  font-size: 10px;
+  line-height: 1.7;
+}
 .technical-preset-controls {
   display: grid;
-  gap: 8px;
-  padding: 11px 13px;
-  border: 1px solid var(--border-soft);
+  gap: 12px;
+  width: min(100%, 750px);
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: color-mix(in srgb, var(--accent-secondary) 4%, var(--surface));
+  background: var(--surface2);
+}
+.technical-preset-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.technical-preset-heading strong {
+  display: block;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.technical-preset-heading small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+  margin-top: 4px;
+}
+.technical-preset-heading .icon-btn {
+  flex-shrink: 0;
+}
+.technical-preset-preview {
+  display: grid;
+  gap: 5px;
+  padding: 10px 11px;
+  border-left: 2px solid var(--accent-secondary);
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.technical-preset-preview > span,
+.technical-preset-preview > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.technical-preset-preview > strong {
+  font-size: 11px;
+  color: var(--subtle);
+  font-weight: 500;
+}
+.technical-preset-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .technical-preset-fields {
   display: flex;
@@ -95,14 +164,6 @@
 }
 .event-price-offset-note {
   line-height: 1.8;
-}
-.event-stage > .technical-preset-controls {
-  margin: 0 0 12px 33px;
-}
-@media (max-width: 600px) {
-  .event-stage > .technical-preset-controls {
-    margin-left: 0;
-  }
 }
 .visual-rule-group {
   border: 1px solid var(--border);

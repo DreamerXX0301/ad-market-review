@@ -6,6 +6,10 @@ from app.services.task_service import TERMINAL
 
 
 def require_strategy_present(connection, strategy_id):
+    from .workspace_purge import was_purged, require_not_purging
+    if was_purged(connection, "strategy", strategy_id):
+        raise HTTPException(409,"策略已永久删除，请使用新的策略")
+    require_not_purging(connection,"strategy",strategy_id)
     if connection.execute('SELECT 1 FROM strategy_deletion WHERE strategy_id=?',(strategy_id,)).fetchone():
         raise HTTPException(409,'策略已移入回收站，请先恢复策略')
 
@@ -29,7 +33,11 @@ def _parameters(raw):
     except (TypeError,ValueError):return None
 
 
-def strategy_block_reason(connection,strategy_id):
+def strategy_block_reason(connection,strategy_id,*,ignored_job_id=None):
+    # Cleanup task parameters intentionally contain only purge_id; follow the
+    # authorization registry rather than guessing strategy references in jobs.
+    if connection.execute("SELECT 1 FROM workspace_purge p LEFT JOIN backtest_run b ON p.target_kind='backtest' AND b.backtest_id=p.target_id WHERE p.status IN ('queued','cleaning') AND p.job_id IS NOT ? AND ((p.target_kind='strategy' AND p.target_id=?) OR b.strategy_id=?) LIMIT 1",(ignored_job_id,strategy_id,strategy_id)).fetchone():
+        return '所属策略或关联报告已有永久清理任务，请先等待原任务结束'
     for row in connection.execute('SELECT b.*,j.status job_status,j.lease_owner,j.lease_expires_at_ms FROM backtest_run b JOIN job j USING(job_id) WHERE b.strategy_id=?',(strategy_id,)):
         reason=backtest_block_reason(dict(row))
         if reason:return reason
@@ -37,6 +45,7 @@ def strategy_block_reason(connection,strategy_id):
     related_jobs={row[0] for row in connection.execute('SELECT job_id FROM selection_run WHERE strategy_id=?',(strategy_id,))}
     jobs=connection.execute("SELECT * FROM job WHERE status NOT IN ('succeeded','no_change','partial','failed','cancelled') OR lease_owner IS NOT NULL OR lease_expires_at_ms IS NOT NULL")
     for row in jobs:
+        if row['job_id']==ignored_job_id:continue
         parameters=_parameters(row['parameters_json'])
         if parameters is None:
             if row['kind'] in ('selection','tracking_review','source_check'):
@@ -67,9 +76,13 @@ def strategy_visibility(connection,strategy_id):
     count=connection.execute('SELECT count(*) FROM backtest_run WHERE strategy_id=?',(strategy_id,)).fetchone()[0]
     visible=connection.execute('SELECT count(*) FROM backtest_run b LEFT JOIN backtest_deletion d USING(backtest_id) WHERE b.strategy_id=? AND d.backtest_id IS NULL',(strategy_id,)).fetchone()[0]
     reason=None if marker else strategy_block_reason(connection,strategy_id)
-    return {'deleted':marker is not None,'deleted_at_ms':marker['deleted_at_ms'] if marker else None,
+    from .workspace_purge import active_purge
+    purge=active_purge(connection,'strategy',strategy_id)
+    related_purge=connection.execute("SELECT 1 FROM workspace_purge p JOIN backtest_run b ON b.backtest_id=p.target_id WHERE p.target_kind='backtest' AND b.strategy_id=? AND p.status IN ('queued','cleaning') LIMIT 1",(strategy_id,)).fetchone() if marker else None
+    restore_reason='永久清理已确认，请查看清理任务' if (purge and purge['status'] in ('queued','cleaning')) or related_purge else None
+    return {'active_purge':purge,'deleted':marker is not None,'deleted_at_ms':marker['deleted_at_ms'] if marker else None,
             'can_delete':marker is None and reason is None,'delete_blocked_reason':reason,
-            'can_restore':marker is not None,'restore_blocked_reason':None,
+            'can_restore':marker is not None and not restore_reason,'restore_blocked_reason':restore_reason,
             'backtest_count':count,'related_backtests_count':visible,'cascade_backtest_count':visible}
 
 
@@ -93,8 +106,11 @@ def delete_strategy(strategy_id):
 
 
 def restore_strategy(strategy_id):
+    from .workspace_purge import require_not_purging
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
+        require_not_purging(connection,'strategy',strategy_id)
+        if connection.execute("SELECT 1 FROM workspace_purge p JOIN backtest_run b ON b.backtest_id=p.target_id WHERE p.target_kind='backtest' AND b.strategy_id=? AND p.status IN ('queued','cleaning') LIMIT 1",(strategy_id,)).fetchone():raise HTTPException(409,'关联报告已确认永久清理，请等待原任务结束后再恢复策略')
         if not connection.execute('SELECT 1 FROM strategy WHERE strategy_id=?',(strategy_id,)).fetchone():raise HTTPException(404,'策略不存在')
         marker=connection.execute('SELECT * FROM strategy_deletion WHERE strategy_id=?',(strategy_id,)).fetchone()
         changed=0

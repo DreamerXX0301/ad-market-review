@@ -36,3 +36,13 @@ def delete_backtest(backtest_id:str):return call(store.delete_backtest,backtest_
 
 @router.post('/{backtest_id}/restore')
 def restore_backtest(backtest_id:str):return call(store.restore_backtest,backtest_id)
+
+
+@router.get('/{backtest_id}/purge-preview')
+def purge_preview(backtest_id:str):
+    from app.services.workspace_purge import preview
+    return preview('backtest',backtest_id)
+@router.post('/{backtest_id}/purge')
+def purge(backtest_id:str,payload:dict=Body(...)):
+    from app.services.workspace_purge import submit
+    return submit('backtest',backtest_id,payload)

@@ -96,14 +96,10 @@ const rangeHtml = renderToStaticMarkup(
     onChange: unchanged,
   }),
 );
-assert.match(rangeHtml, /aria-label="K值范围下限"/);
-assert.match(rangeHtml, /aria-label="K值范围上限"/);
-assert.match(rangeHtml, /低位 0—20/);
-assert.match(rangeHtml, /中位 20—80/);
-assert.match(rangeHtml, /高位 80—100/);
-assert.match(rangeHtml, /边界含等号，20与80可重合/);
-assert.match(rangeHtml, /只限制 K，不限制 D/);
-assert.match(rangeHtml, /原9、3、3算法/);
+assert.match(rangeHtml, /快捷添加条件/);
+assert.match(rangeHtml, /aria-expanded="false"/);
+assert.doesNotMatch(rangeHtml, /aria-label="K值范围下限"/);
+assert.doesNotMatch(rangeHtml, /aria-label="快捷条件模板"/);
 const oldBefore = JSON.stringify(old);
 const oldHtml = renderToStaticMarkup(
   createElement(conditions.default, {
@@ -159,8 +155,8 @@ for (const indicator of ["macd", "kdj"]) {
   assert.match(html, /KD或MACD金叉（OR）/);
   assert.match(html, /金叉→死叉→再金叉/);
   assert.match(html, /窗口内/);
-  assert.match(html, /KDJ金叉＋K值范围/);
-  assert.match(html, /K值范围（持续状态）/);
+  assert.equal((html.match(/快捷添加条件<\/button>/g) || []).length, 3);
+  assert.doesNotMatch(html, /aria-label="快捷条件模板"/);
   assert.equal(JSON.stringify(value), before);
   const invalid = { ...value.any[0].history_event, match: "earliest" };
   const invalidBefore = JSON.stringify(invalid);

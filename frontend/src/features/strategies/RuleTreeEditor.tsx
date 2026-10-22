@@ -6,6 +6,8 @@ import {
   Trash2,
   ArrowDown,
   CalendarRange,
+  WandSparkles,
+  X,
 } from "lucide-react";
 import type { Row } from "../../lib/api";
 import Conditions, { fallbackFields, fieldLabel } from "./Conditions";
@@ -58,6 +60,7 @@ type NodeProps = EditorProps & {
   rootValue: RuleNode;
   context: "current" | "where" | "then";
   depth: number;
+  stageRoot?: boolean;
   onRemove?: () => void;
 };
 
@@ -78,31 +81,34 @@ function TechnicalPresetControls({
   depth: number;
   scope?: ConditionScope;
 }) {
-  const [selected, setSelected] = useState<TechnicalPresetId>(
-    scope === "trade-exit" ? "macd-dead-cross" : "macd-above-zero",
-  );
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<TechnicalPresetId | "">("");
+  const [added, setAdded] = useState<{
+    text: string;
+    definition: string;
+  } | null>(null);
   const [upper, setUpper] = useState<number | "">(20);
   const [lower, setLower] = useState<number | "">(80);
   const [rangeMin, setRangeMin] = useState<number | "">(0);
   const [rangeMax, setRangeMax] = useState<number | "">(100);
   const available = availableTechnicalPresets(fields, period, scope);
-  const preset = available.find((item) => item.id === selected) || available[0];
-  if (!preset) return null;
+  const preset = available.find((item) => item.id === selected);
+  if (!available.length) return null;
   const invalidUpper =
-    preset.id === "kd-low-cross" &&
+    preset?.id === "kd-low-cross" &&
     (upper === "" || !Number.isFinite(upper) || upper < 0 || upper > 100);
   const invalidLower =
-    preset.id === "kd-high-dead" &&
+    preset?.id === "kd-high-dead" &&
     (lower === "" || !Number.isFinite(lower) || lower < 0 || lower > 100);
-  const isRange = preset.id === "kd-cross-range" || preset.id === "kd-range";
+  const isRange = preset?.id === "kd-cross-range" || preset?.id === "kd-range";
   const rangeError = isRange ? validateKdRange(rangeMin, rangeMax) : null;
   const rule =
-    invalidUpper || invalidLower || rangeError
+    !preset || invalidUpper || invalidLower || rangeError
       ? null
       : createTechnicalPreset(
           preset.id,
           period,
-          preset.id === "kd-high-dead"
+          preset?.id === "kd-high-dead"
             ? Number(lower)
             : upper === ""
               ? 20
@@ -117,134 +123,219 @@ function TechnicalPresetControls({
     : invalidLower
       ? "KDJ高位下限请输入0—100的有限数值"
       : rangeError ||
-        technicalPresetInsertionError(rootValue, value, rule!, depth);
+        (rule
+          ? technicalPresetInsertionError(rootValue, value, rule, depth)
+          : null);
+  const feedback =
+    added?.definition === JSON.stringify(value) ? added.text : null;
+  const close = () => {
+    setOpen(false);
+    setSelected("");
+  };
   return (
-    <div className="technical-preset-controls">
-      <div className="technical-preset-fields">
-        <label>
-          技术组合
-          <select
-            aria-label="技术组合"
-            value={preset.id}
-            onChange={(event) =>
-              setSelected(event.target.value as TechnicalPresetId)
-            }
-          >
-            {available.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {preset.id === "kd-low-cross" && (
-          <label className="technical-preset-upper">
-            K、D低位上限
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step="any"
-              aria-label="KDJ低位上限"
-              value={upper}
-              onChange={(event) =>
-                setUpper(
-                  event.target.value === "" ? "" : Number(event.target.value),
-                )
-              }
-            />
-          </label>
-        )}
-        {preset.id === "kd-high-dead" && (
-          <label className="technical-preset-upper">
-            K、D高位下限
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step="any"
-              aria-label="KDJ高位下限"
-              value={lower}
-              onChange={(event) =>
-                setLower(
-                  event.target.value === "" ? "" : Number(event.target.value),
-                )
-              }
-            />
-          </label>
-        )}
-        {isRange && (
-          <>
-            <label className="technical-preset-upper">
-              K值下限（含）
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step="any"
-                aria-label="K值范围下限"
-                value={rangeMin}
-                onChange={(event) =>
-                  setRangeMin(
-                    event.target.value === "" ? "" : Number(event.target.value),
-                  )
-                }
-              />
-            </label>
-            <label className="technical-preset-upper">
-              K值上限（含）
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step="any"
-                aria-label="K值范围上限"
-                value={rangeMax}
-                onChange={(event) =>
-                  setRangeMax(
-                    event.target.value === "" ? "" : Number(event.target.value),
-                  )
-                }
-              />
-            </label>
-          </>
-        )}
-        <span className="technical-preset-period">{periodLabel(period)}</span>
+    <div className={"technical-preset-entry" + (open ? " open" : "")}>
+      <div className="technical-preset-launcher">
         <button
           type="button"
-          className="btn small"
-          disabled={!!error}
+          className="btn small technical-preset-trigger"
+          aria-expanded={open}
           onClick={() => {
-            if (rule && !error) onChange(appendTechnicalPreset(value, rule));
+            setOpen(!open);
+            setSelected("");
+            setAdded(null);
           }}
         >
-          <Plus size={13} /> 添加技术组合
+          <WandSparkles size={13} /> {open ? "收起快捷添加" : "快捷添加条件"}
         </button>
+        {!open && feedback && (
+          <span className="technical-preset-feedback" role="status">
+            {feedback}
+          </span>
+        )}
       </div>
-      {isRange && (
-        <div className="technical-range-starts">
-          <span>可编辑起点</span>
-          {kdRangeStartingPoints.map((point) => (
+      {open && (
+        <div
+          className="technical-preset-controls"
+          role="region"
+          aria-label="快捷添加条件面板"
+        >
+          <header className="technical-preset-heading">
+            <div>
+              <strong>选择条件 → 加入条件组 → 保存策略</strong>
+              <small>
+                选择模板不会自动生效。点击“加入条件”后，会出现在本组规则中；保存策略后生效。
+              </small>
+            </div>
             <button
               type="button"
-              className="btn small"
-              key={point.label}
+              className="icon-btn"
+              aria-label="取消快捷添加"
+              onClick={close}
+            >
+              <X size={14} />
+            </button>
+          </header>
+          <div className="technical-preset-fields">
+            <label>
+              选择要添加的条件
+              <select
+                aria-label="快捷条件模板"
+                value={preset?.id || ""}
+                onChange={(event) =>
+                  setSelected(event.target.value as TechnicalPresetId)
+                }
+              >
+                <option value="">请选择条件</option>
+                {available.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {preset?.id === "kd-low-cross" && (
+              <label className="technical-preset-upper">
+                K、D低位上限
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="any"
+                  aria-label="KDJ低位上限"
+                  value={upper}
+                  onChange={(event) =>
+                    setUpper(
+                      event.target.value === ""
+                        ? ""
+                        : Number(event.target.value),
+                    )
+                  }
+                />
+              </label>
+            )}
+            {preset?.id === "kd-high-dead" && (
+              <label className="technical-preset-upper">
+                K、D高位下限
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="any"
+                  aria-label="KDJ高位下限"
+                  value={lower}
+                  onChange={(event) =>
+                    setLower(
+                      event.target.value === ""
+                        ? ""
+                        : Number(event.target.value),
+                    )
+                  }
+                />
+              </label>
+            )}
+            {isRange && (
+              <>
+                <label className="technical-preset-upper">
+                  K值下限（含）
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="any"
+                    aria-label="K值范围下限"
+                    value={rangeMin}
+                    onChange={(event) =>
+                      setRangeMin(
+                        event.target.value === ""
+                          ? ""
+                          : Number(event.target.value),
+                      )
+                    }
+                  />
+                </label>
+                <label className="technical-preset-upper">
+                  K值上限（含）
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="any"
+                    aria-label="K值范围上限"
+                    value={rangeMax}
+                    onChange={(event) =>
+                      setRangeMax(
+                        event.target.value === ""
+                          ? ""
+                          : Number(event.target.value),
+                      )
+                    }
+                  />
+                </label>
+              </>
+            )}
+            <span className="technical-preset-period">
+              {periodLabel(period)}
+            </span>
+          </div>
+          {isRange && (
+            <div className="technical-range-starts">
+              <span>可编辑起点</span>
+              {kdRangeStartingPoints.map((point) => (
+                <button
+                  type="button"
+                  className="btn small"
+                  key={point.label}
+                  onClick={() => {
+                    setRangeMin(point.min);
+                    setRangeMax(point.max);
+                  }}
+                >
+                  {point.label} {point.min}—{point.max}
+                </button>
+              ))}
+              <small>
+                边界含等号，20与80可重合；不是互斥分类。KDJ仍使用原9、3、3算法。
+              </small>
+            </div>
+          )}
+          {preset && (
+            <div className="technical-preset-preview">
+              <span>将加入本组</span>
+              <strong>
+                {rule ? historyRuleSummary(rule, fieldLabel) : preset.label}
+              </strong>
+              <small>{preset.description}</small>
+            </div>
+          )}
+          {error && (
+            <small className="technical-preset-error" role="alert">
+              {error}
+            </small>
+          )}
+          <div className="technical-preset-actions">
+            <button type="button" className="btn small" onClick={close}>
+              取消添加
+            </button>
+            <button
+              type="button"
+              className="btn small primary"
+              disabled={!rule || !!error}
               onClick={() => {
-                setRangeMin(point.min);
-                setRangeMax(point.max);
+                if (!preset || !rule || error) return;
+                const next = appendTechnicalPreset(value, rule);
+                onChange(next);
+                setAdded({
+                  text: `已加入“${preset.label}”，保存策略后生效。`,
+                  definition: JSON.stringify(next),
+                });
+                close();
               }}
             >
-              {point.label} {point.min}—{point.max}
+              <Plus size={13} /> 加入条件
             </button>
-          ))}
-          <small>
-            边界含等号，20与80可重合；不是互斥分类。KDJ仍使用原9、3、3算法。
-          </small>
+          </div>
         </div>
       )}
-      <small className={error ? "technical-preset-error" : ""}>
-        {error || `${preset.description} 添加后可逐项修改，不改变已有条件。`}
-      </small>
     </div>
   );
 }
@@ -635,17 +726,6 @@ function HistoryEventNode({
             普通模板只修改历史事件；上次金叉模板设为前1—60日/最近纯金叉，并追加今日同类金叉与事件价高于比较。已有今日条件全部保留（包括涨幅），请核对是否需要移除。
           </small>
         </div>
-        <TechnicalPresetControls
-          value={event.where || { all: [] }}
-          onChange={(where) => {
-            setCustomPreset(true);
-            update({ where });
-          }}
-          rootValue={rootValue}
-          fields={conditionFields(fields, "where")}
-          period="D"
-          depth={depth + 1}
-        />
         <RuleNodeEditor
           rootValue={rootValue}
           value={event.where || { all: [] }}
@@ -658,6 +738,7 @@ function HistoryEventNode({
           period="D"
           context="where"
           depth={depth + 1}
+          stageRoot
         />
       </div>
       <div className="event-stage-connector">
@@ -721,14 +802,6 @@ function HistoryEventNode({
               </button>
             )}
         </div>
-        <TechnicalPresetControls
-          value={event.then || { all: [] }}
-          onChange={(then) => update({ then })}
-          rootValue={rootValue}
-          fields={conditionFields(fields, "then")}
-          period="D"
-          depth={depth + 1}
-        />
         <RuleNodeEditor
           rootValue={rootValue}
           value={event.then || { all: [] }}
@@ -741,6 +814,7 @@ function HistoryEventNode({
           allowTrackingConditions={allowTrackingConditions}
           context="then"
           depth={depth + 1}
+          stageRoot
         />
       </div>
       <details className="history-rule-method">
@@ -761,22 +835,40 @@ function RuleNodeEditor(props: NodeProps) {
   if (!Array.isArray(group)) {
     if (value.field)
       return (
-        <Conditions
-          conditions={[value as any]}
-          onChange={(next) => (next.length ? onChange(next[0]) : onRemove?.())}
-          fields={candidates}
-          topics={topics}
-          scope={context === "where" ? "selection" : props.scope}
-          allowTrackingAlerts={context !== "where" && props.allowTrackingAlerts}
-          allowTrackingConditions={
-            context !== "where" && props.allowTrackingConditions
-          }
-          allowEventReferences={context === "then"}
-          period={context === "where" ? "D" : period}
-          dailyContext={context === "where"}
-          hidePeriodPicker={context !== "current"}
-          showAddButton={false}
-        />
+        <>
+          <Conditions
+            conditions={[value as any]}
+            onChange={(next) =>
+              next.length ? onChange(next[0]) : onRemove?.()
+            }
+            fields={candidates}
+            topics={topics}
+            scope={context === "where" ? "selection" : props.scope}
+            allowTrackingAlerts={
+              context !== "where" && props.allowTrackingAlerts
+            }
+            allowTrackingConditions={
+              context !== "where" && props.allowTrackingConditions
+            }
+            allowEventReferences={context === "then"}
+            period={context === "where" ? "D" : period}
+            dailyContext={context === "where"}
+            hidePeriodPicker={context !== "current"}
+            showAddButton={false}
+          />
+          {props.stageRoot && (
+            <div className="visual-rule-actions">
+              <TechnicalPresetControls
+                value={value}
+                onChange={onChange}
+                rootValue={props.rootValue}
+                fields={candidates}
+                period="D"
+                depth={depth}
+              />
+            </div>
+          )}
+        </>
       );
     return (
       <div className="unsupported-rule">
@@ -834,6 +926,7 @@ function RuleNodeEditor(props: NodeProps) {
               onChange={(next) => replace(index, next)}
               context={context}
               depth={depth + 1}
+              stageRoot={false}
               onRemove={() =>
                 onChange({
                   [logic]: group.filter(
@@ -886,6 +979,15 @@ function RuleNodeEditor(props: NodeProps) {
             添加条件组
           </button>
         )}
+        <TechnicalPresetControls
+          value={value}
+          onChange={onChange}
+          rootValue={props.rootValue}
+          fields={candidates}
+          period={context === "current" ? period : "D"}
+          depth={depth}
+          scope={context === "current" ? props.scope : undefined}
+        />
         {context === "current" && depth < 4 && (
           <HistoryRuleAddControl
             rootValue={props.rootValue}
@@ -914,15 +1016,6 @@ export default function RuleTreeEditor({
     normalized.all || normalized.any ? normalized : { all: [normalized] };
   return (
     <div className="rule-tree-editor">
-      <TechnicalPresetControls
-        value={group}
-        onChange={onChange}
-        rootValue={group}
-        fields={conditionFields(fields, "current")}
-        period={period}
-        depth={0}
-        scope={scope}
-      />
       <RuleNodeEditor
         rootValue={group}
         value={group}

@@ -20,6 +20,7 @@
 -- 017_market_mainlines.sql sha256=a9978baccc2965efa7687857bd027a13dc12fae1aa2e17df09c1ce198dfd3df5
 -- 018_market_sentiment_snapshots.sql sha256=6ffe051c931bcc3037649880443d50085b3d49affe18a06a3aada6d308305530
 -- 019_workspace_deletion.sql sha256=26c526211b3c05f20f1ef968165aac57d6b75ba0d70e7258f22d140279b25dd1
+-- 020_workspace_purge.sql sha256=67cbabe235f43458e654ddce6dfec8cd2778a4f758a3d7925bf67e83b656bc2c
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -640,6 +641,42 @@ CREATE TABLE watchlist_item (
      OR (tracking_round_id IS NOT NULL AND tracking_entry_date IS NOT NULL AND event_price_e8 IS NOT NULL))
 ) STRICT;
 
+CREATE TABLE workspace_purge (
+  purge_id TEXT PRIMARY KEY,
+  target_kind TEXT NOT NULL CHECK(target_kind IN ('strategy','backtest')),
+  target_id TEXT NOT NULL,
+  target_name TEXT NOT NULL,
+  job_id TEXT NOT NULL UNIQUE REFERENCES job(job_id),
+  scope_sha256 TEXT NOT NULL CHECK(length(scope_sha256)=64),
+  scope_json TEXT NOT NULL CHECK(json_valid(scope_json)),
+  status TEXT NOT NULL CHECK(status IN ('queued','cleaning','completed','failed')),
+  business_deleted INTEGER NOT NULL DEFAULT 0 CHECK(business_deleted IN (0,1)),
+  created_at_ms INTEGER NOT NULL,
+  completed_at_ms INTEGER,
+  error TEXT,
+  superseded_by TEXT REFERENCES workspace_purge(purge_id)
+) STRICT;
+
+CREATE TABLE workspace_purge_audit (
+  purge_id TEXT NOT NULL REFERENCES workspace_purge(purge_id),
+  stage TEXT NOT NULL,
+  occurred_at_ms INTEGER NOT NULL,
+  details_json TEXT NOT NULL CHECK(json_valid(details_json)),
+  PRIMARY KEY(purge_id,stage)
+) STRICT;
+
+CREATE TABLE workspace_purge_file (
+  purge_id TEXT NOT NULL REFERENCES workspace_purge(purge_id),
+  snapshot_id TEXT NOT NULL REFERENCES dataset_snapshot(snapshot_id),
+  object_key TEXT NOT NULL,
+  sha256 TEXT NOT NULL CHECK(length(sha256)=64),
+  byte_count INTEGER NOT NULL CHECK(byte_count>=0),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','removed','absent','failed')),
+  removed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(removed_bytes>=0),
+  error TEXT,
+  PRIMARY KEY(purge_id,object_key)
+) STRICT;
+
 CREATE INDEX artifact_content_references ON snapshot_artifact(sha256);
 
 CREATE INDEX backtest_deletion_strategy_batch ON backtest_deletion(strategy_deletion_id);
@@ -672,6 +709,8 @@ CREATE UNIQUE INDEX one_active_sector_tracking ON sector_tracking_round(strategy
 
 CREATE UNIQUE INDEX one_active_tracking_round ON tracking_round(strategy_id,instrument_id) WHERE status='tracking';
 
+CREATE UNIQUE INDEX one_active_workspace_purge ON workspace_purge(target_kind,target_id) WHERE status IN ('queued','cleaning');
+
 CREATE UNIQUE INDEX only_one_running_job ON job((1)) WHERE status='running';
 
 CREATE INDEX research_by_instrument ON research_report(instrument_id,created_at_ms DESC);
@@ -699,6 +738,8 @@ CREATE INDEX trigger_list ON tracking_event(event_type,business_date DESC,round_
 
 CREATE INDEX watchlist_created ON watchlist_item(created_at_ms DESC,instrument_id);
 
+CREATE INDEX workspace_purge_target ON workspace_purge(target_kind,target_id,business_deleted);
+
 CREATE VIEW published_watermark AS SELECT h.module,h.scope_key,h.snapshot_id,
   s.data_end AS imported_through,s.quality,s.knowledge_cutoff_ms
   FROM published_head h JOIN dataset_snapshot s USING(snapshot_id);
@@ -714,7 +755,7 @@ CREATE TRIGGER append_only_job_event_delete BEFORE DELETE ON job_event BEGIN SEL
 
 CREATE TRIGGER append_only_job_event_update BEFORE UPDATE ON job_event BEGIN SELECT RAISE(ABORT,'task log is append only'); END;
 
-CREATE TRIGGER append_only_strategy_version_delete BEFORE DELETE ON strategy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+CREATE TRIGGER append_only_strategy_version_delete BEFORE DELETE ON strategy_version WHEN workspace_purge_allowed('strategy',OLD.strategy_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_strategy_version_update BEFORE UPDATE ON strategy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
@@ -726,15 +767,15 @@ CREATE TRIGGER append_only_topic_revision_delete BEFORE DELETE ON topic_revision
 
 CREATE TRIGGER append_only_topic_revision_update BEFORE UPDATE ON topic_revision BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
-CREATE TRIGGER append_only_tracking_event_delete BEFORE DELETE ON tracking_event BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+CREATE TRIGGER append_only_tracking_event_delete BEFORE DELETE ON tracking_event WHEN workspace_purge_allowed('round',OLD.round_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_tracking_event_update BEFORE UPDATE ON tracking_event BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
-CREATE TRIGGER append_only_tracking_policy_application_delete BEFORE DELETE ON tracking_policy_application BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+CREATE TRIGGER append_only_tracking_policy_application_delete BEFORE DELETE ON tracking_policy_application WHEN workspace_purge_allowed('round',OLD.round_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_tracking_policy_application_update BEFORE UPDATE ON tracking_policy_application BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
-CREATE TRIGGER append_only_tracking_policy_version_delete BEFORE DELETE ON tracking_policy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+CREATE TRIGGER append_only_tracking_policy_version_delete BEFORE DELETE ON tracking_policy_version WHEN workspace_purge_allowed('strategy',OLD.strategy_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_tracking_policy_version_update BEFORE UPDATE ON tracking_policy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
@@ -791,7 +832,7 @@ END;
 
 CREATE TRIGGER completed_backtest_immutable BEFORE UPDATE ON backtest_run WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'completed backtest is immutable; rerun with new ID'); END;
 
-CREATE TRIGGER completed_backtest_no_delete BEFORE DELETE ON backtest_run WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'retain completed backtest metadata'); END;
+CREATE TRIGGER completed_backtest_no_delete BEFORE DELETE ON backtest_run WHEN OLD.status='completed' AND workspace_purge_allowed('backtest',OLD.backtest_id)=0 BEGIN SELECT RAISE(ABORT,'retain completed backtest metadata'); END;
 
 CREATE TRIGGER event_not_future_business_day BEFORE INSERT ON tracking_event
 WHEN NEW.business_date>(SELECT business_date FROM business_clock WHERE singleton=1)
@@ -804,11 +845,11 @@ BEGIN SELECT RAISE(ABORT,'policy migration requires an audited application'); EN
 CREATE TRIGGER freeze_published_snapshot BEFORE UPDATE ON dataset_snapshot
 WHEN OLD.state='published' BEGIN SELECT RAISE(ABORT,'published snapshot is immutable; create a revision'); END;
 
-CREATE TRIGGER freeze_selection_candidate_delete BEFORE DELETE ON selection_candidate WHEN (SELECT status FROM selection_run WHERE run_id=OLD.run_id)='completed' BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
+CREATE TRIGGER freeze_selection_candidate_delete BEFORE DELETE ON selection_candidate WHEN (SELECT status FROM selection_run WHERE run_id=OLD.run_id)='completed' AND workspace_purge_allowed('selection',OLD.run_id)=0 BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
 
 CREATE TRIGGER freeze_selection_candidate_update BEFORE UPDATE ON selection_candidate WHEN (SELECT status FROM selection_run WHERE run_id=OLD.run_id)='completed' OR (SELECT status FROM selection_run WHERE run_id=NEW.run_id)='completed' BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
 
-CREATE TRIGGER freeze_selection_run_delete BEFORE DELETE ON selection_run WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
+CREATE TRIGGER freeze_selection_run_delete BEFORE DELETE ON selection_run WHEN OLD.status='completed' AND workspace_purge_allowed('selection',OLD.run_id)=0 BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
 
 CREATE TRIGGER freeze_selection_run_update BEFORE UPDATE ON selection_run WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
 
@@ -1045,7 +1086,7 @@ CREATE TRIGGER tracking_exit_evidence BEFORE INSERT ON tracking_event WHEN NEW.e
  THEN RAISE(ABORT,'entry-price exit requires strict break of this round frozen baseline') END;
 END;
 
-CREATE TRIGGER tracking_round_no_delete BEFORE DELETE ON tracking_round BEGIN SELECT RAISE(ABORT,'soft-end tracking round; retain history'); END;
+CREATE TRIGGER tracking_round_no_delete BEFORE DELETE ON tracking_round WHEN workspace_purge_allowed('round',OLD.round_id)=0 BEGIN SELECT RAISE(ABORT,'soft-end tracking round; retain history'); END;
 
 CREATE TRIGGER tracking_status_requires_event BEFORE UPDATE OF status ON tracking_round WHEN NEW.status<>OLD.status BEGIN
  SELECT CASE WHEN NEW.end_reason IS NULL OR length(NEW.end_reason)=0 OR NOT EXISTS(SELECT 1 FROM tracking_event e WHERE e.round_id=OLD.round_id AND e.business_date=NEW.end_business_date
@@ -1068,5 +1109,21 @@ WHEN OLD.watchlist_entry_price_e8 IS NOT NULL AND (
 ) BEGIN
   SELECT RAISE(ABORT,'watchlist first-added closing baseline is immutable');
 END;
+
+CREATE TRIGGER workspace_purge_audit_delete BEFORE DELETE ON workspace_purge_audit BEGIN SELECT RAISE(ABORT,'retain permanent deletion audit'); END;
+
+CREATE TRIGGER workspace_purge_audit_update BEFORE UPDATE ON workspace_purge_audit BEGIN SELECT RAISE(ABORT,'retain permanent deletion audit'); END;
+
+CREATE TRIGGER workspace_purge_file_identity BEFORE UPDATE ON workspace_purge_file
+WHEN NEW.purge_id<>OLD.purge_id OR NEW.snapshot_id<>OLD.snapshot_id OR NEW.object_key<>OLD.object_key OR NEW.sha256<>OLD.sha256 OR NEW.byte_count<>OLD.byte_count OR NEW.removed_bytes<OLD.removed_bytes
+BEGIN SELECT RAISE(ABORT,'purge file authorization is immutable'); END;
+
+CREATE TRIGGER workspace_purge_file_retained BEFORE DELETE ON workspace_purge_file BEGIN SELECT RAISE(ABORT,'retain permanent deletion file audit'); END;
+
+CREATE TRIGGER workspace_purge_identity BEFORE UPDATE ON workspace_purge
+WHEN NEW.purge_id<>OLD.purge_id OR NEW.target_kind<>OLD.target_kind OR NEW.target_id<>OLD.target_id OR NEW.target_name<>OLD.target_name OR NEW.job_id<>OLD.job_id OR NEW.scope_sha256<>OLD.scope_sha256 OR NEW.scope_json<>OLD.scope_json OR NEW.created_at_ms<>OLD.created_at_ms OR NEW.business_deleted<OLD.business_deleted OR (OLD.superseded_by IS NOT NULL AND NEW.superseded_by IS NOT OLD.superseded_by)
+BEGIN SELECT RAISE(ABORT,'purge authorization is immutable'); END;
+
+CREATE TRIGGER workspace_purge_retained BEFORE DELETE ON workspace_purge BEGIN SELECT RAISE(ABORT,'retain permanent deletion audit'); END;
 
 COMMIT;

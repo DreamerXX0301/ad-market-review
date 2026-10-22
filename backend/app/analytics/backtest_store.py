@@ -47,6 +47,9 @@ def create_backtest(payload):
     requested_key=payload.get('request_key')
     if isinstance(requested_key,str):
         with connect() as c:
+            previous=c.execute("SELECT j.kind,b.backtest_id FROM job j LEFT JOIN backtest_run b USING(job_id) WHERE j.request_key=?",(requested_key,)).fetchone()
+            if previous and previous['kind']=='backtest' and not previous['backtest_id']:
+                raise BacktestRequestConflict('此请求对应的回测已永久删除，请使用新的请求键')
             if c.execute('SELECT 1 FROM job j JOIN backtest_run b USING(job_id) JOIN backtest_deletion d USING(backtest_id) WHERE j.request_key=?',(requested_key,)).fetchone():
                 raise BacktestRequestConflict('此请求对应的回测已移入回收站，请先恢复或使用新的请求键')
     market,strategy,inputs,generation=context(payload.get('strategy_id'))
@@ -90,12 +93,14 @@ def _metadata(row):
     if state!='completed' and row.get('job_status') in ('cancelled','paused'):state=row['job_status']
     deleted=row.get('deleted_at_ms') is not None
     blocked=backtest_block_reason(row)
-    restore_blocked='请先恢复所属策略' if deleted and row.get('strategy_deleted') else None
+    purge=json.loads(row['active_purge_json']) if row.get('active_purge_json') else None
+    restore_blocked='永久清理已确认，请查看清理任务' if purge and purge['status'] in ('queued','cleaning') else None
+    restore_blocked=restore_blocked or ('请先恢复所属策略' if deleted and row.get('strategy_deleted') else None)
     return {'backtest_id':row['backtest_id'],'job_id':row['job_id'],'status':state,'calculation_status':row['status'],'task_status':row.get('job_status'),'strategy_id':row['strategy_id'],'strategy_name':frozen['name'],'strategy_version':row['strategy_version'],'trade_rules':frozen.get('trade_rules',{'entry':None,'exit':None}),'start_date':row['requested_start'],'end_date':row['requested_end'],'config':json.loads(row['execution_config_json']),'stats':summary.get('stats'),'error':summary.get('error'),'created_at_ms':row['created_at_ms'],'completed_at_ms':row['completed_at_ms'],'engine_version':row['engine_version'],
-            'deleted':deleted,'deleted_at_ms':row.get('deleted_at_ms'),'can_delete':not deleted and blocked is None,'delete_blocked_reason':blocked if not deleted else None,'can_restore':deleted and restore_blocked is None,'restore_blocked_reason':restore_blocked}
+            'active_purge':purge,'deleted':deleted,'deleted_at_ms':row.get('deleted_at_ms'),'can_delete':not deleted and blocked is None,'delete_blocked_reason':blocked if not deleted else None,'can_restore':deleted and restore_blocked is None,'restore_blocked_reason':restore_blocked}
 
 
-_READ_SELECT='SELECT b.*,j.status job_status,j.lease_owner,j.lease_expires_at_ms,d.deleted_at_ms,sd.strategy_id strategy_deleted FROM backtest_run b JOIN job j ON j.job_id=b.job_id LEFT JOIN backtest_deletion d USING(backtest_id) LEFT JOIN strategy_deletion sd ON sd.strategy_id=b.strategy_id'
+_READ_SELECT="""SELECT b.*,j.status job_status,j.lease_owner,j.lease_expires_at_ms,d.deleted_at_ms,sd.strategy_id strategy_deleted,(SELECT json_object('purge_id',p.purge_id,'status',p.status,'business_deleted',p.business_deleted) FROM workspace_purge p WHERE p.target_kind='backtest' AND p.target_id=b.backtest_id AND p.superseded_by IS NULL AND p.status IN ('queued','cleaning','failed') ORDER BY p.created_at_ms DESC,p.rowid DESC LIMIT 1) active_purge_json FROM backtest_run b JOIN job j ON j.job_id=b.job_id LEFT JOIN backtest_deletion d USING(backtest_id) LEFT JOIN strategy_deletion sd ON sd.strategy_id=b.strategy_id"""
 
 
 def list_backtests(deleted=False,limit=100,offset=0):
@@ -138,11 +143,14 @@ def delete_backtest(backtest_id):
 
 
 def restore_backtest(backtest_id):
+    from app.services.workspace_purge import require_not_purging
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        require_not_purging(c,'backtest',backtest_id)
         row=c.execute(_READ_SELECT+' WHERE b.backtest_id=?',(backtest_id,)).fetchone()
         if not row:raise KeyError('回测不存在')
         row=dict(row)
+        require_not_purging(c,'strategy',row['strategy_id'])
         if row['deleted_at_ms'] is not None and row['strategy_deleted']:
             raise BacktestRequestConflict('请先恢复所属策略，再恢复关联回测')
         c.execute('DELETE FROM backtest_deletion WHERE backtest_id=?',(backtest_id,))

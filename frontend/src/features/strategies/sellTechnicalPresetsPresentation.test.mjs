@@ -56,13 +56,15 @@ const original = JSON.stringify(value);
 const html = renderToStaticMarkup(createElement(TradeRulesEditor, {value, onChange: () => {throw new Error("SSR must not save or rewrite rules")}, fields, period: "W"}));
 const exit = html.slice(html.indexOf('class="trade-rule-card exit"'));
 const entry = html.slice(html.indexOf('class="trade-rule-card entry"'), html.indexOf('class="trade-rule-card exit"'));
-assert.match(exit, /<option value="macd-dead-cross" selected="">MACD 死叉<\/option>/);
-assert.match(entry, /<option value="macd-above-zero" selected="">MACD 水上金叉<\/option>/);
-for (const label of ["MACD 死叉", "KDJ 死叉", "MACD 水上死叉", "KDJ 高位死叉", "KDJ K &lt; D（持续状态）"])
-  assert(exit.includes(label), label);
-assert(exit.indexOf('value="macd-dead-cross"') < exit.indexOf('value="macd-above-zero"'));
-assert(exit.includes("完整周K"), "sell presets inherit chosen complete-week period");
+for (const section of [entry, exit]) {
+  assert.match(section, /快捷添加条件/);
+  assert.match(section, /aria-expanded="false"/);
+  assert.doesNotMatch(section, /aria-label="快捷条件模板"/);
+  assert.doesNotMatch(section, /添加技术组合|technical-preset-controls/);
+}
 assert.equal(JSON.stringify(value), original);
 const fallback = renderToStaticMarkup(createElement(RuleTreeEditor, {value:{all:[]}, onChange:()=>{}, fields:fields.filter(x=>!["macd_dead_cross","kd_dead_cross"].includes(x.field)), period:"D", scope:"trade-exit"}));
-assert(!fallback.includes('value="macd-dead-cross"'), "unavailable fields cannot become a shortcut");
-console.log("sell shortcut presentation: death-first exit, preserved entry defaults, inherited period, dependency gating and no saved-rule mutation passed");
+assert.match(fallback, /快捷添加条件/, "available alternative templates retain the collapsed entry");
+const unavailable = renderToStaticMarkup(createElement(RuleTreeEditor, {value:{all:[]}, onChange:()=>{}, fields:[], period:"D", scope:"trade-exit"}));
+assert.doesNotMatch(unavailable, /快捷添加条件/, "no empty shortcut when fields cannot support a template");
+console.log("sell shortcut presentation: collapsed entry for buy/sell, no misleading selected template, dependency gating and unchanged saved rules passed");

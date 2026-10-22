@@ -203,6 +203,11 @@ def _increment_frozen_target(identifier, declared_target):
 def change_task(identifier: str, action: str):
     with connect() as batch_check:
         batch = batch_check.execute("SELECT kind,parameters_json FROM job WHERE job_id=?", (identifier,)).fetchone()
+    if batch and batch['kind']=='cleanup' and json.loads(batch['parameters_json']).get('operation')=='workspace_purge':
+        if action=='retry':
+            from .workspace_purge import retry
+            return retry(json.loads(batch['parameters_json'])['purge_id'])
+        raise HTTPException(422,'永久删除授权不能暂停、取消或复制；失败后请重试原清理任务')
     if batch and batch['kind']=='source_check' and json.loads(batch['parameters_json']).get('operation')=='strategy_batch':
         from .strategy_batches import change_batch
         return change_batch(identifier, action)

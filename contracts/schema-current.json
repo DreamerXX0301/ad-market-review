@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 19,
+  "migration_version": 20,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -74,15 +74,19 @@
     {
       "name": "019_workspace_deletion.sql",
       "sha256": "26c526211b3c05f20f1ef968165aac57d6b75ba0d70e7258f22d140279b25dd1"
+    },
+    {
+      "name": "020_workspace_purge.sql",
+      "sha256": "67cbabe235f43458e654ddce6dfec8cd2778a4f758a3d7925bf67e83b656bc2c"
     }
   ],
   "counts": {
-    "table": 47,
-    "index": 29,
+    "table": 50,
+    "index": 31,
     "view": 1,
-    "trigger": 92
+    "trigger": 98
   },
-  "schema_sha256": "dbf3d57c7ee06cc7cb861b650c4a07343c08b1f51f7f9c222ffc5a7a9760feec",
+  "schema_sha256": "1ead1f4ae5833ce269f0a44f17394dad25311c6613cffadc342fdebf01d45a65",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -4614,6 +4618,286 @@
       ],
       "triggers": [
         "watchlist_entry_baseline_frozen"
+      ]
+    },
+    "workspace_purge": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "purge_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "target_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "target_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "target_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "scope_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "scope_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "business_deleted",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "created_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "completed_at_ms",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 11,
+          "name": "error",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 12,
+          "name": "superseded_by",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "workspace_purge",
+          "from": "superseded_by",
+          "to": "purge_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "job",
+          "from": "job_id",
+          "to": "job_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "workspace_purge_identity",
+        "workspace_purge_retained"
+      ]
+    },
+    "workspace_purge_audit": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "purge_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "stage",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "occurred_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "details_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "workspace_purge",
+          "from": "purge_id",
+          "to": "purge_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "workspace_purge_audit_delete",
+        "workspace_purge_audit_update"
+      ]
+    },
+    "workspace_purge_file": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "purge_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "object_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 3,
+          "name": "sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "byte_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'pending'",
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "removed_bytes",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "error",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "dataset_snapshot",
+          "from": "snapshot_id",
+          "to": "snapshot_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "workspace_purge",
+          "from": "purge_id",
+          "to": "purge_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "workspace_purge_file_identity",
+        "workspace_purge_file_retained"
       ]
     }
   }

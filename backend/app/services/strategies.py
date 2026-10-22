@@ -121,7 +121,10 @@ def create_strategy(payload,strategy_id=None):
     except ValueError as e:fail(str(e))
     policy=policy_normalized(payload.get('policy'))
     with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
         sid=strategy_id or new_id('strategy')
+        from .workspace_purge import was_purged
+        if was_purged(c,'strategy',sid):fail('此策略标识已永久删除，请使用新的策略标识',409)
         insert(c,'strategy',dict(strategy_id=sid,name=name,created_at_ms=now_ms()))
         insert(c,'strategy_version',dict(strategy_id=sid,version=1,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),evaluator_version=evaluator_for(definition,period,trade_rules),recorded_at_ms=now_ms()))
         save_policy(c,sid,1,policy)
@@ -178,8 +181,10 @@ def seed_workspace():
     """Explicit post-import bootstrap, does not select stocks or create tracking rounds."""
     with connect() as c:
         day=current(c);existing={r[0] for r in c.execute('SELECT strategy_id FROM strategy')}
+        purged={r[0] for r in c.execute("SELECT target_id FROM workspace_purge WHERE target_kind='strategy' AND business_deleted=1")}
     defaults=[('builtin-volume-3x','三倍量观察',{'all':[{'field':'volume_ratio','op':'>=','value':3},{'field':'close_above_ma30','op':'==','value':True}]}),('builtin-ma-trend','均线趋势观察',{'all':[{'field':'close_above_ma30','op':'==','value':True},{'field':'close_above_ma60','op':'==','value':True},{'field':'change_pct','op':'>=','value':3}]}),('builtin-kd-cross','KDJ金叉观察',{'all':[{'field':'kd_cross','op':'==','value':True},{'field':'close_above_ma20','op':'==','value':True}]})]
     for sid,name,definition in defaults:
+        if sid in purged:continue
         if sid not in existing:create_strategy({'name':name,'definition':definition},strategy_id=sid)
         else:
             with connect() as c:
@@ -326,12 +331,12 @@ def run_strategy(sid,payload=None,*,queued_job=None):
             for row in result:insert(c,'selection_candidate',row)
             c.execute("UPDATE selection_run SET status='completed',completed_at_ms=? WHERE run_id=?",(now_ms(),rid))
             for snap in set(deps.values()):pin(c,snap,'selection',rid)
-            c.execute("UPDATE job SET status='succeeded',phase='completed',finished_at_ms=?,accepted_batches=100,planned_batches=100 WHERE job_id=?",(now_ms(),job_id))
+            c.execute("UPDATE job SET status='succeeded',phase='completed',finished_at_ms=?,accepted_batches=100,planned_batches=100,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?",(now_ms(),job_id))
             counts={k:sum(r['decision']==k for r in result) for k in ('matched','unmatched','unknown')};log(c,job_id,'info','completed','策略运行完成',counts)
         return get_run(rid)
     except Exception as e:
         with connect() as c:
-            c.execute("UPDATE job SET status='failed',phase='failed',finished_at_ms=?,error_summary=? WHERE job_id=? AND status='running' AND lease_owner=?",(now_ms(),str(getattr(e,'detail',e))[:500],job_id,owner))
+            c.execute("UPDATE job SET status='failed',phase='failed',finished_at_ms=?,error_summary=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=? AND status='running' AND lease_owner=?",(now_ms(),str(getattr(e,'detail',e))[:500],job_id,owner))
             if c.execute('SELECT status FROM job WHERE job_id=?',(job_id,)).fetchone()[0]=='failed':log(c,job_id,'error','failed','策略运行失败',{'message':str(getattr(e,'detail',e))[:500]})
         raise
     finally:
