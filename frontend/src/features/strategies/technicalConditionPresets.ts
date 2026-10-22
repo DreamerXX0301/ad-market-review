@@ -6,7 +6,12 @@ export type TechnicalPresetId =
   | "kd-low-cross"
   | "kd-above"
   | "kd-cross-range"
-  | "kd-range";
+  | "kd-range"
+  | "macd-dead-cross"
+  | "macd-above-zero-dead"
+  | "kd-dead-cross"
+  | "kd-high-dead"
+  | "kd-below";
 export const technicalConditionPresets: {
   id: TechnicalPresetId;
   label: string;
@@ -61,6 +66,48 @@ export const technicalConditionPresets: {
       ["kdj_k", "<="],
     ],
   },
+  {
+    id: "macd-dead-cross",
+    label: "MACD 死叉",
+    description: "前一期 DIF 不低于 DEA，当期 DIF 下穿 DEA；不限制零轴位置。",
+    requirements: [["macd_dead_cross", "=="]],
+  },
+  {
+    id: "macd-above-zero-dead",
+    label: "MACD 水上死叉",
+    description: "当期 DIF 下穿 DEA，且当期 DIF、DEA 都严格大于 0。",
+    requirements: [
+      ["macd_dead_cross", "=="],
+      ["macd_dif", ">"],
+      ["macd_dea", ">"],
+    ],
+  },
+  {
+    id: "kd-dead-cross",
+    label: "KDJ 死叉",
+    description: "前一期 K 不低于 D，当期 K 下穿 D；不限制 K、D 的高低位置。",
+    requirements: [["kd_dead_cross", "=="]],
+  },
+  {
+    id: "kd-high-dead",
+    label: "KDJ 高位死叉",
+    description:
+      "当期 K 下穿 D，且当期 K、D 都严格高于所设下限；等于下限不满足。",
+    requirements: [
+      ["kd_dead_cross", "=="],
+      ["kdj_k", ">"],
+      ["kdj_d", ">"],
+    ],
+  },
+  {
+    id: "kd-below",
+    label: "KDJ K < D（持续状态）",
+    description: "当期 K 小于 D；不要求当期刚发生死叉。",
+    requirements: [
+      ["kdj_k", "<"],
+      ["kdj_d", "<"],
+    ],
+  },
 ];
 export const kdRangeStartingPoints = [
   { label: "低位", min: 0, max: 20 },
@@ -81,8 +128,12 @@ export function validateKdRange(min: unknown, max: unknown): string | null {
   return null;
 }
 
-export function availableTechnicalPresets(fields: Row[], period: string) {
-  return technicalConditionPresets.filter((preset) =>
+export function availableTechnicalPresets(
+  fields: Row[],
+  period: string,
+  scope?: string,
+) {
+  const available = technicalConditionPresets.filter((preset) =>
     preset.requirements.every(([name, operator]) => {
       const field = fields.find((item) => item.field === name);
       return (
@@ -92,12 +143,25 @@ export function availableTechnicalPresets(fields: Row[], period: string) {
       );
     }),
   );
+  if (scope !== "trade-exit") return available;
+  const priority: TechnicalPresetId[] = [
+    "macd-dead-cross",
+    "kd-dead-cross",
+    "macd-above-zero-dead",
+    "kd-high-dead",
+    "kd-below",
+  ];
+  return [...available].sort((a, b) => {
+    const rank = (id: TechnicalPresetId) =>
+      priority.includes(id) ? priority.indexOf(id) : priority.length;
+    return rank(a.id) - rank(b.id);
+  });
 }
 
 export function createTechnicalPreset(
   id: TechnicalPresetId,
   period: string,
-  upper = 20,
+  upper = id === "kd-high-dead" ? 80 : 20,
   range: { min: number; max: number } = { min: 0, max: 100 },
 ): RuleNode {
   if (!["D", "W", "M"].includes(period))
@@ -123,6 +187,34 @@ export function createTechnicalPreset(
   }
   if (id === "kd-above")
     return { field: "kdj_k", op: ">", right_field: "kdj_d", period };
+  if (id === "macd-dead-cross" || id === "kd-dead-cross")
+    return {
+      field: id === "macd-dead-cross" ? "macd_dead_cross" : "kd_dead_cross",
+      op: "==",
+      value: true,
+      period,
+    };
+  if (id === "macd-above-zero-dead")
+    return {
+      all: [
+        { field: "macd_dead_cross", op: "==", value: true, period },
+        { field: "macd_dif", op: ">", value: 0, period },
+        { field: "macd_dea", op: ">", value: 0, period },
+      ],
+    };
+  if (id === "kd-high-dead") {
+    if (!Number.isFinite(upper) || upper < 0 || upper > 100)
+      throw new Error("KDJ高位下限请输入0—100的有限数值");
+    return {
+      all: [
+        { field: "kd_dead_cross", op: "==", value: true, period },
+        { field: "kdj_k", op: ">", value: upper, period },
+        { field: "kdj_d", op: ">", value: upper, period },
+      ],
+    };
+  }
+  if (id === "kd-below")
+    return { field: "kdj_k", op: "<", right_field: "kdj_d", period };
   if (id === "kd-cross-range" || id === "kd-range") {
     const error = validateKdRange(range.min, range.max);
     if (error) throw new Error(error);

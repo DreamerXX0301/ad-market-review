@@ -55,6 +55,9 @@ def create_task(kind: str, parameters: dict, target_date: str | None = None, req
     logical_key = digest({"kind": kind, "target_date": target_date, "parameters": parameters})
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
+        if kind in ('selection','backtest') and parameters.get('strategy_id'):
+            from .workspace_deletion import require_strategy_present
+            require_strategy_present(connection,parameters['strategy_id'])
         old = connection.execute("SELECT job_id,kind,target_date,parameters_hash FROM job WHERE request_key=?", (request_key,)).fetchone()
         if old:
             if old['kind']!=kind or old['target_date']!=target_date or old['parameters_hash']!=digest(parameters):

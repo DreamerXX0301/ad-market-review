@@ -93,13 +93,13 @@ const fields = [
   operators: ["==", ">", "<"],
   supported_periods: ["D", "W", "M"],
 }));
-assert.equal(availableTechnicalPresets(fields, "D").length, 3);
+assert.equal(availableTechnicalPresets(fields, "D").length, 4);
 assert.deepEqual(
   availableTechnicalPresets(
     fields.filter((field) => field.field !== "macd_dea"),
     "D",
   ).map((p) => p.id),
-  ["kd-low-cross", "kd-above"],
+  ["kd-low-cross", "kd-above", "kd-below"],
 );
 assert.deepEqual(availableTechnicalPresets([], "D"), []);
 assert.equal(
@@ -176,3 +176,47 @@ assert.equal(
 console.log(
   "technical presets: same-period water/low cross, state distinction, atomic OR insertion, editable thresholds, dependency and tree-budget checks passed",
 );
+
+// Sell signals stay events; K<D is a separate persistent state.
+for (const period of ["D", "W", "M"]) {
+  assert.deepEqual(createTechnicalPreset("macd-dead-cross", period), {
+    field: "macd_dead_cross", op: "==", value: true, period,
+  });
+  assert.deepEqual(createTechnicalPreset("kd-dead-cross", period), {
+    field: "kd_dead_cross", op: "==", value: true, period,
+  });
+  assert.deepEqual(createTechnicalPreset("kd-below", period), {
+    field: "kdj_k", op: "<", right_field: "kdj_d", period,
+  });
+  const water = createTechnicalPreset("macd-above-zero-dead", period);
+  assert.deepEqual(water.all, [
+    {field: "macd_dead_cross", op: "==", value: true, period},
+    {field: "macd_dif", op: ">", value: 0, period},
+    {field: "macd_dea", op: ">", value: 0, period},
+  ]);
+  const high = createTechnicalPreset("kd-high-dead", period);
+  assert.deepEqual(high.all, [
+    {field: "kd_dead_cross", op: "==", value: true, period},
+    {field: "kdj_k", op: ">", value: 80, period},
+    {field: "kdj_d", op: ">", value: 80, period},
+  ]);
+  for (const threshold of [0, 60, 82.5, 100]) {
+    const custom = createTechnicalPreset("kd-high-dead", period, threshold);
+    assert.equal(custom.all[1].value, threshold);
+    assert.equal(custom.all[2].value, threshold);
+    assert.equal(custom.all[1].op, ">");
+  }
+  assert.deepEqual(appendTechnicalPreset(oldOr, water).any, [oldLeaf, water], "water death must remain an atomic AND inside OR");
+}
+for (const invalid of [-1, 101, NaN, Infinity, -Infinity, "80", null])
+  assert.throws(() => createTechnicalPreset("kd-high-dead", "D", invalid));
+const sellFields = [...fields, ...["macd_dead_cross", "kd_dead_cross"].map(field => ({
+  field, operators: ["=="], supported_periods: ["D", "W", "M"],
+}))];
+assert.deepEqual(availableTechnicalPresets(sellFields, "D", "trade-exit").slice(0, 5).map(p => p.id), [
+  "macd-dead-cross", "kd-dead-cross", "macd-above-zero-dead", "kd-high-dead", "kd-below",
+]);
+assert.equal(availableTechnicalPresets(sellFields, "D", "trade-entry")[0].id, "macd-above-zero");
+assert(!availableTechnicalPresets(fields, "D", "trade-exit").some(p => p.id === "macd-dead-cross"));
+assert.equal(JSON.stringify(oldOr), before, "adding sell templates must not modify the saved tree");
+console.log("sell presets: MACD/KD events, water/high gates, editable threshold, state distinction, scope priority and atomic grouping passed");

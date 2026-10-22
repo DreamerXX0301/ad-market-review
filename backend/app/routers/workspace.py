@@ -3,6 +3,7 @@ from fastapi import APIRouter,Body,Query
 from app.services import topics,strategies,tracking,topic_members as membership_service
 from app.services import sector_strategies,sector_tracking,strategy_batches
 from app.domain.conditions import specs
+from app.services import workspace_deletion
 
 router=APIRouter(prefix='/api/v1',tags=['workspace'])
 
@@ -36,7 +37,7 @@ def topic_members(topic_id:str,payload:dict=Body(...)):return topics.add_member(
 def topic_history(topic_id:str):return topics.topic_history(topic_id)
 
 @router.get('/strategies')
-def strategy_list():return strategies.list_strategies()
+def strategy_list(deleted:bool=False,limit:int|None=Query(None,ge=1,le=100),offset:int=Query(0,ge=0)):return strategies.list_strategies(deleted,limit,offset)
 @router.post('/strategy-batches')
 def strategy_batch_create(payload:dict=Body(...)):return strategy_batches.create_batch(payload)
 @router.get('/strategy-batches')
@@ -51,6 +52,10 @@ def strategy_bootstrap():return strategies.seed_workspace()
 def strategy_get(strategy_id:str):return strategies.get_strategy(strategy_id)
 @router.patch('/strategies/{strategy_id}')
 def strategy_update(strategy_id:str,payload:dict=Body(...)):return strategies.update_strategy(strategy_id,payload)
+@router.delete('/strategies/{strategy_id}')
+def strategy_delete(strategy_id:str):return workspace_deletion.delete_strategy(strategy_id)
+@router.post('/strategies/{strategy_id}/restore')
+def strategy_restore(strategy_id:str):return workspace_deletion.restore_strategy(strategy_id)
 @router.post('/strategies/{strategy_id}/runs')
 def strategy_run(strategy_id:str,payload:dict=Body(default={})):return strategies.run_strategy(strategy_id,payload)
 @router.get('/strategy-runs')

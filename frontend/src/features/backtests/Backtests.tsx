@@ -6,6 +6,8 @@ import {
   Play,
   RefreshCw,
   Settings2,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
 import { api, list, post, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
@@ -36,6 +38,17 @@ import {
 } from "../../components/UI";
 import { EquityChart } from "../../components/Charts";
 import DatePicker from "../../components/DatePicker";
+import RecycleConfirm from "../../components/RecycleConfirm";
+import { frozenInitialCapital } from "../../components/equityCurve";
+import {
+  deletionReason,
+  restorationReason,
+  recycleListWithout,
+  selectedBacktestReport,
+  selectionAfterRecycle,
+  visibleRecycleRows,
+} from "../../components/recyclePresentation";
+import "./Backtests.css";
 import { TradeRuleSummary } from "../strategies/TradeRules";
 import { summarizeChecks } from "../strategies/Conditions";
 const defaultConfig = {
@@ -117,8 +130,21 @@ export default function Backtests({
   marketDates?: string[];
   dataVersion?: string;
 }) {
+  const [deletedHistory, setDeletedHistory] = useState(false);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyGeneration, setHistoryGeneration] = useState(0);
+  const [deleteTarget, setDeleteTarget] = useState<Row | null>(null);
+  const [historyMutation, setHistoryMutation] = useState("");
+  const [historyActionError, setHistoryActionError] = useState("");
   const strategies = useApi<Row>("/strategies"),
-    history = useApi<Row>("/backtests");
+    history = useApi<Row>(
+      `/backtests?deleted=${deletedHistory}&limit=25&offset=${historyOffset}&_refresh=${historyGeneration}`,
+    );
+  const historyRows = visibleRecycleRows(
+    list(history.data),
+    deletedHistory,
+    "backtest_id",
+  );
   const [strategyId, setStrategyId] = useState(initialStrategyId || ""),
     [availability, setAvailability] = useState<Row | null>(null),
     [checking, setChecking] = useState(false),
@@ -132,10 +158,14 @@ export default function Backtests({
     [tab, setTab] = useState("trades"),
     [orderFilter, setOrderFilter] = useState("all"),
     [trade, setTrade] = useState<Row | null>(null);
+  const selectedRef = useRef(selectedId);
+  selectedRef.current = selectedId;
   const strategyVersion = list(strategies.data).find(
     (s) => s.strategy_id === strategyId,
   )?.version;
-  const report = useApi<Row>(selectedId ? `/backtests/${selectedId}` : null);
+  const report = useApi<Row>(
+    selectedId && !deletedHistory ? `/backtests/${selectedId}` : null,
+  );
   const toast = useToast(),
     checkId = useRef(0);
   const availabilityScope = useRef("");
@@ -147,9 +177,12 @@ export default function Backtests({
       setStrategyId(list(strategies.data)[0].strategy_id);
   }, [strategies.data]);
   useEffect(() => {
-    if (!selectedId && list(history.data)[0])
-      setSelectedId(list(history.data)[0].backtest_id);
-  }, [history.data]);
+    if (deletedHistory || !history.data) return;
+    const rows = visibleRecycleRows(list(history.data), false, "backtest_id");
+    setSelectedId((current) =>
+      current ? current : rows[0]?.backtest_id || "",
+    );
+  }, [history.data, deletedHistory]);
   useEffect(() => {
     if (!strategyId) return;
     const seq = ++checkId.current;
@@ -180,7 +213,13 @@ export default function Backtests({
         if (seq === checkId.current) setChecking(false);
       });
   }, [strategyId, strategyVersion, dataVersion]);
-  const r = report.data;
+  const r = selectedBacktestReport(
+    report.data,
+    selectedId,
+    deletedHistory,
+    report.error,
+  );
+  const capital = frozenInitialCapital(r);
   useEffect(() => {
     if (!r || !["queued", "running", "pending"].includes(r.status)) return;
     const timer = setTimeout(report.reload, 1500);
@@ -189,6 +228,44 @@ export default function Backtests({
   useEffect(() => {
     if (r?.status === "completed") history.reload();
   }, [r?.status, selectedId]);
+  async function recycleBacktest(item: Row, restore = false) {
+    if (historyMutation) return;
+    const id = item.backtest_id;
+    setHistoryMutation(id);
+    setHistoryActionError("");
+    try {
+      if (restore) await post(`/backtests/${encodeURIComponent(id)}/restore`);
+      else
+        await api(`/backtests/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setHistoryGeneration((current) => current + 1);
+      history.setData((current) =>
+        recycleListWithout(current, id, "backtest_id"),
+      );
+      setSelectedId((current) =>
+        selectionAfterRecycle(current, id, historyRows, "backtest_id"),
+      );
+      if (selectedRef.current === id) setTrade(null);
+      setDeleteTarget(null);
+      const total =
+        typeof history.data?.total === "number" ? history.data.total - 1 : null;
+      if (total !== null && historyOffset > 0 && total <= historyOffset)
+        setHistoryOffset(Math.max(0, historyOffset - 25));
+      else history.reload();
+      toast(restore ? "回测已恢复到历史" : "回测已移到回收站，可恢复");
+    } catch (problem: any) {
+      setHistoryActionError(problem.message);
+      history.reload();
+    } finally {
+      setHistoryMutation("");
+    }
+  }
+  function changeHistoryView(deleted: boolean) {
+    setDeletedHistory(deleted);
+    setHistoryOffset(0);
+    setSelectedId("");
+    setTrade(null);
+    setHistoryActionError("");
+  }
   async function run() {
     setError("");
     if (!start || !end || start > end) {
@@ -212,9 +289,10 @@ export default function Backtests({
         ...config,
         request_key: crypto.randomUUID(),
       });
+      setDeletedHistory(false);
+      setHistoryOffset(0);
       setSelectedId(res.backtest_id);
       history.reload();
-      report.reload();
       toast("已提交回测，后台正在计算真实行情");
     } catch (e: any) {
       setError(e.message);
@@ -411,11 +489,17 @@ export default function Backtests({
           {report.error && (
             <ErrorBox message={report.error} retry={report.reload} />
           )}{" "}
-          {!selectedId ? (
+          {!selectedId || deletedHistory ? (
             <Panel title="回测报告">
               <Empty
-                title="还没有回测结果"
-                description="选择策略和有覆盖的区间，运行后查看收益、风险与逐笔交易。"
+                title={
+                  deletedHistory ? "回收站中的报告暂不展示" : "还没有回测结果"
+                }
+                description={
+                  deletedHistory
+                    ? "从右侧恢复记录后，可在正常历史中查看原报告；所属策略被删除时请先恢复策略。"
+                    : "选择策略和有覆盖的区间，运行后查看收益、风险与逐笔交易。"
+                }
               />
             </Panel>
           ) : report.loading && !r ? (
@@ -525,10 +609,14 @@ export default function Backtests({
                       />
                     )}
                     <Panel
-                      title="账户权益与回撤"
-                      subtitle={`初始权益 ${num(r.config?.initial_capital ?? config.initial_capital)} 元 · 累计费用 ${num(stats.total_fees)} 元`}
+                      title="收益率、账户权益与回撤"
+                      subtitle={`本次初始权益 ${num(capital.value)} 元 · 累计费用 ${num(stats.total_fees)} 元${capital.configMismatch ? " · 使用报告中实际冻结初始权益" : ""}`}
                     >
-                      <EquityChart rows={equity} />
+                      <EquityChart
+                        key={r.backtest_id}
+                        rows={equity}
+                        initialCapital={capital.value}
+                      />
                     </Panel>
                     <Panel
                       title="交易与账户明细"
@@ -682,48 +770,183 @@ export default function Backtests({
           }
           className="backtest-history"
         >
-          {history.loading ? (
+          <div className="backtest-history-tabs">
+            <div className="segmented" role="group" aria-label="回测历史范围">
+              <button
+                type="button"
+                aria-pressed={!deletedHistory}
+                className={!deletedHistory ? "active" : ""}
+                disabled={!!historyMutation}
+                onClick={() => changeHistoryView(false)}
+              >
+                历史
+              </button>
+              <button
+                type="button"
+                aria-pressed={deletedHistory}
+                className={deletedHistory ? "active" : ""}
+                disabled={!!historyMutation}
+                onClick={() => changeHistoryView(true)}
+              >
+                回收站
+              </button>
+            </div>
+            <span>{history.data?.total ?? "—"} 条</span>
+          </div>
+          <p className="backtest-history-hint">
+            {deletedHistory
+              ? "删除记录可恢复；策略被删除时请先恢复所属策略。"
+              : "仅已结束且租约释放的记录可删除；删除策略可连带移入关联回测。"}
+          </p>
+          {history.error && (
+            <ErrorBox message={history.error} retry={history.reload} />
+          )}
+          {historyActionError && !deleteTarget && (
+            <ErrorBox message={historyActionError} />
+          )}
+          {history.loading && !history.data ? (
             <Loading />
-          ) : list(history.data).length ? (
+          ) : historyRows.length ? (
             <div className="run-history">
-              {list(history.data).map((x) => (
-                <button
+              {historyRows.map((x) => (
+                <div
                   key={x.backtest_id}
-                  className={selectedId === x.backtest_id ? "active" : ""}
-                  onClick={() => {
-                    setSelectedId(x.backtest_id);
-                    setTab("trades");
-                  }}
+                  className={`backtest-history-item ${selectedId === x.backtest_id ? "active" : ""}`}
                 >
-                  <div>
-                    <strong>
-                      {x.strategy_name ||
-                        list(strategies.data).find(
-                          (s) => s.strategy_id === x.strategy_id,
-                        )?.name ||
-                        "策略回测"}
-                    </strong>
-                    <Status value={x.status} />
-                  </div>
-                  <p>
-                    {x.start_date} → {x.end_date}
-                  </p>
-                  <footer>
-                    <span>{dateTime(x.created_at ?? x.created_at_ms)}</span>
-                    <span
-                      className={tone(x.stats?.total_return ?? x.total_return)}
+                  {deletedHistory ? (
+                    <div className="backtest-history-summary">
+                      <div>
+                        <strong>{x.strategy_name || "策略回测"}</strong>
+                        <Badge tone="neutral">已删除</Badge>
+                      </div>
+                      <p>
+                        {x.start_date} → {x.end_date}
+                      </p>
+                      <footer>
+                        <span>{dateTime(x.deleted_at_ms)}</span>
+                        <span className={tone(x.stats?.total_return)}>
+                          {percent(x.stats?.total_return)}
+                        </span>
+                      </footer>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="backtest-history-open"
+                      onClick={() => {
+                        setSelectedId(x.backtest_id);
+                        setTab("trades");
+                        setTrade(null);
+                      }}
                     >
-                      {percent(x.stats?.total_return ?? x.total_return)}
-                    </span>
-                  </footer>
-                </button>
+                      <div>
+                        <strong>
+                          {x.strategy_name ||
+                            list(strategies.data).find(
+                              (s) => s.strategy_id === x.strategy_id,
+                            )?.name ||
+                            "策略回测"}
+                        </strong>
+                        <Status value={x.status} />
+                      </div>
+                      <p>
+                        {x.start_date} → {x.end_date}
+                      </p>
+                      <footer>
+                        <span>{dateTime(x.created_at ?? x.created_at_ms)}</span>
+                        <span
+                          className={tone(
+                            x.stats?.total_return ?? x.total_return,
+                          )}
+                        >
+                          {percent(x.stats?.total_return ?? x.total_return)}
+                        </span>
+                      </footer>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={`icon-btn history-action ${deletedHistory ? "restore" : ""}`}
+                    aria-label={`${deletedHistory ? "恢复回测" : "删除回测"}：${x.strategy_name || x.backtest_id}`}
+                    title={
+                      (deletedHistory
+                        ? restorationReason(x)
+                        : deletionReason(x)) ||
+                      (deletedHistory ? "恢复这条回测" : "移到回收站，可恢复")
+                    }
+                    disabled={
+                      !!historyMutation ||
+                      !!(deletedHistory
+                        ? restorationReason(x)
+                        : deletionReason(x))
+                    }
+                    onClick={() => {
+                      setHistoryActionError("");
+                      deletedHistory
+                        ? recycleBacktest(x, true)
+                        : setDeleteTarget(x);
+                    }}
+                  >
+                    {historyMutation === x.backtest_id ? (
+                      <Spinner />
+                    ) : deletedHistory ? (
+                      <RotateCcw size={13} />
+                    ) : (
+                      <Trash2 size={13} />
+                    )}
+                  </button>
+                </div>
               ))}
             </div>
           ) : (
-            <Empty title="暂无历史" description="运行结果将在这里留存。" />
+            <Empty
+              title={deletedHistory ? "回收站为空" : "暂无历史"}
+              description={
+                deletedHistory
+                  ? "移入回收站的回测会在这里显示。"
+                  : "运行结果将在这里留存。"
+              }
+            />
+          )}
+          {(historyOffset > 0 || history.data?.has_more) && (
+            <div className="backtest-history-pagination">
+              <button
+                className="btn small"
+                disabled={
+                  historyOffset === 0 || history.loading || !!historyMutation
+                }
+                onClick={() =>
+                  setHistoryOffset((offset) => Math.max(0, offset - 25))
+                }
+              >
+                上一页
+              </button>
+              <span>第 {Math.floor(historyOffset / 25) + 1} 页</span>
+              <button
+                className="btn small"
+                disabled={
+                  !history.data?.has_more ||
+                  history.loading ||
+                  !!historyMutation
+                }
+                onClick={() => setHistoryOffset((offset) => offset + 25)}
+              >
+                下一页
+              </button>
+            </div>
           )}
         </Panel>
       </div>
+      {deleteTarget && (
+        <RecycleConfirm
+          kind="backtest"
+          item={deleteTarget}
+          busy={!!historyMutation}
+          error={historyActionError}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => recycleBacktest(deleteTarget)}
+        />
+      )}
       {trade && (
         <Modal
           title={`逐笔交易 · ${trade.name || trade.code}`}

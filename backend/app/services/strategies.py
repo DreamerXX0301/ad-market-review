@@ -15,6 +15,7 @@ from app.domain.history_events import nodes as history_nodes, current_names
 from app.services.history_events import contexts_for_batch, prepare_shared, batch_size as history_batch_size
 from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics
 from app.services import task_service as tasks
+from app.services.workspace_deletion import require_strategy_present,strategy_visibility
 ENGINE_VERSION="workspace-v8-bounded-history-events"
 
 
@@ -90,15 +91,24 @@ def strategy_view(c,sid):
     p=one(c,'SELECT * FROM tracking_policy_version WHERE strategy_id=? AND policy_version=?',(sid,r['current_policy_version']))
     latest=c.execute('SELECT run_id,business_date,status FROM selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1',(sid,)).fetchone()
     following,custom=active_policy_scope(c,sid)
-    return {**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'definition':obj(v['definition_json'],{}),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom)}
+    return {**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'definition':obj(v['definition_json'],{}),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid)}
 
-def list_strategies():
+def list_strategies(deleted=False,limit=None,offset=0):
+    if not isinstance(deleted,bool) or (limit is not None and (isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=100)) or isinstance(offset,bool) or not isinstance(offset,int) or offset<0:fail('策略列表分页参数无效')
     with connect() as c:
-        data=[strategy_view(c,r[0]) for r in c.execute('SELECT strategy_id FROM strategy ORDER BY created_at_ms,name')]
-        return {'items':data,'total':len(data)}
+        condition='d.strategy_id IS NOT NULL' if deleted else 'd.strategy_id IS NULL'
+        query='SELECT s.strategy_id FROM strategy s LEFT JOIN strategy_deletion d USING(strategy_id) WHERE '+condition+' ORDER BY s.created_at_ms,s.name,s.strategy_id'
+        parameters=()
+        if limit is not None:query+=' LIMIT ? OFFSET ?';parameters=(limit,offset)
+        elif offset:query+=' LIMIT -1 OFFSET ?';parameters=(offset,)
+        data=[strategy_view(c,r[0]) for r in c.execute(query,parameters)]
+        total=c.execute('SELECT count(*) FROM strategy s LEFT JOIN strategy_deletion d USING(strategy_id) WHERE '+condition).fetchone()[0]
+        return {'items':data,'total':total,'limit':limit,'offset':offset,'has_more':offset+len(data)<total}
 
 def get_strategy(sid):
-    with connect() as c:return strategy_view(c,sid)
+    with connect() as c:
+        if c.execute('SELECT 1 FROM strategy_deletion WHERE strategy_id=?',(sid,)).fetchone():fail('策略已移入回收站，请先恢复',404)
+        return strategy_view(c,sid)
 
 def create_strategy(payload,strategy_id=None):
     name=str(payload.get('name','')).strip();period=payload.get('period','D')
@@ -124,6 +134,7 @@ def update_strategy(sid,payload):
     if apply_active and 'policy' not in payload:fail('同步当前轮次时需要提供policy')
     with connect() as c:
         c.execute("BEGIN IMMEDIATE")
+        require_strategy_present(c,sid)
         old=strategy_view(c,sid);name=str(payload.get('name',old['name'])).strip()
         if not name or len(name)>100:fail('策略名称需要1至100字')
         period=payload.get('period',old['period'])
@@ -152,6 +163,7 @@ def update_strategy(sid,payload):
         return result
 
 def ensure_evaluator_version(c,sid):
+    require_strategy_present(c,sid)
     st=strategy_view(c,sid)
     old=one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,st['version']))
     desired=evaluator_for(st['definition'],st['period'],st.get('trade_rules'))
@@ -170,7 +182,9 @@ def seed_workspace():
     for sid,name,definition in defaults:
         if sid not in existing:create_strategy({'name':name,'definition':definition},strategy_id=sid)
         else:
-            with connect() as c:ensure_evaluator_version(c,sid)
+            with connect() as c:
+                c.execute('BEGIN IMMEDIATE')
+                if not c.execute('SELECT 1 FROM strategy_deletion WHERE strategy_id=?',(sid,)).fetchone():ensure_evaluator_version(c,sid)
     result=seed_topics()
     return {**result,'default_strategies':3}
 
@@ -216,6 +230,7 @@ def run_strategy(sid,payload=None,*,queued_job=None):
     job_id=queued_job['job_id'] if queued_job else new_id('job');rid=new_id('run');owner=queued_job['lease_owner'] if queued_job else api_lease_owner()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        require_strategy_present(c,sid)
         found=c.execute('SELECT r.run_id,r.strategy_id FROM selection_run r JOIN job j USING(job_id) WHERE j.request_key=?',(key,)).fetchone()
         if found:
             if found['strategy_id']!=sid:fail('request_key已用于其他策略，不能复用。',409)

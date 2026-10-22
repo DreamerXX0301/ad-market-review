@@ -19,11 +19,18 @@
 -- 016_listing_status.sql sha256=dc8e44dcffcda6ccb403b5e961211d53be26d86cb4aa87750edfc67d30ce5411
 -- 017_market_mainlines.sql sha256=a9978baccc2965efa7687857bd027a13dc12fae1aa2e17df09c1ce198dfd3df5
 -- 018_market_sentiment_snapshots.sql sha256=6ffe051c931bcc3037649880443d50085b3d49affe18a06a3aada6d308305530
+-- 019_workspace_deletion.sql sha256=26c526211b3c05f20f1ef968165aac57d6b75ba0d70e7258f22d140279b25dd1
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
 
 CREATE TABLE _schema_migration (name TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at_ms INTEGER NOT NULL);
+
+CREATE TABLE backtest_deletion (
+  backtest_id TEXT PRIMARY KEY REFERENCES backtest_run(backtest_id),
+  deleted_at_ms INTEGER NOT NULL CHECK(deleted_at_ms>0),
+  strategy_deletion_id TEXT REFERENCES strategy_deletion(deletion_id)
+) STRICT;
 
 CREATE TABLE backtest_run (
   backtest_id TEXT PRIMARY KEY,
@@ -474,6 +481,13 @@ CREATE TABLE strategy (
   FOREIGN KEY(strategy_id,current_policy_version) REFERENCES tracking_policy_version(strategy_id,policy_version)
 ) STRICT;
 
+CREATE TABLE strategy_deletion (
+  strategy_id TEXT PRIMARY KEY REFERENCES strategy(strategy_id),
+  deletion_id TEXT NOT NULL UNIQUE,
+  deleted_at_ms INTEGER NOT NULL CHECK(deleted_at_ms>0),
+  previous_archived INTEGER NOT NULL CHECK(previous_archived IN (0,1))
+) STRICT;
+
 CREATE TABLE strategy_version (
   strategy_id TEXT NOT NULL REFERENCES strategy(strategy_id),
   version INTEGER NOT NULL CHECK(version>0),
@@ -627,6 +641,8 @@ CREATE TABLE watchlist_item (
 ) STRICT;
 
 CREATE INDEX artifact_content_references ON snapshot_artifact(sha256);
+
+CREATE INDEX backtest_deletion_strategy_batch ON backtest_deletion(strategy_deletion_id);
 
 CREATE INDEX candidates_by_result ON selection_candidate(run_id,decision);
 

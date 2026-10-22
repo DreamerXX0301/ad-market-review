@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -9,6 +9,8 @@ import {
   Plus,
   RefreshCw,
   Settings2,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
 import { api, list, patch, post, requestKey, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
@@ -26,6 +28,14 @@ import {
   useToast,
   Warning,
 } from "../../components/UI";
+import RecycleConfirm from "../../components/RecycleConfirm";
+import {
+  deletionReason,
+  restorationReason,
+  recycleListWithout,
+  selectionAfterRecycle,
+  visibleRecycleRows,
+} from "../../components/recyclePresentation";
 import { fallbackFields, fieldLabel, summarizeChecks } from "./Conditions";
 import RuleTreeEditor from "./RuleTreeEditor";
 import RuleEvidence from "./RuleEvidence";
@@ -354,10 +364,27 @@ function StockStrategies({
   onRefresh?: () => void;
   dataDate?: string;
 }) {
-  const result = useApi<Row>("/strategies"),
+  const [strategyGeneration, setStrategyGeneration] = useState(0);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashOffset, setTrashOffset] = useState(0);
+  const [deleteTarget, setDeleteTarget] = useState<Row | null>(null);
+  const [recycleBusy, setRecycleBusy] = useState("");
+  const [recycleError, setRecycleError] = useState("");
+  const trash = useApi<Row>(
+    trashOpen
+      ? `/strategies?deleted=true&limit=25&offset=${trashOffset}&_refresh=${strategyGeneration}`
+      : null,
+  );
+  const trashRows = visibleRecycleRows(list(trash.data), true, "strategy_id");
+  const result = useApi<Row>(
+      `/strategies?deleted=false&_refresh=${strategyGeneration}`,
+    ),
     fieldsResult = useApi<Row>("/strategy-fields"),
     topicsResult = useApi<Row>("/topics");
-  const strategies = list(result.data),
+  const strategies = useMemo(
+      () => visibleRecycleRows(list(result.data), false, "strategy_id"),
+      [result.data],
+    ),
     fields = (
       list(fieldsResult.data).length ? list(fieldsResult.data) : fallbackFields
     ).map((f: Row): Row => ({ ...f, label: fieldLabel(f.field, f.label) }));
@@ -392,11 +419,13 @@ function StockStrategies({
     busy === "run" || runningChosen,
   );
   useEffect(() => {
-    if (!strategies.length) return;
-    const id = resolvedStrategyId(strategies, selectedId);
+    if (!result.data) return;
+    const id = strategies.length
+      ? resolvedStrategyId(strategies, selectedId)
+      : "";
     if (id !== selectedId) setSelectedId(id);
     rememberStrategySelection("stock", id);
-  }, [strategies, selectedId]);
+  }, [strategies, selectedId, result.data]);
   useEffect(() => {
     setSelected(new Set());
     setError("");
@@ -427,6 +456,52 @@ function StockStrategies({
       });
     return () => request.abort();
   }, [batchRunRequest, chosen?.strategy_id, setRun]);
+  async function recycleStrategy(item: Row, restore = false) {
+    if (recycleBusy) return;
+    const id = item.strategy_id;
+    setRecycleBusy(id);
+    setRecycleError("");
+    try {
+      const response = restore
+        ? await post(`/strategies/${encodeURIComponent(id)}/restore`)
+        : await api<Row>(`/strategies/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+          });
+      // A changed URL retires older in-flight responses without permanent local tombstones.
+      setStrategyGeneration((current) => current + 1);
+      if (restore) {
+        trash.setData((current) =>
+          recycleListWithout(current, id, "strategy_id"),
+        );
+        const total =
+          typeof trash.data?.total === "number" ? trash.data.total - 1 : null;
+        if (total !== null && trashOffset > 0 && total <= trashOffset)
+          setTrashOffset(Math.max(0, trashOffset - 25));
+      } else {
+        result.setData((current) =>
+          recycleListWithout(current, id, "strategy_id"),
+        );
+        setSelectedId((current) =>
+          selectionAfterRecycle(current, id, strategies, "strategy_id"),
+        );
+        setEditor((current) =>
+          current?.strategy_id === id ? undefined : current,
+        );
+      }
+      setDeleteTarget(null);
+      toast(
+        restore
+          ? `策略已恢复，连带恢复 ${response.affected_backtests ?? 0} 条回测`
+          : `策略与 ${response.affected_backtests ?? 0} 条关联回测已移到回收站`,
+      );
+    } catch (problem: any) {
+      setRecycleError(problem.message);
+      result.reload();
+      trash.reload();
+    } finally {
+      setRecycleBusy("");
+    }
+  }
   async function bootstrap() {
     setBusy("bootstrap");
     try {
@@ -512,10 +587,23 @@ function StockStrategies({
     <div className="page-stack">
       <div className="section-intro">
         <p>定义选股条件 → 运行真实行情 → 选择命中 → 加入对应策略跟踪池</p>
-        <button className="btn primary" onClick={() => setEditor(null)}>
-          <Plus size={15} />
-          新建策略
-        </button>
+        <div className="button-group">
+          <button
+            className="btn"
+            onClick={() => {
+              setTrashOpen(true);
+              setTrashOffset(0);
+              setRecycleError("");
+            }}
+          >
+            <Trash2 size={14} />
+            回收站
+          </button>
+          <button className="btn primary" onClick={() => setEditor(null)}>
+            <Plus size={15} />
+            新建策略
+          </button>
+        </div>
       </div>
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
@@ -627,6 +715,21 @@ function StockStrategies({
               subtitle={`规则 V${chosen.version} · 默认${sectorPeriodLabel(chosen.period)}（周/月仅完整周期） · 默认跟踪 ${chosen.policy?.duration_sessions || 30} 个交易日`}
               actions={
                 <>
+                  <button
+                    className="icon-btn recycle-delete"
+                    aria-label={`删除策略：${chosen.name}`}
+                    title={
+                      deletionReason(chosen) ||
+                      "删除策略与关联回测，可从回收站恢复"
+                    }
+                    disabled={!!recycleBusy || !!deletionReason(chosen)}
+                    onClick={() => {
+                      setDeleteTarget(chosen);
+                      setRecycleError("");
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
                   <button
                     className="btn small"
                     onClick={() => setEditor(chosen)}
@@ -862,6 +965,108 @@ function StockStrategies({
           </Panel>
         </div>
       </div>
+      {deleteTarget && (
+        <RecycleConfirm
+          kind="strategy"
+          item={deleteTarget}
+          busy={!!recycleBusy}
+          error={recycleError}
+          onClose={() => {
+            setDeleteTarget(null);
+            setRecycleError("");
+          }}
+          onConfirm={() => recycleStrategy(deleteTarget)}
+        />
+      )}
+      {trashOpen && (
+        <Modal
+          title="策略回收站"
+          onClose={() => !recycleBusy && setTrashOpen(false)}
+        >
+          <div className="modal-body recycle-confirm-body">
+            <p>
+              恢复策略时，仅恢复删除它时连带移入的回测。已有跟踪记录和基准价保留，可在跟踪页独立管理。
+            </p>
+            {trash.error && (
+              <ErrorBox message={trash.error} retry={trash.reload} />
+            )}
+            {recycleError && <ErrorBox message={recycleError} />}
+            {trash.loading && !trash.data ? (
+              <Loading />
+            ) : trashRows.length ? (
+              <div className="strategy-recycle-list">
+                {trashRows.map((item) => (
+                  <div className="strategy-recycle-item" key={item.strategy_id}>
+                    <div>
+                      <strong>{item.name}</strong>
+                      <p>
+                        删除于 {dateTime(item.deleted_at_ms)} · 关联回测{" "}
+                        {integer(item.backtest_count)} 条
+                      </p>
+                    </div>
+                    <button
+                      className="btn small"
+                      disabled={!!recycleBusy || !!restorationReason(item)}
+                      title={
+                        restorationReason(item) ||
+                        "恢复策略与本次连带删除的回测"
+                      }
+                      onClick={() => recycleStrategy(item, true)}
+                    >
+                      {recycleBusy === item.strategy_id ? (
+                        <Spinner />
+                      ) : (
+                        <RotateCcw size={13} />
+                      )}
+                      恢复
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty
+                title="策略回收站为空"
+                description="删除的策略与关联回测可以在这里恢复。"
+              />
+            )}
+            {(trashOffset > 0 || trash.data?.has_more) && (
+              <div className="strategy-recycle-pagination">
+                <button
+                  className="btn small"
+                  disabled={trashOffset === 0 || !!recycleBusy || trash.loading}
+                  onClick={() =>
+                    setTrashOffset((value) => Math.max(0, value - 25))
+                  }
+                >
+                  上一页
+                </button>
+                <span>
+                  第 {Math.floor(trashOffset / 25) + 1} 页 · 共{" "}
+                  {integer(trash.data?.total)} 条
+                </span>
+                <button
+                  className="btn small"
+                  disabled={
+                    !trash.data?.has_more || !!recycleBusy || trash.loading
+                  }
+                  onClick={() => setTrashOffset((value) => value + 25)}
+                >
+                  下一页
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="modal-footer">
+            <button
+              className="btn"
+              disabled={!!recycleBusy}
+              onClick={() => setTrashOpen(false)}
+            >
+              关闭
+            </button>
+          </div>
+        </Modal>
+      )}
       {editor !== undefined && (
         <StrategyEditor
           strategy={editor || undefined}

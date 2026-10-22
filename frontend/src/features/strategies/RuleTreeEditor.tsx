@@ -68,6 +68,7 @@ function TechnicalPresetControls({
   fields,
   period,
   depth,
+  scope,
 }: {
   value: RuleNode;
   onChange: (next: RuleNode) => void;
@@ -75,31 +76,48 @@ function TechnicalPresetControls({
   fields: Row[];
   period: string;
   depth: number;
+  scope?: ConditionScope;
 }) {
-  const [selected, setSelected] =
-    useState<TechnicalPresetId>("macd-above-zero");
+  const [selected, setSelected] = useState<TechnicalPresetId>(
+    scope === "trade-exit" ? "macd-dead-cross" : "macd-above-zero",
+  );
   const [upper, setUpper] = useState<number | "">(20);
+  const [lower, setLower] = useState<number | "">(80);
   const [rangeMin, setRangeMin] = useState<number | "">(0);
   const [rangeMax, setRangeMax] = useState<number | "">(100);
-  const available = availableTechnicalPresets(fields, period);
+  const available = availableTechnicalPresets(fields, period, scope);
   const preset = available.find((item) => item.id === selected) || available[0];
   if (!preset) return null;
   const invalidUpper =
     preset.id === "kd-low-cross" &&
     (upper === "" || !Number.isFinite(upper) || upper < 0 || upper > 100);
+  const invalidLower =
+    preset.id === "kd-high-dead" &&
+    (lower === "" || !Number.isFinite(lower) || lower < 0 || lower > 100);
   const isRange = preset.id === "kd-cross-range" || preset.id === "kd-range";
   const rangeError = isRange ? validateKdRange(rangeMin, rangeMax) : null;
   const rule =
-    invalidUpper || rangeError
+    invalidUpper || invalidLower || rangeError
       ? null
-      : createTechnicalPreset(preset.id, period, upper === "" ? 20 : upper, {
-          min: Number(rangeMin),
-          max: Number(rangeMax),
-        });
+      : createTechnicalPreset(
+          preset.id,
+          period,
+          preset.id === "kd-high-dead"
+            ? Number(lower)
+            : upper === ""
+              ? 20
+              : upper,
+          {
+            min: Number(rangeMin),
+            max: Number(rangeMax),
+          },
+        );
   const error = invalidUpper
     ? "KDJ低位上限请输入0—100的有限数值"
-    : rangeError ||
-      technicalPresetInsertionError(rootValue, value, rule!, depth);
+    : invalidLower
+      ? "KDJ高位下限请输入0—100的有限数值"
+      : rangeError ||
+        technicalPresetInsertionError(rootValue, value, rule!, depth);
   return (
     <div className="technical-preset-controls">
       <div className="technical-preset-fields">
@@ -131,6 +149,24 @@ function TechnicalPresetControls({
               value={upper}
               onChange={(event) =>
                 setUpper(
+                  event.target.value === "" ? "" : Number(event.target.value),
+                )
+              }
+            />
+          </label>
+        )}
+        {preset.id === "kd-high-dead" && (
+          <label className="technical-preset-upper">
+            K、D高位下限
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="any"
+              aria-label="KDJ高位下限"
+              value={lower}
+              onChange={(event) =>
+                setLower(
                   event.target.value === "" ? "" : Number(event.target.value),
                 )
               }
@@ -885,6 +921,7 @@ export default function RuleTreeEditor({
         fields={conditionFields(fields, "current")}
         period={period}
         depth={0}
+        scope={scope}
       />
       <RuleNodeEditor
         rootValue={group}

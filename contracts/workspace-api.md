@@ -69,6 +69,7 @@
 - definition 为叶 `{field,op,value,period?}` / `{field,op,right_field,period?}`，或嵌套 `{all:[...]}` / `{any:[...]}`；兼容旧 logic/conditions 输入。
 - 普通叶默认策略周期，也可逐叶 D/W/M；W/M 使用最近应闭合且有效周期，不能缺最新后退到旧柱。固定日线字段必须 D。右字段只能是兼容白名单数值，常量专用字段不能当右字段。
 - 技术组合快捷入口不新增服务端字段：MACD水上金叉保存为同周期 `all(macd_cross==true,macd_dif>0,macd_dea>0)`；KDJ低位金叉保存为 `all(kd_cross==true,kdj_k<U,kdj_d<U)`，U默认20、快捷输入范围0–100，指当前双线而非前期值；K>D状态保存为 `{field:"kdj_k",op:">",right_field:"kdj_d",period:P}`。每个叶子显式使用同一P；普通入口采用当前选择周期，历史where/then固定D。组合是外层all/any的一个子节点，不能把三项拆进OR。用户后续可编辑各叶子，仍由原有白名单、深度/节点数与三值逻辑核验。
+- 卖出区技术组合优先展示MACD死叉、KDJ死叉、MACD水上死叉、KDJ高位死叉与K<D持续状态。普通死叉为前一期快线≥慢线且当前快线<慢线；水上再要求当前DIF、DEA都>0；高位再要求当前K、D都>H，H默认80、快捷输入0–100，等于门槛不算。K<D只检查当前状态，不要求刚死叉。所有快捷均展开成同周期普通叶子，不把“金叉=false”当死叉，不改变已保存条件或卖出启用时的既有默认条件。
 - K值范围快捷保存为同周期 `all(kdj_k>=L,kdj_k<=U)`，金叉加范围再包含 `kd_cross==true`；只限制当前K，不隐含D范围。L/U为有限0–100且L≤U，等号有效；低/中/高快捷起点为0–20、20–80、80–100，20/80边界重合，它们是可编辑起点而非互斥状态或收益判断。过滤范围不修改KDJ指标本身的计算参数。
 - 股票范围 board 包含/剔除与当前 is_st 在外层独立 AND。当前身份不是历史逐日 ST/上市档案；未知不能当 false。
 - `close_breakout_high` 使用 `op=new_high,value=N`（整数 1–750），观察日日收盘严格大于前 N 个市场交易日 high，排除今日；缺报/零量/行动不可比为未知。
@@ -114,6 +115,21 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 历史 `limit_up` 在选股、跟踪和回测复用同一已发布代际的来源池核验器：逐日期编译来源代码索引与完整来源缺席证据，每只股票再核对该日唯一有效原始 OHLC、收盘、成交量和来源身份；既有日报价标志或 +10% 涨幅不能代替来源证据。缺来源、缺报、停牌、价格/方向冲突均保留 unknown，不用未来池回填。checks 保存来源路径、快照、窗口、日期、偏移、原始价格与原因，不序列化完整历史上下文。回测只为历史 where 放开同日涨停，普通当前涨停及滚动次数条件仍沿用原有回测边界。
 
 `trade_rules={entry:条件树|null,exit:条件树|null}` 与选股独立版本化：买入为选股 AND entry，exit 不要求仍满足选股。只接受已支持回测特征；不支持题材、未完整历史涨停或跟踪锚点，不因为 AST 能保存便保证可回测。
+
+## 个股策略删除与恢复
+
+| 接口 | 作用 |
+| --- | --- |
+| `GET /strategies?deleted=false&limit=&offset=0` | 默认排除已删除策略；不传limit保留原有完整列表语义，显式limit为1–100 |
+| `GET /strategies?deleted=true&limit=25&offset=0` | 只看回收站，支持分页 |
+| `DELETE /strategies/{id}` | 同一SQLite短事务将策略及当前可见关联回测移入回收站 |
+| `POST /strategies/{id}/restore` | 恢复策略及本次策略删除带走的回测，幂等 |
+
+策略可见性另存于019新增的 `strategy_deletion`，关联回测的可见性另存于 `backtest_deletion`；不物理删除策略版本、运行、报告、任务或输入保留引用，不修改已完成回测内容。策略metadata含 `deleted/deleted_at_ms/can_delete/delete_blocked_reason/can_restore/restore_blocked_reason/backtest_count/related_backtests_count/cascade_backtest_count`；后两项表示本次会带走的当前可见回测数，总回测数另列。列表返回 `{items,total,limit,offset,has_more}`，未传limit时为null；删除/恢复返回 `{strategy_id,deleted,deleted_at_ms,affected_backtests}`。已删除策略详情404，PATCH为409。
+
+删除前事务内检查相关选股、批次、跟踪核验和回测任务；排队、运行、暂停或尚未释放租约均409，不自动取消。已取消回测以任务终态及租约释放为准，不因其遗留计算状态仍为queued/running而永远无法清理。删除后禁止新建选股、回测、批次、自动选股或从旧运行新入池，原 `archived=false` 更新不能绕过恢复接口。旧归档策略语义保留，恢复时还原其删除前归档值。
+
+跟踪轮次、入池基准、政策和事件、自选及行情均保留；已有独立跟踪仍可继续核验，不自动结束。恢复不重跑任务、不追加策略版本、不重设基准，也不恢复删除策略之前已经单独移入回收站的回测。删除与恢复均是可见性变更，不构成磁盘空间回收。
 
 ## 个股运行与跟踪
 
@@ -168,6 +184,10 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 `POST /research/jobs {instrument_id}` 手动创建任务，GET 列表及 `/research/jobs/{identifier}` 回读报告。研究限定标的和材料范围，主动访问后七天过期；列表轮询不续期。材料、来源日期、获取时间、单位和缺口分开，清理不影响行情或业务轮次。
 
 `POST /backtests/availability {strategy_id}` 返回可用区间、预热、身份/条件限制；`POST /backtests` 冻结策略、规则、区间和配置，唯一 worker 执行；GET 列表/详情读取结果账本。七项 stats 为 total_return/annual_return/max_drawdown/win_rate/payoff_ratio/trade_count/final_equity，可无定义项保持 null。
+
+`GET /backtests?deleted=false&limit=100&offset=0` 返回正常历史，`deleted=true`只看回收站；limit为1–100，offset非负，返回items/total及分页信息。`DELETE /backtests/{id}` 可单独移入回收站，`POST /backtests/{id}/restore` 幂等恢复。metadata含删除状态、时间、可删除/恢复及阻断原因；活动任务或租约未释放409。父策略已删除时，单独恢复回测409，须先恢复策略；已删除报告的详情404。原request_key指向回收站记录时409，不能静默返回隐藏结果；用户可在恢复后重读，或明确使用新request_key新建。
+
+曲线默认展示累计收益率，支持切换账户权益并保留下方回撤。累计收益率 `=(equity/initial_capital−1)×100`；initial_capital优先使用该报告冻结的 `stats.initial_capital`，它是引擎按十进制ROUND_HALF_UP到分后的实际起始权益。兼容旧报告仅在该字段缺失时用同一报告config的初始本金按分舍入；字段存在但非法不掩盖回退。绝不使用当前表单或第一条普通权益记录。零权益为−100%，缺值不填零；无有效本金时只展示权益并说明原因。百分比、金额与回撤提示统一单位和两位小数；切换视图不重算回测。
 
 撮合仅受限主板/创业板当前非 ST、有效上市日期、区间连续报价且无公司行动样本。收盘信号下一市场日开盘尝试；T+1、限价、费用、滑点、拒单均留记录，期末不强平。未知不成交；不完整上市身份可使回测在创建前不可用，不伪造权益。不是历史全市场无偏或完整复权账户回测。
 

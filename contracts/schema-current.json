@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 18,
+  "migration_version": 19,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -70,15 +70,19 @@
     {
       "name": "018_market_sentiment_snapshots.sql",
       "sha256": "6ffe051c931bcc3037649880443d50085b3d49affe18a06a3aada6d308305530"
+    },
+    {
+      "name": "019_workspace_deletion.sql",
+      "sha256": "26c526211b3c05f20f1ef968165aac57d6b75ba0d70e7258f22d140279b25dd1"
     }
   ],
   "counts": {
-    "table": 45,
-    "index": 28,
+    "table": 47,
+    "index": 29,
     "view": 1,
     "trigger": 92
   },
-  "schema_sha256": "068ae4fc4957dc3533b67d3a62d62da4a432bd9a8a7e98cbcc66a9c0b81a3e3d",
+  "schema_sha256": "dbf3d57c7ee06cc7cb861b650c4a07343c08b1f51f7f9c222ffc5a7a9760feec",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -108,6 +112,57 @@
         }
       ],
       "foreign_keys": [],
+      "triggers": []
+    },
+    "backtest_deletion": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "backtest_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "deleted_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "strategy_deletion_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "strategy_deletion",
+          "from": "strategy_deletion_id",
+          "to": "deletion_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "backtest_run",
+          "from": "backtest_id",
+          "to": "backtest_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
       "triggers": []
     },
     "backtest_run": {
@@ -3328,6 +3383,55 @@
           "table": "strategy_version",
           "from": "current_version",
           "to": "version",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": []
+    },
+    "strategy_deletion": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "strategy_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "deletion_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "deleted_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "previous_archived",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "strategy",
+          "from": "strategy_id",
+          "to": "strategy_id",
           "on_update": "NO ACTION",
           "on_delete": "NO ACTION",
           "match": "NONE"

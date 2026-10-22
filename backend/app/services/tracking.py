@@ -37,6 +37,8 @@ def add_tracking(payload, *, automatic=False, transaction_guard=None, on_commit=
         c.execute("BEGIN IMMEDIATE")
         if transaction_guard: transaction_guard(c)
         day=current(c);run=one(c,'SELECT * FROM selection_run WHERE run_id=?',(rid,),'策略运行不存在')
+        from .workspace_deletion import require_strategy_present
+        require_strategy_present(c,run['strategy_id'])
         if run['business_date']!=day:fail('只能从当前业务日的运行结果入池，请重新运行策略。',409)
         strategy=strategy_view(c,run['strategy_id'])
         if strategy['version']!=run['strategy_version']:fail('策略已修改，请重新运行后加入跟踪。',409)

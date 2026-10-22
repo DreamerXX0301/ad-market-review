@@ -202,8 +202,7 @@ def test_http_without_data_and_cross_site_write(isolated):
 def test_opt_in_workspace_followups_and_validation(isolated,monkeypatch):
     from app.services import workspace_automation as a,task_service as t
     from fastapi import HTTPException
-    monkeypatch.setattr(a.strategies,'get_strategy',lambda sid:{'strategy_id':sid})
-    monkeypatch.setattr(a.strategies,'list_strategies',lambda:{'items':[{'strategy_id':'fixture','name':'测试策略','archived':False}]})
+    a.strategies.create_strategy({'name':'测试策略','definition':{'field':'close','op':'>','value':0}},strategy_id='fixture')
     calls=[]
     monkeypatch.setattr(a.strategies,'run_strategy',lambda sid,payload:calls.append(('selection',payload['request_key'])) or {'run_id':'run-fixture','matched_count':1,'unknown_count':2,'items':[{'instrument_id':'600000.SH','decision':'matched'}]})
     monkeypatch.setattr(a.tracking,'add_tracking',lambda payload:calls.append(('join',payload)) or {'added_count':1})
@@ -211,8 +210,10 @@ def test_opt_in_workspace_followups_and_validation(isolated,monkeypatch):
     job=t.create_task('increment',{});t.finish(job['task_id'],'partial')
     assert a.get_settings('fixture')['refresh_after_sync'] is False
     assert a.run_after_sync(job['task_id'])==[] and calls==[]
-    with pytest.raises(HTTPException):a.configure('fixture',{'auto_track':True})
-    with pytest.raises(HTTPException):a.configure('fixture',{'refresh_after_sync':'true'})
+    with pytest.raises(HTTPException) as error:a.configure('fixture',{'auto_track':True})
+    assert error.value.status_code==422
+    with pytest.raises(HTTPException) as error:a.configure('fixture',{'refresh_after_sync':'true'})
+    assert error.value.status_code==422
     a.configure('fixture',{'refresh_after_sync':True,'auto_track':True})
     result=a.run_after_sync(job['task_id'])
     assert result[0]['added_count']==1

@@ -1,6 +1,7 @@
 """Opt-in local computations after a manual sync, separate from data fetching."""
+import json
 from fastapi import HTTPException
-from app.core import connect,now_ms,setting,set_setting
+from app.core import connect,now_ms,setting,dumps
 from app.services import strategies,tracking,task_service as tasks
 
 
@@ -11,13 +12,20 @@ def get_settings(strategy_id):
 
 
 def configure(strategy_id,payload):
-    current=get_settings(strategy_id)
     for field in ('refresh_after_sync','auto_track'):
-        if field in payload:
-            if not isinstance(payload[field],bool):raise HTTPException(422,'执行开关必须为true或false')
-            current[field]=payload[field]
-    if current['auto_track'] and not current['refresh_after_sync']:raise HTTPException(422,'自动入池需要同时开启同步后重新筛选')
-    set_setting('strategy-execution:'+strategy_id,{**current,'updated_at_ms':now_ms()})
+        if field in payload and not isinstance(payload[field],bool):raise HTTPException(422,'执行开关必须为true或false')
+    with connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        from .workspace_deletion import require_strategy_present
+        require_strategy_present(connection,strategy_id)
+        strategies.strategy_view(connection,strategy_id)
+        key='strategy-execution:'+strategy_id
+        row=connection.execute('SELECT value_json FROM platform_setting WHERE key=?',(key,)).fetchone()
+        value=json.loads(row[0]) if row else {}
+        current={'strategy_id':strategy_id,**{field:bool(value.get(field,False)) for field in ('refresh_after_sync','auto_track')}}
+        current.update({field:payload[field] for field in ('refresh_after_sync','auto_track') if field in payload})
+        if current['auto_track'] and not current['refresh_after_sync']:raise HTTPException(422,'自动入池需要同时开启同步后重新筛选')
+        connection.execute('INSERT INTO platform_setting(key,value_json,updated_at_ms) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at_ms=excluded.updated_at_ms',(key,dumps({**current,'updated_at_ms':now_ms()}),now_ms()))
     return current
 
 
@@ -30,10 +38,10 @@ def run_after_sync(parent_job_id):
     if not state or state[0] not in ('succeeded','no_change','partial'):return []
     for strategy in strategies.list_strategies()['items']:
         if strategy['archived']:continue
-        config=get_settings(strategy['strategy_id'])
-        if not config['refresh_after_sync']:continue
         result={'strategy_id':strategy['strategy_id'],'name':strategy['name']}
         try:
+            config=get_settings(strategy['strategy_id'])
+            if not config['refresh_after_sync']:continue
             run=strategies.run_strategy(strategy['strategy_id'],{'request_key':parent_job_id+':selection:'+strategy['strategy_id']})
             result.update(run_id=run['run_id'],matched=run['matched_count'],unknown=run['unknown_count'],added_count=0)
             if config['auto_track']:

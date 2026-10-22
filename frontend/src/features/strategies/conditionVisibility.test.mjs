@@ -183,6 +183,8 @@ const technicalFields = [
   "macd_cross",
   "macd_dif",
   "macd_dea",
+  "macd_dead_cross",
+  "kd_dead_cross",
   "kd_cross",
   "kdj_k",
   "kdj_d",
@@ -209,7 +211,11 @@ for (const scope of ["selection", "alert", "exit", "trade-entry", "trade-exit"])
     assert.match(html, /MACD 水上金叉/);
     assert.match(html, /KDJ 低位金叉/);
     assert.match(html, /KDJ K &gt; D（持续状态）/);
-    assert.match(html, /当期 DIF、DEA 都严格大于 0/);
+    if (scope === "trade-exit") {
+      assert.match(html, /MACD 死叉/);
+      assert.match(html, /KDJ 高位死叉/);
+      assert.match(html, /前一期 DIF/);
+    } else assert.match(html, /当期 DIF、DEA 都严格大于 0/);
     assert.match(html, /添加技术组合/);
     assert.equal((html.match(/aria-label="技术组合"/g) || []).length, 1);
     assert.equal(

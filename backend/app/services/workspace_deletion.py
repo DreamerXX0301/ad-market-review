@@ -1,0 +1,105 @@
+"""Reversible list visibility; immutable runs, results, pins and rounds stay intact."""
+import json
+from fastapi import HTTPException
+from app.core import connect, new_id, now_ms
+from app.services.task_service import TERMINAL
+
+
+def require_strategy_present(connection, strategy_id):
+    if connection.execute('SELECT 1 FROM strategy_deletion WHERE strategy_id=?',(strategy_id,)).fetchone():
+        raise HTTPException(409,'策略已移入回收站，请先恢复策略')
+
+
+def backtest_block_reason(row):
+    """A cancelled queued task has a stale calculation state by design."""
+    task=row.get('job_status')
+    if task not in TERMINAL:
+        return '回测任务尚未结束，请先取消任务，再移入回收站'
+    if row.get('lease_owner') is not None or row.get('lease_expires_at_ms') is not None:
+        return '回测执行租约尚未释放，请等待任务停止后再操作'
+    state=row['status']
+    if state in ('completed','failed','cancelled') or task=='cancelled':return None
+    return '回测计算与任务状态尚未同时结束，请先核对原任务'
+
+
+def _parameters(raw):
+    try:
+        value=json.loads(raw)
+        return value if isinstance(value,dict) else None
+    except (TypeError,ValueError):return None
+
+
+def strategy_block_reason(connection,strategy_id):
+    for row in connection.execute('SELECT b.*,j.status job_status,j.lease_owner,j.lease_expires_at_ms FROM backtest_run b JOIN job j USING(job_id) WHERE b.strategy_id=?',(strategy_id,)):
+        reason=backtest_block_reason(dict(row))
+        if reason:return reason
+    has_tracking=connection.execute("SELECT 1 FROM tracking_round WHERE strategy_id=? AND status='tracking' LIMIT 1",(strategy_id,)).fetchone() is not None
+    related_jobs={row[0] for row in connection.execute('SELECT job_id FROM selection_run WHERE strategy_id=?',(strategy_id,))}
+    jobs=connection.execute("SELECT * FROM job WHERE status NOT IN ('succeeded','no_change','partial','failed','cancelled') OR lease_owner IS NOT NULL OR lease_expires_at_ms IS NOT NULL")
+    for row in jobs:
+        parameters=_parameters(row['parameters_json'])
+        if parameters is None:
+            if row['kind'] in ('selection','tracking_review','source_check'):
+                return '存在无法核对策略引用的活动任务，请先核对或取消任务'
+            continue
+        target=parameters.get('target_type','stock')
+        if target=='sector':continue
+        if target!='stock':return '活动任务的策略目标类型无法核对，请先核对或取消任务'
+        references=row['job_id'] in related_jobs or parameters.get('strategy_id')==strategy_id
+        is_batch=parameters.get('operation') in ('strategy_batch','strategy_batch_item','strategy_batch_tracking')
+        ids=parameters.get('strategy_ids',[]) if is_batch else []
+        items=parameters.get('items',[]) if is_batch else []
+        if isinstance(ids,list) and all(isinstance(identifier,str) and identifier for identifier in ids):references=references or strategy_id in ids
+        else:return '活动批次的策略引用不完整，请先核对或取消批次'
+        if isinstance(items,list):
+            if any(not isinstance(item,dict) or not isinstance(item.get('strategy_id'),str) or not item['strategy_id'] for item in items):return '活动批次的策略引用不完整，请先核对或取消批次'
+            references=references or any(item.get('strategy_id')==strategy_id for item in items)
+        else:return '活动批次的策略引用不完整，请先核对或取消批次'
+        if is_batch and not ids and not items and not parameters.get('strategy_id'):
+            return '活动批次的策略引用不完整，请先核对或取消批次'
+        if row['kind']=='tracking_review' and not parameters.get('strategy_id') and has_tracking:references=True
+        if references:return '此策略仍被活动筛选、跟踪核验或批量任务引用，请先取消相关任务'
+    return None
+
+
+def strategy_visibility(connection,strategy_id):
+    marker=connection.execute('SELECT * FROM strategy_deletion WHERE strategy_id=?',(strategy_id,)).fetchone()
+    count=connection.execute('SELECT count(*) FROM backtest_run WHERE strategy_id=?',(strategy_id,)).fetchone()[0]
+    visible=connection.execute('SELECT count(*) FROM backtest_run b LEFT JOIN backtest_deletion d USING(backtest_id) WHERE b.strategy_id=? AND d.backtest_id IS NULL',(strategy_id,)).fetchone()[0]
+    reason=None if marker else strategy_block_reason(connection,strategy_id)
+    return {'deleted':marker is not None,'deleted_at_ms':marker['deleted_at_ms'] if marker else None,
+            'can_delete':marker is None and reason is None,'delete_blocked_reason':reason,
+            'can_restore':marker is not None,'restore_blocked_reason':None,
+            'backtest_count':count,'related_backtests_count':visible,'cascade_backtest_count':visible}
+
+
+def delete_strategy(strategy_id):
+    with connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        row=connection.execute('SELECT archived FROM strategy WHERE strategy_id=?',(strategy_id,)).fetchone()
+        if not row:raise HTTPException(404,'策略不存在')
+        old=connection.execute('SELECT * FROM strategy_deletion WHERE strategy_id=?',(strategy_id,)).fetchone()
+        if old:
+            count=connection.execute('SELECT count(*) FROM backtest_deletion WHERE strategy_deletion_id=?',(old['deletion_id'],)).fetchone()[0]
+            return {'strategy_id':strategy_id,'deleted':True,'deleted_at_ms':old['deleted_at_ms'],'affected_backtests':count}
+        reason=strategy_block_reason(connection,strategy_id)
+        if reason:raise HTTPException(409,reason)
+        identifier=new_id('strategy-deletion');stamp=now_ms()
+        connection.execute('INSERT INTO strategy_deletion VALUES(?,?,?,?)',(strategy_id,identifier,stamp,row['archived']))
+        connection.execute('UPDATE strategy SET archived=1 WHERE strategy_id=?',(strategy_id,))
+        changed=connection.execute('INSERT INTO backtest_deletion(backtest_id,deleted_at_ms,strategy_deletion_id) SELECT b.backtest_id,?,? FROM backtest_run b LEFT JOIN backtest_deletion d USING(backtest_id) WHERE b.strategy_id=? AND d.backtest_id IS NULL',(stamp,identifier,strategy_id)).rowcount
+        return {'strategy_id':strategy_id,'deleted':True,'deleted_at_ms':stamp,'affected_backtests':changed,
+                'tracking_preserved':True,'watchlist_preserved':True}
+
+
+def restore_strategy(strategy_id):
+    with connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        if not connection.execute('SELECT 1 FROM strategy WHERE strategy_id=?',(strategy_id,)).fetchone():raise HTTPException(404,'策略不存在')
+        marker=connection.execute('SELECT * FROM strategy_deletion WHERE strategy_id=?',(strategy_id,)).fetchone()
+        changed=0
+        if marker:
+            changed=connection.execute('DELETE FROM backtest_deletion WHERE strategy_deletion_id=?',(marker['deletion_id'],)).rowcount
+            connection.execute('UPDATE strategy SET archived=? WHERE strategy_id=?',(marker['previous_archived'],strategy_id))
+            connection.execute('DELETE FROM strategy_deletion WHERE strategy_id=?',(strategy_id,))
+        return {'strategy_id':strategy_id,'deleted':False,'deleted_at_ms':None,'affected_backtests':changed}
