@@ -390,6 +390,7 @@ export function MarketOverview({
                 )}
                 columns={[
                   { key: "name" },
+                  { key: "change_pct", align: "right" },
                   { key: "topics" },
                   { key: "open_times", title: "开板次数" },
                   { key: "amount", align: "right" },
@@ -443,6 +444,7 @@ export function MarketOverview({
                   sealMode === "funds"
                     ? [
                         { key: "name" },
+                        { key: "change_pct", align: "right" },
                         { key: "topics" },
                         {
                           key: "seal_money",
