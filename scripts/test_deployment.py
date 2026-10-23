@@ -114,6 +114,76 @@ def test_restore_rejects_checksum_tampering_before_target_creation(source,tmp_pa
     with pytest.raises(ValueError,match='checksum'):perform_restore(bundle,tmp_path/'target')
     assert not (tmp_path/'target').exists()
 
+def test_finder_metadata_created_and_modified_during_copy_is_not_backup_evidence(source,tmp_path,monkeypatch):
+    original_copy=backup_module.shutil.copyfile;original_sha=backup_module.sha;original_fsync=backup_module.os.fsync
+    metadata=[];mutations=0
+    def copy_with_finder(src,dst,*args,**kwargs):
+        result=original_copy(src,dst,*args,**kwargs)
+        stage=next((p for p in Path(dst).parents if p.name.startswith('.shixu-backup-')),None)
+        if stage and not metadata:
+            metadata.extend([stage/'.DS_Store',stage/'published/.DS_Store'])
+            for path in metadata:path.write_bytes(b'finder-first-state')
+        return result
+    def hash_business_only(path):
+        nonlocal mutations
+        assert Path(path).name!='.DS_Store','Finder metadata must never enter the SHA manifest'
+        for item in metadata:item.write_text('finder-updated-'+str(mutations))
+        if metadata:mutations+=1
+        return original_sha(path)
+    def fsync_business_only(descriptor):
+        info=os.fstat(descriptor)
+        assert all((info.st_dev,info.st_ino)!=(p.stat().st_dev,p.stat().st_ino) for p in metadata),'Finder metadata must not be fsynced as backup evidence'
+        return original_fsync(descriptor)
+    monkeypatch.setattr(backup_module.shutil,'copyfile',copy_with_finder)
+    monkeypatch.setattr(backup_module,'sha',hash_business_only)
+    monkeypatch.setattr(backup_module.os,'fsync',fsync_business_only)
+    bundle=tmp_path/'finder-bundle';perform_backup(source,bundle)
+    assert mutations>1
+    for relative in ('.DS_Store','published/.DS_Store'):(bundle/relative).write_bytes(b'finder-after-publication')
+    manifest=verify_backup(bundle)
+    assert not any(Path(item['path']).name=='.DS_Store' for item in manifest['files'])
+    restored=tmp_path/'finder-restored';perform_restore(bundle,restored)
+    assert (restored/'published/generation/reference.json').read_bytes()==(source/'published/generation/reference.json').read_bytes()
+    assert not list(restored.rglob('.DS_Store'))
+
+@pytest.mark.parametrize('relative',['extra-file','.DS_Store.extra','published/backup-manifest.json'])
+def test_restore_still_rejects_unlisted_files_with_other_names(source,tmp_path,relative):
+    bundle=tmp_path/'bundle';perform_backup(source,bundle)
+    extra=bundle/relative;extra.parent.mkdir(parents=True,exist_ok=True);extra.write_text('unlisted')
+    with pytest.raises(ValueError,match='inventory'):perform_restore(bundle,tmp_path/'restored')
+    assert not (tmp_path/'restored').exists()
+
+@pytest.mark.parametrize('relative',['.DS_Store','published/.DS_Store','extra-link'])
+def test_restore_rejects_symlinks_including_finder_metadata(source,tmp_path,relative):
+    bundle=tmp_path/'bundle';perform_backup(source,bundle)
+    outside=tmp_path/'outside';outside.write_text('must-not-be-followed')
+    link=bundle/relative;link.parent.mkdir(parents=True,exist_ok=True);link.symlink_to(outside)
+    with pytest.raises(ValueError,match='Symlink'):perform_restore(bundle,tmp_path/'restored')
+    assert not (tmp_path/'restored').exists()
+
+def test_backup_rejects_finder_named_symlink_injected_into_stage(source,tmp_path,monkeypatch):
+    original_copy=backup_module.shutil.copyfile;outside=tmp_path/'outside';outside.write_text('not-metadata')
+    injected=False
+    def copy_with_symlink(src,dst,*args,**kwargs):
+        nonlocal injected
+        result=original_copy(src,dst,*args,**kwargs)
+        stage=next((p for p in Path(dst).parents if p.name.startswith('.shixu-backup-')),None)
+        if stage and not injected:
+            (stage/'.DS_Store').symlink_to(outside);injected=True
+        return result
+    monkeypatch.setattr(backup_module.shutil,'copyfile',copy_with_symlink)
+    with pytest.raises(ValueError,match='Symlink'):perform_backup(source,tmp_path/'bundle')
+    assert injected and not (tmp_path/'bundle').exists()
+
+def test_old_manifest_listing_finder_metadata_requires_fresh_backup(source,tmp_path):
+    bundle=tmp_path/'bundle';perform_backup(source,bundle)
+    metadata=bundle/'published/.DS_Store';metadata.write_text('legacy-bad-manifest-entry')
+    path=bundle/'backup-manifest.json';manifest=json.loads(path.read_text())
+    manifest['files'].append({'path':'published/.DS_Store','bytes':metadata.stat().st_size,'sha256':sha(metadata)})
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError,match='fresh backup'):perform_restore(bundle,tmp_path/'restored')
+    assert not (tmp_path/'restored').exists()
+
 def test_restore_refuses_existing_even_empty_target(source,tmp_path):
     bundle=tmp_path/'bundle';perform_backup(source,bundle);target=tmp_path/'target';target.mkdir()
     with pytest.raises(ValueError,match='must not exist'):perform_restore(bundle,target)
