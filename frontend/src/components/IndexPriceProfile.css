@@ -1,0 +1,196 @@
+.index-price-profile {
+  margin: 10px 0 12px;
+  padding: 13px 15px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--blue) 3%, var(--surface));
+  container: index-profile / inline-size;
+}
+.index-profile-heading,
+.index-profile-reading,
+.index-profile-actions,
+.index-profile-title {
+  display: flex;
+  align-items: center;
+}
+.index-profile-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.index-profile-title {
+  gap: 10px;
+}
+.index-profile-title strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.index-profile-title > span {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--blue) 9%, transparent);
+  color: var(--blue);
+  font-size: 10px;
+}
+.index-profile-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.index-profile-lookbacks {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.index-profile-lookbacks button,
+.index-profile-locate {
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.index-profile-lookbacks button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--border));
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, var(--surface));
+}
+.index-profile-lookbacks button:hover,
+.index-profile-locate:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+.index-profile-lookbacks button:focus-visible,
+.index-profile-locate:focus-visible,
+.index-profile-method summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.index-profile-locate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: var(--border);
+}
+.index-profile-locate:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.index-profile-reading {
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+}
+.index-profile-sample {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--subtle);
+  font-variant-numeric: tabular-nums;
+}
+.index-profile-sample small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.index-profile-levels {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0;
+  margin: 0;
+  flex-shrink: 0;
+}
+.index-profile-level {
+  padding: 0 18px;
+  border-left: 1px solid var(--border);
+  min-width: 105px;
+}
+.index-profile-level:last-child {
+  padding-right: 0;
+}
+.index-profile-level dt {
+  font-size: 10px;
+  color: var(--muted);
+}
+.index-profile-level dd {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--blue);
+  font-variant-numeric: tabular-nums;
+}
+.index-profile-level.center dd {
+  color: var(--amber);
+}
+.index-profile-status {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--amber);
+}
+.index-profile-method {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.index-profile-method summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.index-profile-method p {
+  margin: 7px 0 0;
+  max-width: 100ch;
+}
+.index-profile-plot-label {
+  position: absolute;
+  top: 6px;
+  right: 18px;
+  width: 18%;
+  color: var(--muted);
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.3;
+  pointer-events: none;
+  z-index: 2;
+}
+@container index-profile (max-width: 650px) {
+  .index-profile-reading {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .index-profile-levels {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .index-profile-level {
+    min-width: 0;
+    padding: 0 10px;
+  }
+  .index-profile-level:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+@container index-profile (max-width: 380px) {
+  .index-profile-title {
+    gap: 6px;
+  }
+  .index-profile-actions {
+    gap: 6px;
+  }
+  .index-profile-lookbacks button {
+    padding-inline: 6px;
+  }
+  .index-profile-level dd {
+    font-size: 15px;
+  }
+}

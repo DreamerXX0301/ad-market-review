@@ -4,6 +4,7 @@ import type { EChartsOption } from "echarts";
 import {
   BarChart,
   CandlestickChart,
+  CustomChart,
   HeatmapChart,
   LineChart,
   ScatterChart,
@@ -45,6 +46,9 @@ import { candleChange } from "./candleChange";
 import { bollCandleValues, chartBoll } from "./chartBoll";
 import { chartPaneLayout } from "./chartPaneLayout";
 import { chartSinceReturn } from "./chartSinceReturn";
+import { indexPriceProfile } from "./indexPriceProfile";
+import IndexPriceProfileSummary from "./IndexPriceProfileSummary";
+import { buildIndexProfileSeries } from "./indexPriceProfilePresentation";
 import {
   curveAxisAmount,
   curvePercent,
@@ -130,6 +134,7 @@ export type { ChartEventBaseline } from "./chartDisplay";
 echarts.use([
   BarChart,
   CandlestickChart,
+  CustomChart,
   HeatmapChart,
   LineChart,
   ScatterChart,
@@ -286,10 +291,15 @@ export function CandleChart({
   }
   function zoomBy(delta: number) {
     const current = zoomWindow.current;
-    const width = Math.min(
-      100,
-      Math.max(5, current.end - current.start + delta),
-    );
+    const currentWidth = current.end - current.start;
+    const profileZoom = profileShownRef.current;
+    const step = profileZoom
+      ? Math.sign(delta) * Math.min(Math.abs(delta), currentWidth * 0.25)
+      : delta;
+    const minimum = profileZoom
+      ? Math.min(5, 800 / Math.max(1, latestBars.current.length - 1))
+      : 5;
+    const width = Math.min(100, Math.max(minimum, currentWidth + step));
     const center = (current.start + current.end) / 2;
     const start = Math.min(100 - width, Math.max(0, center - width / 2));
     zoomTo(start, start + width);
@@ -309,6 +319,60 @@ export function CandleChart({
   );
   const data = frozenMode ? frozenChartsByPeriod[period] || null : result.data;
   const bars: Row[] = data?.bars || [];
+  const profileEnabled =
+    isIndex &&
+    !frozenMode &&
+    !dataEndpoint &&
+    preferences.indexShowPriceProfile;
+  const profile = useMemo(
+    () =>
+      profileEnabled && period === "D" && data
+        ? indexPriceProfile(bars, {
+            asOf: data.as_of,
+            lookback: preferences.indexPriceProfileLookback,
+            bins: 32,
+          })
+        : null,
+    [profileEnabled, period, data, preferences.indexPriceProfileLookback],
+  );
+  const profileShown = !!profile?.rows.length;
+  const profileShownRef = useRef(profileShown);
+  profileShownRef.current = profileShown;
+  const profileAxisData = useRef({ profile, bars, mas });
+  profileAxisData.current = { profile, bars, mas };
+  function profilePriceBounds() {
+    const { profile, bars, mas } = profileAxisData.current;
+    if (!profile?.rows.length) return null;
+    const first = Math.max(
+      0,
+      Math.floor((zoomWindow.current.start / 100) * (bars.length - 1)),
+    );
+    const end = Math.min(
+      bars.length,
+      Math.ceil((zoomWindow.current.end / 100) * (bars.length - 1)) + 1,
+    );
+    const visibleValues = bars
+      .slice(first, end)
+      .flatMap((bar) => [
+        bar.low,
+        bar.high,
+        ...mas.map(
+          (window) => bar["ma" + window] ?? bar.indicators?.["ma" + window],
+        ),
+      ])
+      .filter(
+        (value): value is number =>
+          typeof value === "number" && Number.isFinite(value) && value > 0,
+      );
+    const low = Math.min(profile.rows[0].low, ...visibleValues);
+    const high = Math.max(profile.rows.at(-1)!.high, ...visibleValues);
+    const padding = Math.max((high - low) * 0.06, high * 0.001);
+    return { min: low - padding, max: high + padding };
+  }
+  function locateProfile() {
+    const first = bars.findIndex((bar) => bar.date === profile?.startDate);
+    if (first >= 0) zoomTo((first / Math.max(1, bars.length - 1)) * 100, 100);
+  }
   const annotations = useChartAnnotations(
     instrumentId,
     data,
@@ -348,6 +412,9 @@ export function CandleChart({
   const latestBars = useRef(bars);
   latestBars.current = bars;
   useEffect(() => setActiveDate(null), [instrumentId, asOf, period]);
+  useEffect(() => {
+    if (profileShown) locateProfile();
+  }, [profileShown, profile?.startDate, profile?.endDate, instrumentId]);
   useEffect(() => setWavePatternKey("latest"), [instrumentId, asOf, period]);
   useEffect(() => {
     setWavePatternKey("latest");
@@ -455,14 +522,17 @@ export function CandleChart({
   const option = useMemo(() => {
     const pal = chartPalette(),
       dates = bars.map((b) => b.date);
-    const grids: any[] = [{ left: 62, right: 20, top: 24, height: mainHeight }],
+    const chartRight = profileShown ? "25%" : 20;
+    const grids: any[] = [
+        { left: 62, right: chartRight, top: 24, height: mainHeight },
+      ],
       xaxes: any[] = [],
       yaxes: any[] = [],
       series: any[] = [];
     chosen.forEach((k, i) =>
       grids.push({
         left: 62,
-        right: 20,
+        right: chartRight,
         top: paneTops[i],
         height: paneHeights[i],
       }),
@@ -485,6 +555,7 @@ export function CandleChart({
         axisPointer: { label: { backgroundColor: "#435d7d" } },
       });
       yaxes.push({
+        id: i === 0 ? "candle-main-price" : `candle-pane-${i}`,
         type: "value",
         gridIndex: i,
         scale: true,
@@ -503,6 +574,108 @@ export function CandleChart({
         axisLine: { show: false },
       });
     });
+    // The distribution uses a count axis; only the original date axes zoom.
+    const dateAxisIndices = grids.map((_, i) => i);
+    if (profileShown && profile) {
+      const bounds = profilePriceBounds()!;
+      Object.assign(yaxes[0], bounds);
+      const ix = grids.length;
+      grids.push({ left: "79%", right: 12, top: 24, height: mainHeight });
+      xaxes.push({
+        type: "value",
+        gridIndex: ix,
+        min: 0,
+        max: Math.max(1, ...profile.rows.map((row) => row.count)) * 1.12,
+        splitNumber: 2,
+        minInterval: 1,
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: pal.text, fontSize: 9 },
+        splitLine: { show: false },
+        axisPointer: { show: false },
+      });
+      yaxes.push({
+        id: "index-profile-price",
+        type: "value",
+        gridIndex: ix,
+        ...bounds,
+        axisLabel: { show: false },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
+        axisPointer: { show: false },
+      });
+      series.push(
+        buildIndexProfileSeries(profile, {
+          axisIndex: ix,
+          palette: {
+            center: "#e8c16b",
+            valueArea: "#70a6f8",
+            outside: "#3b5476",
+            boundary: pal.line,
+            text: pal.text,
+          },
+        }),
+      );
+      series.push({
+        name: "分布参照",
+        type: "line",
+        data: [],
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        silent: true,
+        tooltip: { show: false },
+        markArea: {
+          silent: true,
+          itemStyle: { color: "rgba(112,166,248,.045)" },
+          data: [[{ yAxis: profile.val }, { yAxis: profile.vah }]],
+        },
+        markLine: {
+          silent: true,
+          symbol: "none",
+          animation: false,
+          lineStyle: { type: "dashed", width: 1 },
+          label: {
+            show: true,
+            position: "insideEndTop",
+            fontSize: 10,
+            backgroundColor: pal.bg,
+            padding: [2, 4],
+          },
+          data: [
+            {
+              yAxis: profile.center,
+              lineStyle: { color: "#e8c16b" },
+              label: {
+                color: "#e8c16b",
+                formatter: `中心 ${num(profile.center)}`,
+              },
+            },
+            {
+              yAxis: profile.vah,
+              lineStyle: { color: "#79b4e9" },
+              label: {
+                color: "#79b4e9",
+                formatter: `上沿 ${num(profile.vah)}`,
+              },
+            },
+            {
+              yAxis: profile.val,
+              lineStyle: { color: "#a795d9" },
+              label: {
+                color: "#a795d9",
+                formatter: `下沿 ${num(profile.val)}`,
+              },
+            },
+          ].filter(
+            (guide, index, guides) =>
+              guides.findIndex(
+                (candidate) => candidate.yAxis === guide.yAxis,
+              ) === index,
+          ),
+        },
+      });
+    }
     series.push({
       name: "K线",
       type: "candlestick",
@@ -792,7 +965,7 @@ export function CandleChart({
       backgroundColor: "transparent",
       grid: grids,
       axisPointer: {
-        link: [{ xAxisIndex: "all" }],
+        link: [{ xAxisIndex: dateAxisIndices }],
         lineStyle: { color: "#61758e", type: "dashed" },
       },
       tooltip: {
@@ -888,7 +1061,7 @@ export function CandleChart({
       dataZoom: [
         {
           type: "inside",
-          xAxisIndex: grids.map((_, i) => i),
+          xAxisIndex: dateAxisIndices,
           start: zoomWindow.current.start,
           end: zoomWindow.current.end,
           zoomOnMouseWheel: true,
@@ -899,7 +1072,7 @@ export function CandleChart({
         },
         {
           type: "slider",
-          xAxisIndex: grids.map((_, i) => i),
+          xAxisIndex: dateAxisIndices,
           bottom: 3,
           height: 17,
           borderColor: "transparent",
@@ -941,6 +1114,8 @@ export function CandleChart({
     historyViews,
     showHistoricalEvents,
     annotations.visible,
+    profile,
+    profileShown,
   ]);
   return (
     <div className="candle-chart">
@@ -1058,6 +1233,15 @@ export function CandleChart({
             color="#b292f0"
           />
         )}
+        {isIndex && !frozenMode && !dataEndpoint && (
+          <ChartToggle
+            label="价格分布"
+            title="四度空间的日线区间观察：按报价日统计经过的点位档，非盘中TPO或真实筹码"
+            checked={preferences.indexShowPriceProfile}
+            onChange={(value) => update({ indexShowPriceProfile: value })}
+            color="#e8c16b"
+          />
+        )}
         {supportsLimits && period === "D" && (
           <ChartToggle
             label="涨跌停标记"
@@ -1110,6 +1294,24 @@ export function CandleChart({
         </div>
       </div>
       <ChartAnnotationPanel state={annotations} />
+      {profileEnabled && period !== "D" && (
+        <div className="source-line">
+          价格分布使用日线区间；切回日 K 查看，不以周/月高低点替代日线。
+          <button className="btn small" onClick={() => setPeriod("D")}>
+            查看日线分布
+          </button>
+        </div>
+      )}
+      {profile && (
+        <IndexPriceProfileSummary
+          profile={profile}
+          lookback={preferences.indexPriceProfileLookback}
+          onLookbackChange={(value) =>
+            update({ indexPriceProfileLookback: value })
+          }
+          onLocate={locateProfile}
+        />
+      )}
       {waves && showWaves && (
         <div className="chart-wave-selectors">
           <label>
@@ -1274,6 +1476,9 @@ export function CandleChart({
         <div
           className={`candle-plot${annotations.drawing ? " drawing-line" : ""}`}
         >
+          {profileShown && (
+            <span className="index-profile-plot-label">触及报价日数</span>
+          )}
           <EChart
             option={option}
             height={actualHeight}
@@ -1296,6 +1501,18 @@ export function CandleChart({
                     start: current.start ?? 0,
                     end: current.end ?? 100,
                   };
+                if (profileShownRef.current) {
+                  const bounds = profilePriceBounds();
+                  // Merge only prices while dragging; rebuilding date axes
+                  // would interrupt the slider's in-progress interaction.
+                  if (bounds)
+                    c.setOption({
+                      yAxis: [
+                        { id: "candle-main-price", ...bounds },
+                        { id: "index-profile-price", ...bounds },
+                      ],
+                    });
+                }
               });
               c.on("updateAxisPointer", (event: any) => {
                 const axis = event.axesInfo?.find(
@@ -1455,8 +1672,12 @@ export function CandleChart({
           ))}
         </div>
         <span>
-          {period === "D" ? "默认最近100根 · " : "默认全范围 · "}滚轮 / 双指缩放
-          · 拖拽平移 · 联动十字线
+          {profileShown
+            ? "分布范围固定 · "
+            : period === "D"
+              ? "默认最近100根 · "
+              : "默认全范围 · "}
+          滚轮 / 双指缩放 · 拖拽平移 · 联动十字线
         </span>
       </div>
       {(!!historyViews.length || historicalChecksReason) && (
