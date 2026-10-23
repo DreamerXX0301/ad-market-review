@@ -41,6 +41,13 @@ def check_db(c):
 def retained_snapshots(c):
     return [dict(r) for r in c.execute("SELECT s.* FROM dataset_snapshot s LEFT JOIN snapshot_gc g USING(snapshot_id) WHERE s.state='published' AND (g.state IS NULL OR g.state='available')")]
 
+def reject_incomplete_collection(c):
+    """A partial unlink ledger is not a self-contained recoverable backup."""
+    if c.execute("SELECT 1 FROM snapshot_gc WHERE state='gc_pending' LIMIT 1").fetchone():raise ValueError('Cannot back up incomplete GC; finish or resume its exact maintenance ledger first')
+    table=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_storage_collection'").fetchone()
+    if table and c.execute("SELECT 1 FROM market_storage_collection WHERE status<>'completed' LIMIT 1").fetchone():raise ValueError('Cannot back up incomplete market storage collection; finish its exact maintenance ledger first')
+
+
 def make_pins(c,snapshots,owner):
     now=time.time_ns()//1000000
     c.execute('BEGIN IMMEDIATE')
@@ -97,10 +104,22 @@ def supplement_files(published):
         elif relative.parts[0]=='indexes':
             index=document(root/relative)
             if not isinstance(index,dict) or index.get('version')!='market-supplement-v1':raise ValueError('Invalid public supplement index version')
-            for field in ('public_pools','annual_pools','annual_down_pools','fund_flows'):
+            storage_version=index.get('storage_version')
+            if storage_version not in (None,'supplement-index-v2'):raise ValueError('Invalid public supplement index storage version')
+            for field in ('public_pools','annual_pools','annual_down_pools','fund_flows','sector_index_history'):
                 records=index.get(field,{})
                 if not isinstance(records,dict):raise ValueError('Invalid public supplement index records')
-                for record in records.values():raw_reference(record)
+                for record in records.values():
+                    if storage_version=='supplement-index-v2' and isinstance(record,dict):
+                        if set(record)!={'record_ref','sha256'}:raise ValueError('Invalid compact supplement record reference')
+                        record=document(reference(record,'record_ref','sha256','artifacts'))
+                        payloads=record.get('__supplement_fields_v1',{})
+                        if not isinstance(payloads,dict) or len(payloads)>64:raise ValueError('Invalid compact supplement field references')
+                        for field_name,pointer in payloads.items():
+                            if field_name in record or not isinstance(pointer,dict) or set(pointer)!={'record_ref','sha256'}:raise ValueError('Invalid compact supplement field pointer')
+                            payload=document(reference(pointer,'record_ref','sha256','artifacts'))
+                            if not isinstance(payload,dict) or set(payload)!={'__supplement_payload_v1'}:raise ValueError('Invalid compact supplement payload')
+                    raw_reference(record)
     if 'market-supplement/head.json' in required:
         head=document(root/'head.json')
         if not isinstance(head,dict) or head.get('version')!='market-supplement-v1':raise ValueError('Invalid public supplement head')
@@ -126,6 +145,7 @@ def needed_files(c,published):
             for item in manifest.get('summary',{}).get('files',[]):
                 key=Path(item['path'])
                 if key.parts and key.parts[0]=='published':key=Path(*key.parts[1:])
+                if str(key) in required and required[str(key)] not in (None,item['sha256']):raise ValueError('Conflicting market object hashes')
                 required[str(key)]=item['sha256']
     for key,expected in supplement_files(published).items():
         if key in required and required[key] not in (None,expected):raise ValueError('Conflicting public supplement artifact hashes')
@@ -145,6 +165,7 @@ def perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credentia
     stage=Path(tempfile.mkdtemp(prefix='.shixu-backup-',dir=output.parent));stage.chmod(0o700)
     owner='backup-'+uuid.uuid4().hex;source=connect_sqlite(db)
     try:
+        reject_incomplete_collection(source)
         make_pins(source,retained_snapshots(source),owner)
         (stage/'business').mkdir()
         dest=sqlite3.connect(stage/'business/app.sqlite3')
@@ -152,6 +173,7 @@ def perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credentia
         finally:dest.close()
         copied=connect_sqlite(stage/'business/app.sqlite3','ro')
         try:
+            reject_incomplete_collection(copied)
             required,snapshots=needed_files(copied,published)
             # A publication could have committed between initial pins and the online snapshot.
             # Pin its exact captured dependencies before copying; unavailable files make backup fail.

@@ -65,6 +65,27 @@ def prior_ladder_feedback(market,reference,day,indexed):
             if not row:continue
             change=row.get('change_pct');height=event.get('board_num')
             found[symbol]={**row,'previous_board_count':height,'previous_board_date':previous,'feedback':'跌停反馈' if symbol in down else '明显回落' if number(change) and change<=-5 else '下跌分歧' if number(change) and change<0 else '上涨' if number(change) and change>0 else '待核验' if not number(change) else '平盘','sample_basis':'上一交易日已留存连板股'}
+    if not found:return []
+    status=market.status()
+    if day==status.get('data_end'):
+        from app.services.stock_memberships import current_memberships
+        classifications=current_memberships(market,found,expected_day=day)
+        memberships=classifications['memberships'];scope=classifications['scope'];state='current_partial'
+    else:
+        local,coverage=resolve_reference('sectors',day,status,reference)
+        memberships={symbol:[] for symbol in found}
+        for topic in local.get('topics',[]):
+            for symbol in set(topic.get('instrument_ids',[])) & found.keys():
+                memberships[symbol].append({'topic_id':topic.get('topic_id'),'name':topic.get('name'),
+                    'kind':topic.get('kind','concept'),'source_observed_date':topic.get('observed_date'),
+                    'members_complete':topic.get('members_complete') is True})
+        scope=coverage.get('notice','观察日已留存成员，不回填当前归属')
+        state='dated_partial' if coverage.get('selected_date_available') else 'unknown'
+    for symbol,row in found.items():
+        tags=memberships.get(symbol,[])
+        row.update(topics=[tag for tag in tags if tag.get('kind')!='industry'],
+            industries=[tag for tag in tags if tag.get('kind')=='industry'],topics_state=state,
+            topics_observed_date=day,topics_scope=scope)
     return sorted(found.values(),key=lambda r:r.get('change_pct') if number(r.get('change_pct')) else 1e6)
 
 

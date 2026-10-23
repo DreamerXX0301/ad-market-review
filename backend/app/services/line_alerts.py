@@ -37,11 +37,14 @@ def annotation_view(row):
     result = dict(row)
     result['alert_modes'] = json.loads(result.pop('alert_modes_json','[]'))
     result['auto_watchlist'] = bool(result.get('auto_watchlist',False))
+    result['origin'] = json.loads(result.pop('origin_json','{}'))
+    result.pop('origin_key', None)
+    result.pop('instrument_kind', None)
     return result
 
 
 def active_rules(connection):
-    return [annotation_view(row) for row in connection.execute("SELECT * FROM chart_annotation WHERE line_type!='reference' AND json_array_length(alert_modes_json)>0 ORDER BY annotation_id")]
+    return [annotation_view(row) for row in connection.execute("SELECT * FROM chart_annotation WHERE instrument_kind='stock' AND line_type!='reference' AND json_array_length(alert_modes_json)>0 ORDER BY annotation_id")]
 
 
 def _signature(rules):

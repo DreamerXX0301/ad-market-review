@@ -23,7 +23,7 @@ def execute_topic_collection(job_id,progress=None):
     else:
         status=get_market().status()
         if not status.get('ready'):raise ValueError('请先完成真实行情初始化，再同步题材成员')
-        plan={'generation':status['snapshot_id'],'collected_at':datetime.now(timezone.utc).isoformat(),'observed_date':datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()}
+        plan={'generation':status['snapshot_id'],'collected_at':datetime.now(timezone.utc).isoformat(),'observed_date':datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat(),'storage_layout':'market-partitions-v1'}
         atomic_json(plan_path,plan)
     market=MarketData(data_dir(),snapshot_id=plan['generation']);status=market.status();reference=market.reference()
     with connect() as connection:job=connection.execute('SELECT target_date FROM job WHERE job_id=?',(job_id,)).fetchone()
@@ -83,7 +83,11 @@ def execute_topic_collection(job_id,progress=None):
     envelope('fuyao_abnormal_current',reference.get('abnormal',[]))
     atomic_json(raw/'fuyao_ladder_30d.json',{'data':reference.get('ladder',{})})
     atomic_json(raw/'fuyao_pool_history.json',reference.get('pool_history',{}))
-    base=Path(status['path']);shutil.copyfile(base/'raw-daily.parquet',directory/'year.parquet')
+    base=Path(status['path'])
+    import duckdb
+    con=duckdb.connect(':memory:')
+    try:con.execute('COPY (SELECT * FROM read_parquet(?) ORDER BY thscode,date_ms) TO ? (FORMAT PARQUET,COMPRESSION ZSTD)',[str(directory/'year.parquet'),market.parquet_input('raw-daily.parquet')])
+    finally:con.close()
     if (base/'corporate-actions.parquet').exists():shutil.copyfile(base/'corporate-actions.parquet',raw/'fuyao_bulk_adjustments.parquet')
     if failures:warnings.append(f'{len(failures)}个题材成员未取得，本次不宣称全量覆盖')
     warnings.extend([w for w in status.get('warnings',[]) if '题材' not in w])
@@ -93,8 +97,11 @@ def execute_topic_collection(job_id,progress=None):
     # Re-publication must preserve unknown, rather than turning that bound into
     # a claimed exact missing-row count. The lower bound stays in coverage.
     bundle={'source':'fuyao','price_basis':'none','daily_file':'year.parquet','collected_at':plan['collected_at'],'quality_warnings':warnings,'unexplained_missing':missing,'coverage':status.get('coverage',{}),'pool_trade_date':reference.get('pool_trade_date',status['data_end']),'pool_history_file':'fuyao_pool_history.json','topic_files':definitions,'topic_coverage':f'{len(definitions)}/{total}个当前题材成员快照','sectors_snapshot_date_semantics':'current_unverified_trade_date','sectors_snapshot_observed_at':plan['collected_at'],'pool_coverage':pool_coverage}
+    if plan.get('storage_layout'):bundle['storage_layout']=plan['storage_layout']
     atomic_json(directory/'bundle.json',bundle);atomic_json(directory/'collection-quality.json',{'topic_count':len(definitions),'catalog_count':total,'failures':failures,'sector_count':len(sectors)})
     if progress:progress('题材校验',81,'构建固定行情代际与完整成员库')
     imported=MarketData(data_dir()).import_audit(directory,lambda stage,p:progress(stage,81+int(p*.01)) if progress else None)
     result=register_market(imported,job_id,progress)
-    return {**result,'quality':'partial','topic_count':len(definitions),'catalog_count':total,'message':'真实当前题材成员库已发布'}
+    from app.services.market_derived_cleanup import release_after_publication
+    cleanup=release_after_publication(job_id,directory,imported,plan,source_kind='topics')
+    return {**result,'quality':'partial','topic_count':len(definitions),'catalog_count':total,'message':'真实当前题材成员库已发布','derived_cleanup':cleanup}

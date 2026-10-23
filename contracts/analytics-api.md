@@ -4,7 +4,7 @@
 
 ## 日期、身份与覆盖
 
-`GET /data/status` 的 `summary` 与 `/bootstrap` 的 `data_summary` 保留 `storage_bytes`，含义为本实例 `published` 中已计量普通文件的逻辑字节，新增 `storage_accounting` 明细。`scope=active_published_root`；`logical_bytes/allocated_bytes/file_count/complete` 与五个 `categories`（`current_market/old_market/supplement/backtests/metadata_other`）使用同一遍只读文件遍历，分类逻辑字节与文件数严格加总，`storage_bytes=logical_bytes`。当前行情按本实例SQLite主行情head识别，其他已有行情代际单列，旧代际不表示可删除。统计排除staging、符号链接及特殊文件；扫描失败时 `complete=false`，数值只是已计量小计。`allocated_bytes` 为可取得的每文件 `st_blocks*512` 之和，未知为null，不去重硬链接或共享块，不等于独占占用或可释放空间。界面默认十进制GB，详情列GiB与字节；业务库、raw、work、其他运行版本及备份不在此统计内。页面读取不递归统计其他实例或备份，不进行内容SHA重算或清理。
+`GET /data/status` 的 `summary` 与 `/bootstrap` 的 `data_summary` 保留 `storage_bytes`，含义为本实例 `published` 中已计量普通文件的逻辑字节，新增 `storage_accounting` 明细。`scope=active_published_root`；`logical_bytes/allocated_bytes/file_count/complete` 与六个 `categories`（`current_market/old_market/shared_market/supplement/backtests/metadata_other`）使用同一遍只读文件遍历，分类逻辑字节与文件数严格加总，`storage_bytes=logical_bytes`。当前行情按本实例SQLite主行情head识别，其他已有行情代际单列，旧代际不表示可删除。`shared_market` 单独计量 `market-objects` 的跨版本共享对象，一个对象只按文件计量一次；代际自身的清单与独有文件仍计入 current/old。前端兼容旧API的五类构成，但不能遗漏共享对象后声称总量完整。统计排除staging、符号链接及特殊文件；扫描失败时 `complete=false`，数值只是已计量小计。`allocated_bytes` 为可取得的每文件 `st_blocks*512` 之和，未知为null，不去重硬链接或共享块，不等于独占占用或可释放空间。界面默认十进制GB，详情列GiB与字节；业务库、raw、work、其他运行版本及备份不在此统计内。页面读取不递归统计其他实例或备份，不进行内容SHA重算或清理。
 
 - `date`/`as_of` 必须属于已发布范围内的完成市场交易日；未来、无效格式或越界日期拒绝。盘面日期不会修改业务时钟。
 - 股票/指数使用完整证券 ID，例如 `000001.SH` 与 `000001.SZ`；板块使用已核验目录的完整来源 `topic_code`。
@@ -119,11 +119,15 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 
 ## 统一个股统计
 
-个股图表支持独立的个人水平线：`GET/POST /instruments/{id}/annotations`，`PATCH/DELETE /instruments/{id}/annotations/{annotation_id}`。价格、名称与颜色写入业务库，不修改来源K线、指标、策略或跟踪状态。只接受已留存个股，每只最多64条；未复权水平线跨日/周/月共用，前复权水平线固定记录锚定日。切换价格口径时隐藏不相符的线；切换前复权锚时仅按上述同代际、有界覆盖证据换算展示，其余在管理列表保留隐藏原因，不能直接把原价水平线画到复权价格轴上。
+个股及已留存大盘指数图表支持独立的个人水平线：`GET/POST /instruments/{id}/annotations`，`PATCH/DELETE /instruments/{id}/annotations/{annotation_id}`。价格、名称与颜色写入业务库，不修改来源K线、指标、策略或跟踪状态。每个标的最多64条；未复权水平线跨日/周/月共用，前复权水平线固定记录锚定日。切换价格口径时隐藏不相符的线；切换前复权锚时仅按上述同代际、有界覆盖证据换算展示，其余在管理列表保留隐藏原因，不能直接把原价水平线画到复权价格轴上。指数仅使用原始点位，`alert_modes=[]/auto_watchlist=false`；服务层和SQLite约束共同禁止其进入个股提醒，规则消费显式排除指数。板块图不使用此个股/大盘入口。
+
+`POST /instruments/{id}/annotations/recommendations` 由用户手动计算本地支撑压力候选，不联网、不创建任务、不写行情或业务标记。参数为 `{period:"D"|"W"|"M",as_of?,price_basis:"none"|"forward",lookback:20..240,snapshot_id?}`；默认D/120根/已发布尾日/未复权，UI使用当前图表周期、观察日、实际口径及代际。需要已发布范围内的交易日，版本变化返回409，前复权不能暗中降级。仅读取所选证券的已发布日价，周/月聚合为完整周期；不会计算或读取全市场广度、策略或未来价格。算法 `confirmed-pivot-cluster-v1` 使用左右各2根完整且连续报价确认严格高低分型，再将同侧最大跨度0.8%内的价位取算术均价；相对观察日最近已发布日收盘分别保留最近的至多3条支撑和3条压力（reference_date明确日报价日期，周/月未完成柱不参与分型确认）。日线缺报价、周/月缺周期或未完成周期阻断确认，未复权公司行动重新起算可比区间，个股公司行动覆盖未知时不生成可比候选。无候选返回明确reason，不编造点位。
+
+预览返回冻结的 `parameters/preview_id`、`reference_price/reference_date/window_start/window_end/observed_bars/complete_bars/algorithm/pivot_wing/cluster_pct/notice/reason` 和 `items`。每项包含 `candidate_id/line_type/price/distance_pct/touches/last_pivot_date/confirmed_on/evidence/price_basis/anchor_date/origin/saved`，evidence逐项保留分型日期、价格及右侧确认日期。`POST .../recommendations/save` 接受 `{parameters,preview_id,candidate_ids}`（1至6项），服务端按冻结上下文重算并校验后短事务原子保存；`origin_key`幂等，不覆盖手工线或已修改的自动线。返回 `created/reused/total_saved/alerts_enabled:false`。保存仍使用普通annotation，但默认不启用提醒或自动自选。`origin`持久化算法、原候选价、观察日、周期、来源行情snapshot_id、窗口及分型证据；后续手动改价或类型标记 `manual_override:true`，不抹去来源。重算只改变临时预览，刷新后已保存线仍在，预览不跨证券/周期/观察日/代际沿用。
 
 `GET /instruments/{id}?as_of=` 是搜索、盘面榜单、行业题材成员、自选、策略和跟踪共同使用的详情入口，图表偏好共用同一个股存储键，调用入口不提供另一套题材或报价。头部从该详情的真实未复权日收盘及实际报价日期读取，明确非实时；悬停历史K线或切换周/月不改变头部日收盘。观察日无报价时应标明最近实际报价日期或保持未知，不能将旧报价冒充当日成交。行情摘要仍由下述 summary 接口按观察日核验。
 
-详情新增 `current_topics/current_industries/current_topics_observed_date/current_topics_scope`。分类项为 `{topic_id,name,kind,source_observed_date,members_complete}`，与自选列表共用当前本地题材目录和人工增删语义；`current_topics_observed_date` 是当前业务关系有效日，每个来源采集日另列。无论图表回看哪天，该组都明确标为“当前归属”，不能当作历史成员、当日主线或上涨原因。原 `topics` 仍按详情观察日可用性返回，历史缺档不回填当前分类。此分类读取只读SQLite和本地来源目录，不读worker活动DuckDB、不联网、不创建研究/策略/跟踪；人工修改下次读取生效，不跟随行情缓存固化。空数组只表示暂无已知正归属。
+详情新增 `current_topics/current_industries/current_topics_observed_date/current_topics_scope`。分类项为 `{topic_id,name,kind,source_observed_date,members_complete,origin,manual_override,provider_member}`，与自选列表共用当前本地题材目录和人工增删语义；`current_topics_observed_date` 是当前业务关系有效日，每个来源采集日另列。无论图表回看哪天，该组都明确标为“当前归属”，不能当作历史成员、当日主线或上涨原因。原 `topics` 仍按详情观察日可用性返回，历史缺档不回填当前分类。此分类读取只读SQLite和本地来源目录，不读worker活动DuckDB、不联网、不创建研究/策略/跟踪；人工修改下次读取生效，不跟随行情缓存固化。空数组只表示暂无已知正归属。`GET /stock-topic-memberships/{instrument_id}`返回同组字段及证券ID，供详情手动补充后轻量刷新，不读历史报价。详情“补充题材”复用`POST /topic-members/associate`原子追加已有归属；新建使用`POST /topics`携带单股instrument_ids同事务创建与关联，失败不留下半成品。新建题材和人工加入均明确标记人工来源，当前业务日生效，不回填历史。
 
 `GET /instruments/{id}/summary?as_of=` 仅适用于已留存股票，不用于指数/板块。返回身份、`board/board_label/as_of/data_date/quote_date/snapshot_id/quote_available/close` 及：
 

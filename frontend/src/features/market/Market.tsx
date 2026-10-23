@@ -32,6 +32,7 @@ import "./MarketOverview.css";
 import { AmountActivityCell, AmountActivitySummary } from "./AmountActivity";
 import { SectorActivityCell, SectorActivityCoverage } from "./SectorActivity";
 import FundTrend from "./FundTrend";
+import { flowDisplayState } from "./marketFlowAvailability";
 import MarketDataCoverage from "./MarketDataCoverage";
 import EmotionStage from "./EmotionStage";
 import EmotionDashboard from "./EmotionDashboard";
@@ -214,8 +215,7 @@ export function MarketOverview({
   onStock: (id: string, navigation?: StockNavigation) => void;
   indicesOnly?: boolean;
 }) {
-  const [selected, setSelected] = useState("000001.SH"),
-    [sealMode, setSealMode] = useState("funds");
+  const [selected, setSelected] = useState("000001.SH");
   const result = useApi<Row>(date ? `/market/overview?date=${date}` : null);
   const data = result.data;
   const indices =
@@ -330,7 +330,7 @@ export function MarketOverview({
                 <span className="note-dot amber" />
                 <div>
                   <strong>先核验，再形成结论</strong>
-                  <p>真实筹码、封单时序与全天资金轮动需要额外数据。</p>
+                  <p>来源缺口保持未知，成交额与资金净流入分别核验。</p>
                 </div>
               </div>
               <Warnings items={data?.warnings} />
@@ -450,67 +450,30 @@ export function MarketOverview({
               />
             </Panel>
             <Panel
-              title={
-                sealMode === "funds"
-                  ? "封单资金前五 · 收盘快照"
-                  : "封单最稳 · 前五"
-              }
-              subtitle={
-                sealMode === "funds"
-                  ? "按已留存单次封单金额排序，金额大不等于稳定"
-                  : "基于连续盘口样本，不按日末封单推断"
-              }
-              actions={
-                <div className="segmented">
-                  <button
-                    className={sealMode === "funds" ? "active" : ""}
-                    onClick={() => setSealMode("funds")}
-                  >
-                    封单金额
-                  </button>
-                  <button
-                    className={sealMode === "stable" ? "active" : ""}
-                    onClick={() => setSealMode("stable")}
-                  >
-                    稳定性
-                  </button>
-                </div>
-              }
+              title="封单资金前五 · 收盘快照"
+              subtitle="按已留存单次封单金额排序，金额大不等于稳定"
             >
               <SortableMarketTable
-                key={sealMode}
                 sortScope="仅对当前已入选前五样本重排"
-                defaultSort={
-                  sealMode === "funds"
-                    ? { key: "seal_money", order: "desc" }
-                    : { key: "seal_cv", order: "asc" }
-                }
-                rows={(sealMode === "funds"
-                  ? data?.seal_funds_top5 || data?.largest_seals || []
-                  : data?.stable_seal_top || data?.seal_stability?.items || []
+                defaultSort={{ key: "seal_money", order: "desc" }}
+                rows={(
+                  data?.seal_funds_top5 ||
+                  data?.largest_seals ||
+                  []
                 ).slice(0, 5)}
-                columns={
-                  sealMode === "funds"
-                    ? [
-                        { key: "name" },
-                        { key: "change_pct", align: "right" },
-                        { key: "topics" },
-                        {
-                          key: "seal_money",
-                          title: "封单金额",
-                          render: (value) => (
-                            <CurrencyCell value={value} field="seal_money" />
-                          ),
-                        },
-                        { key: "board_count" },
-                      ]
-                    : [
-                        { key: "name" },
-                        { key: "topics" },
-                        { key: "seal_cv", title: "封单变异系数" },
-                        { key: "snapshot_count", title: "样本数" },
-                      ]
-                }
+                columns={[
+                  { key: "name" },
+                  { key: "change_pct", align: "right" },
+                  { key: "topics" },
+                  {
+                    key: "seal_money",
+                    title: "封单金额",
+                    render: (value) => (
+                      <CurrencyCell value={value} field="seal_money" />
+                    ),
+                  },
+                  { key: "board_count" },
+                ]}
                 onStock={onStock}
                 onStockNavigate={(id, orderedRows) =>
                   onStock(
@@ -523,32 +486,15 @@ export function MarketOverview({
                     }),
                   )
                 }
-                emptyTitle={
-                  sealMode === "funds"
-                    ? "该日尚无已留存封单快照"
-                    : "连续封单时序尚未接入"
-                }
-                emptyDescription={
-                  sealMode === "funds"
-                    ? "先同步该交易日涨停池，封单金额采用供应商快照定义。"
-                    : data?.seal_stability?.unavailable_reason ||
-                      "需要带交易时间戳的逐笔委托或连续涨停买一封单序列；日K、首末封时间或单次五档快照不能计算稳定性。"
-                }
+                emptyTitle="该日尚无已留存封单快照"
+                emptyDescription="先同步该交易日涨停池，封单金额采用供应商快照定义。"
               />
-              {sealMode === "stable" ? (
-                <div className="panel-footnote">
-                  接口要求：交易日、股票代码、采样时间、涨停买一价量、开板事件。免费涨停池可补封板时间和单次封单，稳定排名仍需连续采样或历史
-                  Level-2 授权数据。
-                </div>
-              ) : (
-                <div className="panel-footnote">
-                  来源：
-                  {textValue(
-                    data?.seal_funds_source || "已留存涨停池封单金额",
-                  )}{" "}
-                  · {date} · 单次快照不包含日内封单波动。
-                </div>
-              )}
+              <div className="panel-footnote">
+                来源：
+                {textValue(
+                  data?.seal_funds_source || "已留存涨停池封单金额",
+                )} · {date} · 单次快照不包含日内封单波动。
+              </div>
             </Panel>
           </div>
         </>
@@ -628,14 +574,7 @@ const pageDetails: Record<
   flow: {
     title: "资金与热点轮动",
     desc: "日级成交额与分类资金流分开；全天时序不能从日末数重建。",
-    columns: [
-      "name",
-      "amount",
-      "change_pct",
-      "net_inflow",
-      "observed_count",
-      "calculation",
-    ],
+    columns: ["name", "amount", "change_pct", "observed_count", "calculation"],
   },
 };
 export function MarketPage({
@@ -690,9 +629,12 @@ export function MarketPage({
   const conceptFlow = route === "flow" && kind === "concept";
   const tableData = conceptFlow ? sectorResult.data : data;
   const tableLoading = conceptFlow ? sectorResult.loading : result.loading;
-  const fundFlowAvailable =
-    route === "flow" && data?.summary?.net_flow_available === true;
-  const hasFundFlow = fundFlowAvailable && !conceptFlow;
+  const { fundFlowAvailable, hasFundFlow, hasFundTrend } = flowDisplayState(
+    data,
+    route,
+    kind,
+    date,
+  );
   useEffect(() => {
     if (fundFlowAvailable)
       setRank((current) => (current === "amount" ? "net_inflow" : current));
@@ -976,12 +918,21 @@ export function MarketPage({
           <strong>
             {fundsSummary.available
               ? "行业净流入数据已留存"
-              : "行业净流入数据待核验"}
+              : "当日资金数据未取得，已隐藏相关字段"}
           </strong>
           <span>
-            {date} · 已取得 {integer(fundsSummary.observed)} /{" "}
-            {integer(fundsSummary.total)} 项行业资金记录 · 已留存{" "}
-            {integer(fundsSummary.days)} 个交易日。
+            {fundsSummary.available ? (
+              <>
+                {date} · 已取得 {integer(fundsSummary.observed)} /{" "}
+                {integer(fundsSummary.total)} 项行业资金记录 · 已留存{" "}
+                {integer(fundsSummary.days)} 个交易日。
+              </>
+            ) : (
+              <>
+                {date} ·
+                已隐藏空的净流入列与资金趋势；以下保留板块涨跌及成交额观察。
+              </>
+            )}
             {conceptFlow
               ? "当前查看概念行情观察，下面的概念涨跌与成交额不代表资金净流入。"
               : "行业资金与板块行情采用各自来源口径，概念净流入尚未接入。"}
@@ -1543,25 +1494,48 @@ export function MarketPage({
         )}
       {route === "flow" && (
         <div className="two-col">
-          {data?.history?.length ? (
-            <FundTrend data={data} />
-          ) : (
-            <Panel title="全天资金轮动时序">
-              <Empty
-                title="缺少连续分类资金时序"
-                description="后续需接入带时间戳、分类及口径说明的数据，不能用成交量虚构资金进攻路径。"
-              />
-            </Panel>
-          )}
+          {hasFundTrend ? <FundTrend data={data!} /> : null}
           <Panel
             title="连板样本反馈"
-            subtitle="上一交易日已留存连板样本 · 当日实际涨跌"
+            subtitle="上一交易日已留存连板样本 · 当日实际涨跌与当日可知归属"
           >
             <SortableMarketTable
               sortScope="当前返回的上一交易日已留存连板样本"
               rows={data?.feedback || []}
               columns={[
                 { key: "name" },
+                {
+                  key: "topics",
+                  title: "题材",
+                  render: (value, row) =>
+                    Array.isArray(value) && value.length ? (
+                      <div className="tags">
+                        {value.map((tag: Row) => (
+                          <Badge key={tag.topic_id}>{tag.name}</Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="muted">
+                        {row.topics_state === "unknown"
+                          ? "当日归属未留存"
+                          : "暂无已知题材"}
+                      </span>
+                    ),
+                },
+                {
+                  key: "industries",
+                  title: "行业",
+                  render: (value) =>
+                    Array.isArray(value) && value.length ? (
+                      <div className="tags">
+                        {value.map((tag: Row) => (
+                          <Badge key={tag.topic_id}>{tag.name}</Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="muted">待核验</span>
+                    ),
+                },
                 { key: "previous_board_count", title: "前日连板" },
                 { key: "previous_board_date", title: "样本日" },
                 { key: "change_pct" },
@@ -1584,7 +1558,7 @@ export function MarketPage({
               emptyDescription="样本反馈只描述已留存标的，不代表全市场赚钱效应或机构资金决策。"
             />
             <div className="panel-footnote">
-              不代表全市场赚钱效应；不将成交额解释为机构资金方向。
+              按反馈观察日的已留存归属展示，当前业务日包含人工补充；不拿当前题材回填历史，也不代表该股当日上涨原因。
             </div>
           </Panel>
         </div>

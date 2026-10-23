@@ -1,6 +1,6 @@
 """Read-only API queries over versioned Parquet; importing is worker-only."""
 from __future__ import annotations
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -13,6 +13,7 @@ import threading
 import duckdb
 
 from .indicators import INDICATOR_VERSION, aggregate_weekly, enrich_bars
+from .market_storage import VERSION as STORAGE_VERSION, OBJECT_ROOT, parquet_input, write_partitions, activity_window, write_reference, load_reference, REFERENCE_VERSION, ENCODER_VERSION, verify_immutable_file
 
 INDEX_NAMES = {'000001.SH':'上证指数','399001.SZ':'深证成指','399006.SZ':'创业板指','000688.SH':'科创50'}
 MEMBERS = {'AI':('885728.TI','人工智能'), 'bank':('881155.TI','银行'), 'semiconductor':('881121.TI','半导体及元件')}
@@ -46,10 +47,10 @@ def validated_snapshot_head(data_dir,final,raw_sha,source_hashes):
     expected=set()
     for item in files:
         target=(data_dir/item['path']).resolve()
-        if not target.is_relative_to(final.resolve()) or target in expected or not target.is_file() or target.stat().st_size!=item.get('bytes') or hash_file(target)!=item.get('sha256'):raise ValueError('已有行情代际文件缺失、损坏或校验和不符，拒绝复用')
+        if not (target.is_relative_to(final.resolve()) or target.is_relative_to((data_dir/'published'/OBJECT_ROOT).resolve())) or target in expected or not target.is_file() or target.stat().st_size!=item.get('bytes') or hash_file(target)!=item.get('sha256'):raise ValueError('已有行情代际文件缺失、损坏或校验和不符，拒绝复用')
         expected.add(target)
     actual={p.resolve() for p in final.iterdir() if p.is_file() and p.name!='manifest.json'}
-    if actual!=expected:raise ValueError('已有行情代际文件与manifest清单不同，拒绝复用')
+    if actual!={target for target in expected if target.is_relative_to(final.resolve())}:raise ValueError('已有行情代际文件与manifest清单不同，拒绝复用')
     return head
 
 
@@ -84,6 +85,7 @@ class MarketData:
         self._meta = None
         self._frame = None
         self._symbol_ranges = {}
+        self._symbol_bars = OrderedDict()
         self._panels = {}
         self._fixed_snapshot = snapshot_id
         self._breadth = None
@@ -92,6 +94,14 @@ class MarketData:
         self._panel_inputs = None
         self._head_signature = None
         self._head_cached = {}
+        self._daily_reader = None
+        self._daily_reader_spill = None
+        self._reader_has_actions = False
+        self._daily_reader_stamp = None
+        self._daily_columns = None
+        self._daily_native_dtypes = None
+        self._daily_text_nulls = None
+        self._frame_source_stamp = None
 
     def _load(self):
         # calendar()/instrument()/reference() also enter here without an outer
@@ -111,11 +121,12 @@ class MarketData:
                 head=document if self._fixed_snapshot is None else document.get('summary',{})
             snapshot = head.get('snapshot_id')
             if snapshot != self._snapshot:
-                meta=load_json(self.data_dir/'published'/snapshot/'reference.json', {}) if snapshot else {}
+                self._close_daily_reader()
+                meta=load_reference(self.data_dir/'published'/snapshot/'reference.json',document=load_json(self.data_dir/'published'/snapshot/'reference.json',{})) if snapshot else {}
                 # Materialize reference first, then publish the coherent head,
                 # metadata and empty derived caches inside one reentrant lock.
                 self._snapshot=snapshot;self._meta=meta
-                self._frame = None; self._symbol_ranges={}; self._panels.clear();self._breadth=None;self._turnover=None;self._actions=None;self._panel_inputs=None
+                self._frame = None; self._frame_source_stamp=None;self._daily_columns=None;self._daily_native_dtypes=None;self._daily_text_nulls=None;self._symbol_ranges={}; self._symbol_bars.clear(); self._panels.clear();self._breadth=None;self._turnover=None;self._actions=None;self._panel_inputs=None
             self._head_signature=signature;self._head_cached=head
             return head
 
@@ -148,6 +159,8 @@ class MarketData:
         hashes = {p.name:hash_file(p) for p in supplemental if p.is_file()}
         identity={'daily':raw_sha, 'files':hashes, 'algorithm':ALGORITHM}
         if bundle:identity['bundle']=bundle
+        partitioned=bundle.get('storage_layout')==STORAGE_VERSION
+        if partitioned:identity.update(reference_storage_version=REFERENCE_VERSION,storage_encoder=ENCODER_VERSION)
         snapshot = 'market-' + sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()[:24]
         root = self.data_dir/'published'; root.mkdir(parents=True,exist_ok=True)
         final = root/snapshot
@@ -162,7 +175,8 @@ class MarketData:
         stage = root/('.staging-'+snapshot)
         if stage.exists(): shutil.rmtree(stage)
         stage.mkdir()
-        shutil.copyfile(daily,stage/'raw-daily.parquet')
+        if not partitioned:shutil.copyfile(daily,stage/'raw-daily.parquet')
+        partition_files=[];storage_stats={}
         report('规范化交易日和数据单位', 20)
         # The sole worker owns imports. Keep ten-year normalization bounded and
         # spill to its writable work volume, rather than a small container /tmp.
@@ -177,11 +191,17 @@ class MarketData:
             invalid_basis=con.execute("SELECT count(*) FROM read_parquet(?) WHERE adjusted IS DISTINCT FROM 'none' OR interval IS DISTINCT FROM '1d' OR currency IS DISTINCT FROM 'CNY'",[str(daily)]).fetchone()[0]
             if invalid_basis:raise ValueError('行情混有未验收的复权、周期或货币口径，拒绝发布')
             con.execute("CREATE TABLE normalized AS SELECT upper(thscode) instrument_id, strftime(to_timestamp(date_ms/1000.0) AT TIME ZONE 'Asia/Shanghai','%Y-%m-%d') date, open_price AS open,high_price AS high,low_price AS low,close_price AS close,volume,turnover AS amount,'fuyao' AS source,'none' AS price_basis FROM read_parquet(?) ORDER BY thscode,date_ms",[str(daily)])
-            con.execute("COPY normalized TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",[str(stage/'daily.parquet')])
-            count, symbols, begin, end, duplicate = con.execute("SELECT count(*),count(distinct instrument_id),min(date),max(date),count(*)-count(distinct (instrument_id,date)) FROM read_parquet(?)",[str(stage/'daily.parquet')]).fetchone()
+            if not partitioned:con.execute("COPY normalized TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",[str(stage/'daily.parquet')])
+            count, symbols, begin, end, duplicate = con.execute("SELECT count(*),count(distinct instrument_id),min(date),max(date),count(*)-count(distinct (instrument_id,date)) FROM normalized").fetchone()
             if duplicate: raise ValueError('年度行情有重复证券日期键，拒绝发布')
             bad=con.execute('SELECT count(*) FROM normalized WHERE instrument_id IS NULL OR date IS NULL OR NOT regexp_full_match(instrument_id,\'[0-9]{6}\\.(SH|SZ|BJ)\') OR open IS NULL OR high IS NULL OR low IS NULL OR close IS NULL OR volume IS NULL OR amount IS NULL OR NOT isfinite(open) OR NOT isfinite(high) OR NOT isfinite(low) OR NOT isfinite(close) OR NOT isfinite(volume) OR NOT isfinite(amount) OR least(open,high,low,close)<=0 OR volume<0 OR amount<0 OR high<greatest(open,close,low) OR low>least(open,close,high)').fetchone()[0]
             if not count or bad:raise ValueError('行情为空或含无效OHLC/非有限数值，拒绝发布')
+            if partitioned:
+                report('复用历史月份，仅发布变化分片',40)
+                con.read_parquet(str(daily)).create_view('raw_partition_source')
+                for relation,role in [('raw_partition_source','raw-daily.parquet'),('normalized','daily.parquet')]:
+                    files,stats=write_partitions(con,relation,role,root,stage,snapshot)
+                    partition_files.extend(files);storage_stats[role]=stats
         finally:
             con.close()
             spill.cleanup()
@@ -214,12 +234,16 @@ class MarketData:
         metadata.update(sectors_snapshot_trade_date=bundle.get('sectors_snapshot_trade_date'),sectors_snapshot_coverage=bundle.get('sectors_snapshot_coverage',bundle.get('coverage',{})))
         metadata['pool_coverage']={key:pool_coverage(load_json(source/'raw'/file,{})) for key,file in [('limitup','fuyao_limitup_latest.json'),('limitdown','fuyao_limitdown_latest.json'),('breakpool','fuyao_breakpool_latest.json')]}
         metadata['pool_quarantine']={key:load_json(source/'raw'/file,{}).get('data',{}).get('quarantine',[]) for key,file in [('limitup','fuyao_limitup_latest.json'),('limitdown','fuyao_limitdown_latest.json'),('breakpool','fuyao_breakpool_latest.json')]}
-        (stage/'reference.json').write_text(json.dumps(metadata,ensure_ascii=False,separators=(',',':')))
+        if partitioned:
+            reference_files,reference_stats=write_reference(metadata,root,stage,snapshot)
+            partition_files.extend(reference_files);storage_stats['reference.json']=reference_stats
+        else:(stage/'reference.json').write_text(json.dumps(metadata,ensure_ascii=False,separators=(',',':')))
         if (source/'raw/fuyao_bulk_adjustments.parquet').is_file(): shutil.copyfile(source/'raw/fuyao_bulk_adjustments.parquet',stage/'corporate-actions.parquet')
         report('校验不可变快照', 80)
-        artifacts = [{'role':p.name,'path':str(Path('published')/snapshot/p.name),'sha256':hash_file(p),'bytes':p.stat().st_size} for p in sorted(stage.iterdir()) if p.is_file()]
+        artifacts = partition_files+[{'role':p.name,'path':str(Path('published')/snapshot/p.name),'sha256':hash_file(p),'bytes':p.stat().st_size} for p in sorted(stage.iterdir()) if p.is_file() and p.name not in ('raw-daily.manifest.json','daily.manifest.json')]
         warnings=bundle.get('quality_warnings',['2145个预期交易记录缺口未解释，未填0；退市历史不完整','未复权原始价格；公司行动附近价格指标重启预热，未声称复权已验收','换手率和完整历史题材不可用；最新名称不等于历史证券身份'])
         head = {'snapshot_id':snapshot,'data_begin':begin,'data_end':end,'rows':count,'symbols':symbols,'source':'fuyao','price_basis':'none','volume_unit':'股','amount_unit':'CNY','algorithm_version':ALGORITHM,'quality':'partial','files':artifacts,'collected_at':collected,'warnings':warnings,'unexplained_missing':bundle.get('unexplained_missing',2145 if not bundle else None),'coverage':bundle.get('coverage',{}),'manifest_path':str(Path('published')/snapshot/'manifest.json')}
+        if partitioned:head.update(storage_layout=STORAGE_VERSION,storage_encoder=ENCODER_VERSION,storage_write=storage_stats,active_window=activity_window(end,begin))
         manifest = {'summary':head,'source_sha256':raw_sha,'supplemental_hashes':hashes,'quality':head['warnings'],'published_at':datetime.now(timezone.utc).isoformat()}
         (stage/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
         for file in sorted(stage.iterdir()):
@@ -242,6 +266,11 @@ class MarketData:
         self._load(); return self._meta or {}
 
     def calendar(self): return list(self._reference().get('calendar',[]))
+
+    def parquet_input(self, role='daily.parquet', *, start=None, end=None):
+        head=self._load()
+        if not head:raise ValueError('尚无已发布行情')
+        return parquet_input(self.data_dir/'published'/head['snapshot_id']/role,start=start,end=end)
 
     def instruments(self, query='', limit=50):
         query = query.strip().casefold()
@@ -284,58 +313,124 @@ class MarketData:
         from .adjustments import continuous_prices
         return continuous_prices(rows,self.actions(instrument_id,end=anchor),anchor,self.calendar())
 
-    def _read_daily_frame(self, head, symbol=None, as_of=None):
-        """Join small evidence tables in SQL, retaining compact Arrow strings.
+    def _close_daily_reader(self):
+        reader=getattr(self,'_daily_reader',None);spill=getattr(self,'_daily_reader_spill',None)
+        self._daily_reader=None;self._daily_reader_spill=None;self._reader_has_actions=False;self._daily_reader_stamp=None
+        try:
+            if reader is not None:reader.close()
+        finally:
+            if spill is not None:spill.cleanup()
 
-        A stock chart can read one security before any all-market view is opened.
-        The all-market cache shares Arrow buffers instead of millions of repeated
-        Python strings/nullable boolean objects. Float64 price precision stays intact.
-        """
-        import pandas as pd
+    def close(self):
+        """Release only this object's in-memory read connection and private spill."""
+        with self._lock:self._close_daily_reader()
+
+    def __del__(self):
+        try:self._close_daily_reader()
+        except Exception:pass
+
+    def _daily_source(self,head):
+        path=self.data_dir/'published'/head['snapshot_id']/'daily.parquet'
+        try:
+            argument=parquet_input(path)
+            if isinstance(argument,str):
+                evidence=next((item for item in head.get('files',[]) if item.get('role')=='daily.parquet'),None)
+                if evidence is not None:verify_immutable_file(path,evidence['sha256'],evidence['bytes'])
+            paths=[argument] if isinstance(argument,str) else argument
+            stamp=tuple((str(item),stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns) for item in paths for stat in [Path(item).stat()])
+            return argument,stamp
+        except BaseException:
+            self._symbol_bars.clear();self._frame=None;self._frame_source_stamp=None;self._symbol_ranges={};self._daily_columns=None;self._daily_native_dtypes=None;self._daily_text_nulls=None;self._close_daily_reader();raise
+
+    def _prepare_daily_reader(self,head,argument,stamp):
+        """Called under the existing RLock; never opens a worker database file."""
         import pyarrow as pa
-        spill = tempfile.TemporaryDirectory(prefix='shixu-query-')
-        con = duckdb.connect(':memory:')
+        import pandas as pd
+        if self._daily_reader is not None:return self._daily_reader
+        meta=self._reference()
+        if self._snapshot!=head.get('snapshot_id'):raise ValueError('行情代际已切换，请重试固定输入')
+        spill=tempfile.TemporaryDirectory(prefix='shixu-query-');con=duckdb.connect(':memory:')
         try:
             con.execute("SET TimeZone='Asia/Shanghai'")
             con.execute("SET memory_limit='1GB'")
-            con.execute('SET temp_directory=?', [spill.name])
-            con.execute('SET threads=4')
-            meta = self._reference()
-            known = {}
-            for day, record in meta.get('pool_history', {}).items():
+            con.execute('SET temp_directory=?',[spill.name]);con.execute('SET threads=4')
+            # Only metadata persists between stock reads. External price pages
+            # must not become an unbounded second copy of the history in RAM.
+            con.execute('SET parquet_metadata_cache=true')
+            con.execute('SET enable_external_file_cache=false')
+            known={}
+            for day,record in meta.get('pool_history',{}).items():
                 if 'limitup' in record:
-                    known[day] = ({r['thscode'] for r in record['limitup'] if r.get('thscode')},
-                                  bool(record.get('coverage', {}).get('limitup', {}).get('complete', False)
-                                       and all(r.get('thscode') for r in record['limitup'])))
-            pool_day = meta.get('pool_trade_date')
+                    known[day]=({row['thscode'] for row in record['limitup'] if row.get('thscode')},
+                                bool(record.get('coverage',{}).get('limitup',{}).get('complete',False)
+                                     and all(row.get('thscode') for row in record['limitup'])))
+            pool_day=meta.get('pool_trade_date')
             if pool_day:
-                known[pool_day] = ({r['thscode'] for r in meta.get('limitup', []) if r.get('thscode')},
-                                   bool(meta.get('pool_coverage', {}).get('limitup', {}).get('complete', False)))
-            con.register('known_days', pa.table({'date': pa.array(list(known), type=pa.string()),
-                                                'complete': pa.array([value[1] for value in known.values()], type=pa.bool_())}))
-            events = [(item, day) for day, (items, _) in known.items() for item in items]
-            con.register('known_events', pa.table({'instrument_id': pa.array([item[0] for item in events], type=pa.string()),
-                                                  'date': pa.array([item[1] for item in events], type=pa.string())}))
-            action_path = self.data_dir/'published'/head['snapshot_id']/'corporate-actions.parquet'
-            action_sql = ("SELECT DISTINCT thscode instrument_id,strftime(to_timestamp(ex_date_ms/1000.0) AT TIME ZONE 'Asia/Shanghai','%Y-%m-%d') date FROM read_parquet(?)"
-                          if action_path.is_file() else 'SELECT NULL::VARCHAR instrument_id, NULL::VARCHAR date WHERE FALSE')
-            clauses = []; params = [str(self.data_dir/'published'/head['snapshot_id']/'daily.parquet')]
-            if symbol is not None: clauses.append('instrument_id=?'); params.append(symbol)
-            if as_of is not None: clauses.append('date<=?'); params.append(as_of)
-            where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
-            if action_path.is_file(): params.append(str(action_path))
-            query = ("WITH daily AS (SELECT * FROM read_parquet(?)" + where + "), actions AS (" + action_sql + ") "
-                     "SELECT daily.*, actions.instrument_id IS NOT NULL corporate_action, "
-                     + ('TRUE' if action_path.is_file() else 'FALSE') + " corporate_action_coverage_known, "
-                     "CASE WHEN events.instrument_id IS NOT NULL THEN TRUE WHEN days.complete THEN FALSE ELSE NULL END limit_up "
-                     "FROM daily LEFT JOIN actions USING(instrument_id,date) "
-                     "LEFT JOIN known_days days USING(date) LEFT JOIN known_events events USING(instrument_id,date) "
-                     "ORDER BY daily.instrument_id,daily.date")
-            mapper = lambda dtype: pd.ArrowDtype(dtype) if pa.types.is_string(dtype) or pa.types.is_boolean(dtype) else None
-            return con.execute(query, params).to_arrow_table().to_pandas(types_mapper=mapper)
-        finally:
-            con.close()
-            spill.cleanup()
+                known[pool_day]=({row['thscode'] for row in meta.get('limitup',[]) if row.get('thscode')},
+                                 bool(meta.get('pool_coverage',{}).get('limitup',{}).get('complete',False)))
+            con.register('known_days',pa.table({'date':pa.array(list(known),type=pa.string()),
+                                              'complete':pa.array([value[1] for value in known.values()],type=pa.bool_())}))
+            events=[(item,day) for day,(items,_) in known.items() for item in items]
+            con.register('known_events',pa.table({'instrument_id':pa.array([item[0] for item in events],type=pa.string()),
+                                                'date':pa.array([item[1] for item in events],type=pa.string())}))
+            con.read_parquet(argument).create_view('snapshot_daily')
+            # Preserve the actual raw daily schema before evidence joins. The
+            # shared Arrow frame may later serve raw-history callers without
+            # leaking derived corporate-action or source-pool fields.
+            self._daily_columns=tuple(con.table('snapshot_daily').columns)
+            text_columns=tuple(name for name,kind in zip(self._daily_columns,con.table('snapshot_daily').types) if str(kind)=='VARCHAR')
+            native_text_null=con.execute("SELECT value FROM (VALUES ('probe'::VARCHAR),(NULL::VARCHAR)) t(value)").fetchdf().to_dict('records')[1]['value']
+            self._daily_text_nulls=(text_columns,native_text_null)
+            native=con.execute('SELECT * FROM snapshot_daily LIMIT 0').fetchdf()
+            self._daily_native_dtypes={}
+            for name,dtype in native.dtypes.items():
+                # Native DuckDB uses nullable integers/booleans only when a
+                # result contains NULL; their record values stay identical
+                # for non-NULL results. Arrow string NULLs must also regain
+                # the native fetchdf representation, rather than becoming None.
+                if dtype.kind in ('i','u'):dtype=pd.api.types.pandas_dtype(('UInt' if dtype.kind=='u' else 'Int')+str(dtype.itemsize*8))
+                elif dtype.kind=='b':dtype=pd.BooleanDtype()
+                self._daily_native_dtypes[name]=dtype
+            action_path=self.data_dir/'published'/head['snapshot_id']/'corporate-actions.parquet'
+            self._reader_has_actions=action_path.is_file()
+            if self._reader_has_actions:
+                con.execute("CREATE TEMP TABLE snapshot_actions AS SELECT DISTINCT thscode instrument_id,strftime(to_timestamp(ex_date_ms/1000.0) AT TIME ZONE 'Asia/Shanghai','%Y-%m-%d') date FROM read_parquet(?)",[str(action_path)])
+            else:con.execute('CREATE TEMP TABLE snapshot_actions AS SELECT NULL::VARCHAR instrument_id,NULL::VARCHAR date WHERE FALSE')
+            self._daily_reader=con;self._daily_reader_spill=spill;self._daily_reader_stamp=stamp
+            return con
+        except BaseException:
+            con.close();spill.cleanup();self._reader_has_actions=False;raise
+
+    def _read_daily_frame(self,head,symbol=None,as_of=None):
+        """Read a fixed generation under one serial, metadata-cached reader.
+
+        Quote pages are not retained in DuckDB. The independent Arrow whole-
+        market cache and the 16-item stock cache keep their original bounds.
+        """
+        import pandas as pd
+        import pyarrow as pa
+        with self._lock:
+            try:
+                # Recheck immutable object signatures even on a warm view. A
+                # replaced/corrupt partition cannot hide behind cached metadata.
+                argument,stamp=self._daily_source(head)
+                if self._daily_reader is not None and self._daily_reader_stamp!=stamp:self._close_daily_reader()
+                con=self._prepare_daily_reader(head,argument,stamp)
+                clauses=[];params=[]
+                if symbol is not None:clauses.append('instrument_id=?');params.append(symbol)
+                if as_of is not None:clauses.append('date<=?');params.append(as_of)
+                where=' WHERE '+' AND '.join(clauses) if clauses else ''
+                query=("WITH daily AS (SELECT * FROM snapshot_daily"+where+") "
+                       "SELECT daily.*,actions.instrument_id IS NOT NULL corporate_action,"
+                       +('TRUE' if self._reader_has_actions else 'FALSE')+" corporate_action_coverage_known,"
+                       "CASE WHEN events.instrument_id IS NOT NULL THEN TRUE WHEN days.complete THEN FALSE ELSE NULL END limit_up "
+                       "FROM daily LEFT JOIN snapshot_actions actions USING(instrument_id,date) "
+                       "LEFT JOIN known_days days USING(date) LEFT JOIN known_events events USING(instrument_id,date) "
+                       "ORDER BY daily.instrument_id,daily.date")
+                mapper=lambda dtype:pd.ArrowDtype(dtype) if pa.types.is_string(dtype) or pa.types.is_boolean(dtype) else None
+                return con.execute(query,params).to_arrow_table().to_pandas(types_mapper=mapper)
+            except BaseException:
+                self._close_daily_reader();raise
 
     def _daily_frame(self):
         with self._lock:
@@ -347,6 +442,8 @@ class MarketData:
                 self._symbol_ranges = {str(frame.instrument_id.iat[left]): (left, right)
                                        for left, right in zip(starts, starts[1:] + [len(frame)])}
                 self._frame = frame
+                self._frame_source_stamp=self._daily_reader_stamp
+                self._symbol_bars.clear();self._close_daily_reader()
             return self._frame
 
     def bars(self, instrument_id, as_of=None):
@@ -357,7 +454,15 @@ class MarketData:
             if symbol in meta.get('indices', {}): rows = meta['indices'][symbol]
             elif not head: return []
             elif self._frame is None:
-                rows = self._read_daily_frame(head, symbol, as_of).to_dict('records')
+                key=(symbol,as_of)
+                if key in self._symbol_bars:
+                    _,stamp=self._daily_source(head)
+                    if self._daily_reader_stamp is not None and self._daily_reader_stamp!=stamp:
+                        self._symbol_bars.clear();self._close_daily_reader()
+                if key not in self._symbol_bars:
+                    self._symbol_bars[key]=self._read_daily_frame(head,symbol,as_of).to_dict('records')
+                    while len(self._symbol_bars)>16:self._symbol_bars.popitem(last=False)
+                self._symbol_bars.move_to_end(key);rows=self._symbol_bars[key]
             else:
                 bounds = self._symbol_ranges.get(symbol)
                 rows = self._frame.iloc[bounds[0]:bounds[1]].to_dict('records') if bounds else []
@@ -379,12 +484,60 @@ class MarketData:
         with self._lock:
             head=self._load()
             if not head:return {symbol:[] for symbol in symbols}
+            if self._frame is not None:
+                _,stamp=self._daily_source(head)
+                if self._frame_source_stamp!=stamp:
+                    self._frame=None;self._frame_source_stamp=None;self._symbol_ranges={};self._daily_columns=None;self._daily_native_dtypes=None;self._daily_text_nulls=None
+            if self._frame is not None:
+                import pandas as pd
+                result={symbol:[] for symbol in symbols}
+                dates=self._frame['date']
+                text_columns,text_null=self._daily_text_nulls
+                nullable_text=[name for name in text_columns if self._frame[name].hasnans] if text_null is not None else []
+                populated_text=set()
+                # Avoid thousands of tiny pandas filters/conversions on a
+                # whole-market member page. Each temporary stays bounded to
+                # at most 256 requested stocks, never another full panel.
+                for offset in range(0,len(symbols),256):
+                    bounds=[self._symbol_ranges[symbol] for symbol in symbols[offset:offset+256] if symbol in self._symbol_ranges]
+                    if not bounds:continue
+                    pieces=[]
+                    for left,right in bounds:
+                        days=dates.iloc[left:right]
+                        try:
+                            # The fixed frame is sorted by security/date. Clip
+                            # before concat so a seven-day request never first
+                            # copies 256 securities' complete retained prefix.
+                            begin=left+int(days.searchsorted(start,side='left')) if start else left
+                            finish=left+int(days.searchsorted(end,side='right')) if end else right
+                            if begin<finish:pieces.append(self._frame.iloc[begin:finish])
+                        except ValueError:
+                            # Malformed legacy fixtures can contain null dates;
+                            # preserve SQL's NULL exclusion under date bounds.
+                            piece=self._frame.iloc[left:right]
+                            if start:piece=piece.loc[piece.date>=start]
+                            if end:piece=piece.loc[piece.date<=end]
+                            if not piece.empty:pieces.append(piece)
+                    if not pieces:continue
+                    selected=pd.concat(pieces)
+                    populated_text.update(name for name in nullable_text if selected[name].notna().any())
+                    raw=selected.loc[:,list(self._daily_columns)].astype(self._daily_native_dtypes)
+                    for row in raw.to_dict('records'):result[row['instrument_id']].append(row)
+                # Native fetchdf infers string NULL representation over the
+                # whole SQL result. All-NULL columns stay None; mixed text can
+                # use NaN on pandas 3. Internal batching must not change that.
+                if populated_text:
+                    for rows in result.values():
+                        for row in rows:
+                            for name in populated_text:
+                                if row[name] is None:row[name]=text_null
+                return result
             clauses=['instrument_id IN (SELECT unnest(?))'];params=[symbols]
             if start:clauses.append('date>=?');params.append(start)
             if end:clauses.append('date<=?');params.append(end)
             con=duckdb.connect(':memory:')
             try:
-                selected=con.execute('SELECT * FROM read_parquet(?) WHERE '+' AND '.join(clauses)+' ORDER BY instrument_id,date',[str(self.data_dir/'published'/head['snapshot_id']/'daily.parquet'),*params]).fetchdf().to_dict('records')
+                selected=con.execute('SELECT * FROM read_parquet(?) WHERE '+' AND '.join(clauses)+' ORDER BY instrument_id,date',[parquet_input(self.data_dir/'published'/head['snapshot_id']/'daily.parquet',start=start,end=end),*params]).fetchdf().to_dict('records')
             finally:con.close()
         result={symbol:[] for symbol in symbols}
         for row in selected:result[row['instrument_id']].append(row)

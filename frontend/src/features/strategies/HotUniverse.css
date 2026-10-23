@@ -1,0 +1,58 @@
+.hot-universe-editor {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+}
+.hot-universe-editor .checkbox-label {
+  flex-wrap: wrap;
+}
+.hot-universe-editor small {
+  color: var(--muted);
+}
+.hot-universe-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.hot-universe-fields label {
+  display: grid;
+  gap: 6px;
+}
+.hot-universe-editor p {
+  margin: 0;
+}
+.hot-universe-receipt {
+  margin: 14px 20px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.hot-universe-receipt summary {
+  cursor: pointer;
+  color: var(--blue);
+}
+.hot-universe-receipt p,
+.hot-universe-receipt small {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.hot-universe-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.hot-universe-tags span {
+  background: var(--surface2);
+  border-radius: 5px;
+  padding: 5px 8px;
+}
+@media (max-width: 650px) {
+  .hot-universe-fields {
+    grid-template-columns: 1fr;
+  }
+}

@@ -65,7 +65,8 @@ def recover_listing_dates(items, previous, snapshot_id=None):
             expected = next(item['sha256'] for item in manifest['summary']['files'] if item['role'] == 'reference.json')
             if hash_file(reference) != expected:
                 continue
-            master = json.loads(reference.read_text()).get('master', {})
+            from app.analytics.market_storage import load_reference
+            master = load_reference(reference).get('master', {})
         except (OSError, ValueError, KeyError, StopIteration):
             continue
         rows, extra = preserve_listing_dates(rows, master, generation)

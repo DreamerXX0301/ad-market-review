@@ -19,6 +19,7 @@ import duckdb
 
 from app.core import connect, published_dir, hash_file
 from app.analytics.market import date_ms
+from app.analytics.market_storage import descriptor_path, parquet_input
 
 FIELD = 'close_above_entry_high'
 VERSION = 'entry-snapshot-exact-daily-high-v1'
@@ -76,7 +77,7 @@ def _frozen(round_, kind='high'):
              and proof.get('entry_snapshot_id') == round_['entry_snapshot_id']
              and proof.get('price_basis') == 'none' and _basis(round_).get('price_basis') == 'none'
              and isinstance(generation, str) and re.fullmatch(r'market-[A-Za-z0-9_-]+', generation)
-             and proof.get('source_artifact') == generation + '/daily.parquet'
+             and proof.get('source_artifact') in (generation + '/daily.parquet',generation + '/daily.manifest.json')
              and isinstance(proof.get('source_sha256'), str) and re.fullmatch(r'[a-f0-9]{64}', proof['source_sha256'])
              and isinstance(proof.get(raw + '_e8'), int) and not isinstance(proof.get(raw + '_e8'), bool)
              and _e8(proof.get(raw)) == proof.get(raw + '_e8')
@@ -101,7 +102,7 @@ def _artifact(snapshot_id, module, role):
     if not isinstance(generation, str) or not re.fullmatch(r'market-[A-Za-z0-9_-]+', generation):
         raise ValueError('来源快照缺少有效不可变行情代际，不回读最新行情')
     root = published_dir().resolve(); path = (root / descriptor['object_key']).resolve()
-    if not path.is_relative_to(root) or path != (root / generation / role).resolve():
+    if not path.is_relative_to(root) or path != descriptor_path(root/generation,role).resolve():
         raise ValueError('来源行情文件路径与入池固定代际不符')
     stat = path.stat()
     if stat.st_size != descriptor['byte_count'] or not isinstance(descriptor['sha256'], str) or not re.fullmatch(r'[a-f0-9]{64}', descriptor['sha256']):
@@ -113,7 +114,7 @@ def _artifact(snapshot_id, module, role):
         with _lock:
             _hashes[signature] = True; _hashes.move_to_end(signature)
             while len(_hashes) > 4: _hashes.popitem(last=False)
-    descriptor.update(generation=generation, path=str(path), signature=signature)
+    descriptor.update(generation=generation, path=parquet_input(path), signature=signature)
     return descriptor
 
 

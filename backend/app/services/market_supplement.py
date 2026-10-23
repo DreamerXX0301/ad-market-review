@@ -30,14 +30,17 @@ def _load(path, default=None):
 def _root(): return published_dir()/'market-supplement'
 
 
-def load_supplement(snapshot_id=None):
+def load_supplement(snapshot_id=None, *, dates=None, fields=None):
     head=_load(_root()/'head.json',{})
     if snapshot_id and head.get('snapshot_id')!=snapshot_id:return {}
     if not head:return {}
     relative=head.get('artifact'); path=(_root()/str(relative)).resolve()
     if not path.is_relative_to(_root().resolve()) or not path.is_file() or hash_file(path)!=head.get('sha256'):return {'quality':'unknown','failure_reason':'补充数据索引缺失或校验失败'}
     result=_load(path,{})
-    return result if result.get('version')==VERSION else {'quality':'unknown','failure_reason':'补充数据版本不匹配'}
+    if result.get('version')!=VERSION:return {'quality':'unknown','failure_reason':'补充数据版本不匹配'}
+    from .supplement_storage import expand_document
+    try:return expand_document(_root(),result,dates=dates,fields=fields)
+    except (ValueError,OSError,TypeError):return {'quality':'unknown','failure_reason':'补充数据索引引用缺失、损坏或版本不匹配'}
 
 
 class SupplementCache:
@@ -95,8 +98,10 @@ class SupplementCache:
                 'validated_at':record.get('validated_at'),'validation_context_id':record.get('validation_context_id')}
 
     def publish(self, document, guard=None):
-        content=digest(document); path=self.root/'indexes'/(content+'.json')
-        atomic_json(path,document)
+        from .supplement_storage import compact_document
+        stored=compact_document(self.root,document)
+        content=digest(stored); path=self.root/'indexes'/(content+'.json')
+        atomic_json(path,stored)
         if guard:guard()
         atomic_json(self.root/'head.json',{'snapshot_id':document['snapshot_id'],'version':VERSION,'artifact':str(path.relative_to(self.root)),'sha256':hash_file(path),'published_at_ms':now_ms()})
 
@@ -159,7 +164,7 @@ def revalidate_for_market(market,target,*,progress=None,guard=None,job_id=None):
     try:
         con.execute("SET threads=1");con.execute("SET memory_limit='256MB'")
         con.execute('CREATE TABLE quotes AS SELECT instrument_id,date,close FROM read_parquet(?) WHERE date>=? AND date<=?',
-                    [status['path']+'/daily.parquet',target[:4]+'-01-01',target])
+                    [market.parquet_input('daily.parquet') if callable(getattr(market,'parquet_input',None)) else status['path']+'/daily.parquet',target[:4]+'-01-01',target])
         def prices(day):return dict(con.execute('SELECT instrument_id,close FROM quotes WHERE date=?',[day]).fetchall())
         tick('离线重验年内涨跌停','仅使用本地已留存原始证据，不读取凭据或发起网络请求')
         for day in days:
@@ -299,7 +304,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         if progress:progress(label,pct,message or label,{'actual_completed_batches':done,'actual_total_batches':planned})
     con=duckdb.connect(':memory:')
     try:
-        con.execute('CREATE TABLE quotes AS SELECT instrument_id,date,close FROM read_parquet(?)',[status['path']+'/daily.parquet'])
+        con.execute('CREATE TABLE quotes AS SELECT instrument_id,date,close FROM read_parquet(?)',[market.parquet_input('daily.parquet') if callable(getattr(market,'parquet_input',None)) else status['path']+'/daily.parquet'])
         def prices(day):return dict(con.execute('SELECT instrument_id,close FROM quotes WHERE date=?',[day]).fetchall())
         def signature_for(day,source,pool_kind=None):return _pool_signature(day,source,prices(day),identity_hash,pool_kind)
         def validate_cached(record,day,pool_kind=None):

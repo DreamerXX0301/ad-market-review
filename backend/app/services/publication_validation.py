@@ -81,4 +81,6 @@ def authorized_removed_files(connection):
             except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
                 # Incomplete or inconsistent evidence never excuses a missing file.
                 continue
+    from .market_storage_gc import authorized_removed_files as market_removed
+    authorized.update(market_removed(connection))
     return authorized

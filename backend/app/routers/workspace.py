@@ -22,6 +22,16 @@ def strategy_fields():
 
 @router.get('/topics')
 def topics_list(q:str='',include_archived:bool=False,kind:str|None=None):return topics.list_topics(q,include_archived,kind)
+@router.get('/stock-topic-memberships/{instrument_id}')
+def stock_topic_memberships(instrument_id:str):
+    from app.core import get_market
+    from app.services.stock_memberships import stock_membership_fields
+    from app.services.workspace_common import fail,identities,current
+    from app.core import connect
+    symbol=instrument_id.upper()
+    with connect() as connection:day=current(connection)
+    if symbol not in identities(day):fail('股票不在当前已导入证券范围内',404)
+    return {'instrument_id':symbol,**stock_membership_fields(get_market(),symbol)}
 @router.post('/topics')
 def topics_create(payload:dict=Body(...)):return topics.create_topic(payload)
 @router.post('/topics/initialize')

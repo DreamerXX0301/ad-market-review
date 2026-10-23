@@ -56,6 +56,12 @@ import {
 } from "./historicalRules";
 import StrategyAutomation from "./StrategyAutomation";
 import UniverseEditor, { splitUniverse, withUniverse } from "./Universe";
+import HotUniverseEditor, {
+  HotUniverseReceipt,
+  hotUniverseSummary,
+  validateHotUniverse,
+} from "./HotUniverse";
+import type { HotUniverseValue } from "./HotUniverse";
 import PolicyScope from "./PolicyScope";
 import TradeRulesEditor, {
   emptyTradeRules,
@@ -141,6 +147,9 @@ function StrategyEditor({
 }) {
   const initial = splitUniverse(strategy?.definition);
   const [universe, setUniverse] = useState(initial.universe);
+  const [hotUniverse, setHotUniverse] = useState<HotUniverseValue | null>(
+    strategy?.hot_universe || null,
+  );
   const [tradeRules, setTradeRules] = useState<TradeRulesValue>(
     strategy?.trade_rules || emptyTradeRules(),
   );
@@ -177,6 +186,8 @@ function StrategyEditor({
     }
     try {
       let definition: Row = definitionTree;
+      const hotProblem = validateHotUniverse(hotUniverse);
+      if (hotProblem) throw new Error(hotProblem);
       if (advanced) {
         definition = JSON.parse(json);
         if (hasHiddenConditionRule(definition))
@@ -201,15 +212,19 @@ function StrategyEditor({
         !ruleCount(definition) &&
         !advanced &&
         universe.mode === "all" &&
-        universe.st === "all"
+        universe.st === "all" &&
+        !hotUniverse
       )
         throw new Error("请至少配置一项条件");
+      if (!ruleCount(definition) && hotUniverse)
+        definition = { field: "close", op: ">", value: 0 };
       definition = withUniverse(definition, universe);
       setBusy(true);
       const body = {
         name: name.trim(),
         period,
         definition,
+        hot_universe: hotUniverse,
         trade_rules: tradeRules,
         policy: {
           ...(strategy?.policy || {}),
@@ -259,6 +274,7 @@ function StrategyEditor({
           </label>
         </div>
         <UniverseEditor value={universe} onChange={setUniverse} />
+        <HotUniverseEditor value={hotUniverse} onChange={setHotUniverse} />
         <div className="form-section-title">
           <h3>选股条件</h3>
           <div className="button-group">
@@ -787,6 +803,16 @@ function StockStrategies({
               }
             >
               <div className="saved-rule-summary">
+                {chosen.hot_universe && (
+                  <div>
+                    <Check size={15} />
+                    <span>
+                      已启用近期热点范围：
+                      {hotUniverseSummary(chosen.hot_universe)} ·
+                      与技术条件同时满足
+                    </span>
+                  </div>
+                )}
                 <small className="muted">
                   {chosen.definition?.any || chosen.definition?.logic === "OR"
                     ? "任一满足"
@@ -855,6 +881,9 @@ function StockStrategies({
             }
           >
             <StrategyRunNotice notice={runNotice} />
+            <HotUniverseReceipt
+              value={run?.universe_definition?.hot_universe}
+            />
             {run ? (
               <>
                 <div className="result-toolbar">

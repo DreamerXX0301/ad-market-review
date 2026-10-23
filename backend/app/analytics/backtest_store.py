@@ -30,7 +30,7 @@ def context(strategy_id):
         strategy=c.execute('SELECT s.name,s.strategy_id,v.* FROM strategy s JOIN strategy_version v ON v.strategy_id=s.strategy_id AND v.version=s.current_version WHERE s.strategy_id=? AND s.archived=0',(strategy_id,)).fetchone()
         if not strategy:raise ValueError('策略不存在或已归档')
         snapshots=[dict(r) for r in c.execute("SELECT s.* FROM published_head h JOIN dataset_snapshot s ON s.snapshot_id=h.snapshot_id WHERE h.module IN ('calendar','security_identity','daily_raw','corporate_actions','analysis_bars','indicators')")]
-    item=dict(strategy);item['period']=item.get('signal_period') or item['period'];item['definition']=json.loads(item['definition_json']);item['trade_rules']=json.loads(item['trade_rules_json'])
+    item=dict(strategy);item['period']=item.get('signal_period') or item['period'];item['definition']=json.loads(item['definition_json']);item['trade_rules']=json.loads(item['trade_rules_json']);item['hot_universe']=json.loads(item['hot_universe_json']) if item.get('hot_universe_json') else None
     raw=next((r for r in snapshots if r['module']=='daily_raw'),None)
     if not raw:raise ValueError('请先手动初始化真实行情')
     generation=json.loads(raw['lineage_json']).get('market_snapshot_id')

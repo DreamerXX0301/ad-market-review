@@ -47,4 +47,10 @@ for (const bad of [
 }
 const mismatch = view({ ...summary, storage_bytes: accounting.logical_bytes + 1 });
 assert.equal(mismatch.valid, false, "contradictory totals are not silently reconciled by the browser");
+const partitioned = { ...accounting, logical_bytes: accounting.logical_bytes + 100000, file_count: 18, categories: [...accounting.categories, { key: "shared_market", logical_bytes: 100000, file_count: 3 }] };
+const partitionedView = view({ storage_bytes: partitioned.logical_bytes, storage_accounting: partitioned });
+assert.equal(partitionedView.valid, true);
+assert.equal(partitionedView.rows.find(row => row.key === "shared_market").files, "3");
+assert.equal(partitionedView.rows.length, 6);
+assert.equal(view({ storage_accounting: { ...partitioned, categories: [...partitioned.categories, partitioned.categories[0]] } }).valid, false);
 console.log("published storage: decimal GB, explicit GiB/exact bytes, reconciled scope/categories, partial subtotal and missing metadata passed");

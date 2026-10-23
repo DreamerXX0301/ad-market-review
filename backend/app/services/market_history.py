@@ -16,6 +16,7 @@ import sqlite3
 import threading
 
 from app.infrastructure.config import published_dir, sqlite_path
+from app.analytics.market_storage import load_reference
 
 REFERENCE_CACHE_LIMIT = 4
 INDEX_CACHE_LIMIT = 2
@@ -95,7 +96,7 @@ def _read_reference(path, signature):
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != signature[1]:
         raise ValueError('历史参考文件校验失败')
-    value = _subset(json.loads(raw))
+    value = _subset(load_reference(path))
     with _lock:
         _references[signature] = value
         _references.move_to_end(signature)

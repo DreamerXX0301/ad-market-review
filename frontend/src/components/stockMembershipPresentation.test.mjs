@@ -18,7 +18,7 @@ const compile = (source) =>
     .outputText.replaceAll(
       '"react/jsx-runtime"',
       JSON.stringify(import.meta.resolve("react/jsx-runtime")),
-    );
+    ).replaceAll('"react"', JSON.stringify(import.meta.resolve("react")));
 const helper = encode(
   compile(
     await fs.readFile(
@@ -109,6 +109,8 @@ const source = (
   )
 )
   .replace('"./stockMembershipPresentation"', JSON.stringify(helper))
+  .replace('import { api } from "../lib/api";', 'const api = () => { throw new Error("read-only render never fetches"); };')
+  .replace('import StockTopicManager from "./StockTopicManager";', 'const StockTopicManager = () => null;')
   .replace('import "./StockCurrentTopics.css";', "");
 const { default: CurrentTopics } = await import(encode(compile(source)));
 const html = renderToStaticMarkup(

@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from app.core import atomic_json, connect, digest, get_market, hash_file, now_ms, published_dir, work_dir
 from app.services import task_service as tasks
 from app.services import gap_diagnosis, listing_status
+from app.analytics.market_storage import OBJECT_ROOT, parquet_input
 
 VERSION='local-coverage-v3-gap-diagnosis'
 MAX_GAP_DATES=20000
@@ -58,7 +59,7 @@ def _context(market):
         relative=Path(item.get('path',''))
         if relative.parts and relative.parts[0]=='published':relative=Path(*relative.parts[1:])
         path=(root/relative).resolve()
-        if not path.is_relative_to(generation):raise ValueError('行情文件路径不属于当前不可变代际')
+        if not (path.is_relative_to(generation) or path.is_relative_to(root/OBJECT_ROOT)):raise ValueError('行情文件路径不属于当前不可变代际')
         stamp=path.stat() if path.is_file() else None
         files.append({'role':item.get('role') or path.name,'path':path,'relative':str(relative),
                       'sha256':item.get('sha256'),'bytes':item.get('bytes'),
@@ -130,19 +131,19 @@ def repair_parameters(plan_id):
 
 def _daily(con,path,reference,begin,end,*,raw_path=None,listing_confirmations=None,market_snapshot_id=None,source_signature=None):
     required={'instrument_id','date','open','high','low','close','volume','amount'}
-    fields={row[0] for row in con.execute('DESCRIBE SELECT * FROM read_parquet(?)',[str(path)]).fetchall()}
+    fields={row[0] for row in con.execute('DESCRIBE SELECT * FROM read_parquet(?)',[parquet_input(path)]).fetchall()}
     if not required<=fields:raise ValueError('分析行情缺少必要字段：'+','.join(sorted(required-fields)))
     calendar=sorted({day for day in reference.get('calendar',[]) if valid_date(day) and begin<=day<=end})
     con.execute('CREATE TABLE calendar(day VARCHAR)')
     if calendar:con.executemany('INSERT INTO calendar VALUES (?)',[(day,) for day in calendar])
     valid="instrument_id IS NOT NULL AND date IS NOT NULL AND regexp_full_match(instrument_id,'[0-9]{6}\\.(SH|SZ|BJ)') AND open IS NOT NULL AND high IS NOT NULL AND low IS NOT NULL AND close IS NOT NULL AND volume IS NOT NULL AND amount IS NOT NULL AND isfinite(open) AND isfinite(high) AND isfinite(low) AND isfinite(close) AND isfinite(volume) AND isfinite(amount) AND least(open,high,low,close)>0 AND volume>=0 AND amount>=0 AND high>=greatest(open,low,close) AND low<=least(open,high,close)"
-    con.execute('CREATE TEMP TABLE quote_keys AS SELECT instrument_id,date,count(*) copies,bool_and('+valid+') AS is_valid FROM read_parquet(?) GROUP BY instrument_id,date',[str(path)])
+    con.execute('CREATE TEMP TABLE quote_keys AS SELECT instrument_id,date,count(*) copies,bool_and('+valid+') AS is_valid FROM read_parquet(?) GROUP BY instrument_id,date',[parquet_input(path)])
     total,duplicates,invalid=con.execute('SELECT coalesce(sum(copies),0),coalesce(sum(copies-1),0),count(*) FILTER(WHERE is_valid IS NOT TRUE) FROM quote_keys').fetchone()
     valid_key='q.is_valid AND q.copies=1 AND c.day IS NOT NULL'
     present={symbol:{'valid_quote_count':count,'first_quote_date':first,'last_quote_date':last,
                      'analysis_observed_rows':rows,'ambiguous_quote_keys':ambiguous}
              for symbol,count,first,last,rows,ambiguous in con.execute('SELECT instrument_id,count(*) FILTER(WHERE '+valid_key+'),min(date) FILTER(WHERE '+valid_key+'),max(date) FILTER(WHERE '+valid_key+'),sum(copies),count(*) FILTER(WHERE q.is_valid IS NOT TRUE OR q.copies!=1 OR c.day IS NULL) FROM quote_keys q LEFT JOIN calendar c ON q.date=c.day GROUP BY instrument_id').fetchall()}
-    raw_counts=dict(con.execute('SELECT upper(thscode),count(*) FROM read_parquet(?) GROUP BY upper(thscode)',[str(raw_path)]).fetchall()) if raw_path is not None else {}
+    raw_counts=dict(con.execute('SELECT upper(thscode),count(*) FROM read_parquet(?) GROUP BY upper(thscode)',[parquet_input(raw_path)]).fetchall()) if raw_path is not None else {}
     quote_presence={}
     for symbol,row in reference.get('master',{}).items():
         if row.get('kind')!='stock':continue
@@ -189,7 +190,7 @@ def _daily(con,path,reference,begin,end,*,raw_path=None,listing_confirmations=No
 
 
 def _actions(con,path,reference,begin,end):
-    fields={row[0] for row in con.execute('DESCRIBE SELECT * FROM read_parquet(?)',[str(path)]).fetchall()}
+    fields={row[0] for row in con.execute('DESCRIBE SELECT * FROM read_parquet(?)',[parquet_input(path)]).fetchall()}
     required={'thscode','ex_date_ms','dividend_per_share','per_share_bonus','allotment_ratio','allotment_price','currency'}
     if not required<=fields:raise ValueError('公司行动缺少必要字段：'+','.join(sorted(required-fields)))
     numeric=('dividend_per_share','per_share_bonus','allotment_ratio','allotment_price')
@@ -198,7 +199,7 @@ def _actions(con,path,reference,begin,end):
     structural="thscode IS NULL OR NOT regexp_full_match(thscode,'[0-9]{6}\\.(SH|SZ|BJ)') OR event_date IS NULL OR "+nonfinite
     # Negative source fields can represent special capital actions. Preserve
     # them, but never silently feed them to the nonnegative adjustment model.
-    con.execute("CREATE TEMP TABLE action_checks AS SELECT *, ("+structural+") AS structural_issue,("+negative+") AS special_action FROM (SELECT *,try(strftime(to_timestamp(ex_date_ms/1000.0) AT TIME ZONE 'Asia/Shanghai','%Y-%m-%d')) AS event_date FROM read_parquet(?))",[str(path)])
+    con.execute("CREATE TEMP TABLE action_checks AS SELECT *, ("+structural+") AS structural_issue,("+negative+") AS special_action FROM (SELECT *,try(strftime(to_timestamp(ex_date_ms/1000.0) AT TIME ZONE 'Asia/Shanghai','%Y-%m-%d')) AS event_date FROM read_parquet(?))",[parquet_input(path)])
     total,bad,securities,in_window,window_bad,structural_bad,special,window_special,outside_special,undated=con.execute("""SELECT count(*),count(*) FILTER(WHERE structural_issue OR special_action),count(distinct thscode),
         count(*) FILTER(WHERE event_date BETWEEN ? AND ?),
         count(*) FILTER(WHERE event_date BETWEEN ? AND ? AND (structural_issue OR special_action)),
@@ -255,7 +256,7 @@ def verify(market,context=None,*,progress=None,guard=None,listing_callback=None)
             con.execute('SET threads=1');con.execute("SET memory_limit='512MB'");con.execute('SET temp_directory=?',[spill])
             raw=valid_roles.get('raw-daily.parquet');raw_ok=False
             if raw:
-                fields={row[0] for row in con.execute('DESCRIBE SELECT * FROM read_parquet(?)',[str(raw)]).fetchall()}
+                fields={row[0] for row in con.execute('DESCRIBE SELECT * FROM read_parquet(?)',[parquet_input(raw)]).fetchall()}
                 required={'thscode','date_ms','open_price','high_price','low_price','close_price','volume','turnover'}
                 raw_ok=required<=fields
                 for item in checks:

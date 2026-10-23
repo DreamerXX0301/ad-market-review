@@ -166,7 +166,9 @@ export function summarizeChecks(checks: any, onlySatisfied = false): string {
   const flatten = (node: any): any[] =>
     Array.isArray(node)
       ? node.flatMap(flatten)
-      : node?.type === "history_event" || node?.history_event
+      : node?.type === "history_event" ||
+          node?.type === "hot_universe" ||
+          node?.history_event
         ? [node]
         : node?.checks
           ? flatten(node.checks)
@@ -186,6 +188,8 @@ export function summarizeChecks(checks: any, onlySatisfied = false): string {
   return leaves
     .slice(0, 6)
     .map((c) => {
+      if (c.type === "hot_universe")
+        return `近期热点题材 / 行业 · ${c.result === true ? "满足" : c.result === false ? "未满足" : "待核验"}${c.reason ? "；" + c.reason : ""}`;
       if (isHiddenConditionRule(c)) return HIDDEN_CONDITION_TEXT;
       if (c.type === "history_event") return historyCheckText(c);
       if (c.field === HIGHER_LOWS_FIELD) {

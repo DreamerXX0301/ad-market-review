@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Crosshair, Minus, Pencil, Trash2, X } from "lucide-react";
+import { Crosshair, Minus, Pencil, Trash2, X, Sparkles } from "lucide-react";
 import { api, patch, post, useApi } from "../lib/api";
 import type { Row } from "../lib/api";
 import { useToast } from "./UI";
@@ -15,6 +15,9 @@ import {
   lineAlertRules,
   newLineSettings,
   savedLineSettings,
+  quietLineSettings,
+  levelOriginLabel,
+  levelPreviewMatchesChart,
 } from "./chartAnnotations";
 import type { ChartLine, ChartLineType } from "./chartAnnotations";
 import "./ChartAnnotations.css";
@@ -29,21 +32,27 @@ export function useChartAnnotations(
     : null;
   const result = useApi<Row>(path);
   const scope = annotationScope(data);
-  const context = `${instrumentId}:${scope?.price_basis}:${scope?.anchor_date}`;
+  const isIndex = data?.instrument?.kind === "index";
+  const context = `${instrumentId}:${scope?.price_basis}:${scope?.anchor_date}:${data?.period}:${data?.as_of}:${data?.snapshot_id}`;
   const currentContext = useRef(context);
   currentContext.current = context;
   const toast = useToast();
-  const membership = useWatchlistMembership(enabled);
+  const membership = useWatchlistMembership(enabled && !isIndex);
+  const defaults = (type: ChartLineType = "support") =>
+    isIndex ? quietLineSettings(type) : newLineSettings(type);
   const [open, setOpen] = useState(false),
     [drawing, setDrawing] = useState(false),
     [show, setShow] = useState(true),
     [price, setPrice] = useState(""),
     [label, setLabel] = useState(""),
     [color, setColor] = useState("blue"),
-    [settings, setSettings] = useState(newLineSettings),
+    [settings, setSettings] = useState(() => defaults()),
     [editing, setEditing] = useState<ChartLine | null>(null),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [lookback, setLookback] = useState(120),
+    [preview, setPreview] = useState<Row | null>(null),
+    [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   const inFlight = useRef(false);
   useEffect(() => {
     setDrawing(false);
@@ -51,7 +60,9 @@ export function useChartAnnotations(
     setPrice("");
     setLabel("");
     setError("");
-    setSettings(newLineSettings());
+    setSettings(defaults());
+    setPreview(null);
+    setSelectedCandidates([]);
   }, [context]);
   useEffect(() => {
     if (!drawing) return;
@@ -85,8 +96,35 @@ export function useChartAnnotations(
     [lines, data],
   );
   const visible = useMemo(
-    () => (show ? views.filter((view) => view.price != null) : []),
-    [views, show],
+    () =>
+      show
+        ? [
+            ...views.filter((view) => view.price != null),
+            ...(
+              (levelPreviewMatchesChart(preview, data, instrumentId)
+                ? preview?.items
+                : []) || []
+            )
+              .filter(
+                (item: Row) =>
+                  !item.saved && selectedCandidates.includes(item.candidate_id),
+              )
+              .map((item: Row) => ({
+                line: {
+                  ...item,
+                  annotation_id: `preview:${item.candidate_id}`,
+                  instrument_id: instrumentId,
+                  label: item.line_type === "support" ? "候选支撑" : "候选压力",
+                  color: item.line_type === "support" ? "green" : "red",
+                } as ChartLine,
+                price: item.price,
+                converted: false,
+                anchor: item.anchor_date,
+                reason: "尚未保存的本次候选",
+              })),
+          ]
+        : [],
+    [views, show, preview, selectedCandidates, instrumentId, data],
   );
   const picked = (value: number) => {
     if (!enabled || !scope || busy || !Number.isFinite(value) || value <= 0)
@@ -112,7 +150,7 @@ export function useChartAnnotations(
         setEditing(null);
         setLabel("");
         setPrice("");
-        setSettings(newLineSettings());
+        setSettings(defaults());
         toast(message);
       }
     } catch (error) {
@@ -144,8 +182,55 @@ export function useChartAnnotations(
       editing ? "水平线已更新" : "水平线已保存",
     );
   };
+  const calculateLevels = async () => {
+    if (!path || !scope || !data?.snapshot_id || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError("");
+    const requestContext = context;
+    try {
+      const response = await post<Row>(`${path}/recommendations`, {
+        period: data.period,
+        as_of: data.as_of,
+        lookback,
+        price_basis: scope.price_basis === "none" ? "none" : "forward",
+        snapshot_id: data.snapshot_id,
+      });
+      if (currentContext.current !== requestContext) return;
+      setPreview(response);
+      setSelectedCandidates(
+        (response.items || [])
+          .filter((item: Row) => !item.saved)
+          .map((item: Row) => item.candidate_id),
+      );
+      setShow(true);
+    } catch (error) {
+      if (currentContext.current === requestContext)
+        setError((error as Error).message);
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  };
+  const saveLevels = () => {
+    if (!path || !preview || !selectedCandidates.length) return;
+    const requestContext = context;
+    void mutate(async () => {
+      await post(`${path}/recommendations/save`, {
+        parameters: preview.parameters,
+        preview_id: preview.preview_id,
+        candidate_ids: selectedCandidates,
+      });
+      if (currentContext.current === requestContext) {
+        setPreview(null);
+        setSelectedCandidates([]);
+      }
+    }, "支撑压力线已保存，未启用提醒或自动自选");
+  };
   return {
     enabled,
+    isIndex,
+    defaults,
     scope,
     open,
     setOpen,
@@ -173,6 +258,16 @@ export function useChartAnnotations(
     picked,
     save,
     mutate,
+    lookback,
+    setLookback,
+    preview: levelPreviewMatchesChart(preview, data, instrumentId)
+      ? preview
+      : null,
+    setPreview,
+    selectedCandidates,
+    setSelectedCandidates,
+    calculateLevels,
+    saveLevels,
   };
 }
 
@@ -207,10 +302,10 @@ export function ChartAnnotationPanel({
   if (!state.enabled || !state.open) return null;
   const activeScope = state.editing || state.scope;
   return (
-    <section className="chart-annotations" aria-label="个股水平线工具">
+    <section className="chart-annotations" aria-label="支撑压力与水平线工具">
       <div className="chart-annotation-heading">
         <div>
-          <strong>划线与提醒</strong>
+          <strong>{state.isIndex ? "指数划线与支撑压力" : "划线与提醒"}</strong>
           <span>
             {activeScope?.price_basis === "none"
               ? "未复权 · 日／周／月共享"
@@ -236,6 +331,125 @@ export function ChartAnnotationPanel({
           <X size={15} />
         </button>
       </div>
+      <div className="chart-auto-levels">
+        <div className="chart-auto-levels-actions">
+          <strong>
+            <Sparkles size={14} /> 自动支撑压力
+          </strong>
+          <label>
+            回看
+            <select
+              aria-label="支撑压力回看范围"
+              value={state.lookback}
+              disabled={state.busy}
+              onChange={(event) => {
+                state.setLookback(Number(event.target.value));
+                state.setPreview(null);
+                state.setSelectedCandidates([]);
+              }}
+            >
+              {[60, 120, 240].map((value) => (
+                <option key={value} value={value}>
+                  {value}根当前周期K线
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="btn small"
+            disabled={state.busy || !state.scope || state.result.loading}
+            onClick={() => void state.calculateLevels()}
+          >
+            {state.busy
+              ? "处理中…"
+              : state.preview
+                ? "重新计算候选"
+                : "计算候选并预览"}
+          </button>
+        </div>
+        <p className="chart-annotation-help">
+          按当前图表周期、观察日和价格口径，从本地行情寻找已确认历史分型。先预览勾选，再保存；重算不会改动已保存的线。
+        </p>
+        {state.preview && (
+          <>
+            <p className="chart-annotation-help">
+              观察 {state.preview.parameters.as_of} ·{" "}
+              {
+                (
+                  { D: "日K", W: "完整周K", M: "完整月K" } as Record<
+                    string,
+                    string
+                  >
+                )[state.preview.parameters.period]
+              }{" "}
+              ·
+              {state.preview.parameters.price_basis === "none"
+                ? "未复权"
+                : "本地前复权"}{" "}
+              · 完整报价 {state.preview.complete_bars}根
+              {state.preview.reference_price != null && (
+                <>
+                  {" "}
+                  · 参考收盘 {num(state.preview.reference_price, 4)}（
+                  {state.preview.reference_date}）
+                </>
+              )}
+            </p>
+            <div className="chart-auto-levels-list">
+              {(state.preview.items || []).map((item: Row) => (
+                <label key={item.candidate_id} data-type={item.line_type}>
+                  <input
+                    type="checkbox"
+                    disabled={state.busy || item.saved}
+                    checked={
+                      item.saved ||
+                      state.selectedCandidates.includes(item.candidate_id)
+                    }
+                    onChange={(event) =>
+                      state.setSelectedCandidates((old) =>
+                        event.target.checked
+                          ? [...old, item.candidate_id]
+                          : old.filter((id) => id !== item.candidate_id),
+                      )
+                    }
+                  />
+                  <span>
+                    {item.line_type === "support" ? "支撑" : "压力"}{" "}
+                    <strong>{num(item.price, 4)}</strong>
+                  </span>
+                  <small>
+                    {item.touches}处分型 · 最近 {item.last_pivot_date} ·{" "}
+                    {item.confirmed_on}确认{item.saved ? " · 已保存" : ""}
+                  </small>
+                </label>
+              ))}
+            </div>
+            {state.preview.reason && (
+              <p className="chart-annotation-help">{state.preview.reason}</p>
+            )}
+            <p className="chart-annotation-help">{state.preview.notice}</p>
+            {!!state.preview.items?.length && (
+              <button
+                className="btn small primary"
+                disabled={state.busy || !state.selectedCandidates.length}
+                onClick={state.saveLevels}
+              >
+                保存所选支撑压力线（{state.selectedCandidates.length}）
+              </button>
+            )}
+            <button
+              className="btn small"
+              disabled={state.busy}
+              onClick={() => {
+                state.setPreview(null);
+                state.setSelectedCandidates([]);
+              }}
+            >
+              收起候选
+            </button>
+          </>
+        )}
+      </div>
       {state.editing && (
         <p className="chart-annotation-help">
           正在修改原保存线价（
@@ -259,7 +473,7 @@ export function ChartAnnotationPanel({
                 name={typeGroup}
                 value={type}
                 checked={state.settings.line_type === type}
-                onChange={() => state.setSettings(newLineSettings(type))}
+                onChange={() => state.setSettings(state.defaults(type))}
               />
               <span>{lineTypeLabels[type]}</span>
             </label>
@@ -286,7 +500,7 @@ export function ChartAnnotationPanel({
           onClick={() => {
             state.setDrawing(!state.drawing);
             state.setEditing(null);
-            if (state.editing) state.setSettings(newLineSettings());
+            if (state.editing) state.setSettings(state.defaults());
           }}
         >
           <Crosshair size={14} />
@@ -335,7 +549,7 @@ export function ChartAnnotationPanel({
                 state.setEditing(null);
                 state.setPrice("");
                 state.setLabel("");
-                state.setSettings(newLineSettings());
+                state.setSettings(state.defaults());
               }}
             >
               取消修改
@@ -343,7 +557,7 @@ export function ChartAnnotationPanel({
           )}
         </div>
       </div>
-      {state.settings.line_type !== "reference" && (
+      {!state.isIndex && state.settings.line_type !== "reference" && (
         <div className="chart-line-alert-settings">
           <div className="chart-line-alert-rules">
             {lineTypeModes[state.settings.line_type].map((mode) => {
@@ -412,17 +626,30 @@ export function ChartAnnotationPanel({
           )}
         </div>
       )}
+      {state.isIndex && (
+        <p className="chart-annotation-help">
+          指数线仅保存与展示点位，不创建个股提醒或自动加入自选。
+        </p>
+      )}
       {state.drawing ? (
         <p className="chart-annotation-help">
           点击蜡烛主图选价，再保存；Esc 退出定位。
         </p>
       ) : (
         <details className="chart-annotation-explainer">
-          <summary>盘后核验 · 口径与使用说明</summary>
+          <summary>
+            {state.isIndex ? "划线口径与使用说明" : "盘后核验 · 口径与使用说明"}
+          </summary>
           <p>
-            保存后核验当前已发布完整日K，之后每次手动行情更新继续检查。提醒记录保存在“我的自选池
-            ·
-            划线提醒”。移出自选后提醒仍保留；取消全部提醒条件可停用。同为前复权时，旧锚线按已核验公司行动换算到当前图；原线价、原锚及提醒证据保留。不同价格口径或缺少区间依据时不显示，并在列表说明原因。
+            {state.isIndex ? (
+              "指数保存后跨日／周／月共享，仅按原始点位显示，不执行个股提醒。"
+            ) : (
+              <>
+                保存后核验当前已发布完整日K，之后每次手动行情更新继续检查。提醒记录保存在“我的自选池
+                ·
+                划线提醒”。移出自选后提醒仍保留；取消全部提醒条件可停用。同为前复权时，旧锚线按已核验公司行动换算到当前图；原线价、原锚及提醒证据保留。不同价格口径或缺少区间依据时不显示，并在列表说明原因。
+              </>
+            )}
           </p>
         </details>
       )}
@@ -450,6 +677,14 @@ export function ChartAnnotationPanel({
                   {lineTypeLabels[savedLineSettings(line).line_type]}
                 </span>
                 <span>{line.label || "未命名"}</span>
+                {line.origin?.algorithm && (
+                  <span
+                    className="chart-line-origin"
+                    title={`${levelOriginLabel(line)} · ${line.origin.algorithm} · ${line.origin.snapshot_id}`}
+                  >
+                    {levelOriginLabel(line)}
+                  </span>
+                )}
                 <strong title={`原保存线价 · ${line.anchor_date || "未复权"}`}>
                   {num(line.price, 4)}
                 </strong>

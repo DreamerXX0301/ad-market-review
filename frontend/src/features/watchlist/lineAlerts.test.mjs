@@ -272,6 +272,11 @@ const state = {
   editing: null,
   busy: false,
   error: "",
+  isIndex: false,
+  lookback: 120,
+  preview: null,
+  selectedCandidates: [],
+  defaults: newLineSettings,
   result: { loading: false, error: "", reload: nope },
   lines: [],
   views: [],
@@ -285,6 +290,11 @@ const state = {
   setColor: nope,
   save: nope,
   mutate: nope,
+  calculateLevels: nope,
+  saveLevels: nope,
+  setLookback: nope,
+  setPreview: nope,
+  setSelectedCandidates: nope,
 };
 const support = renderToStaticMarkup(
   createElement(ChartAnnotationPanel, { state }),
@@ -296,9 +306,60 @@ assert.equal(
 );
 assert.match(support, /支撑失守提醒（风险）/);
 assert.match(support, /保存后核验当前行情日，命中才加入/);
-assert.doesNotMatch(support, /<select/);
+assert.match(support, /aria-label="支撑压力回看范围"/);
+assert.doesNotMatch(
+  support.slice(support.indexOf("<fieldset")),
+  /<select/,
+  "manual line types and reminder rules remain explicit radio/checkbox controls",
+);
 assert.equal((support.match(/aria-label="选择.色线"/g) || []).length, 5);
 assert.match(support, /划线与提醒/);
+const indexPanel = renderToStaticMarkup(
+  createElement(ChartAnnotationPanel, {
+    state: {
+      ...state,
+      isIndex: true,
+      settings: {
+        line_type: "support",
+        alert_modes: [],
+        auto_watchlist: false,
+      },
+    },
+  }),
+);
+assert.match(indexPanel, /指数划线与支撑压力/);
+assert.match(indexPanel, /指数线仅保存与展示点位/);
+assert.doesNotMatch(indexPanel, /触发后自动加入自选|支撑失守提醒（风险）/);
+const candidatePanel = renderToStaticMarkup(
+  createElement(ChartAnnotationPanel, {
+    state: {
+      ...state,
+      preview: {
+        parameters: { as_of: "2026-10-23", period: "D", price_basis: "none" },
+        reference_price: 12.98,
+        reference_date: "2026-10-23",
+        complete_bars: 120,
+        notice: "保存不启用提醒或自动自选。",
+        items: [
+          {
+            candidate_id: "candidate-1",
+            line_type: "support",
+            price: 12.1,
+            touches: 2,
+            last_pivot_date: "2026-09-28",
+            confirmed_on: "2026-09-30",
+            saved: false,
+          },
+        ],
+      },
+      selectedCandidates: ["candidate-1"],
+    },
+  }),
+);
+assert.match(candidatePanel, /参考收盘 12.9800/);
+assert.match(candidatePanel, /2026-09-30确认/);
+assert.match(candidatePanel, /保存所选支撑压力线（1）/);
+assert.match(candidatePanel, /保存不启用提醒或自动自选/);
 const legacy = renderToStaticMarkup(
   createElement(ChartAnnotationPanel, {
     state: {

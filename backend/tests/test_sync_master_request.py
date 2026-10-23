@@ -44,10 +44,19 @@ def test_new_sync_freezes_explicit_exchanges_before_master_and_keeps_raw_evidenc
     accepted=json.loads((collector.root/'accepted/master.json').read_text())
     assert accepted['data']['item'][0]['list_date']=='2000-01-01'
     assert accepted['data']['item'][1]['list_date'] is None
-    canonical=json.loads((collector.root/'raw/fuyao_stock_master.json').read_text())
-    assert canonical['identity_lineage']['master_request_params']==EXPLICIT
-    assert canonical['identity_lineage']['raw_evidence']=='accepted/master.json'
+    # New plans defer the reconstructible canonical copy until publication;
+    # pausing still preserves exact accepted source bytes and frozen parameters.
+    assert not (collector.root/'raw/fuyao_stock_master.json').exists()
     assert collector.state['files']['master.json']['signature']==digest({'path':PATH,'params':EXPLICIT})
+    accepted_sha=sync.hash_file(collector.root/'accepted/master.json')
+    tasks.change_task(job,'resume');tasks.claim_next('fixture-worker')
+    result=sync.execute_sync(job)
+    assert result['derived_cleanup']['status']=='completed'
+    receipt=json.loads((collector.root/'derived-cleanup.json').read_text())
+    assert any(row['path']=='accepted/master.json' and row['sha256']==accepted_sha for row in receipt['scope']['accepted_sources'])
+    assert any(row['path']=='raw/fuyao_stock_master.json' and row['status']=='removed' for row in receipt['files'])
+    assert sync.hash_file(collector.root/'accepted/master.json')==accepted_sha
+    assert [params for path,params in transport.calls if path==PATH]==[EXPLICIT]
 
 
 def test_legacy_checkpoint_reuses_original_master_signature_and_fetch_receipt(transport):

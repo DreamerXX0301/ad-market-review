@@ -14,6 +14,37 @@
 .stock-current-topics-heading small {
   font-size: 10px;
 }
+.stock-current-topics-heading button {
+  margin-left: 6px;
+}
+.stock-topic-manual-label {
+  margin-left: 5px;
+  color: var(--purple);
+  font-size: 9px;
+}
+.stock-topic-manager {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  max-width: 650px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+}
+.stock-topic-manager-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.stock-topic-manager label {
+  display: grid;
+  gap: 6px;
+}
+.stock-topic-manager small {
+  color: var(--muted);
+  line-height: 1.7;
+}
 .stock-current-topic-list {
   display: flex;
   flex-wrap: wrap;

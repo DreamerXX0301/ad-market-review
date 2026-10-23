@@ -30,7 +30,7 @@ def current_memberships(market, symbols, *, expected_day=None):
         tag = {key: definition.get(key) for key in
                ('topic_id', 'name', 'kind', 'source_observed_date', 'members_complete')}
         for symbol in entry['members'] & selected:
-            memberships[symbol].append(tag)
+            memberships[symbol].append({**tag,**topic_members._membership(entry,symbol)})
     for tags in memberships.values():
         tags.sort(key=lambda item: (item['kind'], item['name'], item['topic_id']))
     return {'business_date': day, 'memberships': memberships, 'scope': CURRENT_TOPICS_SCOPE}

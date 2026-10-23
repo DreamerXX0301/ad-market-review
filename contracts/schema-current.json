@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 20,
+  "migration_version": 23,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -78,15 +78,27 @@
     {
       "name": "020_workspace_purge.sql",
       "sha256": "67cbabe235f43458e654ddce6dfec8cd2778a4f758a3d7925bf67e83b656bc2c"
+    },
+    {
+      "name": "021_chart_annotation_origins.sql",
+      "sha256": "7851f88ebaa7ac730c3023a5a83652c2207bc0993a3c7fa2748aeddd0b4c1ff5"
+    },
+    {
+      "name": "022_strategy_hot_universe.sql",
+      "sha256": "e7543389e7bd1437107ce94d98548f8c3eae94064a716527422ec08b89784bb3"
+    },
+    {
+      "name": "023_market_storage_gc.sql",
+      "sha256": "74b135a3e6749189a1d344216c145f4f271c809745a56c45e19865346903cdf7"
     }
   ],
   "counts": {
-    "table": 50,
-    "index": 31,
+    "table": 52,
+    "index": 32,
     "view": 1,
-    "trigger": 98
+    "trigger": 102
   },
-  "schema_sha256": "1ead1f4ae5833ce269f0a44f17394dad25311c6613cffadc342fdebf01d45a65",
+  "schema_sha256": "56b07db288cc0845316d67b2a290d6ea85ae8e57651540d9c5bbbb19fb957171",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -641,6 +653,30 @@
           "type": "TEXT",
           "notnull": 0,
           "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 14,
+          "name": "origin_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'{}'",
+          "pk": 0
+        },
+        {
+          "cid": 15,
+          "name": "origin_key",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 16,
+          "name": "instrument_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'stock'",
           "pk": 0
         }
       ],
@@ -1811,6 +1847,139 @@
         "retain_sentiment_snapshot_replace",
         "retain_sentiment_snapshot_update",
         "sentiment_snapshot_clock"
+      ]
+    },
+    "market_storage_collection": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "collection_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "version",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "scope_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "scope_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "completed_at_ms",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [],
+      "triggers": [
+        "market_collection_identity_immutable",
+        "market_collection_retained"
+      ]
+    },
+    "market_storage_collection_file": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "collection_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "object_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "byte_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "removed_bytes",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "market_storage_collection",
+          "from": "collection_id",
+          "to": "collection_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "market_collection_file_identity_immutable",
+        "market_collection_file_retained"
       ]
     },
     "platform_setting": {
@@ -3512,6 +3681,14 @@
         {
           "cid": 8,
           "name": "signal_period",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "hot_universe_json",
           "type": "TEXT",
           "notnull": 0,
           "dflt_value": null,

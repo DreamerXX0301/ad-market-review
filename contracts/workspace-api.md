@@ -69,13 +69,16 @@
 
 前端条件组的“快捷添加条件”默认收起且不预选模板。选择、修改参数、取消都不调用规则onChange；仅点“加入条件”才把预览的标准条件加入当前草稿，之后仍须保存策略。历史where/then各自有入口，单叶旧结构打开面板也不重写。all/any中的组合始终作为一个原子子组加入，不拆散到OR。
 
-- `GET/POST /strategies`、`GET/PATCH /strategies/{id}`：name、period=D/W/M、definition、policy、trade_rules；修改追加版本，旧运行冻结。
+- `GET/POST /strategies`、`GET/PATCH /strategies/{id}`：name、period=D/W/M、definition、policy、trade_rules、hot_universe；修改追加版本，旧运行冻结。
 - definition 为叶 `{field,op,value,period?}` / `{field,op,right_field,period?}`，或嵌套 `{all:[...]}` / `{any:[...]}`；兼容旧 logic/conditions 输入。
 - 普通叶默认策略周期，也可逐叶 D/W/M；W/M 使用最近应闭合且有效周期，不能缺最新后退到旧柱。固定日线字段必须 D。右字段只能是兼容白名单数值，常量专用字段不能当右字段。
 - 技术组合快捷入口不新增服务端字段：MACD水上金叉保存为同周期 `all(macd_cross==true,macd_dif>0,macd_dea>0)`；KDJ低位金叉保存为 `all(kd_cross==true,kdj_k<U,kdj_d<U)`，U默认20、快捷输入范围0–100，指当前双线而非前期值；K>D状态保存为 `{field:"kdj_k",op:">",right_field:"kdj_d",period:P}`。每个叶子显式使用同一P；普通入口采用当前选择周期，历史where/then固定D。组合是外层all/any的一个子节点，不能把三项拆进OR。用户后续可编辑各叶子，仍由原有白名单、深度/节点数与三值逻辑核验。
 - 卖出区技术组合优先展示MACD死叉、KDJ死叉、MACD水上死叉、KDJ高位死叉与K<D持续状态。普通死叉为前一期快线≥慢线且当前快线<慢线；水上再要求当前DIF、DEA都>0；高位再要求当前K、D都>H，H默认80、快捷输入0–100，等于门槛不算。K<D只检查当前状态，不要求刚死叉。所有快捷均展开成同周期普通叶子，不把“金叉=false”当死叉，不改变已保存条件或卖出启用时的既有默认条件。
 - K值范围快捷保存为同周期 `all(kdj_k>=L,kdj_k<=U)`，金叉加范围再包含 `kd_cross==true`；只限制当前K，不隐含D范围。L/U为有限0–100且L≤U，等号有效；低/中/高快捷起点为0–20、20–80、80–100，20/80边界重合，它们是可编辑起点而非互斥状态或收益判断。过滤范围不修改KDJ指标本身的计算参数。
 - 股票范围 board 包含/剔除与当前 is_st 在外层独立 AND。当前身份不是历史逐日 ST/上市档案；未知不能当 false。
+- `hot_universe` 为独立范围配置，`null` 关闭；启用为 `{window_sessions:7,top_n:10,kind:"all"}`，窗口整数1–60、排名整数1–50，kind为`all/concept/industry`（concept包含人工题材）。在截至当前业务日的最近N个市场交易日（含当日），按已核验收盘涨停股票日数降序、活跃股票数降序、名称/ID稳定排序，股票属于前N名中任一当前分类即可；它不是成交额榜、资金净流入或已确认当日主线。与技术条件独立AND，技术false仍为false。来源日期、原始收盘核验、窗口长度或参与分类成员覆盖不足时范围结果为unknown，不能伪造0、强行入选或将unknown改成false。每次运行一次有界批量核验，补充数据只加载窗口三类涨停/跌停来源，每批最多256股，不逐股重扫全市场。
+- 热点配置写入022迁移的`strategy_version.hot_universe_json`，与规则同版本。运行返回`universe_definition.hot_universe`：算法版本、配置、业务日、窗口、排名/计数、覆盖与缺口、当前成员联合证券ID（只存一次）、成员SHA及来源行情代际；逐股checks仅保存`type=hot_universe/result/matched_topic_ids/evidence_ref`，不复制完整排名或目录。运行结束同时复核行情与题材修订指纹，变化则409，旧运行证据不随当前目录修改。当前成员代理不等于历史PIT，回测availability明确不可用，创建及执行层拒绝，不静默忽略热点范围。
+- 热点覆盖的`unverified_candidate_stock_days`保留待核验股票日数量，`unverified_candidate_stock_day_reasons`按`missing_raw_close/source_conflict/other_unverified`给出原因计数。来源日完整不代表证券原价与跨源证据全部一致；排名不完整时只能展示已确认事件下界，界面解释数据待核验不等于任务运行失败，不能补零或声称已证明前N边界。
 - `close_breakout_high` 使用 `op=new_high,value=N`（整数 1–750），观察日日收盘严格大于前 N 个市场交易日 high，排除今日；缺报/零量/行动不可比为未知。
 - `limit_up/prev_limit_up` 分别是当日收盘/前一市场交易日收盘来源事实，是/否均需证据。`limit_up_count_1y` 是截至昨日滚动自然一年次数，非负整数常量，不是年内次数；不完整 actual=null，有限上下界可证明的比较才成立。
 
@@ -189,6 +192,8 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 普通周/月信号日期与入池日分开。入池始终用业务日 T 的真实日收盘，不能拿最近周/月价冒充。运行与核对有任务租约、真实进度和取消；同步 API 用例不支持后台任务式暂停/重试。
 
 `GET /tasks/activity` 为全局任务提示提供轻量只读摘要：当前 running/queued（最多200项，`active_count` 为实际总数）及最近5个非活动任务；不返回完整日志或任务参数。行含 job_id/request_key、kind/title、target_type、strategy_id/strategy_name、status/stage、progress、实际批次数、日期和结束时间。刚开始且未回报测量时 progress=null，真实0%保留，完成为100%，失败不伪装完成。个股与板块选股因已有运行任务冲突返回409 `{detail:{message,active_task}}`，message包含当前任务与策略名称。
+
+`GET /tasks?limit=200&summary=true`供数据中心历史轮询，最多200条小回执，单个SQLite只读事务完成。兼容的默认`GET /tasks`及服务`list_tasks()`仍返回原完整内容；选中某任务继续`GET /tasks/{id}`读取完整日志，不删除或截断审计事实。summary行保留身份、状态、真实进度、日期、duration_ms、摘要和显示用parameters白名单（operation/mode/target_type/strategy_id/window/data_chain_version、明确链标记、来源/板块代码、单板块名称等标量；不含任务冻结大计划、成员或SHA全集）。logs只带chain_authorized/followup_queued/chain_blocked每种最新一条，按真实seq排序，details仅next_task_id/原因；足够恢复待排队/已排队/阻断状态，不能把缺失后续误显示完成。不存在的记录数保持null。完整批次子项不在历史列表展开，精细进度仍从activity与选中详情读取。
 
 策略列表的 `latest_run` 用于 GET 恢复最近已保存运行；返回页面、刷新浏览器或读取旧结果不创建任务。旧日期、旧规则版本保持原值，不能冒充当前结果；手动刷新失败或尚在运行时保留上次成功结果。浏览器仅记住个股/板块目标和各自策略ID偏好，候选与证据始终读取服务端。
 

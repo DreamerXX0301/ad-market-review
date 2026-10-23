@@ -300,6 +300,65 @@
   padding: 0 4px;
   background: color-mix(in srgb, var(--blue) 14%, transparent);
 }
+.chart-auto-levels {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  background: var(--surface2);
+}
+.chart-auto-levels-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.chart-auto-levels-actions > strong,
+.chart-auto-levels-actions > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.chart-auto-levels-actions > label {
+  margin-left: auto;
+  color: var(--muted);
+}
+.chart-auto-levels-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.chart-auto-levels-list > label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px;
+  font-size: 12px;
+}
+.chart-auto-levels-list small {
+  flex-basis: 100%;
+  padding-left: 22px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.chart-auto-levels-list [data-type="support"] strong {
+  color: #45c6a4;
+}
+.chart-auto-levels-list [data-type="resistance"] strong {
+  color: #f17c80;
+}
+.chart-auto-levels > .btn {
+  margin: 10px 8px 0 0;
+}
+.chart-line-origin {
+  color: var(--muted);
+  font-size: 10px;
+}
 .candle-plot.drawing-line canvas {
   cursor: crosshair;
 }

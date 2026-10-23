@@ -27,6 +27,7 @@ import SectorChartDialog from "./features/market/SectorChartDialog";
 import SectorMembersDialog from "./features/sector/SectorMembersDialog";
 import { globalSectorSelection } from "./components/searchPresentation";
 import { marketInstallationState } from "./components/marketInstallation";
+import IncrementProgressDialog from "./components/IncrementProgressDialog";
 const currentRoute = () => {
   const hash = location.hash.slice(1).split("?")[0];
   return routeTitles[hash] ? hash : "market";
@@ -367,6 +368,14 @@ export default function App() {
           }}
         />
       )}
+      <IncrementProgressDialog
+        onFinished={() => {
+          bootstrap.reload();
+          window.dispatchEvent(
+            new CustomEvent("workbench-route", { detail: "data" }),
+          );
+        }}
+      />
       {toast && (
         <div className={"toast " + toast.kind}>
           {toast.kind === "error" ? (

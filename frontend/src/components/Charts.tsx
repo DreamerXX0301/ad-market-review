@@ -313,9 +313,10 @@ export function CandleChart({
     instrumentId,
     data,
     !frozenMode &&
-      !isIndex &&
       !dataEndpoint &&
-      (instrumentKind === "stock" || data?.instrument?.kind === "stock"),
+      (isIndex ||
+        instrumentKind === "stock" ||
+        data?.instrument?.kind === "stock"),
   );
   const annotationPick = useRef<((price: number) => void) | null>(null);
   annotationPick.current = annotations.drawing ? annotations.picked : null;

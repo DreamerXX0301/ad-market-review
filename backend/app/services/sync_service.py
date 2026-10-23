@@ -142,7 +142,7 @@ def validate_raw(con,table):
     if invalid or duplicate:raise ValueError(f'原始行情校验失败：无效OHLC/口径{invalid}行，重复键{duplicate}行')
 
 
-def merge_daily(incoming,previous,output,start,end,calendar,master):
+def merge_daily(incoming,previous,output,start,end,calendar,master,*,unchanged_rows=None):
     con=duckdb.connect(':memory:')
     try:
         con.execute("SET memory_limit='512MB'");con.execute('SET threads=2')
@@ -156,7 +156,7 @@ def merge_daily(incoming,previous,output,start,end,calendar,master):
         con.read_parquet(str(incoming)).filter(f'date_ms>={midnight_ms(start)} AND date_ms<={midnight_ms(end)+86400000-1}').project(RAW_COLUMNS).create_view('incoming')
         validate_raw(con,'incoming')
         if previous:
-            con.read_parquet(str(previous)).project(RAW_COLUMNS).create_view('old')
+            con.read_parquet(previous if isinstance(previous,list) else str(previous)).project(RAW_COLUMNS).create_view('old')
             validate_raw(con,'old')
             overlap,changed=con.execute('SELECT count(*),count(*) FILTER(WHERE i.open_price<>o.open_price OR i.high_price<>o.high_price OR i.low_price<>o.low_price OR i.close_price<>o.close_price OR i.volume<>o.volume OR i.turnover<>o.turnover) FROM incoming i JOIN old o USING(thscode,date_ms)').fetchone()
             con.execute('CREATE VIEW merged_all AS SELECT o.* FROM old o ANTI JOIN incoming i USING(thscode,date_ms) UNION ALL SELECT * FROM incoming')
@@ -171,9 +171,10 @@ def merge_daily(incoming,previous,output,start,end,calendar,master):
         con.register('calendar_rows',pd.DataFrame({'date':calendar}))
         missing=con.execute("SELECT count(*) FROM master_rows m CROSS JOIN calendar_rows c LEFT JOIN merged b ON b.thscode=m.thscode AND strftime(to_timestamp(b.date_ms/1000.0) AT TIME ZONE 'Asia/Shanghai','%Y-%m-%d')=c.date WHERE m.list_date IS NOT NULL AND CAST(m.list_date AS VARCHAR)<=c.date AND (m.end_date IS NULL OR CAST(m.end_date AS VARCHAR)>=c.date) AND b.thscode IS NULL").fetchone()[0]
         output.parent.mkdir(parents=True,exist_ok=True)
-        con.execute('COPY (SELECT * FROM merged ORDER BY thscode,date_ms) TO ? (FORMAT PARQUET,COMPRESSION ZSTD)',[str(output)])
+        write_output = not (unchanged_rows is not None and previous and changed == 0 and count == unchanged_rows)
+        if write_output:con.execute('COPY (SELECT * FROM merged ORDER BY thscode,date_ms) TO ? (FORMAT PARQUET,COMPRESSION ZSTD)',[str(output)])
         unknown_identity=[r['thscode'] for r in master if not r.get('list_date')]
-        return {'rows':count,'unexplained_missing':None if unknown_identity else missing,'confirmed_missing_lower_bound':missing,'identity_unknown_count':len(unknown_identity),'identity_unknown_symbols':unknown_identity,'expected_coverage_state':'unknown' if unknown_identity else 'partial','overlap_rows':overlap,'revised_overlap_rows':changed,'missing_classification':'上市日期未知时总缺口不可核验；已知身份中的缺口尚未区分停牌/数据缺失，不填0'}
+        return {'rows':count,'unexplained_missing':None if unknown_identity else missing,'confirmed_missing_lower_bound':missing,'identity_unknown_count':len(unknown_identity),'identity_unknown_symbols':unknown_identity,'expected_coverage_state':'unknown' if unknown_identity else 'partial','overlap_rows':overlap,'revised_overlap_rows':changed,'derived_file_written':write_output,'missing_classification':'上市日期未知时总缺口不可核验；已知身份中的缺口尚未区分停牌/数据缺失，不填0'}
     finally:con.close()
 
 
@@ -260,6 +261,7 @@ def execute_sync(job_id,progress=None):
             plan['index_request_plan']=INDEX_REQUEST_PLAN
             plan['index_request_begin']=wanted if kind=='initialise' else max(begin,source_calendar[0])
         plan['completion_cutoff']='18:00 Asia/Shanghai'
+        plan['storage_layout']='market-partitions-v1'
         collector.state['plan']=plan;atomic_json(collector.state_path,collector.state)
     target,begin=plan['target'],plan['begin']
     if old.get('ready') and old['data_end']>target:raise ValueError('恢复任务目标早于当前发布水位，请手动新建增量')
@@ -278,7 +280,8 @@ def execute_sync(job_id,progress=None):
     prior_reference=(prior or current).reference() if old.get('ready') else {}
     prior_master=prior_reference.get('master',{})
     master,inherited_dates=recover_listing_dates(master,prior_master,plan.get('previous_generation') or old.get('snapshot_id'))
-    collector.canonical_json('fuyao_stock_master.json',{**master_payload,'data':{**master_payload['data'],'item':master},'identity_lineage':{'inherited_listing_dates':inherited_dates,'raw_evidence':'accepted/master.json','master_request_params':master_params}})
+    canonical_master={**master_payload,'data':{**master_payload['data'],'item':master},'identity_lineage':{'inherited_listing_dates':inherited_dates,'raw_evidence':'accepted/master.json','master_request_params':master_params}}
+    if plan.get('storage_layout') != 'market-partitions-v1':collector.canonical_json('fuyao_stock_master.json',canonical_master)
     prior_symbols={symbol for symbol,row in prior_master.items() if row.get('kind')=='stock'}
     identity_changed=set(symbols)!=prior_symbols or any(any(row.get(key)!=prior_master.get(row['thscode'],{}).get(key) for key in ('name','list_date','end_date','exchange','asset_type')) for row in master)
     downloaded=collector.download('daily-k-10d' if prior else 'daily-k',12)
@@ -321,10 +324,12 @@ def execute_sync(job_id,progress=None):
             calendar_provenance={**prior_provenance,'recent_extension':{'previous_generation':plan['previous_generation'],'previous_end':plan['previous_end'],'end':target,'official_calendar_start':source_calendar[0],'official_calendar_end':source_calendar[-1],'appended_dates':[d for d in cal if d>plan['previous_end']]},'retained_calendar_count':len(cal),'retained_calendar_sha256':digest(cal)}
     lineage={'source':'fuyao','merged_verified_calendar':True,'previous_generation':plan['previous_generation']}
     if calendar_provenance:lineage.update(calendar_provenance=calendar_provenance,official_history=calendar_provenance.get('official_history',False))
-    collector.canonical_json('fuyao_calendar_year.json',{'code':0,'data':{'item':[{'date_ms':midnight_ms(d),'date':d.replace('-','')} for d in cal]},'lineage':lineage})
-    previous=Path(prior.status()['path'])/'raw-daily.parquet' if prior else None
+    canonical_calendar={'code':0,'data':{'item':[{'date_ms':midnight_ms(d),'date':d.replace('-','')} for d in cal]},'lineage':lineage}
+    if plan.get('storage_layout') != 'market-partitions-v1':collector.canonical_json('fuyao_calendar_year.json',canonical_calendar)
+    previous=prior.parquet_input('raw-daily.parquet') if prior else None
     collector.tick('校验、合并历史行情与重叠修订',50)
-    coverage=merge_daily(downloaded,previous,collector.root/'year.parquet',begin,target,cal,master)
+    unchanged_rows = prior.status()['rows'] if prior and plan.get('storage_layout') == 'market-partitions-v1' and target == plan['previous_end'] and not identity_changed else None
+    coverage=merge_daily(downloaded,previous,collector.root/'year.parquet',begin,target,cal,master,unchanged_rows=unchanged_rows)
     coverage['master_request_params']=master_params
     coverage['inherited_listing_dates']=len(inherited_dates)
     if calendar_provenance:coverage['calendar_provenance']=calendar_provenance
@@ -340,6 +345,9 @@ def execute_sync(job_id,progress=None):
     if prior and target==plan['previous_end'] and coverage['revised_overlap_rows']==0 and coverage['rows']==prior.status()['rows'] and not identity_changed:
         finish(job_id,'no_change','目标交易日行情已留存，重叠窗口无修订；本次未刷新题材成员和研究资料')
         return {'status':'no_change','quality':prior.status().get('quality','partial'),'message':'已有当日行情且重叠无修订；题材/研究资料需单独手动刷新','coverage':coverage,'data_status':prior.status()}
+    if plan.get('storage_layout') == 'market-partitions-v1':
+        collector.canonical_json('fuyao_stock_master.json',canonical_master)
+        collector.canonical_json('fuyao_calendar_year.json',canonical_calendar)
     actions=collector.download('adjustment-factors',52)
     shutil.copyfile(actions,collector.root/'raw/fuyao_bulk_adjustments.parquet')
     if not index_payloads:collect_indices(begin,55)
@@ -421,6 +429,7 @@ def execute_sync(job_id,progress=None):
     if sum(coverage.get('pool_quarantine_counts',{}).values()):warnings.append('事件池存在身份或价格缺失记录已隔离；未知不等于未涨停，详见pool_quarantine。')
     sector_observed=[collector.state['files'][f'sectors-{offset}.json']['observed_at'] for offset in range(0,len(sector_codes),50)]
     bundle={'source':'fuyao','price_basis':'none','daily_file':'year.parquet','collected_at':collector.state['collected_at'],'pool_trade_date':target,'pool_history_file':'fuyao_pool_history.json','abnormal_observed_date':str(abnormal_observed)[:10],'abnormal_fetched_at':abnormal_observed,'sectors_snapshot_observed_at':max(sector_observed) if sector_observed else None,'sectors_snapshot_date_semantics':'current_unverified_trade_date','quality_warnings':warnings,'unexplained_missing':coverage['unexplained_missing'],'coverage':coverage,'topic_files':topic_specs,'topic_coverage':f'{len(topic_specs)}组已请求或复用的真实当前成员，各组采集日独立；不是全题材历史成员库'}
+    if plan.get('storage_layout'):bundle['storage_layout']=plan['storage_layout']
     atomic_json(collector.root/'bundle.json',bundle)
     collector.tick('发布前核验数据包',76)
     validate_frozen_target(target,now_china())
@@ -428,4 +437,6 @@ def execute_sync(job_id,progress=None):
     collector.tick('登记并原子切换全部模块',81)
     validate_frozen_target(target,now_china())
     registration=register_market(status,job_id,lambda stage,pct:collector.tick(stage,pct))
-    return {'status':'partial','quality':'partial','message':'真实同步已发布；缺口与功能覆盖见数据质量','data_status':status,'registration':registration,'coverage':coverage}
+    from app.services.market_derived_cleanup import release_after_publication
+    cleanup=release_after_publication(job_id,collector.root,status,collector.state,source_kind='sync')
+    return {'status':'partial','quality':'partial','message':'真实同步已发布；缺口与功能覆盖见数据质量','data_status':status,'registration':registration,'coverage':coverage,'derived_cleanup':cleanup}

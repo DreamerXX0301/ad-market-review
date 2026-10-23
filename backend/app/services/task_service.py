@@ -100,17 +100,24 @@ def task_view(identifier: str, after_seq: int = 0) -> dict:
     return item
 
 
-def list_tasks(limit=50):
+def list_tasks(limit=50,summary=False):
+    if summary:
+        with connect() as connection:
+            connection.execute('BEGIN')
+            saved=connection.execute('SELECT * FROM job ORDER BY created_at_ms DESC,rowid DESC LIMIT ?', (max(1,min(limit,200)),)).fetchall()
+            total=connection.execute('SELECT count(*) FROM job').fetchone()[0]
+            observed=now_ms()
+            return {'items':[_summary_task_view(connection,row,observed) for row in saved],'total':total,'summary':True}
     with connect() as connection:
         ids = [r[0] for r in connection.execute("SELECT job_id FROM job ORDER BY created_at_ms DESC LIMIT ?", (max(1, min(limit, 200)),))]
         total = connection.execute("SELECT count(*) FROM job").fetchone()[0]
     return {"items": [task_view(i) for i in ids], "total": total}
 
 
-def _activity_view(connection, row):
+def _activity_view(connection, row, *, expand_batch=True, parameters=None):
     """Small display-only receipt; never serialize credentials or full event history."""
     item = dict(row)
-    parameters = json.loads(item['parameters_json'])
+    parameters = json.loads(item['parameters_json']) if parameters is None else parameters
     event = connection.execute(
         'SELECT stage,message,details_json FROM job_event WHERE job_id=? ORDER BY seq DESC LIMIT 1',
         (item['job_id'],)).fetchone()
@@ -129,7 +136,7 @@ def _activity_view(connection, row):
         'tracking_review': '板块跟踪核对' if target == 'sector' else '个股跟踪核对',
         'selection': '板块策略筛选' if target == 'sector' else '个股策略选股',
         'source_check': {'sector_chart': '单板块历史K线', 'sector_charts': '板块K线尾部增量' if parameters.get('mode') == 'increment' else '全库板块历史K线',
-                         'market_supplement': '盘面补充', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
+                         'market_supplement': '盘面补充', 'local_storage_conversion':'本地存储升级', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
                          'strategy_batch_tracking': '板块命中自动入池' if target == 'sector' else '个股命中自动入池'}.get(operation, '数据来源任务'),
     }.get(item['kind'], '后台任务')
     # accepted_batches is a weighted percentage only after progress() reports.
@@ -149,7 +156,7 @@ def _activity_view(connection, row):
         'target_date': item['target_date'], 'created_at_ms': item['created_at_ms'],
         'finished_at_ms': item['finished_at_ms'],
     }
-    if operation == 'strategy_batch' and item['kind'] == 'source_check':
+    if expand_batch and operation == 'strategy_batch' and item['kind'] == 'source_check':
         from .strategy_batches import _view as batch_view
         batch = batch_view(connection, row)
         receipt.update(status=batch['status'], progress=batch['progress'],
@@ -160,6 +167,43 @@ def _activity_view(connection, row):
             current_item = batch['current_strategy']
             receipt.update(strategy_id=current_item['strategy_id'], strategy_name=current_item['name'],
                 stage=current_item['stage'], message=f'已完成策略 {batch["completed_count"]}/{batch["total_count"]} · 步骤 {batch["completed_steps"]}/{batch["total_steps"]} · 正在运行：{current_item["name"]}')
+    return receipt
+
+
+_SUMMARY_PARAMETERS = ('mode','operation','target_type','strategy_id','window','data_chain_version',
+                       'initialization_chain','increment_chain','parent_sync_job_id','previous_chain_job_id',
+                       'topic_code','source_code','source_name','source_id','period','version','plan_version','auto_add')
+
+
+def _summary_task_view(connection,row,observed):
+    """A bounded display receipt; selected-task detail retains the full audit."""
+    item=dict(row)
+    parameters=json.loads(item['parameters_json'])
+    receipt=_activity_view(connection,row,expand_batch=False,parameters=parameters)
+    for key in ('message','strategy_name','title'):
+        if isinstance(receipt.get(key),str):receipt[key]=receipt[key][:160]
+    public={key:value[:200] if isinstance(value,str) else value
+            for key,value in parameters.items() if key in _SUMMARY_PARAMETERS and
+            (value is None or isinstance(value,(str,bool,int,float)))}
+    instrument=parameters.get('instrument')
+    if isinstance(instrument,dict):
+        public['instrument']={key:value[:120] for key,value in instrument.items()
+                              if key in ('name','topic_code','source_code','kind') and isinstance(value,str)}
+    # One latest event per state is enough for taskChainState, preserving their
+    # sequence. Large source SHA maps and progress payloads never enter history.
+    events=connection.execute("""SELECT seq,occurred_at_ms,stage,message,details_json FROM job_event
+        WHERE job_id=? AND seq IN (SELECT max(seq) FROM job_event WHERE job_id=?
+          AND stage IN ('chain_authorized','followup_queued','chain_blocked') GROUP BY stage)
+        ORDER BY seq LIMIT 3""",(item['job_id'],item['job_id'])).fetchall()
+    logs=[]
+    for event in events:
+        details=json.loads(event['details_json'])
+        small={key:value[:500] for key,value in details.items()
+               if key in ('next_task_id','reason') and isinstance(value,str)}
+        logs.append({'seq':event['seq'],'time':event['occurred_at_ms'],'stage':event['stage'],
+                     'message':event['message'][:160],'details':small})
+    receipt.update(parameters=public,logs=logs,duration_ms=max(0,(item['finished_at_ms'] or observed)-item['created_at_ms']),
+                   row_count=None,accepted_rows=None,summary=True)
     return receipt
 
 
@@ -203,6 +247,8 @@ def _increment_frozen_target(identifier, declared_target):
 def change_task(identifier: str, action: str):
     with connect() as batch_check:
         batch = batch_check.execute("SELECT kind,parameters_json FROM job WHERE job_id=?", (identifier,)).fetchone()
+    if batch and json.loads(batch['parameters_json']).get('operation')=='local_storage_conversion' and action in ('pause','resume','retry'):
+        raise HTTPException(422,'离线维护记录，请停止服务后使用存储转换工具，不在同步中心重跑')
     if batch and batch['kind']=='cleanup' and json.loads(batch['parameters_json']).get('operation')=='workspace_purge':
         if action=='retry':
             from .workspace_purge import retry

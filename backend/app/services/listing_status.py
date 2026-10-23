@@ -160,7 +160,8 @@ def confirmation_history(instrument_id=None,limit=100):
 def quote_presence(market, identifiers, as_of):
     """Worker/write only: bounded SQL aggregation, never materialize history rows."""
     status=market.status();root=published_dir().resolve();generation=(root/status['snapshot_id']).resolve()
-    path=generation/'daily.parquet';raw=generation/'raw-daily.parquet'
+    from app.analytics.market_storage import descriptor_path,parquet_input
+    path=descriptor_path(generation,'daily.parquet');raw=descriptor_path(generation,'raw-daily.parquet')
     if not generation.is_relative_to(root) or not path.is_file():raise HTTPException(409,'当前代际分析报价文件不可用，不能确认无报价')
     result={};con=duckdb.connect(':memory:')
     try:
@@ -169,9 +170,9 @@ def quote_presence(market, identifiers, as_of):
         calendar=market.calendar()
         for offset in range(0,len(identifiers),MAX_CONFIRM):
             batch=identifiers[offset:offset+MAX_CONFIRM]
-            rows=con.execute('SELECT instrument_id,count(*) FILTER(WHERE is_valid AND copies=1),min(date) FILTER(WHERE is_valid AND copies=1),max(date) FILTER(WHERE is_valid AND copies=1),sum(copies),count(*) FILTER(WHERE is_valid IS NOT TRUE OR copies!=1) FROM (SELECT instrument_id,date,bool_and('+valid+' AND date IS NOT NULL AND date<=? AND date IN (SELECT unnest(?))) AS is_valid,count(*) copies FROM read_parquet(?) WHERE instrument_id IN (SELECT unnest(?)) GROUP BY instrument_id,date) GROUP BY instrument_id',[as_of,calendar,str(path),batch]).fetchall()
+            rows=con.execute('SELECT instrument_id,count(*) FILTER(WHERE is_valid AND copies=1),min(date) FILTER(WHERE is_valid AND copies=1),max(date) FILTER(WHERE is_valid AND copies=1),sum(copies),count(*) FILTER(WHERE is_valid IS NOT TRUE OR copies!=1) FROM (SELECT instrument_id,date,bool_and('+valid+' AND date IS NOT NULL AND date<=? AND date IN (SELECT unnest(?))) AS is_valid,count(*) copies FROM read_parquet(?) WHERE instrument_id IN (SELECT unnest(?)) GROUP BY instrument_id,date) GROUP BY instrument_id',[as_of,calendar,parquet_input(path),batch]).fetchall()
             found={symbol:{'valid_quote_count':count,'first_quote_date':first,'last_quote_date':last,'analysis_observed_rows':observed,'ambiguous_quote_keys':ambiguous} for symbol,count,first,last,observed,ambiguous in rows}
-            raw_counts=dict(con.execute('SELECT thscode,count(*) FROM read_parquet(?) WHERE thscode IN (SELECT unnest(?)) GROUP BY thscode',[str(raw),batch]).fetchall()) if raw.is_file() else {}
+            raw_counts=dict(con.execute('SELECT thscode,count(*) FROM read_parquet(?) WHERE thscode IN (SELECT unnest(?)) GROUP BY thscode',[parquet_input(raw),batch]).fetchall()) if raw.is_file() else {}
             for symbol in batch:
                 item=found.get(symbol,{'valid_quote_count':0,'first_quote_date':None,'last_quote_date':None,'analysis_observed_rows':0,'ambiguous_quote_keys':0})
                 item.update(raw_observed_rows=raw_counts.get(symbol,0),absence_verified=raw.is_file())

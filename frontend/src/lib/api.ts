@@ -16,22 +16,28 @@ export async function api<T = any>(
   try {
     data = content ? JSON.parse(content) : null;
   } catch {
-    throw new Error(
-      response.ok
-        ? "服务器返回了无法读取的响应"
-        : "服务暂时不可用，请确认后端已启动",
+    throw Object.assign(
+      new Error(
+        response.ok
+          ? "服务器返回了无法读取的响应"
+          : "服务暂时不可用，请确认后端已启动",
+      ),
+      { status: response.status },
     );
   }
   if (!response.ok) {
     const d = data?.detail;
-    throw new Error(
-      typeof d === "string"
-        ? d
-        : typeof d?.message === "string"
-          ? d.message
-          : Array.isArray(d)
-            ? d.map((x: any) => x.msg || JSON.stringify(x)).join("；")
-            : JSON.stringify(d || data || "请求失败"),
+    throw Object.assign(
+      new Error(
+        typeof d === "string"
+          ? d
+          : typeof d?.message === "string"
+            ? d.message
+            : Array.isArray(d)
+              ? d.map((x: any) => x.msg || JSON.stringify(x)).join("；")
+              : JSON.stringify(d || data || "请求失败"),
+      ),
+      { status: response.status },
     );
   }
   return data;
@@ -99,7 +105,26 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
         reload();
     };
     window.addEventListener("workbench-route", onRoute);
-    return () => window.removeEventListener("workbench-route", onRoute);
+    const onTopicsChanged = () => {
+      if (
+        path &&
+        [
+          "/topics",
+          "/topic-members",
+          "/stock-topic-memberships",
+          "/topic-hotspots",
+          "/bootstrap",
+          "/watchlist",
+          "/tracking",
+        ].some((prefix) => path.startsWith(prefix))
+      )
+        reload();
+    };
+    window.addEventListener("workbench-topics-changed", onTopicsChanged);
+    return () => {
+      window.removeEventListener("workbench-route", onRoute);
+      window.removeEventListener("workbench-topics-changed", onTopicsChanged);
+    };
   }, [path, reload]);
   // A changed URL must never render the old date/security response for even one frame.
   return {

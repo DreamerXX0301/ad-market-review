@@ -17,6 +17,9 @@ const {
   savedLineSettings,
   newLineSettings,
   projectChartLine,
+  quietLineSettings,
+  levelOriginLabel,
+  levelPreviewMatchesChart,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
@@ -79,6 +82,70 @@ assert.deepEqual(newLineSettings(), {
   alert_modes: ["support_reclaim"],
   auto_watchlist: true,
 });
+for (const type of ["support", "resistance", "reference"]) {
+  assert.deepEqual(
+    quietLineSettings(type),
+    {
+      line_type: type,
+      alert_modes: [],
+      auto_watchlist: false,
+    },
+    "automatic and index levels never arm stock rules",
+  );
+}
+assert.equal(levelOriginLabel(raw), "手动划线");
+assert.match(
+  levelOriginLabel({
+    origin: {
+      algorithm: "confirmed-pivot-cluster-v1",
+      period: "W",
+      as_of: "2026-10-23",
+      manual_override: true,
+      evidence: [{ date: "2026-10-02", confirmed_on: "2026-10-16", price: 12 }],
+    },
+  }),
+  /已手动修改.*完整周K.*2026-10-23.*1处历史分型/,
+);
+const levelChart = {
+  instrument: { instrument_id: "601900.SH" },
+  snapshot_id: "market-a",
+  as_of: "2026-10-23",
+  period: "D",
+  price_basis: "none",
+};
+const levelPreview = {
+  instrument_id: "601900.SH",
+  parameters: {
+    snapshot_id: "market-a",
+    as_of: "2026-10-23",
+    period: "D",
+    price_basis: "none",
+  },
+};
+assert.equal(
+  levelPreviewMatchesChart(levelPreview, levelChart, "601900.SH"),
+  true,
+);
+for (const changes of [
+  { period: "W" },
+  { as_of: "2026-10-22" },
+  { snapshot_id: "market-b" },
+  { instrument: { instrument_id: "000001.SH" } },
+  { price_basis: "forward", adjustment: { anchor: "2026-10-23" } },
+]) {
+  assert.equal(
+    levelPreviewMatchesChart(
+      levelPreview,
+      { ...levelChart, ...changes },
+      "601900.SH",
+    ),
+    false,
+  );
+}
+assert.equal(
+  levelPreviewMatchesChart(levelPreview, levelChart, "000001.SH"),
+  false,
+);
 assert.deepEqual(
   savedLineSettings({
     ...raw,

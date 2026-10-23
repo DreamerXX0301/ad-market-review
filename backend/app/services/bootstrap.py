@@ -7,6 +7,7 @@ from pathlib import Path
 from app.core import (business_date, connect, data_dir, get_market, now_ms,
                       publish_snapshot, published_dir)
 from app.services import task_service as tasks
+from app.analytics.market_storage import load_reference
 
 
 def register_market(status: dict, job_id: str, callback=None):
@@ -15,13 +16,18 @@ def register_market(status: dict, job_id: str, callback=None):
     if previous_day and previous_day > end:
         raise ValueError("导入数据早于当前业务日，不能覆盖最新数据；请使用独立恢复目录")
     generation = status["snapshot_id"]
-    physical = {}
+    physical = {}; shared = {}
     for file in status["files"]:
         path = Path(file["path"])
         if path.parts and path.parts[0] == "published":
             path = Path(*path.parts[1:])
         physical[file["role"]] = {"object_key": str(path), "sha256": file["sha256"], "byte_count": file["bytes"], "role": file["role"]}
-    reference = json.loads((published_dir() / generation / "reference.json").read_text())
+    for role in ('raw-daily.parquet','daily.parquet'):
+        prefix=role.removesuffix('.parquet')+'-partition/'
+        shared[role]=[value for key,value in physical.items() if key.startswith(prefix)]
+    reference_parts=[value for key,value in physical.items() if key.startswith('reference-part/')]
+    shared['reference.json']=reference_parts
+    reference = load_reference(published_dir()/generation/'reference.json')
     calendar = reference["calendar"]
     actual_end = max(calendar)
     if end != actual_end:
@@ -57,7 +63,7 @@ def register_market(status: dict, job_id: str, callback=None):
         if module in ("analysis_bars", "indicators"):
             lineage["derived_view"] = {"calculation": "统一后端日周聚合和指标；基于此不可变输入按需计算", "algorithm": status.get("algorithm_version"), "materialized_indicator_rows": False}
         identifier = module + "-" + generation.removeprefix("market-")
-        snapshots[module] = publish_snapshot(module=module, job_id=job_id, start=begin, end=finish, artifacts=[artifact], quality=quality, missing=missing, lineage=lineage, price_basis="none" if module in ("daily_raw", "analysis_bars", "indicators") else "not_applicable", algorithm=status.get("algorithm_version", "raw-v1"), snapshot_id=identifier, activate=False)
+        snapshots[module] = publish_snapshot(module=module, job_id=job_id, start=begin, end=finish, artifacts=[artifact,*shared.get(file,[])], quality=quality, missing=missing, lineage=lineage, price_basis="none" if module in ("daily_raw", "analysis_bars", "indicators") else "not_applicable", algorithm=status.get("algorithm_version", "raw-v1"), snapshot_id=identifier, activate=False)
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         state = connection.execute("SELECT status FROM job WHERE job_id=?", (job_id,)).fetchone()
