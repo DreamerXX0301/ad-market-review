@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from math import isfinite
 from typing import Any
+from app.analytics.boll_conditions import field_spec as boll_field_spec
 
 NUMERIC_FIELDS = ['close','change_pct','volume','amount','volume_ratio','turnover_ratio_pct','macd_dif','macd_dea','macd_hist','kdj_k','kdj_d','kdj_j','tracking_change_pct','trading_age','limit_up_count_1y'] + [f'ma{n}' for n in (5,10,20,30,60,250)]
 NUMERIC_FIELDS += ['intraday_high_change_pct']
@@ -17,6 +18,7 @@ FIELDS['close_above_entry_high'].update(tracking_only=True,alerts_only=True)
 FIELDS['close_below_entry_low'].update(tracking_only=True)
 FIELDS['close_breakout_high']={'type':'number','operators':['new_high'],'integer':True,'min':1,'max':750,'step':1,'constant_only':True,'parameter_kind':'lookback_sessions','default':60}
 FIELDS['higher_lows']={'type':'number','operators':['confirmed_rising_lows'],'integer':True,'min':8,'max':750,'step':1,'constant_only':True,'parameter_kind':'lookback_periods','default':60,'structure_version':'higher-lows-v1','left_bars':2,'right_bars':2}
+FIELDS['boll_signal']=boll_field_spec()
 FIELDS['close']['event_price_comparison']={'scope':'event_then','right_fields':['close','high','low'],
     'change_pct':{'min_exclusive':-100,'max':10000,'default':0}}
 FIELDS['topic_ids']={'type':'topic','operators':['contains','not_contains']}
@@ -30,6 +32,7 @@ LABELS['macd_dead_cross']='MACD死叉（DIF下穿DEA）'
 LABELS['kd_dead_cross']='KDJ死叉（K线下穿D线）'
 LABELS['close_breakout_high']='收盘价突破前N个市场交易日最高价'
 LABELS['higher_lows']='底部抬高（最近两个已确认低点）'
+LABELS['boll_signal']='BOLL收口与方向'
 LABELS['intraday_high_change_pct']='当日最高涨幅（相对前收，%）'
 LABELS.update(open='开盘价', high='最高价', low='最低价')
 DAILY_ONLY_FIELDS = {'limit_up','prev_limit_up','limit_up_1y','limit_up_count_1y',
@@ -42,7 +45,7 @@ def specs():
     result=[]
     for key,spec in FIELDS.items():
         hidden=key.startswith(('close_above_ma','close_below_ma')) or key in ('volume_expand','volume_shrink','board','is_st','close_above_entry_high','close_below_entry_low') or (key.startswith('ma') and key[2:].isdigit())
-        category='趋势状态' if key in ('bullish_ma_alignment','close_breakout_high','higher_lows') else '事件信号' if key in ('macd_cross','kd_cross','macd_dead_cross','kd_dead_cross','limit_up','prev_limit_up') or key.startswith('cross_above_ma') else '题材归属' if key=='topic_ids' else '跟踪状态' if key in ('tracking_change_pct','trading_age','close_below_entry','close_above_entry_high','close_below_entry_low') else '数值比较'
+        category='BOLL收口与方向' if key=='boll_signal' else '趋势状态' if key in ('bullish_ma_alignment','close_breakout_high','higher_lows') else '事件信号' if key in ('macd_cross','kd_cross','macd_dead_cross','kd_dead_cross','limit_up','prev_limit_up') or key.startswith('cross_above_ma') else '题材归属' if key=='topic_ids' else '跟踪状态' if key in ('tracking_change_pct','trading_age','close_below_entry','close_above_entry_high','close_below_entry_low') else '数值比较'
         result.append({'field':key,'label':LABELS.get(key,key),'category':category,'hidden_in_builder':hidden,'historical_event_supported':supported_field(key),'supported_periods':['D'] if key in DAILY_ONLY_FIELDS else ['D','W','M'],**({'fixed_period':'D'} if key in DAILY_ONLY_FIELDS else {}),**spec})
     return result
 
@@ -88,9 +91,14 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
     spec=FIELDS[field]
     if scope=='event_where':
         if field=='higher_lows' or node.get('right_field')=='higher_lows':raise ValueError('底部抬高第一版支持独立条件或历史事件的今日条件；不用于历史事件日where扫描，请在外层用AND/OR组合')
+        if field=='boll_signal' or node.get('right_field')=='boll_signal':raise ValueError('BOLL支持独立条件或历史事件的今日条件；不用于历史事件日where扫描，请在外层用AND/OR组合')
         from app.domain.history_events import supported_field
         if not supported_field(field) or 'right_field' in node and not supported_field(node['right_field']):raise ValueError('历史事件条件支持日OHLCV、均线、技术指标和同日已核验收盘涨停；历史题材、身份、跟踪与滚动涨停次数尚不支持')
     if op not in spec['operators']:raise ValueError('字段不支持比较符：'+str(op))
+    if field=='boll_signal':
+        if 'right_field' in node or 'right_event_field' in node:raise ValueError('BOLL信号只接受可调参数，不支持字段比较')
+        from app.analytics.boll_conditions import validate_config
+        return {'field':field,'op':op,'value':validate_config(value),**({'period':'D'} if scope=='event_then' else {})}
     if 'right_event_field' in node:
         if scope!='event_then' or field!='close' or node['right_event_field'] not in ('close','high','low') or 'value' in node or 'right_field' in node:raise ValueError('事件价格比较仅能在本事件then内使用观察日收盘价，对比事件日close/high/low')
         clean={'field':field,'op':op,'right_event_field':node['right_event_field']}
@@ -140,6 +148,9 @@ def evaluate(node:dict, metrics:dict, history=None)->dict:
     if node['field']=='higher_lows':
         from app.analytics.higher_lows import evaluate as evaluate_structure
         return evaluate_structure(node,metrics)
+    if node['field']=='boll_signal':
+        from app.analytics.boll_conditions import evaluate as evaluate_boll
+        return evaluate_boll(node,metrics)
     if FIELDS[node['field']]['type']=='boolean' and not isinstance(a,bool):a=None
     if a is not None and b is not None:
         try:
@@ -235,6 +246,7 @@ def normalized_bar(row):
     # New structure comparisons require an explicit source/action coverage
     # proof; do not inherit the legacy display indicator's missing-key default.
     out['_higher_lows_action_coverage_known']=r.get('corporate_action_coverage_known') is True and isinstance(r.get('corporate_action'),bool)
+    out['_boll_action_coverage_known']=r.get('_boll_action_coverage_known',r.get('corporate_action_coverage_known') is True and isinstance(r.get('corporate_action'),bool)) is True
     return out
 
 def metrics_from_enriched(row,previous=None,topics=None):
@@ -247,6 +259,7 @@ def metrics_from_enriched(row,previous=None,topics=None):
     for field in ('breakout_valid','breakout_previous_sessions','breakout_blocking_distance','new_high_current_close'):
         if field in row:m[field]=row[field]
     if 'higher_lows_state' in row:m['higher_lows_state']=row['higher_lows_state']
+    if 'boll_states' in row:m['boll_states']=row['boll_states']
     for field in ('limit_up','prev_limit_up'):
         if not isinstance(m[field],bool):m[field]=None
     m['topic_ids']=topics
@@ -286,7 +299,7 @@ def metrics_from_enriched(row,previous=None,topics=None):
     return m
 
 
-def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,include_higher_lows=False)->dict:
+def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,include_higher_lows=False,boll_configs=None)->dict:
     from app.analytics.indicators import enrich_bars,aggregate_weekly,intraday_high_change
     rows=sorted((normalized_bar(b) for b in bars),key=lambda r:r['date'] or '')
     rows=[r for r in rows if r['date'] and r['date']<=as_of]
@@ -296,6 +309,9 @@ def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,
     if include_higher_lows:
         from app.analytics.higher_lows import latest as higher_lows_latest
         structure={'higher_lows_state':higher_lows_latest(daily_rows,calendar,as_of,period)}
+    if boll_configs:
+        from app.analytics.boll_conditions import latest_states
+        structure['boll_states']=latest_states(daily_rows,calendar,as_of,period,boll_configs)
     empty.update(structure)
     positions={day:index for index,day in enumerate(calendar)}
     prior_position=positions.get(as_of)

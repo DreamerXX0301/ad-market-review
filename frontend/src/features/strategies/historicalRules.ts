@@ -603,6 +603,7 @@ export function historyRuleSummary(
       : "";
   if (!node.field) return "未识别规则（保留原结构）";
   if (node.field === HIGHER_LOWS_FIELD) return higherLowsSummary(node);
+  if (node.field === "boll_signal") return bollSummary(node);
   const boards: Record<string, string> = {
     main: "主板",
     chinext: "创业板",
@@ -687,6 +688,8 @@ export function validateVisualRule(
     return null;
   }
   if (!node.field) return "未识别的规则请在结构化编辑中核对";
+  const bollError = validateBollRule(node, context);
+  if (bollError) return bollError;
   const higherLowsError = validateHigherLowsRule(node, context);
   if (higherLowsError) return higherLowsError;
   if (Object.hasOwn(node, "right_event_change_pct")) {
@@ -760,4 +763,142 @@ export function validateHigherLowsRule(node: RuleNode, context = "current") {
   )
     return "底部抬高使用独立结构判断，只接受回看窗口参数";
   return higherLowsWindowError(node.value);
+}
+
+export const BOLL_MODES = [
+  {
+    value: "squeeze",
+    label: "带宽收口",
+    description: "当期带宽不高于历史分位阈值",
+  },
+  {
+    value: "breakout_up",
+    label: "收盘向上突破上轨",
+    description: "前期收盘不高于上轨，当期收盘严格高于上轨",
+  },
+  {
+    value: "breakout_down",
+    label: "收盘向下跌破下轨",
+    description: "前期收盘不低于下轨，当期收盘严格低于下轨",
+  },
+  {
+    value: "reentry_from_above",
+    label: "从上轨外回到带内",
+    description: "前期收盘在上轨外，当期收盘回到上下轨之间（含边界）",
+  },
+  {
+    value: "reentry_from_below",
+    label: "从下轨外回到带内",
+    description: "前期收盘在下轨外，当期收盘回到上下轨之间（含边界）",
+  },
+] as const;
+export const BOLL_DEFAULTS = {
+  mode: "breakout_up",
+  band_period: 20,
+  deviations: 2,
+  rank_window: 125,
+  squeeze_percentile: 10,
+  recent_squeeze_periods: 5,
+  require_squeeze: true,
+  middle_direction: "any",
+  slope_periods: 5,
+  require_expansion: false,
+};
+export type BollConfig = Record<string, any>;
+/** Supply missing defaults without changing the saved rule. Invalid input remains visible for repair. */
+export function bollConfig(value: unknown): BollConfig {
+  return {
+    ...BOLL_DEFAULTS,
+    ...(value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {}),
+  };
+}
+export function bollConfigError(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return "请填写 BOLL 参数对象";
+  const supplied = value as BollConfig;
+  if (Object.keys(supplied).some((key) => !Object.hasOwn(BOLL_DEFAULTS, key)))
+    return "BOLL 参数包含不支持的字段，请在结构化编辑中核对";
+  const config = bollConfig(value);
+  if (!BOLL_MODES.some((mode) => mode.value === config.mode))
+    return "请选择有效的 BOLL 信号";
+  for (const [key, label, min, max] of [
+    ["band_period", "BOLL 周期", 2, 250],
+    ["rank_window", "分位回看窗口", 10, 750],
+    ["recent_squeeze_periods", "近期收口窗口", 1, 60],
+    ["slope_periods", "中轨方向比较间隔", 1, 60],
+  ] as const) {
+    const number = config[key];
+    if (
+      typeof number !== "number" ||
+      !Number.isInteger(number) ||
+      number < min ||
+      number > max
+    )
+      return `${label}请输入${min}—${max}的整数`;
+  }
+  if (
+    typeof config.deviations !== "number" ||
+    !Number.isFinite(config.deviations) ||
+    config.deviations < 0.1 ||
+    config.deviations > 10
+  )
+    return "标准差倍数请输入0.1—10的有限数值";
+  if (
+    typeof config.squeeze_percentile !== "number" ||
+    !Number.isFinite(config.squeeze_percentile) ||
+    config.squeeze_percentile < 1 ||
+    config.squeeze_percentile > 100
+  )
+    return "收口分位请输入1—100的有限百分比";
+  if (!["any", "rising", "falling"].includes(config.middle_direction))
+    return "请选择有效的中轨方向";
+  if (
+    typeof config.require_squeeze !== "boolean" ||
+    typeof config.require_expansion !== "boolean"
+  )
+    return "BOLL 收口与扩张开关须为是或否";
+  return null;
+}
+export function validateBollRule(
+  node: RuleNode,
+  context = "current",
+): string | null {
+  if (node.field !== "boll_signal") return null;
+  if (context === "where")
+    return "BOLL 请放在外层独立条件或今日条件，不作为历史事件日筛选条件";
+  if (
+    node.op !== "matches" ||
+    node.right_field ||
+    node.right_event_field ||
+    Object.hasOwn(node, "right_event_change_pct")
+  )
+    return "BOLL 使用信号参数，不支持字段或事件价比较";
+  return bollConfigError(node.value);
+}
+export function bollSummary(node: RuleNode, effectivePeriod?: string): string {
+  const config = bollConfig(node.value);
+  const period = node.period || effectivePeriod;
+  const cycle = period
+    ? `${({ D: "日K", W: "完整周K", M: "完整月K" } as Record<string, string>)[period] || period} · `
+    : "";
+  const mode =
+    BOLL_MODES.find((item) => item.value === config.mode)?.label ||
+    "未识别信号";
+  const filters = [];
+  if (config.mode === "squeeze")
+    filters.push(
+      `带宽≤前${config.rank_window}期的${config.squeeze_percentile}%分位`,
+    );
+  else if (config.require_squeeze)
+    filters.push(
+      `此前${config.recent_squeeze_periods}期曾收口（前${config.rank_window}期的${config.squeeze_percentile}%分位，不含信号当期）`,
+    );
+  if (config.middle_direction !== "any")
+    filters.push(
+      `中轨较${config.slope_periods}期前${config.middle_direction === "rising" ? "上行" : "下行"}`,
+    );
+  if (config.require_expansion) filters.push("带宽较前期扩大");
+  return `${cycle}BOLL ${mode}（周期${config.band_period}，标准差${config.deviations}倍${filters.length ? "；" + filters.join("；") : ""}）`;
 }

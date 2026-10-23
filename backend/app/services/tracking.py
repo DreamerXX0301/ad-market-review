@@ -231,7 +231,29 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
         dates=[d for d in calendar if original['entry_business_date']<=d<=day]
         comparisons={observed:_entry_comparison(original,observed,finite(limit_quotes[observed].get('close')) if limit_quotes.get(observed) else None,market) for observed in dates}
         count_values=limit_evidence.count_series(original['instrument_id'],dates,calendar,limit_quotes) if original['strategy_id'] in count_strategies else {}
+        boll_series={}
         for date_ in dates:
+            # Precompute a BOLL series once per policy/configuration outside
+            # the SQLite write lock. A concurrent policy edit is checked again
+            # below, so it cannot borrow a previous policy's indicator state.
+            from app.analytics.boll_conditions import configs_for, config_key, states_for_bars
+            from app.analytics.period_dates import latest_closed_date
+            with connect() as checked:
+                prepared_round=one(checked,'SELECT * FROM tracking_round WHERE round_id=?',(original['round_id'],))
+                if prepared_round['status']!='tracking':break
+                prepared_policy=_policy_at(checked,prepared_round,date_)
+            boll_by_period=configs_for(prepared_policy['alerts']+prepared_policy['exits'],'D')
+            prepared_boll={}
+            for selected,configs in boll_by_period.items():
+                for config in configs:
+                    cache_key=(selected,config_key(config))
+                    if cache_key not in boll_series:
+                        if len(boll_series)>=32:boll_series.pop(next(iter(boll_series)))
+                        computed=states_for_bars(bars,calendar,day,selected,[config])
+                        boll_series[cache_key]={observed:value.get(cache_key[1]) for observed,value in computed.items()}
+                    observed=latest_closed_date(calendar,date_,selected)
+                    state=boll_series[cache_key].get(observed)
+                    if state is not None:prepared_boll.setdefault(selected,{})[cache_key[1]]=state
             with connect() as c:
                 c.execute("BEGIN IMMEDIATE")
                 if job_id:check_api_task(job_id,c)
@@ -240,6 +262,8 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
                 r=one(c,'SELECT * FROM tracking_round WHERE round_id=?',(original['round_id'],))
                 if r['status']!='tracking':break
                 p=_policy_at(c,r,date_);age=_age(calendar,r['entry_business_date'],date_)
+                if p['policy_version']!=prepared_policy['policy_version']:
+                    fail('跟踪政策在指标核验期间已变化，请重新核对；未使用旧参数保存结果。',409)
                 previous_reviews=rows(c,"SELECT evidence_json FROM tracking_event WHERE round_id=? AND event_type='review' AND business_date=?",(r['round_id'],date_))
                 if any(obj(event['evidence_json'],{}).get('policy_version')==p['policy_version'] for event in previous_reviews):stats['skipped']+=1;continue
                 key=r['round_id']+':'+date_+':review'+(':policy:'+str(p['policy_version']) if previous_reviews else '')
@@ -247,8 +271,10 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
                 current_topics=_historical_topics(c,r,date_,day,topics)
                 ms=metrics_for(bars,date_,calendar,'D',[x['topic_id'] for x in current_topics] if current_topics is not None else None,
                                include_higher_lows=any('higher_lows' in names(node) for node in p['alerts']+p['exits']))
+                if boll_by_period.get('D'):ms['boll_states']=prepared_boll.get('D',{})
                 ms=add_period_metrics(ms,bars,date_,calendar,p['alerts']+p['exits'],'D',
-                                      instrument_id=r['instrument_id'],generation=generation)
+                                      instrument_id=r['instrument_id'],generation=generation,
+                                      **({'boll_states_by_period':prepared_boll} if any(boll_by_period.values()) else {}))
                 if any(names(node) & DAILY_LIMIT_FIELDS for node in p['alerts']+p['exits']):
                     ms.update(limit_evidence.metrics(r['instrument_id'],date_,calendar,limit_quotes))
                 if any(names(node)&{COUNT_FIELD,'limit_up_1y'} for node in p['alerts']+p['exits']):

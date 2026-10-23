@@ -3,6 +3,8 @@ import { Plus, Trash2 } from "lucide-react";
 import type { Row } from "../../lib/api";
 import { num, textValue } from "../../lib/format";
 import TopicSelect from "./TopicSelect";
+import BollConditionEditor from "./BollConditionEditor";
+import { BOLL_DEFAULTS } from "./historicalRules";
 import { yearlyLimitCountText } from "./conditionEvidence";
 import {
   conditionFieldGroups,
@@ -42,6 +44,7 @@ import {
 export function ruleValue(field: string, value: any): string {
   if (isHiddenConditionField(field)) return "—";
   if (field === "close_breakout_high") return `${textValue(value)}个交易日`;
+  if (field === "boll_signal") return historyRuleSummary({ field, value });
   if (field === "board") {
     const boardNames: Record<string, string> = {
       main: "主板",
@@ -66,6 +69,7 @@ export const ruleOperator = (op: string) =>
       "==": "等于",
       "!=": "不等于",
       new_high: "回看",
+      matches: "满足",
     }) as Record<string, string>
   )[op] || op;
 export function fieldLabel(field: string, provided?: string): string {
@@ -75,6 +79,7 @@ export function fieldLabel(field: string, provided?: string): string {
   if (field === "kd_dead_cross") return "KDJ死叉（K线下穿D线）";
   if (field === "close_breakout_high") return "收盘价突破前N日最高价";
   if (field === HIGHER_LOWS_FIELD) return "底部抬高（确认后未失守）";
+  if (field === "boll_signal") return "BOLL 收口与方向";
   if (provided && provided !== field) return provided;
   const labels: Record<string, string> = {
     volume: "成交量",
@@ -196,6 +201,11 @@ export function summarizeChecks(checks: any, onlySatisfied = false): string {
         const state =
           c.result === true ? "满足" : c.result === false ? "未满足" : "待核验";
         return `${higherLowsSummary({ ...c, period: c.indicator_period || c.period })} · ${state}${c.reason ? "；" + conditionReasonText(c.reason) : ""}`;
+      }
+      if (c.field === "boll_signal") {
+        const state =
+          c.result === true ? "满足" : c.result === false ? "未满足" : "待核验";
+        return `${historyRuleSummary({ ...c, period: c.indicator_period || c.period })} · ${state}${c.observed_date ? " · " + c.observed_date : ""}${c.reason ? "；" + conditionReasonText(c.reason) : ""}`;
       }
       if (c.history_event) return historyRuleSummary(c, fieldLabel);
       if (c.field === "close_breakout_high") {
@@ -374,6 +384,17 @@ export const fallbackFields: Row[] = [
     historical_event_supported: false,
   },
   {
+    field: "boll_signal",
+    label: "BOLL 收口与方向",
+    type: "boll_config",
+    default: { ...BOLL_DEFAULTS },
+    operators: ["matches"],
+    constant_only: true,
+    category: "BOLL收口与方向",
+    periods: ["D", "W", "M"],
+    historical_event_supported: false,
+  },
+  {
     field: "bullish_ma_alignment",
     label: "均线多头排列（5>10>20>30>60）",
     type: "boolean",
@@ -508,6 +529,7 @@ export default function Conditions({
           );
         const isYearlyLimitCount = c.field === "limit_up_count_1y";
         const isNewHigh = c.field === "close_breakout_high";
+        const isBoll = c.field === "boll_signal";
         const isHigherLows = c.field === HIGHER_LOWS_FIELD;
         const field = fields.find((f) => f.field === c.field) || {
           type: "number",
@@ -518,7 +540,10 @@ export default function Conditions({
           : [">=", ">", "<=", "<", "==", "!="];
         const periodView = conditionPeriodView(c, field, period, dailyContext);
         return (
-          <div className="condition-row" key={i}>
+          <div
+            className={`condition-row${isBoll ? " boll-condition-row" : ""}`}
+            key={i}
+          >
             <span className="condition-index">{i + 1}</span>
             {!periodView.identity && !hidePeriodPicker && (
               <select
@@ -564,17 +589,20 @@ export default function Conditions({
                 const next: Condition = {
                   field: e.target.value,
                   op: f?.operators?.[0] || ">=",
-                  value: ["close_breakout_high", HIGHER_LOWS_FIELD].includes(
-                    e.target.value,
-                  )
-                    ? 60
-                    : e.target.value === "intraday_high_change_pct"
-                      ? 3
-                      : f?.type === "boolean"
-                        ? true
-                        : f?.type === "topic"
-                          ? ""
-                          : 0,
+                  value:
+                    e.target.value === "boll_signal"
+                      ? { ...BOLL_DEFAULTS }
+                      : ["close_breakout_high", HIGHER_LOWS_FIELD].includes(
+                            e.target.value,
+                          )
+                        ? 60
+                        : e.target.value === "intraday_high_change_pct"
+                          ? 3
+                          : f?.type === "boolean"
+                            ? true
+                            : f?.type === "topic"
+                              ? ""
+                              : 0,
                 };
                 if (
                   c.period &&
@@ -614,7 +642,7 @@ export default function Conditions({
                 </optgroup>
               ))}
             </select>
-            {!isNewHigh && !isHigherLows && (
+            {!isNewHigh && !isHigherLows && !isBoll && (
               <select
                 aria-label="比较关系"
                 className="operator"
@@ -636,7 +664,14 @@ export default function Conditions({
                 ))}
               </select>
             )}
-            {isHigherLows ? (
+            {isBoll ? (
+              <BollConditionEditor
+                value={c.value}
+                onChange={(value) => update(i, { value })}
+                label={`条件${i + 1}`}
+                period={periodView.effective}
+              />
+            ) : isHigherLows ? (
               <>
                 <input
                   type="number"
@@ -932,13 +967,16 @@ export default function Conditions({
               {
                 field: visibleFields[0]?.field || "volume_ratio",
                 op: visibleFields[0]?.operators?.[0] || ">=",
-                value: ["close_breakout_high", HIGHER_LOWS_FIELD].includes(
-                  visibleFields[0]?.field,
-                )
-                  ? 60
-                  : visibleFields[0]?.type === "boolean"
-                    ? true
-                    : 3,
+                value:
+                  visibleFields[0]?.field === "boll_signal"
+                    ? { ...BOLL_DEFAULTS }
+                    : ["close_breakout_high", HIGHER_LOWS_FIELD].includes(
+                          visibleFields[0]?.field,
+                        )
+                      ? 60
+                      : visibleFields[0]?.type === "boolean"
+                        ? true
+                        : 3,
               },
             ])
           }

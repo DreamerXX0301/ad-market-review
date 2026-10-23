@@ -22,7 +22,7 @@ def periods_for(node, default='D'):
             # A new daily structure in "then" needs the observation's full
             # strict daily window, rather than the event's compact EMA seed.
             def structure_periods(tree):
-                if tree.get('field')=='higher_lows':return {'D'}
+                if tree.get('field') in ('higher_lows','boll_signal'):return {'D'}
                 return set().union(*(structure_periods(child) for child in tree.get('all',tree.get('any',[]))))
             return structure_periods(node['history_event']['then'])
         if 'field' in node:
@@ -51,27 +51,35 @@ def dependencies_for_period(node,period,default='D'):
     return {'all':children} if children else None
 
 
-def add_period_metrics(base,bars,day,calendar,trees,default='D',*,instrument_id=None,generation=None):
+def add_period_metrics(base,bars,day,calendar,trees,default='D',*,instrument_id=None,generation=None,boll_states_by_period=None):
     requested=periods_for(trees,default)
     # Old definitions without scoped clauses keep their original metrics and
     # compact result contract; no new work is added to their fast path.
     if not any(period!=default for period in requested):return base
     by_period={default:{key:value for key,value in base.items() if key!='_period_metrics'}}
     structured=any('higher_lows' in names(tree) for tree in trees) if isinstance(trees,list) else 'higher_lows' in names(trees)
+    from app.analytics.boll_conditions import configs_for
+    boll_by_period=configs_for(trees,default)
     for period in sorted(requested-{default}):
-        by_period[period]=cached_metrics(bars,day,calendar,period,instrument_id=instrument_id,generation=generation,include_higher_lows=structured)
+        by_period[period]=cached_metrics(bars,day,calendar,period,instrument_id=instrument_id,generation=generation,include_higher_lows=structured,boll_configs=boll_by_period.get(period) if boll_states_by_period is None else None)
+        if boll_states_by_period is not None and period in boll_states_by_period:
+            by_period[period]['boll_states']=boll_states_by_period[period]
     return {**base,'_period_metrics':by_period}
 
 
-def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None,topics=None,include_higher_lows=False):
+def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None,topics=None,include_higher_lows=False,boll_configs=None):
     """Cache summaries of an immutable market generation, never user policies."""
-    key=(str(data_dir()),generation,instrument_id,day,period,include_higher_lows)
+    from app.analytics.boll_conditions import config_key
+    # Parameters are part of the immutable summary identity: two BOLL clauses
+    # or policies must never borrow each other's bands or warmup result.
+    boll_keys=tuple(sorted({config_key(config) for config in boll_configs or []}))
+    key=(str(data_dir()),generation,instrument_id,day,period,include_higher_lows,boll_keys)
     usable=bool(generation and instrument_id)
     with _lock:
         saved=_cache.get(key) if usable else None
         if saved is not None:_cache.move_to_end(key)
     if saved is None:
-        saved=metrics_for(bars,day,calendar,period,include_higher_lows=include_higher_lows)
+        saved=metrics_for(bars,day,calendar,period,include_higher_lows=include_higher_lows,**({'boll_configs':boll_configs} if boll_configs else {}))
         if usable:
             with _lock:
                 _cache[key]=deepcopy(saved);_cache.move_to_end(key)
