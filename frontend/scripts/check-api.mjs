@@ -633,7 +633,12 @@ try {
     fields.items.every(
       (f) =>
         typeof f.field === "string" &&
-        ["number", "boolean", "topic", "enum_set"].includes(f.type) &&
+        (["number", "boolean", "topic", "enum_set"].includes(f.type) ||
+          (f.field === "boll_signal" &&
+            f.type === "boll_config" &&
+            f.constant_only === true &&
+            f.signal_version === "boll-signal-v1" &&
+            JSON.stringify(f.operators) === JSON.stringify(["matches"]))) &&
         Array.isArray(f.operators) &&
         (f.type !== "enum_set" ||
           (Array.isArray(f.choices) && f.choices.length > 0)),

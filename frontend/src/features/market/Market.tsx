@@ -32,6 +32,7 @@ import "./MarketOverview.css";
 import { AmountActivityCell, AmountActivitySummary } from "./AmountActivity";
 import { SectorActivityCell, SectorActivityCoverage } from "./SectorActivity";
 import FundTrend from "./FundTrend";
+import LadderFeedback from "./LadderFeedback";
 import { flowDisplayState } from "./marketFlowAvailability";
 import MarketDataCoverage from "./MarketDataCoverage";
 import EmotionStage from "./EmotionStage";
@@ -1493,75 +1494,15 @@ export function MarketPage({
           />
         )}
       {route === "flow" && (
-        <div className="two-col">
+        <>
           {hasFundTrend ? <FundTrend data={data!} /> : null}
-          <Panel
-            title="连板样本反馈"
-            subtitle="上一交易日已留存连板样本 · 当日实际涨跌与当日可知归属"
-          >
-            <SortableMarketTable
-              sortScope="当前返回的上一交易日已留存连板样本"
-              rows={data?.feedback || []}
-              columns={[
-                { key: "name" },
-                {
-                  key: "topics",
-                  title: "题材",
-                  render: (value, row) =>
-                    Array.isArray(value) && value.length ? (
-                      <div className="tags">
-                        {value.map((tag: Row) => (
-                          <Badge key={tag.topic_id}>{tag.name}</Badge>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="muted">
-                        {row.topics_state === "unknown"
-                          ? "当日归属未留存"
-                          : "暂无已知题材"}
-                      </span>
-                    ),
-                },
-                {
-                  key: "industries",
-                  title: "行业",
-                  render: (value) =>
-                    Array.isArray(value) && value.length ? (
-                      <div className="tags">
-                        {value.map((tag: Row) => (
-                          <Badge key={tag.topic_id}>{tag.name}</Badge>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="muted">待核验</span>
-                    ),
-                },
-                { key: "previous_board_count", title: "前日连板" },
-                { key: "previous_board_date", title: "样本日" },
-                { key: "change_pct" },
-                { key: "feedback", title: "当日反馈" },
-              ]}
-              onStock={onStock}
-              onStockNavigate={(id, orderedRows) =>
-                onStock(
-                  id,
-                  createStockNavigation(orderedRows, {
-                    source: "market",
-                    scopeKey: `flow:feedback:${date}`,
-                    label: "资金轮动 · 连板反馈样本",
-                    asOf: date,
-                  }),
-                )
-              }
-              pageSize={10}
-              emptyTitle="没有留存的可比连板样本"
-              emptyDescription="样本反馈只描述已留存标的，不代表全市场赚钱效应或机构资金决策。"
-            />
-            <div className="panel-footnote">
-              按反馈观察日的已留存归属展示，当前业务日包含人工补充；不拿当前题材回填历史，也不代表该股当日上涨原因。
-            </div>
-          </Panel>
-        </div>
+          <LadderFeedback
+            key={date}
+            rows={data?.feedback || []}
+            date={date}
+            onStock={onStock}
+          />
+        </>
       )}
     </div>
   );

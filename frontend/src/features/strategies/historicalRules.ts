@@ -41,6 +41,8 @@ export const historyFieldsFallback = new Set([
   "change_pct",
   "intraday_high_change_pct",
   "volume_ratio",
+  "volume_expand",
+  "volume_shrink",
   "limit_up",
   "macd_dif",
   "macd_dea",

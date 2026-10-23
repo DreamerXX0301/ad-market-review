@@ -57,6 +57,11 @@ assert.equal(
   metricCycleLabel("volume_ratio", "较昨日成交量倍数", "M"),
   "较前一完整月成交量倍数",
 );
+for (const [period, previous] of [["D", "前一交易日"], ["W", "前一完整周"], ["M", "前一完整月"]]) {
+  assert.equal(metricCycleLabel("volume_expand", "今日放量", period), `成交量大于${previous}（放量）`);
+  assert.equal(metricCycleLabel("volume_shrink", "今日缩量", period), `成交量小于${previous}（缩量）`);
+}
+assert.equal(metricCycleLabel("volume_ratio", "较昨日成交量倍数", "D"), "较前一交易日成交量倍数");
 assert.equal(
   metricCycleLabel("volume_ratio", "较昨日成交量倍数", "W"),
   "较前一完整周成交量倍数",

@@ -80,6 +80,8 @@ export function fieldLabel(field: string, provided?: string): string {
   if (field === "close_breakout_high") return "收盘价突破前N日最高价";
   if (field === HIGHER_LOWS_FIELD) return "底部抬高（确认后未失守）";
   if (field === "boll_signal") return "BOLL 收口与方向";
+  if (field === "volume_expand") return "成交量大于前一周期（放量）";
+  if (field === "volume_shrink") return "成交量小于前一周期（缩量）";
   if (provided && provided !== field) return provided;
   const labels: Record<string, string> = {
     volume: "成交量",
@@ -297,6 +299,18 @@ export const fallbackFields: Row[] = [
     operators: [">=", ">", "<=", "<"],
   },
   {
+    field: "volume_expand",
+    label: "成交量大于前一周期（放量）",
+    type: "boolean",
+    operators: ["==", "!="],
+  },
+  {
+    field: "volume_shrink",
+    label: "成交量小于前一周期（缩量）",
+    type: "boolean",
+    operators: ["==", "!="],
+  },
+  {
     field: "close",
     label: "收盘价",
     type: "number",
@@ -437,25 +451,6 @@ export function conditionsOf(def: Row | undefined): Condition[] {
             : ">=";
       return { field: "close", op, right_field: "ma" + alias[2] };
     }
-    if (
-      ["volume_expand", "volume_shrink"].includes(c.field) &&
-      ["==", "!="].includes(c.op) &&
-      typeof c.value === "boolean"
-    ) {
-      const positive = c.op === "==" ? c.value : !c.value;
-      return {
-        field: "volume_ratio",
-        op:
-          c.field === "volume_expand"
-            ? positive
-              ? ">"
-              : "<="
-            : positive
-              ? "<"
-              : ">=",
-        value: 1,
-      };
-    }
     return c;
   });
 }
@@ -492,7 +487,8 @@ export default function Conditions({
   const candidateFields = fields.filter(
     (f) =>
       !isHiddenConditionField(f.field) &&
-      !f.hidden_in_builder &&
+      (!f.hidden_in_builder ||
+        ["volume_expand", "volume_shrink"].includes(f.field)) &&
       trackingConditionAllowed(
         f.field,
         allowTrackingAlerts,
@@ -500,7 +496,7 @@ export default function Conditions({
       ) &&
       !/^(close_above|close_below)_ma\d+$/.test(f.field) &&
       !/^ma\d+$/.test(f.field) &&
-      !["volume_expand", "volume_shrink", "board", "is_st"].includes(f.field),
+      !["board", "is_st"].includes(f.field),
   );
   const groups = conditionFieldGroups(
     candidateFields,
@@ -865,6 +861,27 @@ export default function Conditions({
           </div>
         );
       })}
+      {conditions.some(
+        (condition) =>
+          condition.field === "volume" && condition.right_field === "volume",
+      ) && (
+        <small className="danger-text" role="alert">
+          两边的“成交量”都是同一周期的数据，不是昨天的成交量。若只要求比前一期多，请选择“成交量大于前一周期（放量）”并设为“是”；需要指定倍数时，选择“成交量倍数”与数值比较。
+        </small>
+      )}
+      {conditions.some((condition) =>
+        ["volume_expand", "volume_shrink"].includes(condition.field),
+      ) && (
+        <small className="muted">
+          放量“是”要求当期成交量严格增加；缩量“是”要求严格减少；无需填写倍数。日K比较前一个市场交易日，周/月K比较前一个完整周/月。相等时两者均为“否”，“不放量”不能替代“缩量”。缺报价、零量停牌或覆盖不足时待核验。
+        </small>
+      )}
+      {conditions.some((condition) => condition.field === "volume_ratio") && (
+        <small className="muted">
+          成交量倍数 = 当期成交量 ÷
+          前一可比周期成交量；日K比较前一市场交易日，周/月K比较前一完整周/月，不是均量。&gt;1才是放量，≥1.5表示至少1.5倍，≥1包含平量。
+        </small>
+      )}
       {conditions.some((condition) =>
         Object.hasOwn(condition, "right_event_change_pct"),
       ) && (

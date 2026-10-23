@@ -73,8 +73,12 @@ assert.doesNotMatch(
   view,
   /<Panel title="全天资金轮动时序"|setSealMode|封单最稳/,
 );
-assert.match(view, /title="题材"|title: "题材"/);
-assert.match(view, /title: "行业"/);
+const feedbackView = await fs.readFile(
+  new URL("./LadderFeedback.tsx", import.meta.url),
+  "utf8",
+);
+assert.match(feedbackView, /title: "题材"/);
+assert.match(feedbackView, /title: "行业"/);
 console.log(
   "Market flow: verified zero remains visible; missing/future/unrelated history and unavailable tools stay hidden",
 );
