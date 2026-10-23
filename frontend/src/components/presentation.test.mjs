@@ -571,8 +571,6 @@ assert.deepEqual(
     indexPanels: ["volume", "kdj", "macd", "breadth"],
     stockShowBoll: false,
     indexShowBoll: false,
-    indexShowPriceProfile: false,
-    indexPriceProfileLookback: 60,
   },
 );
 assert.deepEqual(

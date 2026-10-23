@@ -31,8 +31,6 @@ export type ChartPreferences = {
   indexPanels: ChartPanel[];
   stockShowBoll: boolean;
   indexShowBoll: boolean;
-  indexShowPriceProfile: boolean;
-  indexPriceProfileLookback: 20 | 60 | 120;
 };
 export type PreferenceStorage = {
   getItem: (key: string) => string | null;
@@ -53,8 +51,6 @@ const defaults = (): ChartPreferences => ({
   indexPanels: [...INDEX_CHART_PANELS],
   stockShowBoll: false,
   indexShowBoll: false,
-  indexShowPriceProfile: false,
-  indexPriceProfileLookback: 60,
 });
 
 /** Validate the version and every field, and whitelist serialized properties. */
@@ -128,15 +124,6 @@ export function normalizeChartPreferences(value: unknown): ChartPreferences {
     ),
     stockShowBoll: input.version === 4 && input.stockShowBoll === true,
     indexShowBoll: input.version === 4 && input.indexShowBoll === true,
-    indexShowPriceProfile:
-      input.version === 4 && input.indexShowPriceProfile === true,
-    indexPriceProfileLookback:
-      input.version === 4 &&
-      (input.indexPriceProfileLookback === 20 ||
-        input.indexPriceProfileLookback === 60 ||
-        input.indexPriceProfileLookback === 120)
-        ? input.indexPriceProfileLookback
-        : 60,
   };
 }
 
