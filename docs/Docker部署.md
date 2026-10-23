@@ -68,10 +68,10 @@ docker compose config
 
 ## 维护者发行流程
 
-`.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `main`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签也应指向同一审核提交，才能使用上面的固定版本下载 URL。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
+`.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签也应指向同一审核提交，才能使用上面的固定版本下载 URL。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
 ```bash
-gh workflow run publish-image.yml --ref main -f version=0.1.1 -F confirm=true
+gh workflow run publish-image.yml --ref master -f version=0.1.1 -F confirm=true
 ```
 
 流程先复用只读 CI，核对根 `VERSION`、前后端版本及完整 Git SHA；之后在原生 `ubuntu-24.04` 与 `ubuntu-24.04-arm` 分别构建。每个平台在隔离空目录运行 API 健康、品牌、版本和首页检查，amd64 另跑14项独立空卷验收；成功后才上传各平台完整提交标签。两个构建都成功，才按精确子镜像摘要创建版本标签与提交标签，已有版本标签拒绝覆盖。没有 `latest`、自动部署或本机服务操作。[Docker 原生多平台构建](https://docs.docker.com/build/ci/github-actions/multi-platform/)

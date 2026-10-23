@@ -307,7 +307,7 @@ def test_ci_is_readonly_and_has_no_deployment_or_docker_socket():
     workflow=(ROOT/'.github/workflows/ci.yml').read_text()
     assert 'contents: read' in workflow and 'persist-credentials: false' in workflow
     assert 'pull_request:' in workflow and 'pull_request_target:' not in workflow
-    assert 'branches: [main, develop]' in workflow
+    assert 'branches: [master, develop]' in workflow
     assert 'docker.sock' not in workflow and 'docker login' not in workflow and 'docker push' not in workflow
     assert 'npm ci' in workflow and 'npm run format:check' in workflow and "*.test.mjs" in workflow
     assert 'deploy/Dockerfile.test' in workflow and '--network none' in workflow

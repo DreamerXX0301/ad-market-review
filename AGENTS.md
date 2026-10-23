@@ -2,6 +2,7 @@
 
 当前功能与边界以仓库文档及接口契约为准。运行环境与个人配置分离，避免引入机器绝对路径。
 
+- Git主分支为`master`；新增提交的标题和说明使用中文，必要的代码标识、命令和分支名保留原文。
 - 前端React、TypeScript、Vite；后端FastAPI/Python；业务SQLite，分析DuckDB与不可变Parquet。
 - API可以写业务SQLite短事务，唯一worker负责行情写入、任务消费和发布。API不得跨进程打开worker正在写的DuckDB文件。
 - 每条SQLite连接设置foreign_keys、recursive_triggers、busy_timeout；事务外取数。迁移完整成功后才登记schema版本。
