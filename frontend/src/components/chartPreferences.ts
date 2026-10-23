@@ -152,7 +152,7 @@ export function effectiveChartPanels(
   return [...(isIndex ? preferences.indexPanels : preferences.stockPanels)];
 }
 
-/** BOLL is a main-chart overlay, separate from the selected lower panels. */
+/** BOLL has its own lower pane while retaining the existing visibility setting. */
 export function effectiveChartBoll(
   preferences: ChartPreferences,
   isIndex: boolean,

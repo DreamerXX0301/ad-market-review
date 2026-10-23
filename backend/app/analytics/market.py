@@ -502,6 +502,25 @@ class MarketData:
         for symbol,group in frame.groupby('instrument_id',sort=False):
             yield symbol,group.to_dict('records')
 
+    def amount_top10_history(self, days):
+        """Project only dated amount facts; do not compute seven full panels."""
+        from .amount_rank import amount_ranking_fact
+        with self._lock:
+            head = self._load()
+            snapshot = head.get('snapshot_id') if head else None
+            requested = list(dict.fromkeys(days))
+            if not head or not requested:
+                return {'snapshot_id': snapshot, 'days': {}}
+            calendar = set(self.calendar())
+            requested = [day for day in requested if day in calendar]
+            frame = self._daily_frame()
+            if frame is None:
+                return {'snapshot_id': snapshot, 'days': {}}
+            selected = frame.loc[frame.date.isin(requested), ['instrument_id', 'date', 'amount']]
+            found = {str(day): amount_ranking_fact(group.to_dict('records'), str(day))
+                     for day, group in selected.groupby('date', sort=False)}
+            return {'snapshot_id': snapshot, 'days': found}
+
     def panel(self, as_of=None):
         head = self._load()
         if not head:return []

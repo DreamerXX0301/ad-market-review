@@ -25,6 +25,8 @@ import {
 import { CandleChart, EChart } from "../../components/Charts";
 import "./Market.css";
 import "./MarketOverview.css";
+import { AmountActivityCell, AmountActivitySummary } from "./AmountActivity";
+import { SectorActivityCell, SectorActivityCoverage } from "./SectorActivity";
 import FundTrend from "./FundTrend";
 import MarketDataCoverage from "./MarketDataCoverage";
 import EmotionStage from "./EmotionStage";
@@ -349,10 +351,20 @@ export function MarketOverview({
                   { key: "name" },
                   { key: "change_pct", align: "right" },
                   { key: "amount", align: "right" },
+                  {
+                    key: "active_top10_7d",
+                    title: "近7日活跃",
+                    sortable: false,
+                    render: (value) => <AmountActivityCell activity={value} />,
+                  },
                   { key: "topics" },
                 ]}
                 onStock={onStock}
                 pageSize={10}
+              />
+              <AmountActivitySummary
+                summary={data?.top_amount_activity}
+                asOf={data?.date}
               />
             </Panel>
             <Panel title="当日涨幅前列" subtitle="市场事实，不代表买卖建议">
@@ -1169,6 +1181,13 @@ export function MarketPage({
             )}
           </>
         )}
+        {isQuoteBoard && (
+          <SectorActivityCoverage
+            summary={tableData?.sector_activity_7d}
+            kind={kind}
+            level={level}
+          />
+        )}
         {tableLoading ? (
           <Loading />
         ) : (
@@ -1206,9 +1225,21 @@ export function MarketPage({
                     ]
                   : info.columns
               )
+                .concat(isQuoteBoard ? ["sector_activity_7d"] : [])
                 .concat(isSector ? ["sector_chart"] : [])
                 .map((key) => ({
                   key,
+                  ...(key === "sector_activity_7d"
+                    ? {
+                        title: "近7日榜单活跃",
+                        sortable: false,
+                        render: (value: unknown) => (
+                          <SectorActivityCell
+                            activity={value as Row | undefined}
+                          />
+                        ),
+                      }
+                    : {}),
                   ...(key === "sector_chart"
                     ? {
                         title: "板块走势",

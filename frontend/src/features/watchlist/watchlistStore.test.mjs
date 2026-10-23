@@ -75,6 +75,18 @@ const membership = await import(encode(memberSource));
 const activity = await import(encode(activitySource));
 const { LINE_ALERT_CHECK_FINISHED } = await import(events);
 windowSurface.addEventListener(membership.WATCHLIST_CHANGED, () => changes++);
+const disabled = membership.useWatchlistMembership(false);
+assert.equal(
+  requests.length,
+  0,
+  "disabled frozen charts do not read membership",
+);
+assert.equal(
+  disabled.loaded,
+  false,
+  "disabled hook does not change shared cache",
+);
+subscribers.shift();
 membership.useWatchlistMembership();
 const stopMembership = subscribers.shift()(() => {});
 activity.useTaskActivity();

@@ -6,6 +6,7 @@ arbitrary hosts, document downloads or credential forwarding is performed.
 """
 from datetime import datetime
 import html
+import json
 import math
 import re
 import time
@@ -15,7 +16,7 @@ import httpx
 from app.adapters.providers import ProviderError
 
 CHINA=ZoneInfo('Asia/Shanghai')
-BASES={'cninfo':'https://www.cninfo.com.cn','holders':'https://datacenter-web.eastmoney.com','quote':'https://push2.eastmoney.com'}
+BASES={'cninfo':'https://www.cninfo.com.cn','holders':'https://datacenter-web.eastmoney.com','quote':'https://push2.eastmoney.com','business':'https://emweb.securities.eastmoney.com'}
 
 
 def number(value):
@@ -33,19 +34,31 @@ def day(value):
 
 
 class ResearchPublicClient:
-    def __init__(self,transport=None,sleep=time.sleep):
-        self.transport=transport;self.sleep=sleep
+    def __init__(self,transport=None,sleep=time.sleep,*,budget=None):
+        self.transport=transport;self.sleep=sleep;self.budget=budget
 
     def request(self,host,path,*,params=None,data=None):
         if host not in BASES or not path.startswith('/') or '://' in path:raise ProviderError('研究公开来源路径不受支持')
         for attempt in range(2):
+            timeout=self.budget.before_attempt(host) if self.budget else 6
             try:
-                with httpx.Client(transport=self.transport,timeout=6,follow_redirects=False,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json'}) as client:
-                    response=client.post(BASES[host]+path,data=data) if data is not None else client.get(BASES[host]+path,params=params)
-                if response.status_code in (401,403,429):raise ProviderError('公开研究来源拒绝访问或限流（HTTP '+str(response.status_code)+'）',response.status_code)
-                if response.status_code!=200:raise ValueError('non-200')
-                if len(response.content)>4*1024*1024:raise ProviderError('公开研究来源单页超过容量边界')
-                result=response.json()
+                with httpx.Client(transport=self.transport,timeout=timeout,follow_redirects=False,headers={'User-Agent':'Mozilla/5.0','Accept':'application/json'}) as client:
+                    with client.stream('POST' if data is not None else 'GET',BASES[host]+path,
+                                       data=data,params=None if data is not None else params) as response:
+                        if response.status_code in (401,403,429):
+                            if self.budget:self.budget.refuse(host)
+                            raise ProviderError('公开研究来源拒绝访问或限流（HTTP '+str(response.status_code)+'）',response.status_code)
+                        if response.status_code!=200:raise ValueError('non-200')
+                        content=bytearray()
+                        # No coalescing chunk_size: a slowly trickling response
+                        # must still hit cancellation/deadline checks per chunk.
+                        for chunk in response.iter_bytes():
+                            count=len(content)+len(chunk)
+                            if self.budget:self.budget.check_response(count)
+                            elif count>4*1024*1024:raise ProviderError('公开研究来源单页超过容量边界')
+                            content.extend(chunk)
+                        if self.budget:self.budget.check_response(len(content))
+                result=json.loads(content)
                 if not isinstance(result,dict):raise ValueError('shape')
                 return result
             except ProviderError:raise
@@ -109,3 +122,48 @@ class ResearchPublicClient:
         floating=floating if floating is not None and floating>=0 else None
         if total is None and floating is None:raise ProviderError('来源没有返回可核验市值字段')
         return {'total_market_cap_cny':total,'float_market_cap_cny':floating,'total_shares':number(data.get('f84')),'float_shares':number(data.get('f85')),'source_date':observed,'source':'eastmoney','unit':'CNY','coverage':{'complete':total is not None and floating is not None,'reason':None if total is not None and floating is not None else '部分市值字段未披露或无效'},'raw':raw}
+
+    def company_profile(self,symbol,as_of,*,max_rows=200):
+        """Current business composition, independently verified identity and units.
+
+        Contract reference (2026-10-23): AKShare stock_fundamental/stock_zygc.py,
+        stock_zygc_em. REPORT_DATE is the reporting period, not publication time.
+        No inference of supplier/customer relationships or historical availability.
+        """
+        if not re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)',symbol):raise ProviderError('主营构成须提供完整证券及市场')
+        if symbol.endswith('.BJ'):raise ProviderError('北交所主营构成来源映射尚未核验')
+        raw=self.request('business','/PC_HSF10/BusinessAnalysis/PageAjax',params={'code':symbol[-2:]+symbol[:6]})
+        rows=raw.get('zygcfx')
+        if not isinstance(rows,list):raise ProviderError('主营构成响应字段未通过核验')
+        if len(rows)>2000:raise ProviderError('主营构成响应行数超过核验上限')
+        accepted=[];isolated=0
+        for row in rows:
+            if not isinstance(row,dict):isolated+=1;continue
+            period=day(row.get('REPORT_DATE'));category=str(row.get('MAINOP_TYPE',''))
+            name=row.get('ITEM_NAME')
+            name=html.unescape(re.sub('<[^>]+>','',name)).strip()[:500] if isinstance(name,str) else None
+            if row.get('SECUCODE')!=symbol or row.get('SECURITY_CODE')!=symbol[:6] or not period or period>as_of or category not in ('1','2','3') or not isinstance(name,str) or not name.strip():
+                isolated+=1;continue
+            accepted.append({'instrument_id':symbol,'report_period':period,'category_code':category,
+                'category':{'1':'按行业','2':'按产品','3':'按地区'}[category],'name':name,
+                'revenue_cny':number(row.get('MAIN_BUSINESS_INCOME')),'revenue_ratio':number(row.get('MBI_RATIO')),
+                'cost_cny':number(row.get('MAIN_BUSINESS_COST')),'profit_cny':number(row.get('MAIN_BUSINESS_RPOFIT')),
+                'gross_margin_ratio':number(row.get('GROSS_RPOFIT_RATIO')),'source':'eastmoney',
+                'published_at_ms':None,'historical_usable':False,'unit':'金额CNY；比例为来源原始比率（1代表100%）'})
+        if not accepted:raise ProviderError('没有取得证券身份、分类和报告期均可核验的主营构成')
+        # One latest reporting period only. Keep each classification separate;
+        # never add product/region/industry subtotals into an inflated revenue.
+        latest=max(row['report_period'] for row in accepted)
+        selected=sorted([row for row in accepted if row['report_period']==latest],key=lambda row:(row['category_code'],-(row['revenue_cny'] or 0),row['name']))
+        dedup={}
+        for row in selected:
+            key=(row['category_code'],row['name'])
+            if key in dedup and dedup[key]!=row:raise ProviderError('主营构成存在同一分类项目的冲突记录，未合并')
+            dedup[key]=row
+        items=list(dedup.values())[:max(1,min(int(max_rows),200))]
+        return {'items':items,'report_period':latest,'source':'eastmoney','fetched_at_ms':int(time.time()*1000),
+                'published_at_ms':None,'historical_usable':False,
+                'url':'https://emweb.securities.eastmoney.com/PC_HSF10/BusinessAnalysis/Index?type=web&code='+symbol[-2:]+symbol[:6],
+                'coverage':{'complete':False,'accepted_count':len(items),'isolated_count':isolated,
+                    'reason':'仅当前取得的主营构成快照；缺少原始披露日期，不声明历史时点可见或完整供应链',
+                    'truncated':len(dedup)>len(items)},'raw':raw}

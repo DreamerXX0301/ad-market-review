@@ -346,7 +346,10 @@ export default function Research({
         <div className="research-report-shell">
           <div className="report-heading">
             <div>
-              <h2>{report.instrument?.name || selected?.name} · 研究记录</h2>
+              <h2>
+                {report.instrument?.name || selected?.name} ·{" "}
+                {report.schema_version === 2 ? "个股调研" : "研究记录"}
+              </h2>
               <p>
                 行情截止 {report.data_cutoff || "以材料明细为准"} ·{" "}
                 {report.research_as_of_ms && (
@@ -354,11 +357,21 @@ export default function Research({
                 )}
               </p>
             </div>
-            <Badge tone={report.status === "partial" ? "warn" : "good"}>
-              {report.status === "partial" ? "已留存 · 材料有缺口" : "已留存"}
-            </Badge>
+            <div className="research-report-actions">
+              <button
+                className="btn small"
+                onClick={run}
+                disabled={busy || !selected}
+              >
+                <RefreshCw size={13} /> 重新调研
+              </button>
+              <Badge tone={report.status === "partial" ? "warn" : "good"}>
+                {report.status === "partial" ? "已留存 · 材料有缺口" : "已留存"}
+              </Badge>
+            </div>
           </div>
-          {stockMetricDate(report.data_cutoff) &&
+          {report.schema_version !== 2 &&
+            stockMetricDate(report.data_cutoff) &&
             (report.instrument?.instrument_id || selected?.instrument_id) && (
               <StockLimitSummary
                 instrumentId={
@@ -394,7 +407,7 @@ export default function Research({
             <Warnings items={report.warnings} />
           </details>
           <ResearchDetails report={report} onMaterial={setMaterial} />
-          {marketPreview}
+          {report.schema_version !== 2 && marketPreview}
           {report.sections?.length ? (
             <details className="research-report-fold">
               <summary>补充研究记录 · 题材归属与留存文字</summary>

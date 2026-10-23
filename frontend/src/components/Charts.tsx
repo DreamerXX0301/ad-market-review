@@ -43,6 +43,7 @@ import {
 } from "../lib/format";
 import { candleChange } from "./candleChange";
 import { chartBoll } from "./chartBoll";
+import { chartPaneLayout } from "./chartPaneLayout";
 import { chartSinceReturn } from "./chartSinceReturn";
 import {
   curveAxisAmount,
@@ -211,6 +212,7 @@ export function CandleChart({
   dataEndpoint,
   showStockSummary = true,
   showDataNotes = true,
+  frozenChartsByPeriod,
 }: {
   instrumentId: string;
   asOf?: string;
@@ -224,6 +226,7 @@ export function CandleChart({
   dataEndpoint?: string;
   showStockSummary?: boolean;
   showDataNotes?: boolean;
+  frozenChartsByPeriod?: Partial<Record<ChartPeriod, Row>>;
 }) {
   const { preferences, persistent, update, reset } = useChartPreferences();
   const knownIndex = [
@@ -285,22 +288,26 @@ export function CandleChart({
     const start = Math.min(100 - width, Math.max(0, center - width / 2));
     zoomTo(start, start + width);
   }
+  const frozenMode = frozenChartsByPeriod !== undefined;
   const result = useApi<Row>(
-    candleChartEndpoint({
-      instrumentId,
-      period,
-      priceBasis,
-      indicatorContinuity,
-      asOf,
-      dataEndpoint,
-    }),
+    frozenMode
+      ? null
+      : candleChartEndpoint({
+          instrumentId,
+          period,
+          priceBasis,
+          indicatorContinuity,
+          asOf,
+          dataEndpoint,
+        }),
   );
-  const data = result.data;
+  const data = frozenMode ? frozenChartsByPeriod[period] || null : result.data;
   const bars: Row[] = data?.bars || [];
   const annotations = useChartAnnotations(
     instrumentId,
     data,
-    !isIndex &&
+    !frozenMode &&
+      !isIndex &&
       !dataEndpoint &&
       (instrumentKind === "stock" || data?.instrument?.kind === "stock"),
   );
@@ -377,19 +384,18 @@ export function CandleChart({
   const valueAt = (field: string) =>
     activeBar?.[field] ?? activeBar?.indicators?.[field] ?? null;
   const broad = bars.some((x) => x.advancers != null || x.up_count != null);
-  const chosen = ["volume", "macd", "kdj", "breadth"].filter(
-    (x) => panels.includes(x as ChartPanel) && (x !== "breadth" || broad),
+  const chosen = [
+    ...(showBoll ? ["boll"] : []),
+    ...["volume", "macd", "kdj", "breadth"].filter(
+      (key) =>
+        panels.includes(key as ChartPanel) && (key !== "breadth" || broad),
+    ),
+  ];
+  const { actualHeight, mainHeight, subHeight, gap } = chartPaneLayout(
+    height,
+    chosen.length,
+    compact,
   );
-  const actualHeight = compact ? Math.max(480, height) : height;
-  const plotHeight = actualHeight - 75;
-  const mainHeight = Math.max(180, plotHeight * (chosen.length ? 0.48 : 0.9));
-  const gap = 27;
-  const subHeight = chosen.length
-    ? Math.max(
-        55,
-        (plotHeight - mainHeight - gap * chosen.length) / chosen.length,
-      )
-    : 0;
   const waves = data?.waves;
   const waveAsOf = data?.as_of || asOf || last?.date || "";
   const patterns = useMemo(
@@ -434,6 +440,7 @@ export function CandleChart({
     [selectedPatterns, bars],
   );
   const supportsLimits =
+    !frozenMode &&
     data?.instrument?.kind === "stock" &&
     data?.limit_event_coverage?.applicable !== false;
   const forwardOption = data?.price_basis_options?.find(
@@ -441,14 +448,7 @@ export function CandleChart({
   );
   const option = useMemo(() => {
     const pal = chartPalette(),
-      dates = bars.map((b) => b.date),
-      subCount = chosen.length;
-    const plotHeight = actualHeight - 75,
-      mainHeight = Math.max(180, plotHeight * (subCount ? 0.48 : 0.9)),
-      gap = 27,
-      subHeight = subCount
-        ? Math.max(55, (plotHeight - mainHeight - gap * subCount) / subCount)
-        : 0;
+      dates = bars.map((b) => b.date);
     const grids: any[] = [{ left: 62, right: 20, top: 24, height: mainHeight }],
       xaxes: any[] = [],
       yaxes: any[] = [],
@@ -671,32 +671,6 @@ export function CandleChart({
         itemStyle: { color: maColors[[5, 10, 20, 30, 60, 250].indexOf(n)] },
       });
     });
-    if (showBoll) {
-      (
-        [
-          ["upper", "BOLL 上轨", "#82b5e9"],
-          ["middle", "BOLL 中轨", "#d6b96d"],
-          ["lower", "BOLL 下轨", "#b59be3"],
-        ] as const
-      ).forEach(([field, name, color]) => {
-        series.push({
-          name,
-          type: "line",
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-          data: boll.map((point) => point[field]),
-          symbol: "none",
-          connectNulls: false,
-          lineStyle: {
-            color,
-            width: field === "middle" ? 1 : 1.25,
-            opacity: 0.85,
-          },
-          itemStyle: { color },
-          z: 3,
-        });
-      });
-    }
     if (showWaves)
       series.push(
         ...wavePlotSeries(selectedPatterns, turns, waveMode, {
@@ -719,6 +693,28 @@ export function CandleChart({
           lineStyle: { width: 1.25, color },
           itemStyle: { color },
         });
+      if (key === "boll") {
+        line("BOLL 收盘参照", "close", pal.text);
+        (
+          [
+            ["upper", "BOLL 上轨", "#82b5e9"],
+            ["middle", "BOLL 中轨", "#d6b96d"],
+            ["lower", "BOLL 下轨", "#b59be3"],
+          ] as const
+        ).forEach(([field, name, color]) => {
+          series.push({
+            name,
+            type: "line",
+            xAxisIndex: ix,
+            yAxisIndex: ix,
+            data: boll.map((point) => point[field]),
+            symbol: "none",
+            connectNulls: false,
+            lineStyle: { color, width: field === "middle" ? 1 : 1.25 },
+            itemStyle: { color },
+          });
+        });
+      }
       if (key === "volume")
         series.push({
           name: "成交量",
@@ -805,9 +801,21 @@ export function CandleChart({
             })),
             ...(showBoll
               ? [
-                  { name: "BOLL 上轨", value: point?.upper, color: "#82b5e9" },
-                  { name: "BOLL 中轨", value: point?.middle, color: "#d6b96d" },
-                  { name: "BOLL 下轨", value: point?.lower, color: "#b59be3" },
+                  {
+                    name: "BOLL副图 上轨",
+                    value: point?.upper,
+                    color: "#82b5e9",
+                  },
+                  {
+                    name: "BOLL副图 中轨",
+                    value: point?.middle,
+                    color: "#d6b96d",
+                  },
+                  {
+                    name: "BOLL副图 下轨",
+                    value: point?.lower,
+                    color: "#b59be3",
+                  },
                 ]
               : []),
           ];
@@ -892,6 +900,9 @@ export function CandleChart({
     showBoll,
     chosen.join(","),
     actualHeight,
+    mainHeight,
+    subHeight,
+    gap,
     themeTick,
     waves,
     showWaves,
@@ -912,6 +923,7 @@ export function CandleChart({
   return (
     <div className="candle-chart">
       {showStockSummary &&
+        !frozenMode &&
         !isIndex &&
         !dataEndpoint &&
         (instrumentKind === "stock" || data?.instrument?.kind === "stock") && (
@@ -933,7 +945,14 @@ export function CandleChart({
             </button>
           ))}
         </div>
-        {isIndex ? (
+        {frozenMode ? (
+          <span
+            className="chart-index-basis"
+            title="报告内留存行情；不读取当前行情，不随个股复权偏好重算"
+          >
+            报告冻结图 · 未复权
+          </span>
+        ) : isIndex ? (
           <span
             className="chart-index-basis"
             title="指数显示原始点位，不使用或修改个股默认复权口径"
@@ -959,7 +978,7 @@ export function CandleChart({
             ]}
           />
         )}
-        {period === "D" && !dataEndpoint ? (
+        {period === "D" && !dataEndpoint && !frozenMode ? (
           <ChartSelect
             label="图表指标连续口径"
             value={indicatorContinuity}
@@ -1204,20 +1223,6 @@ export function CandleChart({
           {supportsLimits && <LimitStatus bar={activeBar} period={period} />}
         </div>
       )}
-      {showBoll && activeBoll && (
-        <div className="chart-boll-values" aria-label="BOLL布林带当前值">
-          <strong>BOLL 20 · 2</strong>
-          <span style={{ color: "#82b5e9" }}>上轨 {num(activeBoll.upper)}</span>
-          <span style={{ color: "#d6b96d" }}>
-            中轨 {num(activeBoll.middle)}
-          </span>
-          <span style={{ color: "#b59be3" }}>下轨 {num(activeBoll.lower)}</span>
-          {activeBoll.middle == null && (
-            <span className="muted">{activeBoll.reason}</span>
-          )}
-          <time>{activeBoll.date}</time>
-        </div>
-      )}
       {data?.indicator_continuity_notice && (
         <div className="source-line chart-continuity-note">
           {data.indicator_continuity_notice}
@@ -1230,14 +1235,18 @@ export function CandleChart({
           {activeMAState.label} · {activeMAState.reason}
         </div>
       )}
-      {result.loading ? (
+      {!frozenMode && result.loading ? (
         <Loading />
-      ) : result.error ? (
+      ) : !frozenMode && result.error ? (
         <ErrorBox message={result.error} retry={result.reload} />
       ) : !bars.length ? (
         <Empty
-          title="该区间暂无K线"
-          description="请先初始化行情，或选择有覆盖的日期。"
+          title={frozenMode ? "报告中没有留存该周期K线" : "该区间暂无K线"}
+          description={
+            frozenMode
+              ? "本图仅读取报告冻结数据，不回退到当前行情；所需周期与预热不足时保留缺口。"
+              : "请先初始化行情，或选择有覆盖的日期。"
+          }
         />
       ) : (
         <div
@@ -1294,6 +1303,7 @@ export function CandleChart({
                 {
                   (
                     {
+                      boll: "BOLL 20 · 2",
                       volume: "成交量",
                       macd: "MACD 12 · 26 · 9",
                       kdj: "KDJ 9 · 3 · 3",
@@ -1305,6 +1315,28 @@ export function CandleChart({
                   )[key]
                 }
               </strong>
+              {key === "boll" && (
+                <>
+                  <span>收盘 {num(activeBar?.close)}</span>
+                  <span style={{ color: "#82b5e9" }}>
+                    上轨 {num(activeBoll?.upper)}
+                  </span>
+                  <span style={{ color: "#d6b96d" }}>
+                    中轨 {num(activeBoll?.middle)}
+                  </span>
+                  <span style={{ color: "#b59be3" }}>
+                    下轨 {num(activeBoll?.lower)}
+                  </span>
+                  {activeBoll?.middle == null && (
+                    <span
+                      className="candle-pane-reason"
+                      title={activeBoll?.reason}
+                    >
+                      {activeBoll?.reason || "BOLL预热依据待核验"}
+                    </span>
+                  )}
+                </>
+              )}
               {key === "volume" && (
                 <>
                   <span>
@@ -1373,7 +1405,7 @@ export function CandleChart({
         <div className="indicator-controls">
           <ChartToggle
             label="BOLL"
-            title="主图布林带 · 20周期 · 2倍标准差"
+            title="独立副图布林带 · 20周期 · 2倍标准差"
             checked={showBoll}
             onChange={setShowBoll}
             color="#82b5e9"
@@ -1708,9 +1740,9 @@ export function CandleChart({
                 ))}
               </div>
               <p className="muted">
-                BOLL 叠加在主图，按当前周期收盘价计算，参数 20 ·
-                2；成交量、MACD、KDJ
-                各占一张副图。图下开关与这里同步，也可关闭全部副图。
+                BOLL、成交量、MACD、KDJ各占一张副图。BOLL包含收盘参照线与上中下轨，
+                按当前周期收盘价计算，参数20 ·
+                2；图下开关与这里同步，也可关闭全部副图。
               </p>
             </fieldset>
             <fieldset>
