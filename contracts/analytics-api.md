@@ -111,12 +111,19 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 - 默认 `quotes` 可按实际日报价连续显示指标；`market_sessions` 严格按市场日中断。两者不改变策略、跟踪或回测口径。
 - `waves` 仅为延迟确认的价格转折/骨架候选，点满足确认时间不晚于 as_of；不保证确定艾略特浪，不作自动交易信号。
 - 上证 `advancers` 及广度范围按真实样本说明，不将有限可比样本称全市场完整。
+- `annotation_projection_evidence={version:"chart-annotation-projection-v1",available,start_date,end_date,snapshot_id,source:"published_corporate_actions",reason}` 只读说明本图所属发布代际、日行情起点至观察日的公司行动覆盖依据。仅 available 为真、来源与代际匹配、原锚处在该范围内，且复权事件逐项可核验时，允许将已保存旧锚水平线换算到本图锚展示；区间无新增行动时线价不变。未知、缺口、未来锚或范围不含旧锚均保留隐藏原因，不能据此声称完整公司行动历史。换算不改保存价格、原锚、提醒版本或既有事件证据。
+
+图表前端的 BOLL 仅用于显示，不增加或重算上述接口的 MA/MACD/KDJ 字段：基于返回且口径相符的连续可比收盘计算20周期均值及上下2倍总体标准差（方差除以20）。独立副图用同一组返回 OHLC 画小蜡烛，上/中/下轨分别为红/青/绿，不再叠加额外收盘折线；缺 OHLC 不填造蜡烛，轨道不足20根或连续性重置仍为空。图下开关、偏好面板和已开启副图统一按成交量、BOLL、KDJ、MACD排序，指数广度随后；个股/指数原有显隐偏好和接口参数保持不变。研究冻结图复用相同呈现，只使用报告已留存的行情，不借切换副图请求当前行情。
 
 收盘涨跌停通过 `limit_events` 与逐方向 `limit_event_coverage` 返回；日 bar 的状态和证据区分 confirmed/source_absent/unknown/conflict。正事件必须通过来源身份、日期及原始收盘核验，不按涨幅 9.9% 猜，不用炸板触价当收盘涨停。空池、隔离、错价不能证明 false。周/月只汇总确切日事件，不称整周/整月涨停；指数不适用个股标记。显式前复权只改变图上锚点，不改变原始事件日期和核验价格。
 
 ## 统一个股统计
 
-个股图表支持独立的个人水平线：`GET/POST /instruments/{id}/annotations`，`PATCH/DELETE /instruments/{id}/annotations/{annotation_id}`。价格、名称与颜色写入业务库，不修改来源K线、指标、策略或跟踪状态。只接受已留存个股，每只最多64条；未复权水平线跨日/周/月共用，前复权水平线固定记录锚定日。切换价格口径或锚定日时隐藏不相符的线，并在管理列表保留说明，不能直接把原价水平线画到复权价格轴上。
+个股图表支持独立的个人水平线：`GET/POST /instruments/{id}/annotations`，`PATCH/DELETE /instruments/{id}/annotations/{annotation_id}`。价格、名称与颜色写入业务库，不修改来源K线、指标、策略或跟踪状态。只接受已留存个股，每只最多64条；未复权水平线跨日/周/月共用，前复权水平线固定记录锚定日。切换价格口径时隐藏不相符的线；切换前复权锚时仅按上述同代际、有界覆盖证据换算展示，其余在管理列表保留隐藏原因，不能直接把原价水平线画到复权价格轴上。
+
+`GET /instruments/{id}?as_of=` 是搜索、盘面榜单、行业题材成员、自选、策略和跟踪共同使用的详情入口，图表偏好共用同一个股存储键，调用入口不提供另一套题材或报价。头部从该详情的真实未复权日收盘及实际报价日期读取，明确非实时；悬停历史K线或切换周/月不改变头部日收盘。观察日无报价时应标明最近实际报价日期或保持未知，不能将旧报价冒充当日成交。行情摘要仍由下述 summary 接口按观察日核验。
+
+详情新增 `current_topics/current_industries/current_topics_observed_date/current_topics_scope`。分类项为 `{topic_id,name,kind,source_observed_date,members_complete}`，与自选列表共用当前本地题材目录和人工增删语义；`current_topics_observed_date` 是当前业务关系有效日，每个来源采集日另列。无论图表回看哪天，该组都明确标为“当前归属”，不能当作历史成员、当日主线或上涨原因。原 `topics` 仍按详情观察日可用性返回，历史缺档不回填当前分类。此分类读取只读SQLite和本地来源目录，不读worker活动DuckDB、不联网、不创建研究/策略/跟踪；人工修改下次读取生效，不跟随行情缓存固化。空数组只表示暂无已知正归属。
 
 `GET /instruments/{id}/summary?as_of=` 仅适用于已留存股票，不用于指数/板块。返回身份、`board/board_label/as_of/data_date/quote_date/snapshot_id/quote_available/close` 及：
 

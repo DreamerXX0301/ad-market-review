@@ -17,6 +17,10 @@ FIELDS.update({key: {'type': 'boolean', 'operators': ['==', '!=']}
 FIELDS['close_breakout_high'] = {'type': 'number', 'operators': ['new_high'],
     'integer': True, 'min': 1, 'max': 750, 'step': 1, 'default': 60,
     'constant_only': True, 'fixed_period': 'D', 'parameter_kind': 'lookback_sessions'}
+FIELDS['higher_lows'] = {'type': 'number', 'operators': ['confirmed_rising_lows'],
+    'integer': True, 'min': 8, 'max': 750, 'step': 1, 'default': 60,
+    'constant_only': True, 'parameter_kind': 'lookback_periods',
+    'structure_version': 'higher-lows-v1', 'left_bars': 2, 'right_bars': 2}
 FIELDS['intraday_high_change_pct'] = {'type': 'number', 'operators': ['>=', '>', '<=', '<', '==', '!='],
                                       'fixed_period': 'D', 'default': 3}
 for key in ('tracking_change_pct', 'trading_age'):
@@ -32,6 +36,7 @@ LABELS = {'open': '开盘点位', 'high': '最高点位', 'low': '最低点位',
     'kd_dead_cross': 'KDJ死叉', 'bullish_ma_alignment': '均线多头排列（5>10>20>30>60）',
     'volume_expand': '所选周期放量', 'volume_shrink': '所选周期缩量',
     'close_breakout_high': '收盘价突破前N个市场交易日最高价',
+    'higher_lows': '底部抬高（最近两个已确认低点）',
     'intraday_high_change_pct': '观察日最高涨幅（相对前收，%）',
     'tracking_change_pct': '本轮跟踪涨幅(%)', 'trading_age': '本轮跟踪交易日',
     'close_below_entry': '收盘跌破本轮事件日收盘点位',
@@ -95,7 +100,7 @@ def validate(node, default_period='D', scope='selection', _depth=0, _counter=Non
         if spec['type'] == 'number' and finite(value) is None:
             raise ValueError('数值板块条件需要有限数字')
         if spec.get('integer') and (not isinstance(value, int) or isinstance(value, bool) or not spec['min'] <= value <= spec['max']):
-            raise ValueError('新高窗口需要1至750个市场交易日的整数')
+            raise ValueError('底部抬高窗口需要8至750个所选完整周期的整数' if field=='higher_lows' else '新高窗口需要1至750个市场交易日的整数')
         result['value'] = value
     return result
 
@@ -119,6 +124,10 @@ def evaluate(node, metrics_by_period, default_period='D'):
     if field == 'close_breakout_high':
         from app.domain.conditions import _evaluate_breakout
         return {**_evaluate_breakout(node, metrics), 'period': 'D', 'observation_date': metrics.get('observed_date'), 'price_basis': 'none'}
+    if field == 'higher_lows':
+        from app.analytics.higher_lows import evaluate as evaluate_structure
+        return {**evaluate_structure(node,metrics), 'period':period,
+                'observation_date':metrics.get('observed_date'), 'price_basis':'none'}
     actual = (actual if isinstance(actual, bool) else None) if spec['type'] == 'boolean' else finite(actual)
     if spec['type'] == 'number': right = finite(right)
     if actual is not None and right is not None:

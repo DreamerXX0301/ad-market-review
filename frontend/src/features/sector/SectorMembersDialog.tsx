@@ -203,7 +203,7 @@ export default function SectorMembersDialog({
                       createStockNavigation(
                         sectorMemberNavigationRows(orderedRows),
                         {
-                          source: "tracking",
+                          source: "members",
                           scopeKey: `sector-members:${round?.round_id || topic?.topic_code}:${scope}:${asOf}`,
                           label: `${identity.name} · 成分股`,
                           asOf: quoteDate,

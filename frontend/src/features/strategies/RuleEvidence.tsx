@@ -7,6 +7,7 @@ import {
   historyEventPriceLabels,
   historyReclaimModes,
   eventPriceTargetText,
+  HIGHER_LOWS_FIELD,
 } from "./historicalRules";
 import { summarizeChecks } from "./Conditions";
 
@@ -340,16 +341,76 @@ export function EventPriceOffsetEvidence({ value }: { value: Row }) {
     </div>
   );
 }
+function higherLowsChecks(value: any): Row[] {
+  if (Array.isArray(value)) return value.flatMap(higherLowsChecks);
+  if (!value || typeof value !== "object") return [];
+  if (value.field === HIGHER_LOWS_FIELD) return [value];
+  return higherLowsChecks(
+    value.checks || value.all || value.any || value.conditions || [],
+  );
+}
+export function HigherLowsEvidence({ value }: { value: Row }) {
+  const lows = value.evidence?.recent_lows || [];
+  return (
+    <section className="history-price-evidence higher-lows-evidence">
+      <header>
+        <strong>底部抬高 · 最近两次已确认低点</strong>
+        <PriceStateBadge result={value.result} />
+      </header>
+      <dl>
+        {lows.slice(-2).map((low: Row, index: number) => (
+          <div key={`${low.date}-${index}`}>
+            <dt>
+              {lows.length >= 2 ? `L${index + 1}` : "已确认低点"} · {low.date}
+            </dt>
+            <dd>
+              <PrecisePrice value={low.price} /> · 确认于{" "}
+              {low.confirmed_on || "—"}
+            </dd>
+          </div>
+        ))}
+        {!lows.length && (
+          <div>
+            <dt>已确认低点</dt>
+            <dd>暂无可确认的低点依据</dd>
+          </div>
+        )}
+        <div>
+          <dt>L2确认起最低收盘</dt>
+          <dd>
+            <PrecisePrice
+              value={value.evidence?.minimum_close_since_l2_confirmation}
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>核验截至</dt>
+          <dd>{value.observed_date || "—"}</dd>
+        </div>
+      </dl>
+      <small>
+        左右各2根确认；使用最近两底，不跳过后续更低低点。L2确认当期起收盘不低于L2，曾跌破后收回仍不满足。
+      </small>
+      {value.reason && (
+        <p className="muted">{conditionReasonText(value.reason)}</p>
+      )}
+    </section>
+  );
+}
 export default function RuleEvidence({ value }: { value: any }) {
   const events = eventChecks(value);
-  if (!events.length) return <>{summarizeChecks(value)}</>;
+  const lows = higherLowsChecks(value);
+  if (!events.length && !lows.length) return <>{summarizeChecks(value)}</>;
   return (
     <details className="historical-check-evidence">
       <summary>
         {summarizeChecks(value)}
-        <span>查看事件依据</span>
+        <span>{events.length ? "查看事件依据" : "查看低点依据"}</span>
       </summary>
       <div>
+        {lows.map((check, index) => (
+          <HigherLowsEvidence key={`low-${index}`} value={check} />
+        ))}
         {events.map((check, index) => {
           const anyMatch = check.history_event?.match === "any";
           const selected =

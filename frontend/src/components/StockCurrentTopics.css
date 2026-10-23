@@ -1,0 +1,50 @@
+.stock-current-topics {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  min-width: 0;
+}
+.stock-current-topics-heading {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 11px;
+}
+.stock-current-topics-heading small {
+  font-size: 10px;
+}
+.stock-current-topic-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  font-size: 11px;
+}
+.stock-current-topic {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  border-radius: 5px;
+  color: var(--text);
+}
+.stock-current-topic[data-kind="industry"] {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 30%, var(--border));
+}
+.stock-current-topic-list details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}
+.stock-current-topic-list details[open] {
+  width: 100%;
+}
+.stock-current-topic-list details[open] .stock-current-topic-list {
+  margin-top: 9px;
+}
+.stock-current-topics-date {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}

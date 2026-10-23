@@ -245,7 +245,8 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
                 key=r['round_id']+':'+date_+':review'+(':policy:'+str(p['policy_version']) if previous_reviews else '')
                 if age is None:stats['unknown']+=1;continue
                 current_topics=_historical_topics(c,r,date_,day,topics)
-                ms=metrics_for(bars,date_,calendar,'D',[x['topic_id'] for x in current_topics] if current_topics is not None else None)
+                ms=metrics_for(bars,date_,calendar,'D',[x['topic_id'] for x in current_topics] if current_topics is not None else None,
+                               include_higher_lows=any('higher_lows' in names(node) for node in p['alerts']+p['exits']))
                 ms=add_period_metrics(ms,bars,date_,calendar,p['alerts']+p['exits'],'D',
                                       instrument_id=r['instrument_id'],generation=generation)
                 if any(names(node) & DAILY_LIMIT_FIELDS for node in p['alerts']+p['exits']):

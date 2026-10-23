@@ -24,19 +24,27 @@ const {
   effectiveChartPanels,
   effectiveChartBoll,
   normalizeChartPreferences,
+  CHART_INDICATOR_ORDER,
 } = await import(preferenceModuleUrl);
 const defaults = normalizeChartPreferences(null);
+assert.deepEqual(CHART_INDICATOR_ORDER, [
+  "volume",
+  "boll",
+  "kdj",
+  "macd",
+  "breadth",
+]);
 assert.equal(defaults.version, 4);
 assert.equal(CHART_PREFERENCES_KEY, "shixu-chart-preferences-v4");
 assert.deepEqual(effectiveChartPanels(defaults, false), [
   "volume",
-  "macd",
   "kdj",
+  "macd",
 ]);
 assert.deepEqual(effectiveChartPanels(defaults, true), [
   "volume",
-  "macd",
   "kdj",
+  "macd",
   "breadth",
 ]);
 assert.equal(effectiveChartBoll(defaults, false), false);

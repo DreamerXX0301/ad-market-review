@@ -8,6 +8,7 @@ import re
 VERSION = 'daily-history-event-v1'
 ANY_VERSION = 'daily-history-event-v2-any'
 UNSUPPORTED = {'topic_ids', 'board', 'is_st', 'prev_limit_up',
+               'higher_lows',
                'limit_up_1y', 'limit_up_count_1y', 'turnover_ratio_pct',
                'tracking_change_pct', 'trading_age', 'close_below_entry',
                'close_above_entry_high', 'close_below_entry_low'}
@@ -211,6 +212,15 @@ class HistoryContext:
         return current['close'], None
 
 
+def _daily_then_metrics(metrics,context,day):
+    """New structures use the caller's strict daily summary, not event seeds."""
+    daily=dict(context.daily.get(day,{}))
+    source=metrics.get('_period_metrics',{}).get('D')
+    if source is None and metrics.get('indicator_period','D')=='D':source=metrics
+    if source and 'higher_lows_state' in source:daily['higher_lows_state']=source['higher_lows_state']
+    return daily
+
+
 def _bind_candidate(result, spec, metrics, history, context, day, target, offset, check, *, skip_failed_path=False):
     """All later clauses share exactly this candidate's event and price basis."""
     from app.domain.conditions import evaluate
@@ -222,7 +232,7 @@ def _bind_candidate(result, spec, metrics, history, context, day, target, offset
     bound = {**history, 'event': event, 'current_price': current_price, 'price_reason': price_reason}
     # New explicitly daily clauses read the observation day's own history
     # context. Unscoped legacy clauses keep their strategy-period semantics.
-    then_metrics={**metrics,'_period_metrics':{**metrics.get('_period_metrics',{}),'D':context.daily.get(day,{})}}
+    then_metrics={**metrics,'_period_metrics':{**metrics.get('_period_metrics',{}),'D':_daily_then_metrics(metrics,context,day)}}
     then = evaluate(spec['then'], then_metrics, bound)
     result.update(result=then['result'], checks=[then], reason=then.get('reason'))
     if 'price_path' in spec and not (skip_failed_path and then['result'] is False):
@@ -251,7 +261,7 @@ def _evaluate_any(result, spec, metrics, history, context, day, position):
         if unbound_then is None:
             periods = dict(metrics.get('_period_metrics', {}))
             if context is not None:
-                periods['D'] = context.daily.get(day, {})
+                periods['D'] = _daily_then_metrics(metrics,context,day)
             bound = {**(history if isinstance(history, dict) else {}), 'event': None,
                      'current_price': None, 'price_reason': '没有可绑定的事件报价，事件价保持未知'}
             unbound_then = evaluate(spec['then'], {**metrics, '_period_metrics': periods}, bound)

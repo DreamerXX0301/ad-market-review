@@ -12,9 +12,10 @@ const compiled = ts.transpileModule(source, {
     target: ts.ScriptTarget.ES2022,
   },
 }).outputText;
-const { chartBoll, BOLL_PERIOD, BOLL_STD_MULTIPLIER } = await import(
-  "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
-);
+const { chartBoll, bollCandleValues, BOLL_PERIOD, BOLL_STD_MULTIPLIER } =
+  await import(
+    "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
+  );
 
 const dateAt = (offset) =>
   new Date(Date.UTC(2026, 0, offset + 1)).toISOString().slice(0, 10);
@@ -45,6 +46,35 @@ assert.equal(BOLL_PERIOD, 20);
 assert.equal(BOLL_STD_MULTIPLIER, 2);
 assert.deepEqual(chartBoll(null), []);
 assert.deepEqual(chartBoll({ bars: null }), []);
+const candle = {
+  date: "2026-10-22",
+  open: 10,
+  close: 10.5,
+  low: 9.7,
+  high: 11,
+  original_close: 999,
+};
+assert.deepEqual(bollCandleValues(candle), [10, 10.5, 9.7, 11]);
+for (const invalid of [
+  { open: null },
+  { close: undefined },
+  { high: Infinity },
+  { low: NaN },
+  { close: "10.5" },
+  { open: 0 },
+  { low: 10.1 },
+  { high: 10.4 },
+])
+  assert.deepEqual(
+    bollCandleValues({ ...candle, ...invalid }),
+    ["-", "-", "-", "-"],
+    JSON.stringify(invalid),
+  );
+assert.equal(
+  candle.original_close,
+  999,
+  "candles use adjusted chart OHLC, never original close",
+);
 const sequence = fixture(Array.from({ length: 25 }, (_, index) => index + 1));
 const frozen = structuredClone(sequence);
 const points = chartBoll(sequence);

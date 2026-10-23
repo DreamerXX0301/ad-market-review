@@ -2,6 +2,10 @@ import { useState } from "react";
 import { list, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
+  createStockNavigation,
+  type StockNavigation,
+} from "../../components/stockNavigation";
+import {
   Badge,
   ErrorBox,
   Loading,
@@ -32,7 +36,7 @@ export default function TopicMembersDialog({
   topic: Row;
   date: string;
   onClose: () => void;
-  onStock: (id: string) => void;
+  onStock: (id: string, navigation?: StockNavigation) => void;
   onChart?: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -286,6 +290,22 @@ export default function TopicMembersDialog({
               },
             ]}
             onStock={onStock}
+            onStockNavigate={(id, orderedRows) =>
+              onStock(
+                id,
+                createStockNavigation(orderedRows, {
+                  source: "members",
+                  scopeKey: JSON.stringify({
+                    topic: topic.topic_code || topic.topic_id || topic.name,
+                    date,
+                    query,
+                    board,
+                  }),
+                  label: `${topic.name || "行业与题材"} · 当前成员列表`,
+                  asOf: date,
+                }),
+              )
+            }
             pageSize={20}
             emptyTitle={
               data?.unavailable_reason ? "所选日成员尚不可用" : "暂无可核验成员"

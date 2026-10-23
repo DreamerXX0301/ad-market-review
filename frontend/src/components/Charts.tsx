@@ -42,7 +42,7 @@ import {
   textValue,
 } from "../lib/format";
 import { candleChange } from "./candleChange";
-import { chartBoll } from "./chartBoll";
+import { bollCandleValues, chartBoll } from "./chartBoll";
 import { chartPaneLayout } from "./chartPaneLayout";
 import { chartSinceReturn } from "./chartSinceReturn";
 import {
@@ -75,6 +75,8 @@ import {
 import "./Charts.css";
 import "./StockNavigation.css";
 import StockLimitSummary from "./StockLimitSummary";
+import StockHeaderQuote from "./StockHeaderQuote";
+import StockCurrentTopics from "./StockCurrentTopics";
 import WatchlistButton from "../features/watchlist/WatchlistButton";
 import StockEventBaseline, {
   useStockEventBaseline,
@@ -98,6 +100,7 @@ import {
   effectiveChartPanels,
   effectiveChartPriceBasis,
   effectiveChartWaves,
+  CHART_INDICATOR_ORDER,
   MA_WINDOWS,
 } from "./chartPreferences";
 import type { ChartPanel } from "./chartPreferences";
@@ -159,6 +162,9 @@ function chartPalette() {
     tooltip: light ? "#ffffff" : "#192332",
     up: light ? "#d85151" : "#ed6865",
     down: light ? "#119573" : "#39bd9b",
+    bollUpper: light ? "#ce4147" : "#f07178",
+    bollMiddle: light ? "#00868f" : "#49c7db",
+    bollLower: light ? "#228447" : "#57cc83",
     waveCorrection: light ? "#7754b4" : "#b292f0",
     waveTurning: light ? "#758496" : "#a0aec1",
   };
@@ -384,17 +390,17 @@ export function CandleChart({
   const valueAt = (field: string) =>
     activeBar?.[field] ?? activeBar?.indicators?.[field] ?? null;
   const broad = bars.some((x) => x.advancers != null || x.up_count != null);
-  const chosen = [
-    ...(showBoll ? ["boll"] : []),
-    ...["volume", "macd", "kdj", "breadth"].filter(
-      (key) =>
-        panels.includes(key as ChartPanel) && (key !== "breadth" || broad),
-    ),
-  ];
-  const { actualHeight, mainHeight, subHeight, gap } = chartPaneLayout(
+  const chosen = CHART_INDICATOR_ORDER.filter((key) =>
+    key === "boll"
+      ? showBoll
+      : panels.includes(key) && (key !== "breadth" || broad),
+  );
+  const palette = chartPalette();
+  const { actualHeight, mainHeight, paneHeights, paneTops } = chartPaneLayout(
     height,
     chosen.length,
     compact,
+    chosen.map((key) => (key === "boll" ? 140 : 55)),
   );
   const waves = data?.waves;
   const waveAsOf = data?.as_of || asOf || last?.date || "";
@@ -457,8 +463,8 @@ export function CandleChart({
       grids.push({
         left: 62,
         right: 20,
-        top: 24 + mainHeight + gap + (subHeight + gap) * i,
-        height: subHeight,
+        top: paneTops[i],
+        height: paneHeights[i],
       }),
     );
     grids.forEach((_, i) => {
@@ -603,16 +609,16 @@ export function CandleChart({
             backgroundColor: pal.bg,
             padding: [2, 4],
           },
-          data: annotations.visible.map((line) => ({
+          data: annotations.visible.map(({ line, price }) => ({
             name: line.label || "水平线",
-            yAxis: line.price,
+            yAxis: price!,
             lineStyle: {
               color: annotationColors[line.color],
               width: 1.4,
               type: "dashed",
             },
             label: {
-              formatter: lineLabel(line),
+              formatter: lineLabel(line, price!),
               color: annotationColors[line.color],
             },
           })),
@@ -694,12 +700,27 @@ export function CandleChart({
           itemStyle: { color },
         });
       if (key === "boll") {
-        line("BOLL 收盘参照", "close", pal.text);
+        series.push({
+          name: "BOLL K线",
+          type: "candlestick",
+          xAxisIndex: ix,
+          yAxisIndex: ix,
+          data: bars.map(bollCandleValues),
+          itemStyle: {
+            color: "transparent",
+            color0: pal.down,
+            borderColor: pal.up,
+            borderColor0: pal.down,
+            borderWidth: 1,
+          },
+          barMaxWidth: 9,
+          z: 2,
+        });
         (
           [
-            ["upper", "BOLL 上轨", "#82b5e9"],
-            ["middle", "BOLL 中轨", "#d6b96d"],
-            ["lower", "BOLL 下轨", "#b59be3"],
+            ["upper", "BOLL 上轨", pal.bollUpper],
+            ["middle", "BOLL 中轨", pal.bollMiddle],
+            ["lower", "BOLL 下轨", pal.bollLower],
           ] as const
         ).forEach(([field, name, color]) => {
           series.push({
@@ -712,6 +733,7 @@ export function CandleChart({
             connectNulls: false,
             lineStyle: { color, width: field === "middle" ? 1 : 1.25 },
             itemStyle: { color },
+            z: 3,
           });
         });
       }
@@ -804,17 +826,17 @@ export function CandleChart({
                   {
                     name: "BOLL副图 上轨",
                     value: point?.upper,
-                    color: "#82b5e9",
+                    color: pal.bollUpper,
                   },
                   {
                     name: "BOLL副图 中轨",
                     value: point?.middle,
-                    color: "#d6b96d",
+                    color: pal.bollMiddle,
                   },
                   {
                     name: "BOLL副图 下轨",
                     value: point?.lower,
-                    color: "#b59be3",
+                    color: pal.bollLower,
                   },
                 ]
               : []),
@@ -901,8 +923,8 @@ export function CandleChart({
     chosen.join(","),
     actualHeight,
     mainHeight,
-    subHeight,
-    gap,
+    paneHeights.join(","),
+    paneTops.join(","),
     themeTick,
     waves,
     showWaves,
@@ -1293,9 +1315,9 @@ export function CandleChart({
           {chosen.map((key, i) => (
             <div
               key={key}
-              className="candle-pane-value"
+              className={`candle-pane-value${key === "boll" ? " candle-pane-boll" : ""}`}
               style={{
-                top: 24 + mainHeight + gap + (subHeight + gap) * i - 18,
+                top: paneTops[i] - 18,
               }}
               aria-label={key + "副图当前值"}
             >
@@ -1317,14 +1339,16 @@ export function CandleChart({
               </strong>
               {key === "boll" && (
                 <>
-                  <span>收盘 {num(activeBar?.close)}</span>
-                  <span style={{ color: "#82b5e9" }}>
+                  <span className="candle-boll-close">
+                    收 {num(activeBar?.close)}
+                  </span>
+                  <span style={{ color: palette.bollUpper }}>
                     上轨 {num(activeBoll?.upper)}
                   </span>
-                  <span style={{ color: "#d6b96d" }}>
+                  <span style={{ color: palette.bollMiddle }}>
                     中轨 {num(activeBoll?.middle)}
                   </span>
-                  <span style={{ color: "#b59be3" }}>
+                  <span style={{ color: palette.bollLower }}>
                     下轨 {num(activeBoll?.lower)}
                   </span>
                   {activeBoll?.middle == null && (
@@ -1403,24 +1427,30 @@ export function CandleChart({
       )}
       <div className="chart-bottom">
         <div className="indicator-controls">
-          <ChartToggle
-            label="BOLL"
-            title="独立副图布林带 · 20周期 · 2倍标准差"
-            checked={showBoll}
-            onChange={setShowBoll}
-            color="#82b5e9"
-          />
-          {[
-            ["volume", "成交量"],
-            ["macd", "MACD"],
-            ["kdj", "KDJ"],
-            ...(broad ? [["breadth", "上涨家数"]] : []),
-          ].map(([key, name]) => (
+          {CHART_INDICATOR_ORDER.filter(
+            (key) => key !== "breadth" || broad,
+          ).map((key) => (
             <ChartToggle
               key={key}
-              label={name}
-              checked={panels.includes(key as ChartPanel)}
-              onChange={() => togglePanel(key as ChartPanel)}
+              label={
+                {
+                  volume: "成交量",
+                  boll: "BOLL",
+                  kdj: "KDJ",
+                  macd: "MACD",
+                  breadth: "上涨家数",
+                }[key]
+              }
+              title={
+                key === "boll"
+                  ? "独立副图K线与布林带 · 20周期 · 2倍标准差"
+                  : undefined
+              }
+              color={key === "boll" ? palette.bollMiddle : undefined}
+              checked={key === "boll" ? showBoll : panels.includes(key)}
+              onChange={() =>
+                key === "boll" ? setShowBoll(!showBoll) : togglePanel(key)
+              }
             />
           ))}
         </div>
@@ -1717,30 +1747,30 @@ export function CandleChart({
             <fieldset>
               <legend>{isIndex ? "指数" : "个股"}默认指标</legend>
               <div className="chart-preferences-mas">
-                <ChartToggle
-                  label="BOLL 布林带"
-                  checked={showBoll}
-                  onChange={setShowBoll}
-                  color="#82b5e9"
-                />
-                {(
-                  [
-                    ["volume", "成交量"],
-                    ["macd", "MACD"],
-                    ["kdj", "KDJ"],
-                    ...(isIndex ? [["breadth", "上涨家数"]] : []),
-                  ] as [ChartPanel, string][]
-                ).map(([key, name]) => (
+                {CHART_INDICATOR_ORDER.filter(
+                  (key) => key !== "breadth" || isIndex,
+                ).map((key) => (
                   <ChartToggle
                     key={key}
-                    label={name}
-                    checked={panels.includes(key)}
-                    onChange={() => togglePanel(key)}
+                    label={
+                      {
+                        volume: "成交量",
+                        boll: "BOLL 布林带",
+                        kdj: "KDJ",
+                        macd: "MACD",
+                        breadth: "上涨家数",
+                      }[key]
+                    }
+                    color={key === "boll" ? palette.bollMiddle : undefined}
+                    checked={key === "boll" ? showBoll : panels.includes(key)}
+                    onChange={() =>
+                      key === "boll" ? setShowBoll(!showBoll) : togglePanel(key)
+                    }
                   />
                 ))}
               </div>
               <p className="muted">
-                BOLL、成交量、MACD、KDJ各占一张副图。BOLL包含收盘参照线与上中下轨，
+                副图按成交量、BOLL、KDJ、MACD排列，各占一张副图。BOLL包含当前周期同口径蜡烛K线与上中下轨，
                 按当前周期收盘价计算，参数20 ·
                 2；图下开关与这里同步，也可关闭全部副图。
               </p>
@@ -1957,13 +1987,20 @@ export function StockDrawer({
         >
           <div>
             <div className="eyebrow">个股行情详情</div>
-            <h2>
-              {meta.name || position?.current.name || id}{" "}
-              <CopyStockCode
-                code={meta.code || position?.current.code || id.slice(0, 6)}
+            <div className="stock-title-row">
+              <h2>
+                {meta.name || position?.current.name || id}{" "}
+                <CopyStockCode
+                  code={meta.code || position?.current.code || id.slice(0, 6)}
+                  instrumentId={id}
+                />
+              </h2>
+              <StockHeaderQuote
+                data={detailData}
                 instrumentId={id}
+                asOf={asOf}
               />
-            </h2>
+            </div>
             {position && (
               <div className="stock-navigation-scope">
                 <span>{navigation?.label}</span>
@@ -1972,15 +2009,17 @@ export function StockDrawer({
                     ? "跟踪观察日"
                     : navigation?.source === "watchlist"
                       ? "自选观察日"
-                      : "选股观察日"}{" "}
+                      : navigation?.source === "market"
+                        ? "盘面观察日"
+                        : navigation?.source === "members"
+                          ? "成员报价日"
+                          : "选股观察日"}{" "}
                   {asOf || "未指定"}
                 </span>
               </div>
             )}
+            <StockCurrentTopics data={detailData} instrumentId={id} />
             <div className="tags">
-              {(detailData?.topics || []).map((t: any, i: number) => (
-                <Badge key={i}>{textValue(t)}</Badge>
-              ))}
               {(detailData?.risk_labels || []).map((t: any, i: number) => (
                 <Badge key={i} tone="warn">
                   {textValue(t)}

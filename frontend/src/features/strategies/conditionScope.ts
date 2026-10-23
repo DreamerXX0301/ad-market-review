@@ -33,6 +33,7 @@ export function conditionFieldGroup(field: Row, scope: ConditionScope): string {
       "close_breakout_high",
       "close_above_entry_high",
       "bullish_ma_alignment",
+      "higher_lows",
     ].includes(name) || name.startsWith("cross_above_ma");
   const downward =
     [

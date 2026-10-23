@@ -602,6 +602,7 @@ export function historyRuleSummary(
           "）"
       : "";
   if (!node.field) return "未识别规则（保留原结构）";
+  if (node.field === HIGHER_LOWS_FIELD) return higherLowsSummary(node);
   const boards: Record<string, string> = {
     main: "主板",
     chinext: "创业板",
@@ -686,6 +687,8 @@ export function validateVisualRule(
     return null;
   }
   if (!node.field) return "未识别的规则请在结构化编辑中核对";
+  const higherLowsError = validateHigherLowsRule(node, context);
+  if (higherLowsError) return higherLowsError;
   if (Object.hasOwn(node, "right_event_change_pct")) {
     if (!node.right_event_field || context !== "then")
       return "事件价百分比偏移仅用于历史事件的今日事件价比较";
@@ -711,4 +714,50 @@ export function validateVisualRule(
     return "每个条件只能选择一种比较对象";
   if (node.value === "") return "请填写条件数值";
   return null;
+}
+
+export const HIGHER_LOWS_FIELD = "higher_lows";
+export const HIGHER_LOWS_OPERATOR = "confirmed_rising_lows";
+export const HIGHER_LOWS_DEFAULT = 60;
+export const HIGHER_LOWS_MIN = 8;
+export const HIGHER_LOWS_MAX = 750;
+
+export function higherLowsWindowError(value: unknown): string | null {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= HIGHER_LOWS_MIN &&
+    value <= HIGHER_LOWS_MAX
+    ? null
+    : "底部抬高回看窗口请输入8—750的整数";
+}
+
+export function higherLowsWindowUnit(period?: string): string {
+  return period === "D"
+    ? "个交易日"
+    : period === "W"
+      ? "根完整周K"
+      : period === "M"
+        ? "根完整月K"
+        : "个默认周期";
+}
+
+export function higherLowsSummary(
+  node: RuleNode,
+  effectivePeriod?: string,
+): string {
+  const period = node.period || effectivePeriod;
+  return `${period ? (({ D: "日K", W: "完整周K", M: "完整月K" } as Record<string, string>)[period] || period) + " · " : ""}底部抬高（回看${node.value ?? "N"}${higherLowsWindowUnit(period)}，左右各2根确认，确认后收盘未失守）`;
+}
+
+export function validateHigherLowsRule(node: RuleNode, context = "current") {
+  if (node.field !== HIGHER_LOWS_FIELD) return null;
+  if (context === "where")
+    return "底部抬高请放在外层独立条件或今日条件，不作为历史事件日筛选条件";
+  if (
+    node.op !== HIGHER_LOWS_OPERATOR ||
+    node.right_field ||
+    node.right_event_field
+  )
+    return "底部抬高使用独立结构判断，只接受回看窗口参数";
+  return higherLowsWindowError(node.value);
 }

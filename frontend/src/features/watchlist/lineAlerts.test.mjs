@@ -157,9 +157,12 @@ const api = encoded(
   "export const api=()=>{throw Error('SSR must never fetch')};export const patch=api;export const post=api;export const useApi=()=>({});export const list=(v)=>Array.isArray(v)?v:Array.isArray(v?.items)?v.items:[];",
 );
 const lineUIURL = await compile("./WatchlistLineAlerts.tsx", {
-  "../../components/CopyStockCode": await compile("../../components/CopyStockCode.tsx", {
-    "./stockCodeCopy": await compile("../../components/stockCodeCopy.ts"),
-  }),
+  "../../components/CopyStockCode": await compile(
+    "../../components/CopyStockCode.tsx",
+    {
+      "./stockCodeCopy": await compile("../../components/stockCodeCopy.ts"),
+    },
+  ),
   "./lineAlertPresentation": helpersURL,
   "../../components/UI": ui,
   "../../lib/format": format,
@@ -248,7 +251,9 @@ const chartURL = await compile("../../components/ChartDrawingTools.tsx", {
     "export const useWatchlistMembership=()=>({ids:new Set()});",
   ),
 });
-const { newLineSettings, savedLineSettings } = await import(annotationURL);
+const { newLineSettings, savedLineSettings, projectChartLine } = await import(
+  annotationURL
+);
 const { ChartAnnotationPanel } = await import(chartURL);
 const nope = () => {
   throw Error("SSR must not mutate chart lines");
@@ -269,6 +274,7 @@ const state = {
   error: "",
   result: { loading: false, error: "", reload: nope },
   lines: [],
+  views: [],
   setSettings: nope,
   setShow: nope,
   setOpen: nope,
@@ -309,12 +315,64 @@ const legacy = renderToStaticMarkup(
           anchor_date: null,
         },
       ],
+      views: [
+        projectChartLine(
+          {
+            annotation_id: "old",
+            instrument_id: "605089.SH",
+            label: "支撑位",
+            price: 23.25,
+            color: "blue",
+            price_basis: "none",
+            anchor_date: null,
+          },
+          { price_basis: "none", instrument: { instrument_id: "605089.SH" } },
+        ),
+      ],
     },
   }),
 );
 assert.doesNotMatch(legacy, /触发后自动加入自选/);
 assert.match(legacy, /参考线/);
 assert.match(legacy, /不提醒/);
+const originalLine = {
+  annotation_id: "old-anchor",
+  instrument_id: "605089.SH",
+  label: "原锚支撑",
+  price: 12.5,
+  color: "green",
+  price_basis: "forward_event_affine",
+  anchor_date: "2026-10-21",
+  line_type: "support",
+  alert_modes: ["support_reclaim"],
+  auto_watchlist: true,
+  revision: 2,
+};
+const projectedPanel = renderToStaticMarkup(
+  createElement(ChartAnnotationPanel, {
+    state: {
+      ...state,
+      editing: originalLine,
+      price: String(originalLine.price),
+      lines: [originalLine],
+      views: [
+        {
+          line: originalLine,
+          price: 9.84,
+          converted: true,
+          anchor: "2026-10-23",
+          reason: "按已核验公司行动换算",
+        },
+      ],
+    },
+  }),
+);
+assert.match(projectedPanel, /本图 9\.8400 · 已换算/);
+assert.match(projectedPanel, /原保存线价 · 2026-10-21/);
+assert.match(projectedPanel, /value="12.5"/);
+assert.match(projectedPanel, /保存不更换原锚/);
+assert.equal(originalLine.price, 12.5);
+assert.equal(originalLine.anchor_date, "2026-10-21");
 const watchPresentation = await compile("./watchlistPresentation.ts");
 const stockNavigation = await compile("../../components/stockNavigation.ts");
 globalThis.__watchlistFixture = {

@@ -9,7 +9,7 @@ export type StockNavigationItem = {
   historicalChecks?: unknown;
 };
 export type StockNavigation = {
-  source: "strategy" | "tracking" | "watchlist";
+  source: "strategy" | "tracking" | "watchlist" | "market" | "members";
   scopeKey: string;
   label: string;
   asOf?: string;
@@ -69,9 +69,12 @@ export function createStockNavigation(
       id,
       name: typeof row.name === "string" ? row.name : undefined,
       code: typeof row.code === "string" ? row.code : undefined,
-      ...(preferred.historicalChecks ||
-      preferred.checks ||
-      preferred.entry_basis?.entry_checks
+      ...(["strategy", "tracking", "watchlist"].includes(
+        scope.source || "strategy",
+      ) &&
+      (preferred.historicalChecks ||
+        preferred.checks ||
+        preferred.entry_basis?.entry_checks)
         ? {
             historicalChecks: JSON.parse(
               JSON.stringify(
@@ -97,7 +100,9 @@ export function stockNavigationPosition(
 ) {
   if (
     !navigation ||
-    !["strategy", "tracking", "watchlist"].includes(navigation.source)
+    !["strategy", "tracking", "watchlist", "market", "members"].includes(
+      navigation.source,
+    )
   )
     return null;
   const index = navigation.items.findIndex(

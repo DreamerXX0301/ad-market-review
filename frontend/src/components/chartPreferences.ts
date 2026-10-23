@@ -6,7 +6,14 @@ export const PREVIOUS_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v3";
 export const EARLIER_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v2";
 export const LEGACY_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v1";
 export const MA_WINDOWS = [5, 10, 20, 30, 60, 250] as const;
-export const STOCK_CHART_PANELS = ["volume", "macd", "kdj"] as const;
+export const CHART_INDICATOR_ORDER = [
+  "volume",
+  "boll",
+  "kdj",
+  "macd",
+  "breadth",
+] as const;
+export const STOCK_CHART_PANELS = ["volume", "kdj", "macd"] as const;
 export const INDEX_CHART_PANELS = [...STOCK_CHART_PANELS, "breadth"] as const;
 export type ChartPanel = (typeof INDEX_CHART_PANELS)[number];
 export type ChartPreferences = {

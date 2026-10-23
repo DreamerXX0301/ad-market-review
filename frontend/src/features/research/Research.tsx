@@ -333,13 +333,18 @@ export default function Research({
         )}
       </Panel>
       {error && <ErrorBox message={error} />}{" "}
-      {taskSnapshot && (
+      {taskSnapshot && researchTaskProgress(taskSnapshot).complete && report ? (
+        <details className="research-report-fold research-completed-task">
+          <summary>研究记录已留存 · 查看执行过程</summary>
+          <ResearchTaskProgress task={taskSnapshot} />
+        </details>
+      ) : taskSnapshot ? (
         <ResearchTaskProgress
           task={taskSnapshot}
           pollError={taskId ? task.error : undefined}
           onRetry={taskId ? task.reload : undefined}
         />
-      )}
+      ) : null}
       {busy && !taskSnapshot && <Loading />}
       {!report && marketPreview}
       {report ? (
@@ -393,8 +398,15 @@ export default function Research({
               </span>
             </div>
           )}
-          <details className="research-report-fold">
-            <summary>材料覆盖与来源说明 · 查看日期、缺口及研究记录信息</summary>
+          <details
+            className="research-report-fold"
+            key={report.report_id || report.job_id}
+          >
+            <summary>
+              来源与缺口说明
+              {report.gaps?.length ? ` · ${report.gaps.length} 项缺口` : ""}
+              ，按需查看
+            </summary>
             <div className="research-report-meta">
               <span>
                 研究记录 {report.report_id || report.job_id || "待核验"}
@@ -415,7 +427,7 @@ export default function Research({
                 <ResearchSection key={i} section={section} />
               ))}
             </details>
-          ) : (
+          ) : report.schema_version !== 2 ? (
             <Panel title="研究结果">
               <div className="prose">
                 <p>
@@ -426,59 +438,64 @@ export default function Research({
                 </p>
               </div>
             </Panel>
+          ) : null}
+          {report.schema_version !== 2 && (
+            <details className="research-report-fold">
+              <summary>材料与来源索引 · 查看原文、报告期和采集日期</summary>
+              <Panel
+                title="材料与来源"
+                subtitle="发布时间、采集时间和报告期分别核对"
+              >
+                <Table
+                  rows={report.materials || []}
+                  columns={[
+                    {
+                      key: "title",
+                      title: "材料",
+                      render: (v, r) =>
+                        r.url && /^https?:\/\//.test(r.url) ? (
+                          <a href={r.url} target="_blank" rel="noreferrer">
+                            {v || r.name} ↗
+                          </a>
+                        ) : (
+                          <button
+                            className="link"
+                            onClick={() => setMaterial(r)}
+                          >
+                            {v || r.name} · 查看材料
+                          </button>
+                        ),
+                    },
+                    { key: "source" },
+                    {
+                      key: "published_at",
+                      title: "发布时间",
+                      render: (v, r) => dateTime(v || r.published_at_ms),
+                    },
+                    { key: "report_period", title: "报告期" },
+                    {
+                      key: "source_timestamp_ms",
+                      title: "来源元数据时间",
+                      render: (v) => dateTime(v),
+                    },
+                    {
+                      key: "kind",
+                      title: "材料类型",
+                      render: (v) =>
+                        v === "provider_summary" ? "来源摘要" : v || "待核验",
+                    },
+                    {
+                      key: "fetched_at_ms",
+                      title: "采集时间",
+                      render: (v) => dateTime(v),
+                    },
+                  ]}
+                  emptyTitle="没有取得可引用材料"
+                  emptyDescription="资讯摘要不等于完整公告原文；没有材料时保留缺口。"
+                />
+              </Panel>
+            </details>
           )}
-          <details className="research-report-fold">
-            <summary>材料与来源索引 · 查看原文、报告期和采集日期</summary>
-            <Panel
-              title="材料与来源"
-              subtitle="发布时间、采集时间和报告期分别核对"
-            >
-              <Table
-                rows={report.materials || []}
-                columns={[
-                  {
-                    key: "title",
-                    title: "材料",
-                    render: (v, r) =>
-                      r.url && /^https?:\/\//.test(r.url) ? (
-                        <a href={r.url} target="_blank" rel="noreferrer">
-                          {v || r.name} ↗
-                        </a>
-                      ) : (
-                        <button className="link" onClick={() => setMaterial(r)}>
-                          {v || r.name} · 查看材料
-                        </button>
-                      ),
-                  },
-                  { key: "source" },
-                  {
-                    key: "published_at",
-                    title: "发布时间",
-                    render: (v, r) => dateTime(v || r.published_at_ms),
-                  },
-                  { key: "report_period", title: "报告期" },
-                  {
-                    key: "source_timestamp_ms",
-                    title: "来源元数据时间",
-                    render: (v) => dateTime(v),
-                  },
-                  {
-                    key: "kind",
-                    title: "材料类型",
-                    render: (v) =>
-                      v === "provider_summary" ? "来源摘要" : v || "待核验",
-                  },
-                  {
-                    key: "fetched_at_ms",
-                    title: "采集时间",
-                    render: (v) => dateTime(v),
-                  },
-                ]}
-                emptyTitle="没有取得可引用材料"
-                emptyDescription="资讯摘要不等于完整公告原文；没有材料时保留缺口。"
-              />
-            </Panel>
-          </details>
         </div>
       ) : (
         !busy && (

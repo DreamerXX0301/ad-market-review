@@ -16,10 +16,13 @@ const {
   lineLabel,
   savedLineSettings,
   newLineSettings,
+  projectChartLine,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
 const raw = {
+  annotation_id: "raw-line",
+  instrument_id: "601900.SH",
   price_basis: "none",
   anchor_date: null,
   price: 12.5,
@@ -113,4 +116,163 @@ assert.equal(
 );
 console.log(
   "chart marks: persistent price scope, adjustment anchor isolation and shared periods passed",
+);
+const saved = {
+  ...raw,
+  annotation_id: "saved",
+  instrument_id: "601900.SH",
+  color: "green",
+  price_basis: "forward_event_affine",
+  anchor_date: "2026-10-21",
+  line_type: "support",
+  revision: 2,
+  alert_modes: ["support_reclaim"],
+  auto_watchlist: true,
+};
+const chart = {
+  instrument: { instrument_id: saved.instrument_id },
+  as_of: "2026-10-23",
+  snapshot_id: "current-market",
+  price_basis: "forward_event_affine",
+  bars: [
+    {
+      date: "2026-10-23",
+      open: 20,
+      close: 21,
+      low: 19,
+      high: 22,
+      adjustment_anchor: "2026-10-23",
+      price_basis: "forward_event_affine",
+    },
+  ],
+  adjustment: {
+    usable: true,
+    model: "event_affine",
+    anchor: "2026-10-23",
+    events: [],
+    events_count: 0,
+    quarantined: [],
+  },
+  annotation_projection_evidence: {
+    version: "chart-annotation-projection-v1",
+    available: true,
+    start_date: "2021-10-20",
+    end_date: "2026-10-23",
+    snapshot_id: "current-market",
+    source: "published_corporate_actions",
+  },
+};
+const original = structuredClone(saved),
+  chartBefore = structuredClone(chart);
+for (const period of ["D", "W", "M"]) {
+  const result = projectChartLine(saved, { ...chart, period });
+  assert.equal(result.price, saved.price);
+  assert.equal(result.converted, true);
+  assert.match(result.reason, /无新增公司行动/);
+  assert.equal(result.line, saved);
+  assert.equal(
+    projectChartLine(raw, { ...chart, price_basis: "none", period }).price,
+    raw.price,
+  );
+}
+const event = {
+  date: "2026-10-22",
+  cash: 0.5,
+  bonus: 0.1,
+  rights: 0.2,
+  rights_price: 4,
+};
+const adjusted = {
+  ...chart,
+  adjustment: { ...chart.adjustment, events: [event], events_count: 1 },
+};
+const projected = projectChartLine(saved, adjusted);
+assert.equal(projected.price, (12.5 - 0.5 + 4 * 0.2) / 1.3);
+assert.match(lineLabel(saved, projected.price), /9.8462/);
+assert.equal(saved.price, 12.5);
+assert.deepEqual(saved, original);
+assert.deepEqual(chart, chartBefore);
+for (const invalid of [
+  { ...chart, snapshot_id: "other" },
+  { ...chart, annotation_projection_evidence: undefined },
+  {
+    ...chart,
+    annotation_projection_evidence: {
+      ...chart.annotation_projection_evidence,
+      available: false,
+    },
+  },
+  {
+    ...chart,
+    annotation_projection_evidence: {
+      ...chart.annotation_projection_evidence,
+      end_date: "2026-10-22",
+    },
+  },
+  {
+    ...chart,
+    annotation_projection_evidence: {
+      ...chart.annotation_projection_evidence,
+      start_date: "2026-10-22",
+    },
+  },
+  { ...chart, adjustment: { ...chart.adjustment, quarantined: [{}] } },
+  { ...chart, adjustment: { ...chart.adjustment, anchor: "2026-10-22" } },
+  { ...chart, adjustment: { ...chart.adjustment, events: [event] } },
+  {
+    ...chart,
+    adjustment: { ...chart.adjustment, events: [null], events_count: 1 },
+  },
+  {
+    ...chart,
+    adjustment: {
+      ...chart.adjustment,
+      events: [event, event],
+      events_count: 2,
+    },
+  },
+  {
+    ...chart,
+    adjustment: {
+      ...chart.adjustment,
+      events: [{ ...event, cash: null }],
+      events_count: 1,
+    },
+  },
+  {
+    ...chart,
+    adjustment: {
+      ...chart.adjustment,
+      events: [{ ...event, date: "2026-10-24" }],
+      events_count: 1,
+    },
+  },
+  { ...chart, bars: [{ ...chart.bars[0], adjustment_anchor: "2026-10-21" }] },
+  { ...chart, bars: [{ ...chart.bars[0], price_basis: "none" }] },
+  { ...chart, bars: [] },
+  { ...chart, bars: [null] },
+]) {
+  const result = projectChartLine(saved, invalid);
+  assert.equal(result.price, null, JSON.stringify(invalid));
+  assert.ok(result.reason);
+}
+assert.equal(
+  projectChartLine({ ...saved, anchor_date: "2026-10-24" }, chart).price,
+  null,
+);
+assert.equal(
+  projectChartLine({ ...saved, anchor_date: "2026-02-30" }, chart).price,
+  null,
+);
+assert.equal(
+  projectChartLine(saved, { ...chart, price_basis: "none" }).price,
+  null,
+);
+assert.equal(projectChartLine(raw, chart).price, null);
+assert.equal(
+  projectChartLine({ ...saved, anchor_date: chart.as_of }, chart).price,
+  saved.price,
+);
+console.log(
+  "saved anchor projections: explicit same-generation interval, real affine actions, no-action proof, D/W/M and immutable original marks passed",
 );

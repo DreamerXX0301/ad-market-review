@@ -92,7 +92,155 @@ export function lineMatchesScope(
     (line.price_basis === "none" || line.anchor_date === scope.anchor_date)
   );
 }
-export function lineLabel(line: ChartLine) {
+export type ChartLineProjection = {
+  line: ChartLine;
+  price: number | null;
+  anchor: string | null;
+  converted: boolean;
+  reason: string;
+};
+function validDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+    return false;
+  const date = new Date(value + "T00:00:00Z");
+  return (
+    Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
+  );
+}
+const positive = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0;
+const nonnegative = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+/** Project a saved coordinate for this chart only; never rewrite the mark or alert. */
+export function projectChartLine(
+  line: ChartLine,
+  chart: Record<string, any> | null,
+): ChartLineProjection {
+  const unavailable = (reason: string): ChartLineProjection => ({
+    line,
+    price: null,
+    anchor: null,
+    converted: false,
+    reason,
+  });
+  const instrument =
+    chart?.instrument?.instrument_id || chart?.instrument?.thscode;
+  if (
+    typeof instrument !== "string" ||
+    typeof line.instrument_id !== "string" ||
+    instrument.toUpperCase() !== line.instrument_id.toUpperCase()
+  )
+    return unavailable("划线与本图证券不匹配，本图未显示");
+  const scope = annotationScope(chart);
+  if (!positive(line.price)) return unavailable("原保存线价无效，本图未显示");
+  if (!scope) return unavailable("本图价格口径尚未核验，本图未显示");
+  if (line.price_basis !== scope.price_basis)
+    return unavailable(
+      `价格口径不同：原线${line.price_basis === "none" ? "未复权" : "前复权"}，本图${scope.price_basis === "none" ? "未复权" : "前复权"}；本图未显示`,
+    );
+  if (scope.price_basis === "none")
+    return {
+      line,
+      price: line.price,
+      anchor: null,
+      converted: false,
+      reason: "未复权原保存线价；日／周／月共享",
+    };
+  if (
+    !validDate(line.anchor_date) ||
+    !validDate(scope.anchor_date) ||
+    chart?.as_of !== scope.anchor_date
+  )
+    return unavailable("原锚或图表观察日无效，本图未显示");
+  if (line.anchor_date > scope.anchor_date)
+    return unavailable("原保存锚晚于本图观察日，不将未来锚换算回历史图");
+  const plan = chart?.adjustment;
+  if (
+    plan?.usable !== true ||
+    plan.model !== "event_affine" ||
+    plan.anchor !== scope.anchor_date ||
+    !Array.isArray(plan.events) ||
+    !plan.events.every(
+      (event: unknown) =>
+        event != null && typeof event === "object" && !Array.isArray(event),
+    ) ||
+    !Array.isArray(plan.quarantined) ||
+    plan.quarantined.length ||
+    plan.events_count !== plan.events.length
+  )
+    return unavailable("当前公司行动或复权锚未通过校验，本图未显示");
+  if (
+    !Array.isArray(chart?.bars) ||
+    !chart.bars.length ||
+    chart.bars.some(
+      (bar: Record<string, any>) =>
+        !bar ||
+        !validDate(bar.date) ||
+        bar.date > scope.anchor_date! ||
+        (bar.adjustment_anchor != null &&
+          bar.adjustment_anchor !== scope.anchor_date) ||
+        (bar.price_basis != null && bar.price_basis !== scope.price_basis),
+    )
+  )
+    return unavailable("本图报价与复权锚不一致，本图未显示");
+  if (line.anchor_date !== scope.anchor_date) {
+    const proof = chart?.annotation_projection_evidence;
+    if (
+      proof?.version !== "chart-annotation-projection-v1" ||
+      proof.available !== true ||
+      proof.source !== "published_corporate_actions" ||
+      typeof chart.snapshot_id !== "string" ||
+      !chart.snapshot_id ||
+      proof.snapshot_id !== chart.snapshot_id ||
+      !validDate(proof.start_date) ||
+      !validDate(proof.end_date) ||
+      proof.end_date !== scope.anchor_date ||
+      proof.start_date > line.anchor_date
+    )
+      return unavailable(
+        proof?.start_date &&
+          validDate(proof.start_date) &&
+          line.anchor_date < proof.start_date
+          ? `原锚 ${line.anchor_date} 早于本图可核验区间 ${proof.start_date}，本图未显示`
+          : "缺少覆盖原锚至本图观察日的同代际公司行动依据，本图未显示",
+      );
+  }
+  let price = line.price;
+  let previous: string | null = null;
+  let applied = 0;
+  for (const event of [...plan.events].sort((a, b) =>
+    String(a.date).localeCompare(String(b.date)),
+  )) {
+    if (
+      !validDate(event.date) ||
+      event.date > scope.anchor_date ||
+      event.date === previous ||
+      ![event.cash, event.bonus, event.rights, event.rights_price].every(
+        nonnegative,
+      )
+    )
+      return unavailable("公司行动换算字段、日期或重复事件未核验，本图未显示");
+    previous = event.date;
+    if (event.date <= line.anchor_date) continue;
+    price =
+      (price - event.cash + event.rights_price * event.rights) /
+      (1 + event.bonus + event.rights);
+    if (!positive(price)) return unavailable("原线换算后价格无效，本图未显示");
+    applied++;
+  }
+  const converted = line.anchor_date !== scope.anchor_date;
+  return {
+    line,
+    price,
+    anchor: scope.anchor_date,
+    converted,
+    reason: converted
+      ? `原锚 ${line.anchor_date} → 本图 ${scope.anchor_date}；${applied ? `按${applied}项已核验公司行动换算` : "核验区间无新增公司行动，线价不变"}；原保存价格与提醒证据保留`
+      : "与原保存复权锚一致；日／周／月共享",
+  };
+}
+export function lineLabel(line: ChartLine, displayPrice = line.price) {
   const type = savedLineSettings(line).line_type;
-  return `${line.label || lineTypeLabels[type]}${line.label && type !== "reference" ? `（${lineTypeLabels[type]}）` : ""} · ${line.price.toLocaleString("zh-CN", { maximumFractionDigits: 4 })}`;
+  return `${line.label || lineTypeLabels[type]}${line.label && type !== "reference" ? `（${lineTypeLabels[type]}）` : ""} · ${displayPrice.toLocaleString("zh-CN", { maximumFractionDigits: 4 })}`;
 }

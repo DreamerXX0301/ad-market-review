@@ -6,7 +6,7 @@ import pytest
 from test_workspace import ws, make_strategy, add_one, advance
 from app import core
 from app.routers.watchlist import router
-from app.services import watchlist
+from app.services import watchlist, stock_memberships
 from app.services.tracking_quotes import clear_tracking_quote_cache
 
 
@@ -144,7 +144,7 @@ def test_current_industry_and_concept_memberships_are_batched_searchable_and_not
     monkeypatch.setattr(market, 'topics', lambda: catalog)
     assert client.post('/api/v1/topics/initialize', json={}).status_code == 200
     calls = []
-    original_reader = watchlist.topic_members._read_state
+    original_reader = stock_memberships.topic_members._read_state
     def batch(connection, day, provider_catalog):
         statements = []
         connection.set_trace_callback(statements.append)
@@ -154,7 +154,7 @@ def test_current_industry_and_concept_memberships_are_batched_searchable_and_not
             connection.set_trace_callback(None)
         calls.append(statements)
         return result
-    monkeypatch.setattr(watchlist.topic_members, '_read_state', batch)
+    monkeypatch.setattr(stock_memberships.topic_members, '_read_state', batch)
     listed = client.get('/api/v1/watchlist').json()
     assert len(calls) == 1
     assert len([sql for sql in calls[0] if sql.lstrip().upper().startswith('SELECT')]) == 2, 'one definitions query + one override query; not one query per stock/topic'

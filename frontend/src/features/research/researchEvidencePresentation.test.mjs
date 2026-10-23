@@ -27,8 +27,15 @@ const helper = encode(
     ),
   ),
 );
-const { researchUrl, researchEvidenceRefs, researchClaim, researchRows } =
-  await import(helper);
+const {
+  researchUrl,
+  researchEvidenceRefs,
+  researchClaim,
+  researchRows,
+  researchEvidencePage,
+  researchEvidenceKind,
+  groupResearchQuestions,
+} = await import(helper);
 for (const url of [
   "javascript:alert(1)",
   "http://example.com",
@@ -68,6 +75,17 @@ const format = encode(
   ),
 );
 const react = JSON.stringify(import.meta.resolve("react"));
+// A small state harness exercises the actual reader callbacks without a browser.
+// React still renders the resulting element tree through its real server renderer.
+const hooksModule = encode(`let slots=[], cursor=0, effects=[];
+export function begin(){cursor=0;effects=[];}
+export function reset(){slots=[];begin();}
+export function flush(){for(const effect of effects)effect();effects=[];}
+export function useState(initial){const slot=cursor++;if(!(slot in slots))slots[slot]=typeof initial==='function'?initial():initial;return [slots[slot],value=>{slots[slot]=typeof value==='function'?value(slots[slot]):value;}];}
+export function useRef(initial){return useState({current:initial})[0];}
+export function useEffect(callback){effects.push(callback);}
+`);
+const hooks = await import(hooksModule);
 const ui = encode(
   `import React from ${react}; export const Badge=({children})=>React.createElement('span',null,children); export const Panel=({title,subtitle,children})=>React.createElement('section',null,React.createElement('h2',null,title),React.createElement('p',null,subtitle),children); export const Table=({rows=[],columns=[],emptyTitle})=>React.createElement('div',null,rows.length?rows.map((row,i)=>React.createElement('div',{key:i},columns.map((col,j)=>React.createElement('span',{key:j},col.render?col.render(row[col.key],row,i):String(row[col.key]??'—'))))):emptyTitle);`,
 );
@@ -83,6 +101,7 @@ const source = (
     "utf8",
   )
 )
+  .replace('"react"', JSON.stringify(hooksModule))
   .replace('"../../lib/format"', JSON.stringify(format))
   .replace('"../../components/UI"', JSON.stringify(ui))
   .replace('"../../components/Charts"', JSON.stringify(charts))
@@ -152,6 +171,7 @@ const report = {
     frozen_charts_by_period: { D: { bars: [] } },
   },
 };
+hooks.reset();
 const html = renderToStaticMarkup(
   createElement(Details, {
     report,
@@ -189,11 +209,19 @@ assert.ok(
 );
 assert.ok(!html.includes('href="javascript:'));
 assert.ok(!html.includes("上涨概率100"));
-assert.deepEqual(
-  globalThis.__researchFrozenProps.frozenChartsByPeriod,
-  report.technical_assessment.frozen_charts_by_period,
+assert.equal(
+  globalThis.__researchFrozenProps,
+  undefined,
+  "frozen chart waits until the trend chapter opens",
 );
-assert.equal(globalThis.__researchFrozenProps.showStockSummary, false);
+assert.match(html, /role="tab"[^>]*aria-selected="true"/);
+assert.match(html, /id="research-v2-evidence"[^>]*hidden=""/);
+assert.match(html, /id="research-v2-technical"[^>]*hidden=""/);
+assert.ok(
+  !html.includes("details open"),
+  "source, question and metadata drawers start closed",
+);
+hooks.reset();
 const missing = renderToStaticMarkup(
   createElement(Details, {
     report: { schema_version: 2, instrument: {} },
@@ -202,34 +230,46 @@ const missing = renderToStaticMarkup(
   }),
 );
 assert.ok(missing.includes("本次没有取得可引用材料"));
-assert.deepEqual(
-  globalThis.__researchFrozenProps.frozenChartsByPeriod,
-  {},
-  "missing frozen charts cannot request current market data",
-);
+assert.equal(globalThis.__researchFrozenProps, undefined);
 
-// Click the actual component's internal anchors, not just an isolated helper.
-const internalLinks = [];
-function collectInternalLinks(element) {
+// Move between the actual chapter controls and follow a citation across pages.
+const largeReport = {
+  ...report,
+  claims: [{ kind: "fact", text: "第十八条的事实", evidence_ids: ["e18"] }],
+  evidence: Array.from({ length: 21 }, (_, index) => ({
+    evidence_id: "e" + (index + 1),
+    title: "材料" + (index + 1),
+    kind: index % 2 ? "announcement" : "financial_income",
+    source: "真实来源",
+    report_period: index < 10 ? "2025-4" : "2026-2",
+    published_at_ms: index % 3 ? 1700000000000 : null,
+  })),
+};
+function collectElements(element, predicate, found = []) {
   if (Array.isArray(element)) {
-    element.forEach(collectInternalLinks);
-    return;
+    element.forEach((child) => collectElements(child, predicate, found));
+    return found;
   }
-  if (!element || typeof element !== "object") return;
+  if (!element || typeof element !== "object") return found;
   if (typeof element.type === "function") {
-    collectInternalLinks(element.type(element.props));
-    return;
+    collectElements(element.type(element.props), predicate, found);
+    return found;
   }
-  if (element.type === "a" && element.props.href?.startsWith("#"))
-    internalLinks.push(element.props);
-  collectInternalLinks(element.props?.children);
+  if (predicate(element)) found.push(element);
+  collectElements(element.props?.children, predicate, found);
+  return found;
 }
-collectInternalLinks(
-  Details({ report, onMaterial: () => {}, legacyDetails: null }),
-);
-assert.ok(
-  internalLinks.length > 6,
-  "six section links and real evidence references are exercised",
+function renderReader(value = largeReport) {
+  hooks.begin();
+  return Details({ report: value, onMaterial: () => {}, legacyDetails: null });
+}
+hooks.reset();
+let tree = renderReader();
+const tabs = () => collectElements(tree, (node) => node.props?.role === "tab");
+assert.equal(tabs().length, 6);
+assert.equal(
+  tabs().find((tab) => tab.props["aria-selected"]).props.id,
+  "research-tab-overview",
 );
 const oldDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
 const oldLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
@@ -240,6 +280,7 @@ try {
     value: {
       getElementById: (id) => ({
         scrollIntoView: (options) => scrolled.push({ id, options }),
+        focus: () => {},
       }),
     },
   });
@@ -247,36 +288,135 @@ try {
     configurable: true,
     value: { hash: "#research" },
   });
-  for (const link of internalLinks) {
-    let prevented = false;
-    assert.equal(typeof link.onClick, "function");
-    link.onClick({
-      preventDefault: () => {
-        prevented = true;
-      },
-    });
-    assert.equal(
-      prevented,
-      true,
-      "internal anchor must prevent default hash navigation",
-    );
-    assert.equal(scrolled.at(-1).id, link.href.slice(1));
-    assert.deepEqual(scrolled.at(-1).options, {
-      behavior: "smooth",
-      block: "start",
-    });
-    assert.equal(
-      globalThis.location.hash,
-      "#research",
-      "research route must stay selected",
-    );
-  }
+  tabs()
+    .find((tab) => tab.props.id === "research-tab-technical")
+    .props.onClick();
+  tree = renderReader();
+  renderToStaticMarkup(tree);
+  assert.deepEqual(
+    globalThis.__researchFrozenProps.frozenChartsByPeriod,
+    report.technical_assessment.frozen_charts_by_period,
+  );
+  assert.equal(globalThis.__researchFrozenProps.showStockSummary, false);
+  const citation = collectElements(
+    tree,
+    (node) => node.type === "a" && node.props.href === "#research-evidence-17",
+  )[0];
+  let prevented = false;
+  citation.props.onClick({
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true);
+  tree = renderReader();
+  hooks.flush();
+  const evidencePanel = collectElements(
+    tree,
+    (node) => node.props?.id === "research-v2-evidence",
+  )[0];
+  assert.equal(evidencePanel.props.hidden, false);
+  const articleIds = collectElements(
+    tree,
+    (node) =>
+      node.type === "article" &&
+      node.props.id?.startsWith("research-evidence-"),
+  ).map((node) => node.props.id);
+  assert.deepEqual(articleIds, [
+    "research-evidence-16",
+    "research-evidence-17",
+    "research-evidence-18",
+    "research-evidence-19",
+    "research-evidence-20",
+  ]);
+  assert.equal(scrolled.at(-1).id, "research-evidence-17");
+  assert.equal(
+    globalThis.location.hash,
+    "#research",
+    "citations and chapter switching preserve the application route",
+  );
+  const filters = collectElements(
+    tree,
+    (node) => node.type === "input" && node.props.type === "search",
+  );
+  filters[0].props.onChange({ target: { value: "材料21" } });
+  tree = renderReader();
+  assert.equal(
+    collectElements(
+      tree,
+      (node) =>
+        node.type === "article" &&
+        node.props.id?.startsWith("research-evidence-"),
+    ).length,
+    1,
+  );
+  const originalLink = collectElements(
+    tree,
+    (node) => node.type === "a" && node.props.href === "#research-evidence-17",
+  )[0];
+  originalLink.props.onClick({ preventDefault: () => {} });
+  tree = renderReader();
+  hooks.flush();
+  assert.equal(
+    collectElements(
+      tree,
+      (node) => node.type === "input" && node.props.type === "search",
+    )[0].props.value,
+    "",
+  );
+  assert.equal(
+    scrolled.at(-1).id,
+    "research-evidence-17",
+    "citation clears incompatible filters before paging",
+  );
+  tabs()
+    .find((tab) => tab.props.id === "research-tab-evidence")
+    .props.onKeyDown({ key: "Home", preventDefault: () => {} });
+  tree = renderReader();
+  assert.equal(
+    tabs().find((tab) => tab.props["aria-selected"]).props.id,
+    "research-tab-overview",
+  );
 } finally {
   if (oldDocument) Object.defineProperty(globalThis, "document", oldDocument);
   else delete globalThis.document;
   if (oldLocation) Object.defineProperty(globalThis, "location", oldLocation);
   else delete globalThis.location;
 }
+const frozen = JSON.stringify(largeReport.evidence);
+assert.equal(
+  researchEvidencePage(largeReport.evidence, {
+    query: "2026-2",
+    kind: "financial",
+    dateState: "undated",
+  }).total,
+  2,
+);
+assert.equal(researchEvidencePage(largeReport.evidence, { page: 99 }).page, 2);
+assert.equal(researchEvidenceKind("financial_cashflow"), "financial");
+assert.equal(
+  researchEvidencePage(largeReport.evidence, { query: "不存在" }).rows.length,
+  0,
+);
+assert.equal(
+  JSON.stringify(largeReport.evidence),
+  frozen,
+  "filtering never modifies retained records",
+);
+const duplicates = [
+  { question: "同一问题", reason: "相同原因", evidence_ids: ["a"] },
+  { question: "同一问题", reason: "相同原因", evidence_ids: ["b"] },
+  { question: "同一问题", reason: "另一原因", evidence_ids: [] },
+];
+const grouped = groupResearchQuestions(duplicates);
+assert.equal(grouped.length, 2);
+assert.deepEqual(grouped[0].evidence_ids, ["a", "b"]);
+assert.equal(grouped[0].count, 2);
+assert.equal(
+  duplicates.length,
+  3,
+  "aggregation preserves every original question",
+);
 
 // The actual top-level compatibility switch retains the old component for v1.
 const detailsSource = await fs.readFile(

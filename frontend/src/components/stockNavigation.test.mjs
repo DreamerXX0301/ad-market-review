@@ -250,6 +250,37 @@ const plainStrategy = createStockNavigation(trackingRows, {
   scopeKey: "strategy-plain",
   label: "选股",
 });
+for (const source of ["market", "members"]) {
+  const ordinary = createStockNavigation(
+    [
+      {
+        ...trackingRows[0],
+        checks: { all: [{ field: "close", result: true }] },
+        entry_basis: { entry_checks: { result: true } },
+      },
+      trackingRows[1],
+    ],
+    {
+      source,
+      scopeKey: source + ":visible",
+      label: "普通列表",
+      asOf: "2026-10-16",
+    },
+  );
+  const selectedOrdinary = stockSelectionForOpen(
+    "600001.SH",
+    ordinary,
+    "2026-10-20",
+  );
+  assert.equal(selectedOrdinary.asOf, "2026-10-16");
+  assert.equal(stockNavigationPosition(ordinary, selectedOrdinary.id).total, 2);
+  assert.equal(stepStockSelection(selectedOrdinary, 1).id, "600002.SH");
+  assert.ok(!("eventBaseline" in ordinary.items[0]));
+  assert.ok(
+    !("historicalChecks" in ordinary.items[0]),
+    "ordinary list cannot project accidental strategy checks",
+  );
+}
 assert(
   !("eventBaseline" in plainStrategy.items[0]),
   "strategy navigation cannot inherit tracking baselines",

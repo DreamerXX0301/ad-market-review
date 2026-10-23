@@ -25,6 +25,7 @@ def stored_period(period):
 
 def evaluator_for(definition,period,trade_rules=None):
     trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
+    if any('higher_lows' in names(tree) for tree in trees):return 'workspace-v13-higher-lows-v1'
     if any(event.get('match')=='any' for tree in trees for event in history_nodes(tree)):
         return 'workspace-v12-history-any'
     def relative_price(node):
@@ -208,6 +209,7 @@ def compact_candidate(metrics,checks,topics,decision,definition):
     if fields&{'macd_cross','macd_dead_cross'}:fields|={'macd_dif','macd_dea'}
     if fields&{'kd_cross','kd_dead_cross'}:fields|={'kdj_k','kdj_d'}
     if 'close_breakout_high' in fields:fields|={'breakout_valid','breakout_previous_sessions','breakout_blocking_distance','new_high_current_close'}
+    if 'higher_lows' in fields:fields.add('higher_lows_state')
     if 'bullish_ma_alignment' in fields:fields|={'ma5','ma10','ma20','ma30','ma60','bullish_ma_alignment_reason'}
     for field in fields & LIMIT_FIELDS:
         fields|={field+suffix for suffix in ('_date','_reason','_status','_evidence','_confirmed_count','_lower_bound','_upper_bound','_coverage')}
@@ -266,7 +268,9 @@ def run_strategy(sid,payload=None,*,queued_job=None):
         report('准备个股策略数据',0,'读取已发布行情、交易日历和策略依赖')
         market=get_market();calendar=market.calendar();master=identities(day);result=[];required=names(st['definition'])
         current_required=current_names(st['definition']);event_nodes=history_nodes(st['definition'])
-        fast=st['period']=='D'
+        # Structures require exact calendar-defined OHLC windows; the dated
+        # display panel intentionally does not carry these strict summaries.
+        fast=st['period']=='D' and 'higher_lows' not in required
         status_method=getattr(market,'status',None)
         generation=status_method().get('snapshot_id') if callable(status_method) else None
         extra_periods=periods_for(st['definition'],st['period'])-{st['period']}
@@ -298,7 +302,7 @@ def run_strategy(sid,payload=None,*,queued_job=None):
             item=master[ident]
             if item.get('kind',item.get('asset_type','stock')) not in ('stock','equity','a_share','A'):continue
             topic_ids=[x['topic_id'] for x in topics.get(ident,[])]
-            ms=metrics_from_enriched(panel_rows.get(ident),previous_panel.get(ident),topics=topic_ids) if fast else cached_metrics(batch_bars.get(ident,[]),day,calendar,st['period'],topics=topic_ids,instrument_id=ident,generation=generation)
+            ms=metrics_from_enriched(panel_rows.get(ident),previous_panel.get(ident),topics=topic_ids) if fast else cached_metrics(batch_bars.get(ident,[]),day,calendar,st['period'],topics=topic_ids,instrument_id=ident,generation=generation,include_higher_lows='higher_lows' in required)
             if breakout_values is not None:ms.update(breakout_values.get(ident,{'breakout_valid':False}))
             ms.update(identity_flags(item,day))
             ms['indicator_period']=st['period']

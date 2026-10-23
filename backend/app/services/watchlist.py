@@ -5,7 +5,7 @@ import re
 
 from app.core import connect, get_market, now_ms
 from app.services.tracking_quotes import tracking_quotes
-from app.services import topics, topic_members
+from app.services.stock_memberships import current_memberships
 from app.services.workspace_common import code_info, current, e8, fail, freeze_inputs, identities, js, money, obj, rows
 
 MAX_ITEMS = 2000
@@ -220,20 +220,9 @@ def list_items(query=''):
     selected = [_view(row) | code_info(row['instrument_id'], master) for row in saved]
     # Reuse the topic browser's current provider + manual-override semantics.
     # Its catalog and overrides are batched; no per-stock API or history reads.
-    catalog = topics._catalog_map(market)
-    with connect() as connection:
-        if day and current(connection) != day:
-            fail('行情业务日已更新，请刷新自选池', 409)
-        state = topic_members._read_state(connection, day, catalog) if day else {}
     symbols = {row['instrument_id'] for row in selected}
-    memberships = {}
-    for entry in state.values():
-        definition = entry['public']
-        if definition['archived']:
-            continue
-        tag = {key: definition.get(key) for key in ('topic_id', 'name', 'kind', 'source_observed_date', 'members_complete')}
-        for symbol in entry['members'] & symbols:
-            memberships.setdefault(symbol, []).append(tag)
+    membership_data = current_memberships(market, symbols, expected_day=day)
+    memberships = membership_data['memberships']
     for row in selected:
         tags = sorted(memberships.get(row['instrument_id'], []), key=lambda item: (item['kind'], item['name'], item['topic_id']))
         row.update(current_topics=tags,
@@ -256,7 +245,7 @@ def list_items(query=''):
         alerts=latest_by_stock(connection,[row['instrument_id'] for row in selected],day)
     for row in selected:row['latest_line_alert']=alerts.get(row['instrument_id'])
     return {'items': selected, 'total': len(saved), 'matched_count': len(selected), 'business_date': day,
-            'current_topics_scope': '当前业务日有效的本地行业/题材及人工归属；来源采集日独立，不代表历史成员。缺少归属不能推断不属于。',
+            'current_topics_scope': membership_data['scope'],
             'baseline_notice': '加入后涨幅以首次加入自选业务日的独立冻结收盘为基准；原跟踪入池日期和事件日收盘单独保留，不参与自选涨幅计算。重复收藏不重置，移除自选不影响策略跟踪。'}
 
 

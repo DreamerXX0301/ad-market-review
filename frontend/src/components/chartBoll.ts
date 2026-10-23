@@ -24,6 +24,19 @@ const validDate = (value: unknown): value is string => {
   );
 };
 
+/** Use the chart's own adjusted OHLC; keep absent or invalid candles empty. */
+export function bollCandleValues(bar: Row): (number | "-")[] {
+  const values = [bar.open, bar.close, bar.low, bar.high];
+  if (
+    !values.every((value) => finite(value) && value > 0) ||
+    bar.low > Math.min(bar.open, bar.close) ||
+    bar.high < Math.max(bar.open, bar.close) ||
+    bar.high < bar.low
+  )
+    return ["-", "-", "-", "-"];
+  return values;
+}
+
 /**
  * Chart-only BOLL on returned closes in the chart's actual price basis.
  *

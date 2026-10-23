@@ -63,7 +63,7 @@ const functions = ast.statements.filter(
 );
 const helpers = await import(
   moduleUrl(
-    `import {num,textValue} from ${JSON.stringify(formatUrl)}; import {yearlyLimitCountText} from ${JSON.stringify(evidenceUrl)}; import {historyCheckText,historyRuleSummary,conditionReasonText,HIDDEN_CONDITION_TEXT,isHiddenConditionField,isHiddenConditionRule} from ${JSON.stringify(historicalUrl)};\n` +
+    `import {num,textValue} from ${JSON.stringify(formatUrl)}; import {yearlyLimitCountText} from ${JSON.stringify(evidenceUrl)}; import {historyCheckText,historyRuleSummary,conditionReasonText,HIGHER_LOWS_FIELD,higherLowsSummary,HIDDEN_CONDITION_TEXT,isHiddenConditionField,isHiddenConditionRule} from ${JSON.stringify(historicalUrl)};\n` +
       functions.map((node) => node.getText(ast)).join("\n"),
   )
 );

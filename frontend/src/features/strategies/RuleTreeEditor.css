@@ -528,6 +528,9 @@
 .history-price-evidence dt {
   color: var(--muted);
 }
+.higher-lows-evidence dl > div {
+  display: contents;
+}
 .history-price-evidence dd {
   margin: 0;
   color: var(--subtle);
