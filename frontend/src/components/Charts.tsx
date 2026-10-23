@@ -793,6 +793,24 @@ export function CandleChart({
           if (!b) return "";
           const change = candleChange(b, period);
           const since = chartSinceReturn(b, data);
+          // Axis filtering may reindex individual series after zooming. Use
+          // the selected date's source values for every price overlay.
+          const point = boll.find((point) => point.date === b.date);
+          const priceIndicators = [
+            ...mas.map((window) => ({
+              name: "MA" + window,
+              value: b["ma" + window] ?? b.indicators?.["ma" + window] ?? null,
+              color:
+                maColors[MA_WINDOWS.findIndex((value) => value === window)],
+            })),
+            ...(showBoll
+              ? [
+                  { name: "BOLL 上轨", value: point?.upper, color: "#82b5e9" },
+                  { name: "BOLL 中轨", value: point?.middle, color: "#d6b96d" },
+                  { name: "BOLL 下轨", value: point?.lower, color: "#b59be3" },
+                ]
+              : []),
+          ];
           const color =
             change.value == null
               ? pal.text
@@ -820,16 +838,15 @@ export function CandleChart({
               ? `<div style="max-width:260px;white-space:normal;font-size:10px">${escape(change.reason)}</div>`
               : "") +
             `<div title="${escape(since.reason)}">至${since.end || "观察日"}涨跌幅　<span style="color:${since.value == null || since.value === 0 ? pal.text : since.value > 0 ? pal.up : pal.down}">${percent(since.value)}</span></div>` +
-            entries
+            priceIndicators
               .filter(
-                (p: any) =>
-                  (/^MA\d+$/.test(p.seriesName) ||
-                    p.seriesName.startsWith("BOLL ")) &&
-                  p.value != null,
+                (indicator) =>
+                  typeof indicator.value === "number" &&
+                  Number.isFinite(indicator.value),
               )
               .map(
-                (p: any) =>
-                  `<div>${p.marker}${p.seriesName}　${num(p.value)}</div>`,
+                (indicator) =>
+                  `<div><span style="display:inline-block;margin-right:4px;border-radius:50%;width:8px;height:8px;background-color:${indicator.color}"></span>${indicator.name}　${num(indicator.value)}</div>`,
               )
               .join("") +
             (supportsLimits ? limitTooltipHtml(b, period, pal) : "")
