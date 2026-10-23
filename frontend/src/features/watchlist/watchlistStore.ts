@@ -119,10 +119,11 @@ export async function removeWatchlistItem(instrumentId: string) {
   });
   changed(instrumentId, false);
 }
-export function useWatchlistMembership() {
+export function useWatchlistMembership(enabled = true) {
   const value = useSyncExternalStore(subscribe, snapshot);
   useEffect(() => {
-    if (!state.loaded && !state.loading) void refreshWatchlistMembership();
-  }, []);
+    if (enabled && !state.loaded && !state.loading)
+      void refreshWatchlistMembership();
+  }, [enabled]);
   return value;
 }

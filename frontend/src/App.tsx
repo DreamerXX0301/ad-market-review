@@ -22,6 +22,7 @@ import Backtests from "./features/backtests/Backtests";
 import DataCenter from "./features/data/DataCenter";
 import Sources from "./features/sources/Sources";
 import Research from "./features/research/Research";
+import ReadonlyPreviewBanner from "./components/ReadonlyPreviewBanner";
 import SectorChartDialog from "./features/market/SectorChartDialog";
 import SectorMembersDialog from "./features/sector/SectorMembersDialog";
 import { globalSectorSelection } from "./components/searchPresentation";
@@ -301,6 +302,9 @@ export default function App() {
           setSector(next);
         }}
       >
+        <ReadonlyPreviewBanner
+          enabled={import.meta.env.VITE_READONLY_PREVIEW === "1"}
+        />
         {bootstrap.error && (
           <ErrorBox
             message={"本机 API 暂未就绪：" + bootstrap.error}

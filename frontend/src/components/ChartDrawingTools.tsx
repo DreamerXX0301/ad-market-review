@@ -33,7 +33,7 @@ export function useChartAnnotations(
   const currentContext = useRef(context);
   currentContext.current = context;
   const toast = useToast();
-  const membership = useWatchlistMembership();
+  const membership = useWatchlistMembership(enabled);
   const [open, setOpen] = useState(false),
     [drawing, setDrawing] = useState(false),
     [show, setShow] = useState(true),

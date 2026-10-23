@@ -2,6 +2,8 @@
 
 根路径 `/api/v1`；成功直接返回对象，列表通常为 `{items,total}`，错误为 HTTP 4xx/5xx `{detail}`。SQLite 是业务事实来源，浏览器不保存策略或跟踪状态。盘面日期不改变本页业务日；执行/入池只用当前已发布业务日，历史运行读取冻结结果。
 
+盘面总览的成交额 TOP10 近7交易日活跃字段与方向证据见 [成交额活跃契约](amount-top10-activity.md)；行业与题材的涨幅榜、成交额榜活跃见 [板块七日活跃契约](sector-seven-day-activity.md)，各自使用固定口径，不随当前表格排序改变。所有标记只读本地留存数据，不联网创建任务。
+
 ## 题材与多归属
 
 | 接口 | 作用 |
@@ -208,6 +210,8 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 ## 研究与个股回测
 
 `POST /research/jobs {instrument_id}` 手动创建任务，GET 列表及 `/research/jobs/{identifier}` 回读报告。研究限定标的和材料范围，主动访问后七天过期；列表轮询不续期。材料、来源日期、获取时间、单位和缺口分开，清理不影响行情或业务轮次。
+
+新任务冻结 `research_plan`，报告v2含六区、来源证据、主营构成、公告线索及本地技术评估/冻结图；无marker的既有任务沿用原采集范围，旧报告不自动补抓。新版字段、预算与不支持能力见[研究v2契约](research-v2.md)。
 
 `POST /backtests/availability {strategy_id}` 返回可用区间、预热、身份/条件限制；`POST /backtests` 冻结策略、规则、区间和配置，唯一 worker 执行；GET 列表/详情读取结果账本。七项 stats 为 total_return/annual_return/max_drawdown/win_rate/payoff_ratio/trade_count/final_equity，可无定义项保持 null。
 

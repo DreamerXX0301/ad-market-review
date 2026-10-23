@@ -14,6 +14,7 @@ import { Badge, Cell, Panel, Table } from "../../components/UI";
 import { fieldLabel } from "../strategies/Conditions";
 import CopyStockCode from "../../components/CopyStockCode";
 import "./Research.css";
+import ResearchEvidenceDetails from "./ResearchEvidenceDetails";
 
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -146,7 +147,7 @@ function Notes({
   );
 }
 
-export default function ResearchDetails({
+function LegacyResearchDetails({
   report,
   onMaterial,
 }: {
@@ -844,5 +845,19 @@ export default function ResearchDetails({
         </div>
       </Section>
     </div>
+  );
+}
+
+export default function ResearchDetails(props: {
+  report: Row;
+  onMaterial: (material: Row) => void;
+}) {
+  return props.report.schema_version === 2 ? (
+    <ResearchEvidenceDetails
+      {...props}
+      legacyDetails={<LegacyResearchDetails {...props} />}
+    />
+  ) : (
+    <LegacyResearchDetails {...props} />
   );
 }

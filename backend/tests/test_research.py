@@ -163,7 +163,8 @@ def test_access_ttl_list_does_not_renew_task_poll_does_not_renew_and_cleanup_is_
     assert client.get('/api/v1/research/jobs').json()['items']==[]
     assert client.get('/api/v1/research/jobs/'+identifier).status_code==404
     task=client.get('/api/v1/tasks/'+queued['job_id']).json()
-    assert task['report_available'] is False and task['status']=='succeeded'
+    assert task['report_available'] is False
+    assert task['status']==('partial' if report['status']=='partial' else 'succeeded')
     cleaned=research_cache.cleanup_expired(now=expiry)
     assert cleaned['removed_reports']==1 and cleaned['released_research_pins']>0
     with core.connect() as connection:

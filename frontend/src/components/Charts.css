@@ -299,20 +299,10 @@
   color: var(--muted);
 }
 
-.chart-boll-values {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 16px;
-  padding: 5px 0;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.chart-boll-values strong {
-  color: var(--subtle);
-  font-weight: 500;
-}
-.chart-boll-values time {
+.candle-pane-reason {
+  max-width: min(480px, 48%);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--muted);
-  margin-left: auto;
 }
