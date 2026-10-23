@@ -64,6 +64,9 @@ def create_backtest(payload):
     if any('higher_lows' in names(tree) for tree in predicates):
         from .higher_lows import VERSION as structure_version
         frozen['condition_contracts']={'higher_lows':structure_version}
+    if any('boll_signal' in names(tree) for tree in predicates):
+        from .boll_conditions import VERSION as boll_version
+        frozen.setdefault('condition_contracts',{})['boll_signal']=boll_version
     requested_key=payload.get('request_key')
     if requested_key is not None and (not isinstance(requested_key,str) or not requested_key.strip() or len(requested_key)>200):raise ValueError('request_key必须为1至200字符的非空字符串')
     request_key=requested_key if requested_key is not None else new_id('manual-backtest')
@@ -181,6 +184,10 @@ def execute_backtest(job_id,progress=None):
             from .higher_lows import VERSION as structure_version
             if frozen.get('condition_contracts',{}).get('higher_lows')!=structure_version:
                 raise ValueError('底部抬高冻结条件版本不匹配，请保留旧任务并手动新建回测')
+        if any('boll_signal' in names(tree) for tree in predicates):
+            from .boll_conditions import VERSION as boll_version
+            if frozen.get('condition_contracts',{}).get('boll_signal')!=boll_version:
+                raise ValueError('BOLL冻结条件版本不匹配，请保留旧任务并手动新建回测')
         market=MarketData(data_dir(),snapshot_id=frozen['market_snapshot_id'])
         result=run_backtest(market,frozen,{**config,'start_date':row['requested_start'],'end_date':row['requested_end']},progress)
         if result.get('engine_version') != row['engine_version']:

@@ -8,7 +8,7 @@ import re
 VERSION = 'daily-history-event-v1'
 ANY_VERSION = 'daily-history-event-v2-any'
 UNSUPPORTED = {'topic_ids', 'board', 'is_st', 'prev_limit_up',
-               'higher_lows',
+               'higher_lows', 'boll_signal',
                'limit_up_1y', 'limit_up_count_1y', 'turnover_ratio_pct',
                'tracking_change_pct', 'trading_age', 'close_below_entry',
                'close_above_entry_high', 'close_below_entry_low'}
@@ -218,6 +218,7 @@ def _daily_then_metrics(metrics,context,day):
     source=metrics.get('_period_metrics',{}).get('D')
     if source is None and metrics.get('indicator_period','D')=='D':source=metrics
     if source and 'higher_lows_state' in source:daily['higher_lows_state']=source['higher_lows_state']
+    if source and 'boll_states' in source:daily['boll_states']=source['boll_states']
     return daily
 
 

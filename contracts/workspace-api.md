@@ -129,6 +129,40 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 
 历史 `limit_up` 在选股、跟踪和回测复用同一已发布代际的来源池核验器：逐日期编译来源代码索引与完整来源缺席证据，每只股票再核对该日唯一有效原始 OHLC、收盘、成交量和来源身份；既有日报价标志或 +10% 涨幅不能代替来源证据。缺来源、缺报、停牌、价格/方向冲突均保留 unknown，不用未来池回填。checks 保存来源路径、快照、窗口、日期、偏移、原始价格与原因，不序列化完整历史上下文。回测只为历史 where 放开同日涨停，普通当前涨停及滚动次数条件仍沿用原有回测边界。
 
+### BOLL收口与方向条件
+
+叶子为 `field="boll_signal"`、`op="matches"`，`value`是白名单参数对象；可省略`period`继承策略D/W/M，或逐叶指定。与普通量能、MACD、KDJ叶子组成all/any，不自动加入其他条件、创建策略或执行任务。示例为默认参数：
+
+```json
+{
+  "field": "boll_signal",
+  "op": "matches",
+  "period": "D",
+  "value": {
+    "mode": "breakout_up",
+    "band_period": 20,
+    "deviations": 2,
+    "rank_window": 125,
+    "squeeze_percentile": 10,
+    "recent_squeeze_periods": 5,
+    "require_squeeze": true,
+    "middle_direction": "any",
+    "slope_periods": 5,
+    "require_expansion": false
+  }
+}
+```
+
+`mode`仅接受`squeeze/breakout_up/breakout_down/reentry_from_above/reentry_from_below`；`band_period`整数2–250、`deviations`有限数0.1–10、`rank_window`整数10–750、`squeeze_percentile`有限数1–100（百分数）、`recent_squeeze_periods`整数1–60、`middle_direction=any/rising/falling`、`slope_periods`整数1–60、两个require字段为布尔。未知参数、非法数值与字段比较拒绝；参数对象不执行表达式。服务端字段规格提供默认及参数边界供编辑器使用。
+
+中轨=SMA(close,N)，上下轨=中轨±K×总体标准差；带宽=(上轨−下轨)/中轨。每期阈值只取之前L期带宽，分位按`(L−1)×p/100`线性插值，当前带宽≤阈值为当期收口。上破为`C[t−1]≤U[t−1] && C[t]>U[t]`，下破对称；上/下方回轨分别要求前收严格在相应轨外、当期收盘位于`[L[t],U[t]]`。方向条件开启`require_squeeze`时检查前1至R期至少一次收口，排除当期；`squeeze`模式检查当前收口。中轨rising/falling严格比较`t`与`t−S`，扩张严格比较当期和前一期带宽。关闭的过滤不增加分位或方向预热依赖。
+
+浮点比较的绝对/相对容差均为`1e-12`，容差内按等号处理，避免理论触轨被舍入误差变成突破；`evidence.comparison_tolerance`留证。此容差用于轨道、收口、中轨方向及扩张，不是可调价格过滤。
+
+严格市场日报价及明确行动覆盖构成连续可比区间，缺报、重复、无效OHLC、零成交、已知行动或行动覆盖未知打断预热；完整周/月按应有市场日聚合，观察日后的报价不参与。只返回有界配置和价格、带宽、阈值、前置收口等checks，不序列化整段历史。history_event.where不支持该叶，then支持显式日线；BOLL收口无须发生在所绑定事件之后，需事件后价格过程时仍使用独立price_path。
+
+个股选股、跟踪、受限回测和板块自身策略共用`boll-signal-v1`定义；含该叶的新个股定义使用`workspace-v15-boll-signal-v1`、板块使用`sector-index-dwm-boll-signal-v3`，未使用BOLL的旧定义版本保持。多参数与逐条件周期缓存隔离。checks含`signal_version/observed_date/covered_periods/required_periods`，evidence含`close/upper/middle/lower/bandwidth_pct/historical_threshold_pct/recent_squeeze_date/middle_reference/middle_change_pct/expanding/primary_match/squeeze_match/middle_match/expansion_match`及有界`last_blocker`；带宽和阈值单位为百分数。新回测冻结`condition_contracts.boll_signal=boll-signal-v1`，未完成任务版本不匹配时拒绝恢复，不改变旧完成报告；无数据库迁移，也不改变图表BOLL偏好。用户入口见[BOLL选股条件](../docs/BOLL选股条件.md)。
+
 `trade_rules={entry:条件树|null,exit:条件树|null}` 与选股独立版本化：买入为选股 AND entry，exit 不要求仍满足选股。只接受已支持回测特征；不支持题材、未完整历史涨停或跟踪锚点，不因为 AST 能保存便保证可回测。
 
 ## 个股策略删除与恢复
@@ -207,7 +241,7 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 - `GET /sector-strategy-fields` 返回 `{items,total,target_type:"sector",unknown_policy}`；不是股票字段列表。
 - `GET/POST /sector-strategies`、`GET/PATCH /sector-strategies/{id}`：name、period=D/W/M、sector_kind=all/industry/concept、definition、policy、archived；版本独立持久化。
-- 板块条件仅 all/any 与白名单叶，逐叶周期；量额/MA/MACD/KDJ/新高/底部抬高可用，股票 ST、涨停、题材成员、换手和 history_event 不支持。固定日线 N 新高不变成 N 周/月。
+- 板块条件仅 all/any 与白名单叶，逐叶周期；量额/MA/MACD/KDJ/BOLL收口与方向/新高/底部抬高可用，股票 ST、涨停、题材成员、换手和 history_event 不支持。固定日线 N 新高不变成 N 周/月。
 - `POST /sector-strategies/{id}/runs {request_key?}` 读取本地板块证据实际求值，有可轮询真实 selection 任务；请求返回运行结果。只接受当前业务日，不从盘面历史日期入池。
 - `GET /sector-strategy-runs?strategy_id=&limit=`、`GET /sector-strategy-runs/{id}?decision=`：返回冻结版本、目录签名、输入 SHA、cache_refs 及候选。候选含 target_type=sector、target_id/topic_code/topic_id、sector_kind/name、decision/close_price/metrics_by_period/checks/coverage。
 - `POST /sector-tracking-rounds {run_id,target_ids}`、GET 列表/详情、POST `/review`、PATCH `/{id}/policy`、POST `/{id}/remove`、GET `/sector-tracking-events`：独立板块轮次，不写个股跟踪。

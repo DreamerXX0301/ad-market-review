@@ -51,6 +51,7 @@ playwright-report/
 !/docs/近期热点筛选与个股题材维护.md
 !/docs/盘后增量进度与结果确认.md
 !/docs/补充数据对象复用.md
+!/docs/BOLL选股条件.md
 !/docs/research/
 /docs/research/*
 !/docs/research/BOLL收口突破离线研究.md

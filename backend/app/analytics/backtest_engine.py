@@ -59,6 +59,9 @@ def warmup(definition,exit_ma=0,include_daily_lookback=True):
         if node.get('field')=='higher_lows':return node['value']+2
         return max((structure_window(child) for child in node.get('all',node.get('any',[]))),default=0)
     n=max(n,structure_window(definition))
+    from .boll_conditions import configs_for, warmup_for
+    for values in configs_for(definition).values():
+        for config in values:n=max(n,warmup_for(config))
     for field in current_names(definition):
         if field=='bullish_ma_alignment':n=max(n,60)
         match=re.search(r'ma(\d+)$',field)
@@ -193,6 +196,14 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
             for selected,values in series.items():
                 structure=higher_lows_summaries(rows,cal,end,selected)
                 for row in values:row['higher_lows_state']=structure.get(row['date'])
+        if 'boll_signal' in names(dependencies):
+            from .boll_conditions import configs_for, states_for_bars
+            for selected,configs in configs_for(dependencies,default_period).items():
+                if not configs:continue
+                # One forward scan per symbol/configuration, rather than a
+                # growing-prefix recomputation for every historical signal.
+                states=states_for_bars(rows,cal,end,selected,configs)
+                for row in series[selected]:row['boll_states']=states.get(row['date'],{})
         # Each summary is computed once per symbol. Scoped conditions select a
         # closed bar whose date is at or before the signal day, never future OHLC.
         scoped={selected:{r['date']:metrics_from_enriched(r,values[index-1] if index else None)
@@ -331,4 +342,7 @@ def run_backtest(market,strategy,payload,progress=None):
     if any('higher_lows' in names(tree) for tree in [strategy['definition']]+[tree for tree in bounds['trade_rules'].values() if tree is not None]):
         from .higher_lows import VERSION as structure_version
         result['condition_contracts']={'higher_lows':structure_version}
+    if any('boll_signal' in names(tree) for tree in [strategy['definition']]+[tree for tree in bounds['trade_rules'].values() if tree is not None]):
+        from .boll_conditions import VERSION as boll_version
+        result.setdefault('condition_contracts',{})['boll_signal']=boll_version
     return result

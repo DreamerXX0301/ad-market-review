@@ -1,0 +1,71 @@
+.condition-row.boll-condition-row {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.condition-row.boll-condition-row > .icon-btn {
+  margin-left: auto;
+  order: 1;
+}
+.boll-condition-editor {
+  flex: 1 0 100%;
+  min-width: 0;
+  order: 2;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.boll-parameter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  align-items: end;
+  gap: 11px;
+}
+.boll-parameter-grid > label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.boll-parameter-grid > .boll-signal-mode {
+  grid-column: span 2;
+}
+.boll-parameter-grid input,
+.boll-parameter-grid select {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 34px;
+  color: var(--text);
+  font-size: 11px;
+}
+.boll-filter-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 11px 24px;
+  color: var(--subtle);
+  font-size: 11px;
+}
+.boll-rule-preview {
+  color: var(--blue);
+  line-height: 1.8;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.boll-condition-editor small {
+  line-height: 1.8;
+}
+.boll-evidence dl > div {
+  display: contents;
+}
+@media (max-width: 620px) {
+  .boll-parameter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .boll-condition-editor {
+    padding: 11px;
+  }
+}

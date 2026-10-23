@@ -397,17 +397,122 @@ export function HigherLowsEvidence({ value }: { value: Row }) {
     </section>
   );
 }
+function bollChecks(value: any): Row[] {
+  if (Array.isArray(value)) return value.flatMap(bollChecks);
+  if (!value || typeof value !== "object") return [];
+  if (value.field === "boll_signal") return [value];
+  return bollChecks(
+    value.checks || value.all || value.any || value.conditions || [],
+  );
+}
+export function BollEvidence({ value }: { value: Row }) {
+  const evidence = value.evidence || {};
+  const percent = (number: unknown) =>
+    typeof number === "number" && Number.isFinite(number)
+      ? `${num(number, 4)}%`
+      : "—";
+  return (
+    <section className="history-price-evidence boll-evidence">
+      <header>
+        <strong>BOLL 信号依据</strong>
+        <PriceStateBadge result={value.result} />
+      </header>
+      <dl>
+        <div>
+          <dt>核验截至</dt>
+          <dd>
+            {value.observed_date || "—"} ·{" "}
+            {(
+              { D: "日K", W: "完整周K", M: "完整月K" } as Record<string, string>
+            )[evidence.period || value.indicator_period || value.period] ||
+              "默认周期"}
+          </dd>
+        </div>
+        <div>
+          <dt>收盘价</dt>
+          <dd>
+            <PrecisePrice value={evidence.close} />
+          </dd>
+        </div>
+        <div>
+          <dt>上轨 / 中轨 / 下轨</dt>
+          <dd>
+            <PrecisePrice value={evidence.upper} /> /{" "}
+            <PrecisePrice value={evidence.middle} /> /{" "}
+            <PrecisePrice value={evidence.lower} />
+          </dd>
+        </div>
+        <div>
+          <dt>带宽 / 历史收口阈值</dt>
+          <dd>
+            {percent(evidence.bandwidth_pct)} /{" "}
+            {percent(evidence.historical_threshold_pct)}
+            {Number.isInteger(evidence.historical_width_count)
+              ? ` · ${evidence.historical_width_count}期历史带宽`
+              : ""}
+          </dd>
+        </div>
+        <div>
+          <dt>当期收口 / 信号前最近收口</dt>
+          <dd>
+            {priceState(evidence.squeeze)} /{" "}
+            {evidence.recent_squeeze_date ||
+              (evidence.recent_squeeze === false ? "窗口内未收口" : "待核验")}
+          </dd>
+        </div>
+        <div>
+          <dt>前期收盘 / 上轨 / 下轨</dt>
+          <dd>
+            <PrecisePrice value={evidence.previous_close} /> /{" "}
+            <PrecisePrice value={evidence.previous_upper} /> /{" "}
+            <PrecisePrice value={evidence.previous_lower} />
+          </dd>
+        </div>
+        <div>
+          <dt>中轨变动 / 当期扩张</dt>
+          <dd>
+            {percent(evidence.middle_change_pct)} /{" "}
+            {priceState(evidence.expanding)}
+          </dd>
+        </div>
+        <div>
+          <dt>预热覆盖</dt>
+          <dd>
+            {value.covered_periods ?? "—"} / {value.required_periods ?? "—"}期
+          </dd>
+        </div>
+      </dl>
+      <small>
+        带宽和阈值均为相对中轨的百分比；阈值只使用被判断期之前的历史带宽。缺报价、价格口径或预热不足时保留待核验。
+      </small>
+      {value.reason && (
+        <p className="muted">{conditionReasonText(value.reason)}</p>
+      )}
+    </section>
+  );
+}
 export default function RuleEvidence({ value }: { value: any }) {
   const events = eventChecks(value);
   const lows = higherLowsChecks(value);
-  if (!events.length && !lows.length) return <>{summarizeChecks(value)}</>;
+  const bolls = bollChecks(value);
+  if (!events.length && !lows.length && !bolls.length)
+    return <>{summarizeChecks(value)}</>;
   return (
     <details className="historical-check-evidence">
       <summary>
         {summarizeChecks(value)}
-        <span>{events.length ? "查看事件依据" : "查看低点依据"}</span>
+        <span>
+          {events.length
+            ? "查看事件依据"
+            : bolls.length
+              ? "查看指标依据"
+              : "查看低点依据"}
+        </span>
       </summary>
       <div>
+        {bolls.map((check, index) => (
+          <BollEvidence key={`boll-${index}`} value={check} />
+        ))}
         {lows.map((check, index) => (
           <HigherLowsEvidence key={`low-${index}`} value={check} />
         ))}

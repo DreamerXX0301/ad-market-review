@@ -34,7 +34,7 @@ _PERSIST_LOCK = RLock()
 _PERSIST_SIZES = OrderedDict()
 
 
-def _summary_scope(plan, calendar, include_higher_lows=False):
+def _summary_scope(plan, calendar, include_higher_lows=False, boll_configs_by_period=None):
     """All immutable input scopes, plus the local derived-algorithm contract."""
     return {'contract': SUMMARY_CONTRACT, 'evaluator': EVALUATOR_VERSION,
         'indicators': INDICATOR_VERSION, 'normalization': charts.NORMALIZATION_VERSION,
@@ -42,7 +42,14 @@ def _summary_scope(plan, calendar, include_higher_lows=False):
         'topic_code': plan['topic_code'], 'as_of': plan['as_of'],
         'catalog_identity': plan['instrument'], 'request_signature': plan['request_signature'],
         'calendar_sha256': digest(calendar),
-        **({'higher_lows_version':'higher-lows-v1'} if include_higher_lows else {})}
+        **({'higher_lows_version':'higher-lows-v1'} if include_higher_lows else {}),
+        **({'boll_contract':_boll_scope(boll_configs_by_period)} if boll_configs_by_period else {})}
+
+
+def _boll_scope(configs):
+    from app.analytics.boll_conditions import VERSION, config_key
+    return {'version':VERSION,'parameters':{period:sorted({config_key(value) for value in values})
+            for period,values in configs.items() if values}}
 
 
 def _summary_paths(scope, create=False):
@@ -217,6 +224,7 @@ def _version(connection, sid, version, value):
 def _evaluator(value):
     from app.domain.conditions import names
     trees=[value['definition']]+value.get('policy',{}).get('alerts',[])+value.get('policy',{}).get('exits',[])
+    if any('boll_signal' in names(tree) for tree in trees):return 'sector-index-dwm-boll-signal-v3'
     return 'sector-index-dwm-higher-lows-v2' if any('higher_lows' in names(tree) for tree in trees) else EVALUATOR_VERSION
 
 
@@ -310,7 +318,7 @@ def _traded(row):
     return all(value is not None and value > 0 for value in values) and values[1] >= max(values[0], values[2], values[3]) and values[2] <= min(values[0], values[3])
 
 
-def _indicators(record, calendar, day, include_higher_lows=False):
+def _indicators(record, calendar, day, include_higher_lows=False, boll_configs_by_period=None):
     daily = [{**row, 'corporate_action': False, 'corporate_action_coverage_known': True,
               'volume': finite(row.get('volume')), 'amount': finite(row.get('amount'))}
              for row in record['bars'] if row['date'] <= day]
@@ -372,10 +380,14 @@ def _indicators(record, calendar, day, include_higher_lows=False):
         from app.analytics.higher_lows import latest as higher_lows_latest
         for period in PERIODS:
             result[period]['higher_lows_state']=higher_lows_latest(daily,calendar,day,period)
+    if boll_configs_by_period:
+        from app.analytics.boll_conditions import latest_states
+        for period,configs in boll_configs_by_period.items():
+            if configs:result[period]['boll_states']=latest_states(daily,calendar,day,period,configs)
     return result, current
 
 
-def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_higher_lows=False):
+def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_higher_lows=False, boll_configs_by_period=None):
     """One verified daily input, all-period summaries, bounded warm reuse.
 
     Warm calls hash every frozen normalized/raw input again, never merely trust
@@ -386,7 +398,7 @@ def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_highe
     identity = {'target_type': 'sector', 'target_id': plan['topic_code'], 'topic_code': plan['topic_code'],
         'topic_id': plan['instrument']['topic_id'], 'name': plan['instrument']['name'],
         'sector_kind': plan['instrument']['sector_kind']}
-    scope = _summary_scope(plan, market.calendar(),include_higher_lows)
+    scope = _summary_scope(plan, market.calendar(),include_higher_lows,boll_configs_by_period)
     key = (str(work_dir().resolve()), digest(scope))
     with _SUMMARY_LOCK: entry = _SUMMARIES.get(key)
     if entry:
@@ -409,7 +421,7 @@ def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_highe
             'normalization_version': charts.NORMALIZATION_VERSION,
             'source_request': record.get('cache_source_request', record.get('source_request')),
             'cache_as_of': record.get('cache_as_of', day), 'raw_lineage': record.get('raw_lineage')}
-        metrics, current_row = _indicators(record, market.calendar(), day,include_higher_lows)
+        metrics, current_row = _indicators(record, market.calendar(), day,include_higher_lows,boll_configs_by_period)
         value = {'metrics_by_period': metrics, 'close_price': finite(current_row.get('close')) if current_row else None,
             'cache_refs': proofs, 'coverage': {**record['coverage'], 'available': True,
                 'observation_date': day, 'price_basis': 'none', 'membership_independent': True,
@@ -554,11 +566,15 @@ def run_strategy(sid, payload=None, *, queued_job=None):
         if not selected: fail('当前板块目录为空或没有所选类型，未保存空选板结果', 409)
         catalog_signature = digest(selected); candidates = []; refs = {}
         periods = periods_for(st['definition'], st['period'])
+        from app.analytics.boll_conditions import configs_for
+        boll_by_period=configs_for(st['definition'],st['period'])
         for index, (code, item) in enumerate(sorted(selected.items()), 1):
             check_task()
             from app.domain.conditions import names
             structured='higher_lows' in names(st['definition'])
-            prepared = metrics_for_sector(market, code, day, periods,**({'include_higher_lows':True} if structured else {}))
+            prepared = metrics_for_sector(market, code, day, periods,
+                **({'include_higher_lows':True} if structured else {}),
+                **({'boll_configs_by_period':boll_by_period} if any(boll_by_period.values()) else {}))
             check = evaluate(st['definition'], prepared['metrics_by_period'], st['period'])
             decision = 'matched' if check['result'] is True else 'unmatched' if check['result'] is False else 'unknown'
             refs[code] = prepared['cache_refs']
