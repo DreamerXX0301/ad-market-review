@@ -7,7 +7,8 @@ from test_backtests import creation_context
 
 
 LEGACY_VERSIONS = ('restricted-next-open-v3-history-events',
-                   'restricted-next-open-v4-history-price-path')
+                   'restricted-next-open-v4-history-price-path',
+                   'restricted-next-open-v5-event-percent-cross-cycle')
 
 
 def create_legacy(store, payload, monkeypatch, version):

@@ -72,6 +72,8 @@
 - `GET/POST /strategies`、`GET/PATCH /strategies/{id}`：name、period=D/W/M、definition、policy、trade_rules、hot_universe；修改追加版本，旧运行冻结。
 - definition 为叶 `{field,op,value,period?}` / `{field,op,right_field,period?}`，或嵌套 `{all:[...]}` / `{any:[...]}`；兼容旧 logic/conditions 输入。
 - 普通叶默认策略周期，也可逐叶 D/W/M；W/M 使用最近应闭合且有效周期，不能缺最新后退到旧柱。固定日线字段必须 D。右字段只能是兼容白名单数值，常量专用字段不能当右字段。
+- 放量/缩量使用已有布尔 `volume_expand` / `volume_shrink`，跟随该条件周期；当期与前一可比周期均须有可核验的有限正成交量及有限正倍数，分别严格比较倍数 `>1` / `<1`，相等时两者均为false。当前或对比周期零量、缺量、缺报或不可比时两者为null，`==false`与`!=true`也不得将未知变为命中；日K比较前一市场交易日，W/M比较前一完整周期。数值 `volume_ratio` 保留既有显示与条件语义：例如当前零量且前期有效时可能为0；它不单独证明存在有效成交的“缩量”。不修改已保存条件、旧运行或图表指标。
+- 含上述布尔字段的选股或买卖规则使用 `workspace-v16-volume-comparison-v1`；新手动运行沿已有机制追加同定义的新计算版本，旧选择结果保留，不自动重跑。受限回测使用 `restricted-next-open-v6-volume-comparison`，版本纳入输入复用键；旧完成报告继续可读，旧未完成任务拒绝使用新引擎续算，须手动新建。
 - 技术组合快捷入口不新增服务端字段：MACD水上金叉保存为同周期 `all(macd_cross==true,macd_dif>0,macd_dea>0)`；KDJ低位金叉保存为 `all(kd_cross==true,kdj_k<U,kdj_d<U)`，U默认20、快捷输入范围0–100，指当前双线而非前期值；K>D状态保存为 `{field:"kdj_k",op:">",right_field:"kdj_d",period:P}`。每个叶子显式使用同一P；普通入口采用当前选择周期，历史where/then固定D。组合是外层all/any的一个子节点，不能把三项拆进OR。用户后续可编辑各叶子，仍由原有白名单、深度/节点数与三值逻辑核验。
 - 卖出区技术组合优先展示MACD死叉、KDJ死叉、MACD水上死叉、KDJ高位死叉与K<D持续状态。普通死叉为前一期快线≥慢线且当前快线<慢线；水上再要求当前DIF、DEA都>0；高位再要求当前K、D都>H，H默认80、快捷输入0–100，等于门槛不算。K<D只检查当前状态，不要求刚死叉。所有快捷均展开成同周期普通叶子，不把“金叉=false”当死叉，不改变已保存条件或卖出启用时的既有默认条件。
 - K值范围快捷保存为同周期 `all(kdj_k>=L,kdj_k<=U)`，金叉加范围再包含 `kd_cross==true`；只限制当前K，不隐含D范围。L/U为有限0–100且L≤U，等号有效；低/中/高快捷起点为0–20、20–80、80–100，20/80边界重合，它们是可编辑起点而非互斥状态或收益判断。过滤范围不修改KDJ指标本身的计算参数。
@@ -119,7 +121,7 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 
 事件结果的 `price_path_checks` 仅在新定义出现，未绑定事件时为null；绑定后含 `type=history_price_path`、路径模型、观察日、result、guard/reclaim/cross_cycle小证据。guard含公式、保护价、最小可比收盘及日期、首个破位、可比/应有天数、回落/近保护价命中或缺口；reclaim含基准、昨今价、触发方式和此前首次价格收复日期；cross_cycle含E/T金叉、期间死叉日期、已知/应有信号日与阻断原因。不给出全区间行情对象。选股、跟踪和受限回测共用求值器；新增定义与回测版本单独标记，旧保存结果不重写，无数据库迁移。
 
-价格过程为个股历史节点能力，板块条件不接受history_event。当前新回测引擎为 `restricted-next-open-v5-event-percent-cross-cycle`，input/logical key包含版本；不同冻结引擎的未完成任务不得被新请求复用或继续模拟发布，需手动新建，旧完成报告仍可读取。带百分比事件比较或cross_cycle的新定义使用 `workspace-v11-event-percent-cross-cycle`；只有原守位/收复的定义保留 `workspace-v10-history-price-path`，更早定义继续沿用其既有v8/v9，不自动重写旧版本。
+价格过程为个股历史节点能力，板块条件不接受history_event。当前新回测引擎为 `restricted-next-open-v6-volume-comparison`，input/logical key包含版本；不同冻结引擎的未完成任务不得被新请求复用或继续模拟发布，需手动新建，旧完成报告仍可读取。不含上述放量/缩量布尔字段的定义，带百分比事件比较或cross_cycle仍使用 `workspace-v11-event-percent-cross-cycle`；只有原守位/收复的定义保留 `workspace-v10-history-price-path`，更早定义继续沿用其既有v8/v9，不自动重写旧版本。
 
 包含match=any的定义（包括买入或卖出规则）使用 `workspace-v12-history-any`，其历史事件证据模型为 `daily-history-event-v2-any`。只增加新AST语义，不改变旧latest/earliest定义的版本、求值或已保存运行；新AST与输入SHA已隔离。搜索摘要只记录有界计数与首个未知位置，不保存完整历史候选数组。
 
@@ -251,6 +253,8 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 底部抬高在板块上复用上述严格日/完整周/完整月结构，含该字段的新定义使用`sector-index-dwm-higher-lows-v2`，只判断板块自身指数价，不推导成员信号。
 
 板块指标摘要绑定固定来源及算法，命中仍核验 raw/规范化 SHA；缺本地 K 或预热为 unknown，不自动远程加载。板块没有回测或自动交易接口。
+
+板块派生摘要使用 `sector-strategy-metrics-volume-comparison-v3` 契约，隔离放量/缩量修正前的磁盘及内存scope；旧摘要保留但不命中，新摘要仅从同一已核验本地来源重算并留存回执。来源、行情规范化及板块策略evaluator不变，不创建取数任务或重写旧运行结果。
 
 ## 研究与个股回测
 

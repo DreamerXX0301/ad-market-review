@@ -181,6 +181,9 @@ def test_missing_or_zero_volume_intermediate_day_restarts_daily_proof(workspace,
     daily = data['metrics_by_period']['D']
     assert daily['close'] is not None and daily['ma5'] is None
     assert daily['macd_cross'] is None and daily['kd_cross'] is None
+    for field in ('volume_expand','volume_shrink'):
+        assert daily[field] is None
+        assert conditions.evaluate(leaf(field,'==',True), data['metrics_by_period'])['result'] is None
     assert conditions.evaluate(conditions.validate(leaf('close_breakout_high', 'new_high', 2)), data['metrics_by_period'])['result'] is None
 
 

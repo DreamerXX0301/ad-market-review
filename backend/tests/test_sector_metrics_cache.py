@@ -80,6 +80,59 @@ def test_persistent_scope_changes_are_cache_misses(workspace, monkeypatch, chang
     assert strategies._load_summary(new_scope, plan) is None
 
 
+def test_volume_comparison_contract_cannot_reuse_old_bool_and_new_scope_survives_memory_clear(workspace, monkeypatch):
+    # Both finite positive source values pass the real normalizer. Their
+    # quotient underflows to zero: old boolean code called it contraction,
+    # while the corrected predicate keeps an unverifiable ratio unknown.
+    def boundary(payload):
+        payload['data']['item'][-2]['volume'] = 1e308
+        payload['data']['item'][-1]['volume'] = 1e-308
+        return payload
+    cached(workspace, transform=boundary)
+    adapter = strategies.metrics_from_enriched
+    def legacy_adapter(row, previous=None, topics=None):
+        value = adapter(row, previous, topics)
+        value['volume_expand'] = row['volume_ratio'] > 1 if row.get('volume_ratio') is not None else None
+        value['volume_shrink'] = row['volume_ratio'] < 1 if row.get('volume_ratio') is not None else None
+        return value
+    with monkeypatch.context() as legacy:
+        legacy.setattr(strategies, 'SUMMARY_CONTRACT', 'sector-strategy-metrics-complete-first-week-v2')
+        legacy.setattr(strategies, 'metrics_from_enriched', legacy_adapter)
+        old = strategies.metrics_for_sector(workspace.market, CODE, DAY)
+        old_scope, (_, old_content, old_receipt) = paths(workspace)
+        old_bytes = (old_content.read_bytes(), old_receipt.read_bytes())
+        assert old['metrics_by_period']['D']['volume_ratio'] == 0
+        assert old['metrics_by_period']['D']['volume_shrink'] is True
+    # Leave the old in-memory entry as well as both old disk files in place.
+    # The current contract must miss both, then read the same verified source.
+    scope, (_, content, receipt) = paths(workspace)
+    assert scope['contract'] == 'sector-strategy-metrics-volume-comparison-v3'
+    assert scope != old_scope and content != old_content and not content.exists()
+    assert scope['evaluator'] == old_scope['evaluator']
+    assert scope['indicators'] == old_scope['indicators']
+    assert scope['normalization'] == old_scope['normalization']
+    calls = []; indicators = strategies._indicators
+    def calculate(*args, **kwargs):
+        calls.append(True)
+        return indicators(*args, **kwargs)
+    monkeypatch.setattr(strategies, '_indicators', calculate)
+    corrected = strategies.metrics_for_sector(workspace.market, CODE, DAY)
+    assert calls == [True]
+    assert corrected['metrics_by_period']['D']['volume_ratio'] == 0
+    assert corrected['metrics_by_period']['D']['volume_shrink'] is None
+    assert corrected['cache_refs'] == old['cache_refs']
+    assert corrected['close_price'] == old['close_price']
+    assert (old_content.read_bytes(), old_receipt.read_bytes()) == old_bytes
+    proof = json.loads(receipt.read_text())
+    assert proof['contract'] == scope['contract']
+    assert proof['scope_sha256'] == strategies.digest(scope)
+    assert proof['sha256'] == sha256(content.read_bytes()).hexdigest()
+    clear_memory()
+    monkeypatch.setattr(strategies, '_indicators', lambda *a, **k: pytest.fail('new persisted scope must be reused'))
+    assert strategies.metrics_for_sector(workspace.market, CODE, DAY) == corrected
+    assert (old_content.read_bytes(), old_receipt.read_bytes()) == old_bytes
+
+
 def test_work_directory_namespaces_do_not_share_derived_files(workspace, monkeypatch, tmp_path):
     cached(workspace); first = strategies.metrics_for_sector(workspace.market, CODE, DAY)
     _, (_, old_content, _) = paths(workspace)
