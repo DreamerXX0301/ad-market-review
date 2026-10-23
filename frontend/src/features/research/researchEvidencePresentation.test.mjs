@@ -74,6 +74,30 @@ const format = encode(
     ).replace('"./indicatorVisibility"', JSON.stringify(indicator)),
   ),
 );
+const financialComparison = encode(
+  compile(
+    await fs.readFile(
+      new URL("./researchFinancialComparison.ts", import.meta.url),
+      "utf8",
+    ),
+  ),
+);
+const financialValue = encode(
+  compile(
+    (
+      await fs.readFile(
+        new URL("./ResearchFinancialValue.tsx", import.meta.url),
+        "utf8",
+      )
+    )
+      .replace('"../../lib/format"', JSON.stringify(format))
+      .replace(
+        '"./researchFinancialComparison"',
+        JSON.stringify(financialComparison),
+      ),
+    true,
+  ),
+);
 const react = JSON.stringify(import.meta.resolve("react"));
 // A small state harness exercises the actual reader callbacks without a browser.
 // React still renders the resulting element tree through its real server renderer.
@@ -106,6 +130,7 @@ const source = (
   .replace('"../../components/UI"', JSON.stringify(ui))
   .replace('"../../components/Charts"', JSON.stringify(charts))
   .replace('"../../components/CopyStockCode"', JSON.stringify(copy))
+  .replace('"./ResearchFinancialValue"', JSON.stringify(financialValue))
   .replace('"./researchEvidencePresentation"', JSON.stringify(helper))
   .replace(
     '"lucide-react"',
@@ -209,6 +234,84 @@ assert.ok(
 );
 assert.ok(!html.includes('href="javascript:'));
 assert.ok(!html.includes("上涨概率100"));
+// Exercise the real financial renderer: a profitable amount can still have a
+// declining comparison, and a narrowing loss must not use a negative denominator.
+const { ResearchFinancialValue: FinancialValue } = await import(financialValue);
+const fiscal = (year, values) => ({
+  thscode: "000001.SZ",
+  source: "fuyao",
+  currency: "CNY",
+  unit: "CNY；basic_eps为元/股",
+  period: "quarterly",
+  fiscal_year: year,
+  fiscal_period: "Q2",
+  report_period: `${year}-06-30`,
+  period_end_ms: Date.parse(`${year}-06-30T00:00:00+08:00`),
+  report_date_ms: Date.parse(`${year}-08-20T00:00:00+08:00`),
+  published_at_ms: Date.parse(`${year}-08-20T00:00:00+08:00`),
+  ...values,
+});
+const financialRows = [
+  fiscal(2026, {
+    parent_holder_net_profit: 50,
+    operating_income: 100,
+    invest_cash_flow_net: -30,
+  }),
+  fiscal(2025, {
+    parent_holder_net_profit: 100,
+    operating_income: 80,
+    invest_cash_flow_net: -60,
+  }),
+];
+const financialHtml = (rows, field) =>
+  renderToStaticMarkup(
+    createElement(FinancialValue, { rows, row: rows[0], field }),
+  );
+const profitHtml = financialHtml(financialRows, "parent_holder_net_profit");
+assert.match(profitHtml, /class="research-change increase">50\.00元/);
+assert.match(
+  profitHtml,
+  /research-financial-comparison research-change decrease/,
+);
+assert.ok(profitHtml.includes("同比 -50.00%"));
+assert.ok(profitHtml.includes("较上年同期 2025-06-30"));
+const revenueHtml = financialHtml(financialRows, "operating_income");
+assert.match(
+  revenueHtml,
+  /<span>100\.00元<\/span>/,
+  "positive revenue is not itself growth",
+);
+assert.ok(revenueHtml.includes("同比 +25.00%"));
+const flowHtml = financialHtml(financialRows, "invest_cash_flow_net");
+assert.match(flowHtml, /class="research-change decrease">-30\.00元/);
+assert.match(
+  flowHtml,
+  /research-financial-comparison research-change increase/,
+);
+assert.ok(
+  !flowHtml.includes("亏损") &&
+    !flowHtml.includes("恶化") &&
+    !flowHtml.includes("%"),
+);
+const lossHtml = financialHtml(
+  [fiscal(2026, { net_profit: -50 }), fiscal(2025, { net_profit: -100 })],
+  "net_profit",
+);
+assert.ok(lossHtml.includes("亏损收窄") && !lossHtml.includes("%"));
+for (const value of [null, "12", NaN, Infinity]) {
+  const unknownHtml = financialHtml(
+    [fiscal(2026, { net_profit: value })],
+    "net_profit",
+  );
+  assert.match(unknownHtml, /class="research-change flat">—/);
+  assert.ok(unknownHtml.includes("同比待核验"));
+}
+const zeroHtml = financialHtml(
+  [fiscal(2026, { net_profit: 0 }), fiscal(2025, { net_profit: 0 })],
+  "net_profit",
+);
+assert.match(zeroHtml, /class="research-change flat">0\.00元/);
+assert.ok(zeroHtml.includes("同比持平"));
 assert.equal(
   globalThis.__researchFrozenProps,
   undefined,
