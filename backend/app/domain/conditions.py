@@ -16,6 +16,7 @@ FIELDS['limit_up_count_1y'].update(operators=['>=','>','==','<=','<','!='],integ
 FIELDS['close_above_entry_high'].update(tracking_only=True,alerts_only=True)
 FIELDS['close_below_entry_low'].update(tracking_only=True)
 FIELDS['close_breakout_high']={'type':'number','operators':['new_high'],'integer':True,'min':1,'max':750,'step':1,'constant_only':True,'parameter_kind':'lookback_sessions','default':60}
+FIELDS['higher_lows']={'type':'number','operators':['confirmed_rising_lows'],'integer':True,'min':8,'max':750,'step':1,'constant_only':True,'parameter_kind':'lookback_periods','default':60,'structure_version':'higher-lows-v1','left_bars':2,'right_bars':2}
 FIELDS['close']['event_price_comparison']={'scope':'event_then','right_fields':['close','high','low'],
     'change_pct':{'min_exclusive':-100,'max':10000,'default':0}}
 FIELDS['topic_ids']={'type':'topic','operators':['contains','not_contains']}
@@ -28,6 +29,7 @@ LABELS['close_below_entry_low']='收盘价跌破本轮事件日最低价'
 LABELS['macd_dead_cross']='MACD死叉（DIF下穿DEA）'
 LABELS['kd_dead_cross']='KDJ死叉（K线下穿D线）'
 LABELS['close_breakout_high']='收盘价突破前N个市场交易日最高价'
+LABELS['higher_lows']='底部抬高（最近两个已确认低点）'
 LABELS['intraday_high_change_pct']='当日最高涨幅（相对前收，%）'
 LABELS.update(open='开盘价', high='最高价', low='最低价')
 DAILY_ONLY_FIELDS = {'limit_up','prev_limit_up','limit_up_1y','limit_up_count_1y',
@@ -40,7 +42,7 @@ def specs():
     result=[]
     for key,spec in FIELDS.items():
         hidden=key.startswith(('close_above_ma','close_below_ma')) or key in ('volume_expand','volume_shrink','board','is_st','close_above_entry_high','close_below_entry_low') or (key.startswith('ma') and key[2:].isdigit())
-        category='趋势状态' if key in ('bullish_ma_alignment','close_breakout_high') else '事件信号' if key in ('macd_cross','kd_cross','macd_dead_cross','kd_dead_cross','limit_up','prev_limit_up') or key.startswith('cross_above_ma') else '题材归属' if key=='topic_ids' else '跟踪状态' if key in ('tracking_change_pct','trading_age','close_below_entry','close_above_entry_high','close_below_entry_low') else '数值比较'
+        category='趋势状态' if key in ('bullish_ma_alignment','close_breakout_high','higher_lows') else '事件信号' if key in ('macd_cross','kd_cross','macd_dead_cross','kd_dead_cross','limit_up','prev_limit_up') or key.startswith('cross_above_ma') else '题材归属' if key=='topic_ids' else '跟踪状态' if key in ('tracking_change_pct','trading_age','close_below_entry','close_above_entry_high','close_below_entry_low') else '数值比较'
         result.append({'field':key,'label':LABELS.get(key,key),'category':category,'hidden_in_builder':hidden,'historical_event_supported':supported_field(key),'supported_periods':['D'] if key in DAILY_ONLY_FIELDS else ['D','W','M'],**({'fixed_period':'D'} if key in DAILY_ONLY_FIELDS else {}),**spec})
     return result
 
@@ -85,6 +87,7 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
     if field not in FIELDS:raise ValueError('不支持的策略字段：'+str(field))
     spec=FIELDS[field]
     if scope=='event_where':
+        if field=='higher_lows' or node.get('right_field')=='higher_lows':raise ValueError('底部抬高第一版支持独立条件或历史事件的今日条件；不用于历史事件日where扫描，请在外层用AND/OR组合')
         from app.domain.history_events import supported_field
         if not supported_field(field) or 'right_field' in node and not supported_field(node['right_field']):raise ValueError('历史事件条件支持日OHLCV、均线、技术指标和同日已核验收盘涨停；历史题材、身份、跟踪与滚动涨停次数尚不支持')
     if op not in spec['operators']:raise ValueError('字段不支持比较符：'+str(op))
@@ -103,7 +106,7 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
         if 'value' in node or right not in FIELDS or spec['type']!='number' or FIELDS[right]['type']!='number':raise ValueError('right_field只支持数值白名单字段且不能同时提供value')
         return {'field':field,'op':op,'right_field':right}
     if spec['type']=='number' and (isinstance(value,bool) or not isinstance(value,(int,float)) or not isfinite(value)):raise ValueError('数值条件需要有限数字')
-    if spec.get('integer') and (not isinstance(value,int) or isinstance(value,bool) or value<spec.get('min',0) or value>spec.get('max',float('inf'))):raise ValueError('新高窗口需要1至750个市场交易日的正整数' if field=='close_breakout_high' else '近一年涨停次数需要非负整数')
+    if spec.get('integer') and (not isinstance(value,int) or isinstance(value,bool) or value<spec.get('min',0) or value>spec.get('max',float('inf'))):raise ValueError('底部抬高窗口需要8至750个所选完整周期的整数' if field=='higher_lows' else '新高窗口需要1至750个市场交易日的正整数' if field=='close_breakout_high' else '近一年涨停次数需要非负整数')
     if spec['type']=='boolean' and not isinstance(value,bool):raise ValueError('布尔条件value必须为true/false')
     if spec['type']=='topic' and (not isinstance(value,str) or not value or len(value)>128):raise ValueError('题材条件需要有效topic_id')
     if spec['type']=='enum_set' and (not isinstance(value,list) or not value or len(value)>4 or len(set(map(str,value)))!=len(value) or any(v not in spec['choices'] for v in value)):raise ValueError('板块范围需选择主板、创业板、科创板或北交所，且不能重复')
@@ -134,6 +137,9 @@ def evaluate(node:dict, metrics:dict, history=None)->dict:
     if 'intraday_high_change_pct' in (node['field'],node.get('right_field')):a=finite(a);b=finite(b)
     if node['field']=='limit_up_count_1y':return _evaluate_limit_count(node,metrics)
     if node['field']=='close_breakout_high':return _evaluate_breakout(node,metrics)
+    if node['field']=='higher_lows':
+        from app.analytics.higher_lows import evaluate as evaluate_structure
+        return evaluate_structure(node,metrics)
     if FIELDS[node['field']]['type']=='boolean' and not isinstance(a,bool):a=None
     if a is not None and b is not None:
         try:
@@ -226,6 +232,9 @@ def normalized_bar(row):
     out['turnover_ratio_pct']=finite(r.get('turnover_ratio_pct'))
     out['corporate_action']=bool(r.get('corporate_action',False))
     out['corporate_action_coverage_known']=r.get('corporate_action_coverage_known',True) is True
+    # New structure comparisons require an explicit source/action coverage
+    # proof; do not inherit the legacy display indicator's missing-key default.
+    out['_higher_lows_action_coverage_known']=r.get('corporate_action_coverage_known') is True and isinstance(r.get('corporate_action'),bool)
     return out
 
 def metrics_from_enriched(row,previous=None,topics=None):
@@ -237,6 +246,7 @@ def metrics_from_enriched(row,previous=None,topics=None):
         if field in row:m[field]=row[field]
     for field in ('breakout_valid','breakout_previous_sessions','breakout_blocking_distance','new_high_current_close'):
         if field in row:m[field]=row[field]
+    if 'higher_lows_state' in row:m['higher_lows_state']=row['higher_lows_state']
     for field in ('limit_up','prev_limit_up'):
         if not isinstance(m[field],bool):m[field]=None
     m['topic_ids']=topics
@@ -276,12 +286,17 @@ def metrics_from_enriched(row,previous=None,topics=None):
     return m
 
 
-def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None)->dict:
+def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,include_higher_lows=False)->dict:
     from app.analytics.indicators import enrich_bars,aggregate_weekly,intraday_high_change
     rows=sorted((normalized_bar(b) for b in bars),key=lambda r:r['date'] or '')
     rows=[r for r in rows if r['date'] and r['date']<=as_of]
     daily_rows=rows
     empty={field:None for field in FIELDS};empty['topic_ids']=topics
+    structure={}
+    if include_higher_lows:
+        from app.analytics.higher_lows import latest as higher_lows_latest
+        structure={'higher_lows_state':higher_lows_latest(daily_rows,calendar,as_of,period)}
+    empty.update(structure)
     positions={day:index for index,day in enumerate(calendar)}
     prior_position=positions.get(as_of)
     prior_day=calendar[prior_position-1] if prior_position is not None and prior_position>0 else None
@@ -315,6 +330,7 @@ def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None)->
         from app.analytics.period_dates import latest_closed_date
         if current['date']!=latest_closed_date(calendar,as_of,period):return empty
     result=metrics_from_enriched(current,previous,topics)
+    result.update(structure)
     result.update(daily_high_metrics)
     result.update(daily_breakout)
     target_position=calendar.index(as_of) if as_of in calendar else None

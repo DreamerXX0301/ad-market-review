@@ -3,6 +3,10 @@ import { ChevronRight, RefreshCw } from "lucide-react";
 import { list, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
+  createStockNavigation,
+  type StockNavigation,
+} from "../../components/stockNavigation";
+import {
   integer,
   num,
   percent,
@@ -207,7 +211,7 @@ export function MarketOverview({
 }: {
   date: string;
   bootstrap: Row | null;
-  onStock: (id: string) => void;
+  onStock: (id: string, navigation?: StockNavigation) => void;
   indicesOnly?: boolean;
 }) {
   const [selected, setSelected] = useState("000001.SH"),
@@ -360,6 +364,17 @@ export function MarketOverview({
                   { key: "topics" },
                 ]}
                 onStock={onStock}
+                onStockNavigate={(id, orderedRows) =>
+                  onStock(
+                    id,
+                    createStockNavigation(orderedRows, {
+                      source: "market",
+                      scopeKey: `overview:成交额TOP10:${date}`,
+                      label: "成交额TOP10 · 当前榜单",
+                      asOf: date,
+                    }),
+                  )
+                }
                 pageSize={10}
               />
               <AmountActivitySummary
@@ -384,6 +399,17 @@ export function MarketOverview({
                   { key: "topics" },
                 ]}
                 onStock={onStock}
+                onStockNavigate={(id, orderedRows) =>
+                  onStock(
+                    id,
+                    createStockNavigation(orderedRows, {
+                      source: "market",
+                      scopeKey: `overview:当日涨幅前列:${date}`,
+                      label: "当日涨幅前列 · 当前榜单",
+                      asOf: date,
+                    }),
+                  )
+                }
                 pageSize={10}
               />
             </Panel>
@@ -408,6 +434,17 @@ export function MarketOverview({
                   { key: "amount", align: "right" },
                 ]}
                 onStock={onStock}
+                onStockNavigate={(id, orderedRows) =>
+                  onStock(
+                    id,
+                    createStockNavigation(orderedRows, {
+                      source: "market",
+                      scopeKey: `overview:炸板池前五:${date}`,
+                      label: "炸板池前五 · 当前榜单",
+                      asOf: date,
+                    }),
+                  )
+                }
                 emptyTitle="尚无可核验排名"
                 emptyDescription="只有完成事件采样与字段验收后才展示前五，不以日K代替开板过程。"
               />
@@ -475,6 +512,17 @@ export function MarketOverview({
                       ]
                 }
                 onStock={onStock}
+                onStockNavigate={(id, orderedRows) =>
+                  onStock(
+                    id,
+                    createStockNavigation(orderedRows, {
+                      source: "market",
+                      scopeKey: `overview:封单样本前五:${date}`,
+                      label: "封单样本前五 · 当前榜单",
+                      asOf: date,
+                    }),
+                  )
+                }
                 emptyTitle={
                   sealMode === "funds"
                     ? "该日尚无已留存封单快照"
@@ -597,7 +645,7 @@ export function MarketPage({
 }: {
   route: string;
   date: string;
-  onStock: (id: string) => void;
+  onStock: (id: string, navigation?: StockNavigation) => void;
 }) {
   const info = pageDetails[route];
   const isSector = route === "sectors" || route === "flow";
@@ -1394,6 +1442,27 @@ export function MarketPage({
               changeColumnSort,
             )}
             onStock={onStock}
+            onStockNavigate={
+              isSector
+                ? undefined
+                : (id, orderedRows) =>
+                    onStock(
+                      id,
+                      createStockNavigation(orderedRows, {
+                        source: "market",
+                        scopeKey: JSON.stringify({
+                          route,
+                          date,
+                          rank,
+                          gainerQuery,
+                          gainerPage,
+                          activeSort,
+                        }),
+                        label: `${marketLabels[route] || (isGainers ? "30日涨幅榜" : "盘面列表")} · 当前已加载列表`,
+                        asOf: date,
+                      }),
+                    )
+            }
             pageSize={isSector ? 10 : 25}
             emptyTitle={
               tableData?.unavailable_reason
@@ -1499,6 +1568,17 @@ export function MarketPage({
                 { key: "feedback", title: "当日反馈" },
               ]}
               onStock={onStock}
+              onStockNavigate={(id, orderedRows) =>
+                onStock(
+                  id,
+                  createStockNavigation(orderedRows, {
+                    source: "market",
+                    scopeKey: `flow:feedback:${date}`,
+                    label: "资金轮动 · 连板反馈样本",
+                    asOf: date,
+                  }),
+                )
+              }
               pageSize={10}
               emptyTitle="没有留存的可比连板样本"
               emptyDescription="样本反馈只描述已留存标的，不代表全市场赚钱效应或机构资金决策。"

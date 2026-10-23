@@ -23,6 +23,16 @@ import {
 } from "./historicalRules";
 import type { ComparisonObject } from "./historicalRules";
 import {
+  HIGHER_LOWS_FIELD,
+  HIGHER_LOWS_OPERATOR,
+  HIGHER_LOWS_DEFAULT,
+  HIGHER_LOWS_MIN,
+  HIGHER_LOWS_MAX,
+  higherLowsSummary,
+  higherLowsWindowUnit,
+  higherLowsWindowError,
+} from "./historicalRules";
+import {
   conditionPeriodView,
   conditionPeriodSummary,
   periodLabel,
@@ -64,6 +74,7 @@ export function fieldLabel(field: string, provided?: string): string {
   if (field === "kd_cross") return "KDJ金叉（K线上穿D线）";
   if (field === "kd_dead_cross") return "KDJ死叉（K线下穿D线）";
   if (field === "close_breakout_high") return "收盘价突破前N日最高价";
+  if (field === HIGHER_LOWS_FIELD) return "底部抬高（确认后未失守）";
   if (provided && provided !== field) return provided;
   const labels: Record<string, string> = {
     volume: "成交量",
@@ -177,6 +188,11 @@ export function summarizeChecks(checks: any, onlySatisfied = false): string {
     .map((c) => {
       if (isHiddenConditionRule(c)) return HIDDEN_CONDITION_TEXT;
       if (c.type === "history_event") return historyCheckText(c);
+      if (c.field === HIGHER_LOWS_FIELD) {
+        const state =
+          c.result === true ? "满足" : c.result === false ? "未满足" : "待核验";
+        return `${higherLowsSummary({ ...c, period: c.indicator_period || c.period })} · ${state}${c.reason ? "；" + conditionReasonText(c.reason) : ""}`;
+      }
       if (c.history_event) return historyRuleSummary(c, fieldLabel);
       if (c.field === "close_breakout_high") {
         const window = Number.isInteger(c.lookback_sessions)
@@ -340,6 +356,20 @@ export const fallbackFields: Row[] = [
     max: 750,
   },
   {
+    field: HIGHER_LOWS_FIELD,
+    label: "底部抬高（确认后未失守）",
+    type: "number",
+    operators: [HIGHER_LOWS_OPERATOR],
+    parameter_kind: "lookback_periods",
+    constant_only: true,
+    category: "趋势状态",
+    default: HIGHER_LOWS_DEFAULT,
+    min: HIGHER_LOWS_MIN,
+    max: HIGHER_LOWS_MAX,
+    periods: ["D", "W", "M"],
+    historical_event_supported: false,
+  },
+  {
     field: "bullish_ma_alignment",
     label: "均线多头排列（5>10>20>30>60）",
     type: "boolean",
@@ -474,6 +504,7 @@ export default function Conditions({
           );
         const isYearlyLimitCount = c.field === "limit_up_count_1y";
         const isNewHigh = c.field === "close_breakout_high";
+        const isHigherLows = c.field === HIGHER_LOWS_FIELD;
         const field = fields.find((f) => f.field === c.field) || {
           type: "number",
           operators: [">=", ">", "<=", "<", "==", "!="],
@@ -529,16 +560,17 @@ export default function Conditions({
                 const next: Condition = {
                   field: e.target.value,
                   op: f?.operators?.[0] || ">=",
-                  value:
-                    e.target.value === "close_breakout_high"
-                      ? 60
-                      : e.target.value === "intraday_high_change_pct"
-                        ? 3
-                        : f?.type === "boolean"
-                          ? true
-                          : f?.type === "topic"
-                            ? ""
-                            : 0,
+                  value: ["close_breakout_high", HIGHER_LOWS_FIELD].includes(
+                    e.target.value,
+                  )
+                    ? 60
+                    : e.target.value === "intraday_high_change_pct"
+                      ? 3
+                      : f?.type === "boolean"
+                        ? true
+                        : f?.type === "topic"
+                          ? ""
+                          : 0,
                 };
                 if (
                   c.period &&
@@ -578,7 +610,7 @@ export default function Conditions({
                 </optgroup>
               ))}
             </select>
-            {!isNewHigh && (
+            {!isNewHigh && !isHigherLows && (
               <select
                 aria-label="比较关系"
                 className="operator"
@@ -600,7 +632,33 @@ export default function Conditions({
                 ))}
               </select>
             )}
-            {isNewHigh ? (
+            {isHigherLows ? (
+              <>
+                <input
+                  type="number"
+                  aria-label={`条件${i + 1}底部抬高回看周期数`}
+                  min={HIGHER_LOWS_MIN}
+                  max={HIGHER_LOWS_MAX}
+                  step={1}
+                  placeholder="默认60"
+                  value={c.value ?? ""}
+                  onChange={(event) =>
+                    update(i, {
+                      value:
+                        event.target.value === ""
+                          ? ""
+                          : Number(event.target.value),
+                    })
+                  }
+                />
+                <span
+                  className="muted"
+                  style={{ whiteSpace: "nowrap", fontSize: 11 }}
+                >
+                  {higherLowsWindowUnit(periodView.effective)}
+                </span>
+              </>
+            ) : isNewHigh ? (
               <>
                 <input
                   type="number"
@@ -835,6 +893,22 @@ export default function Conditions({
           使用已完成日K最高价相对前一个市场交易日收盘价的涨幅，不用收盘涨幅替代；周/月策略仍按观察日日线判断。本条件不依赖分钟接口，也不代表盘中实时触发或成交；缺前日报价、零量停牌或未核验公司行动时待核验。
         </small>
       )}
+      {conditions.some(
+        (condition) => condition.field === HIGHER_LOWS_FIELD,
+      ) && (
+        <small className="muted">
+          取回看窗口内最近两个已确认低点，后底严格高于前底，且后底确认日（含）之后没有收盘跌破后底；左右各2根确认，相等低点不算。另需窗口前2根预热，缺报价或价格不可比时待核验。周/月只用完整K线，可与倍量或金叉独立组合，不自动限定两底发生在历史事件之后。
+        </small>
+      )}
+      {conditions.some(
+        (condition) =>
+          condition.field === HIGHER_LOWS_FIELD &&
+          higherLowsWindowError(condition.value),
+      ) && (
+        <small className="danger-text" role="alert">
+          底部抬高回看窗口请输入8—750的整数；清空时不能保存。
+        </small>
+      )}
       {scope !== "selection" && showAddButton && (
         <label className="checkbox-label">
           <input
@@ -854,12 +928,13 @@ export default function Conditions({
               {
                 field: visibleFields[0]?.field || "volume_ratio",
                 op: visibleFields[0]?.operators?.[0] || ">=",
-                value:
-                  visibleFields[0]?.field === "close_breakout_high"
-                    ? 60
-                    : visibleFields[0]?.type === "boolean"
-                      ? true
-                      : 3,
+                value: ["close_breakout_high", HIGHER_LOWS_FIELD].includes(
+                  visibleFields[0]?.field,
+                )
+                  ? 60
+                  : visibleFields[0]?.type === "boolean"
+                    ? true
+                    : 3,
               },
             ])
           }

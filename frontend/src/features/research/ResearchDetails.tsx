@@ -854,6 +854,11 @@ export default function ResearchDetails(props: {
 }) {
   return props.report.schema_version === 2 ? (
     <ResearchEvidenceDetails
+      key={
+        props.report.report_id ||
+        props.report.job_id ||
+        `${props.report.instrument?.instrument_id}-${props.report.research_as_of_ms}`
+      }
       {...props}
       legacyDetails={<LegacyResearchDetails {...props} />}
     />

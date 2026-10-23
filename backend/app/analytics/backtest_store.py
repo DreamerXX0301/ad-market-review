@@ -60,6 +60,10 @@ def create_backtest(payload):
     sessions=sum(start<=d<=end for d in cal)
     if sessions<10:raise ValueError('回测区间至少10个市场交易日')
     frozen={'name':strategy['name'],'strategy_id':strategy['strategy_id'],'version':strategy['version'],'period':strategy['period'],'definition':strategy['definition'],'trade_rules':bounds['trade_rules'],'market_snapshot_id':generation}
+    predicates=[strategy['definition']]+[tree for tree in bounds['trade_rules'].values() if tree is not None]
+    if any('higher_lows' in names(tree) for tree in predicates):
+        from .higher_lows import VERSION as structure_version
+        frozen['condition_contracts']={'higher_lows':structure_version}
     requested_key=payload.get('request_key')
     if requested_key is not None and (not isinstance(requested_key,str) or not requested_key.strip() or len(requested_key)>200):raise ValueError('request_key必须为1至200字符的非空字符串')
     request_key=requested_key if requested_key is not None else new_id('manual-backtest')
@@ -172,6 +176,11 @@ def execute_backtest(job_id,progress=None):
         if row['engine_version'] != VERSION:
             raise ValueError('回测冻结引擎版本'+row['engine_version']+'与当前'+VERSION+'不同；保留旧任务与结果，请使用当前版本手动新建回测')
         frozen=json.loads(row['strategy_snapshot_json']);config=json.loads(row['execution_config_json'])
+        predicates=[frozen['definition']]+[tree for tree in frozen.get('trade_rules',{}).values() if tree is not None]
+        if any('higher_lows' in names(tree) for tree in predicates):
+            from .higher_lows import VERSION as structure_version
+            if frozen.get('condition_contracts',{}).get('higher_lows')!=structure_version:
+                raise ValueError('底部抬高冻结条件版本不匹配，请保留旧任务并手动新建回测')
         market=MarketData(data_dir(),snapshot_id=frozen['market_snapshot_id'])
         result=run_backtest(market,frozen,{**config,'start_date':row['requested_start'],'end_date':row['requested_end']},progress)
         if result.get('engine_version') != row['engine_version']:

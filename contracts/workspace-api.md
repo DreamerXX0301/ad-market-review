@@ -120,6 +120,10 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 
 包含match=any的定义（包括买入或卖出规则）使用 `workspace-v12-history-any`，其历史事件证据模型为 `daily-history-event-v2-any`。只增加新AST语义，不改变旧latest/earliest定义的版本、求值或已保存运行；新AST与输入SHA已隔离。搜索摘要只记录有界计数与首个未知位置，不保存完整历史候选数组。
 
+独立趋势条件 `{"field":"higher_lows","op":"confirmed_rising_lows","value":60,"period":"D"}` 的value为8—750整数，默认60；period省略继承策略D/W/M。回看窗口包含最近N个所选完整周期的低点中心，左边另外需要2根预热；左右各2根且中心low严格低于四邻才确认，等低平台不算。只取最近两次确认低点，不跳过后续较低低点；要求L2>L1，且从L2右侧确认当期（含）至观察期的全部收盘≥L2。破位后收回仍不满足该对结构。完整窗口不足两底为false；缺失/重复/无效或零量报价、未知公司行动覆盖或不可比原价区间为unknown，不补停牌周期。W/M按市场日历完整聚合，观察日后右邻不参与确认。
+
+该条件是独立状态，不自动限制两底在历史事件之后；可放外层all/any及历史节点then（日线），where拒绝。checks含`lookback_periods/structure_version=higher-lows-v1/covered_periods/required_periods/observed_date/confirmation_date`，其中`required_periods=N+2`；evidence含最近两底的date/confirmed_on/price/age_periods、`minimum_close_since_l2_confirmation`、`window_includes=pivot_centers/left_warmup_periods=2/hold_from=l2_confirmation_inclusive/price_basis=none`。另含有界`last_blocker={period_end,kind,reason,market_dates,affected_market_days}`或null，market_dates最多3个，仅说明最近一次缺报、重复、无效成交、行动覆盖未知、未复权行动、日历冲突或首周期边界阻断；unknown原因直接说明阻断日期/类型与连续可比根数、所需根数，例如“2026-07-22存在未复权公司行动，目前连续61根，60根窗口加左侧2根预热需62根”。只包含有界依据，不返回整段行情。仅使用新字段的个股定义使用`workspace-v13-higher-lows-v1`；旧定义版本保持。受限回测支持该条件，报告附`condition_contracts.higher_lows=higher-lows-v1`，输入AST隔离，旧引擎计算行为和旧报告不变；无数据库迁移，也不自动执行策略。
+
 历史 `limit_up` 在选股、跟踪和回测复用同一已发布代际的来源池核验器：逐日期编译来源代码索引与完整来源缺席证据，每只股票再核对该日唯一有效原始 OHLC、收盘、成交量和来源身份；既有日报价标志或 +10% 涨幅不能代替来源证据。缺来源、缺报、停牌、价格/方向冲突均保留 unknown，不用未来池回填。checks 保存来源路径、快照、窗口、日期、偏移、原始价格与原因，不序列化完整历史上下文。回测只为历史 where 放开同日涨停，普通当前涨停及滚动次数条件仍沿用原有回测边界。
 
 `trade_rules={entry:条件树|null,exit:条件树|null}` 与选股独立版本化：买入为选股 AND entry，exit 不要求仍满足选股。只接受已支持回测特征；不支持题材、未完整历史涨停或跟踪锚点，不因为 AST 能保存便保证可回测。
@@ -198,12 +202,14 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 - `GET /sector-strategy-fields` 返回 `{items,total,target_type:"sector",unknown_policy}`；不是股票字段列表。
 - `GET/POST /sector-strategies`、`GET/PATCH /sector-strategies/{id}`：name、period=D/W/M、sector_kind=all/industry/concept、definition、policy、archived；版本独立持久化。
-- 板块条件仅 all/any 与白名单叶，逐叶周期；量额/MA/MACD/KDJ/新高可用，股票 ST、涨停、题材成员、换手和 history_event 不支持。固定日线 N 新高不变成 N 周/月。
+- 板块条件仅 all/any 与白名单叶，逐叶周期；量额/MA/MACD/KDJ/新高/底部抬高可用，股票 ST、涨停、题材成员、换手和 history_event 不支持。固定日线 N 新高不变成 N 周/月。
 - `POST /sector-strategies/{id}/runs {request_key?}` 读取本地板块证据实际求值，有可轮询真实 selection 任务；请求返回运行结果。只接受当前业务日，不从盘面历史日期入池。
 - `GET /sector-strategy-runs?strategy_id=&limit=`、`GET /sector-strategy-runs/{id}?decision=`：返回冻结版本、目录签名、输入 SHA、cache_refs 及候选。候选含 target_type=sector、target_id/topic_code/topic_id、sector_kind/name、decision/close_price/metrics_by_period/checks/coverage。
 - `POST /sector-tracking-rounds {run_id,target_ids}`、GET 列表/详情、POST `/review`、PATCH `/{id}/policy`、POST `/{id}/remove`、GET `/sector-tracking-events`：独立板块轮次，不写个股跟踪。
 - 板块政策使用 alert_logic/exit_logic=`ANY|ALL`；其余期限、事件日开关与提醒/结束含义相同。锚点固定日线原始指数点位，不能套到成员股票。
 - `GET /sector-tracking-rounds/{id}/members?as_of=&membership_scope=` 是带 round_id 的兼容入口；无需轮次可调用 `/sectors/{topic_code}/members`。latest 与 historical 含义见 [Analytics API](analytics-api.md)。
+
+底部抬高在板块上复用上述严格日/完整周/完整月结构，含该字段的新定义使用`sector-index-dwm-higher-lows-v2`，只判断板块自身指数价，不推导成员信号。
 
 板块指标摘要绑定固定来源及算法，命中仍核验 raw/规范化 SHA；缺本地 K 或预热为 unknown，不自动远程加载。板块没有回测或自动交易接口。
 
@@ -212,6 +218,8 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 `POST /research/jobs {instrument_id}` 手动创建任务，GET 列表及 `/research/jobs/{identifier}` 回读报告。研究限定标的和材料范围，主动访问后七天过期；列表轮询不续期。材料、来源日期、获取时间、单位和缺口分开，清理不影响行情或业务轮次。
 
 新任务冻结 `research_plan`，报告v2含六区、来源证据、主营构成、公告线索及本地技术评估/冻结图；无marker的既有任务沿用原采集范围，旧报告不自动补抓。新版字段、预算与不支持能力见[研究v2契约](research-v2.md)。
+
+报告v2阅读界面使用本地章节状态：桌面左侧小目录、窄屏横向标签，每次只显示一章，默认总览；完成任务、来源缺口与详细核查信息默认折叠。证据搜索、材料类型/发布时间状态筛选、每页8条分页，以及完全相同问题与原因的展示合并，均在已回读报告上进行，不新增服务端字段、筛选接口或研究任务，不删改留存证据、未知状态、来源时间或报告内容。条目数不是独立文档数；日期过滤只区分来源是否提供发布时间。引用保留原证据编号，可自动清筛选、选择目标页并定位，不改变应用hash路由；冻结图仅进入趋势章节后挂载，副图切换不读取当前行情。旧v1继续按原结构可读，不自动升级或重新采集。
 
 `POST /backtests/availability {strategy_id}` 返回可用区间、预热、身份/条件限制；`POST /backtests` 冻结策略、规则、区间和配置，唯一 worker 执行；GET 列表/详情读取结果账本。七项 stats 为 total_return/annual_return/max_drawdown/win_rate/payoff_ratio/trade_count/final_equity，可无定义项保持 null。
 
@@ -238,7 +246,7 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 新初始化/盘后增量在同步 plan 冻结 `master_request_params={asset_type:"a-share",exchange:"SH,SZ,BJ",limit:10000,offset:0}`，显式交易所范围用于来源返回证券上市日期；实际仍未知的日期保留未知。旧已有 plan 无此字段时使用原无exchange参数，保持 accepted/master.json 的请求签名与验收证据，不能升级时静默重写旧任务。原始响应继续留证，已验证同身份上市日期的恢复规则不变。
 - 行字段含 `source_kind/source_id/source_name`、`added_business_date/created_at_ms`、`observed_date`、`tracking_round_id/tracking_entry_date`、`event_date/event_close/event_price_basis`、`latest_price/today_change_pct/quote_date`。人工收藏且无原个股轮次时，事件日和事件价保持 null 并提供 `event_baseline_reason`；板块成员不套用板块指数的事件基准。
-- 每行 `current_topics` 为当前有效行业、概念与人工研究归属，`current_industries` 为行业子集；元素含 `topic_id/name/kind/source_observed_date/members_complete`。`current_topics_observed_date` 是业务日有效关系日期，不冒充来源采集日；逐来源日期见标签字段。归属使用题材库当前来源成员及人工修改批量读取，不缓存原收藏时归属，不查询逐股接口或扫描历史行情。缺少已知归属不推断不属于；`query` 同时匹配股票、代码、首次来源和全部行业/题材名称。界面合并为“行业 / 题材”一列，默认最多1枚行业和2枚概念标签，其余可展开且仍可搜索。
+- 每行 `current_topics` 为当前有效行业、概念与人工研究归属，`current_industries` 为行业子集；元素含 `topic_id/name/kind/source_observed_date/members_complete`。`current_topics_observed_date` 是业务日有效关系日期，不冒充来源采集日；逐来源日期见标签字段。归属使用题材库当前来源成员及人工修改批量读取，与普通个股详情共用同一只读归属服务，不缓存原收藏时归属，不查询逐股接口或扫描历史行情。缺少已知归属不推断不属于；`query` 同时匹配股票、代码、首次来源和全部行业/题材名称。界面合并为“行业 / 题材”一列，默认最多1枚行业和2枚概念标签，其余可展开且仍可搜索。
 - 自选股票详情可按筛选排序后的完整列表上一只/下一只；每只股票独立传递其冻结事件基准，切换到无事件来源股票时不会继承上一只的基准线。该导航的观察日期使用业务行情日，不受盘面历史日期影响。
 
 ## 手动批量执行策略

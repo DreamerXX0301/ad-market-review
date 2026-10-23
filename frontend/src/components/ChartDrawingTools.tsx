@@ -9,7 +9,7 @@ import { useWatchlistMembership } from "../features/watchlist/watchlistStore";
 import {
   annotationColors,
   annotationScope,
-  lineMatchesScope,
+  projectChartLine,
   lineTypeLabels,
   lineTypeModes,
   lineAlertRules,
@@ -80,9 +80,13 @@ export function useChartAnnotations(
         : [],
     [result.data, instrumentId],
   );
+  const views = useMemo(
+    () => lines.map((line) => projectChartLine(line, data)),
+    [lines, data],
+  );
   const visible = useMemo(
-    () => (show ? lines.filter((line) => lineMatchesScope(line, scope)) : []),
-    [lines, show, scope?.price_basis, scope?.anchor_date],
+    () => (show ? views.filter((view) => view.price != null) : []),
+    [views, show],
   );
   const picked = (value: number) => {
     if (!enabled || !scope || busy || !Number.isFinite(value) || value <= 0)
@@ -164,6 +168,7 @@ export function useChartAnnotations(
     error,
     result,
     lines,
+    views,
     visible,
     picked,
     save,
@@ -231,6 +236,15 @@ export function ChartAnnotationPanel({
           <X size={15} />
         </button>
       </div>
+      {state.editing && (
+        <p className="chart-annotation-help">
+          正在修改原保存线价（
+          {state.editing.price_basis === "none"
+            ? "未复权"
+            : `前复权锚 ${state.editing.anchor_date}`}
+          ）；图上换算价仅用于显示，保存不更换原锚。
+        </p>
+      )}
       <fieldset className="chart-line-types" disabled={state.busy}>
         <legend>线的用途</legend>
         {(["support", "resistance", "reference"] as ChartLineType[]).map(
@@ -408,7 +422,7 @@ export function ChartAnnotationPanel({
           <p>
             保存后核验当前已发布完整日K，之后每次手动行情更新继续检查。提醒记录保存在“我的自选池
             ·
-            划线提醒”。移出自选后提醒仍保留；取消全部提醒条件可停用。缺少报价或复权依据时待核验。不同价格口径或锚定日的线独立保留。
+            划线提醒”。移出自选后提醒仍保留；取消全部提醒条件可停用。同为前复权时，旧锚线按已核验公司行动换算到当前图；原线价、原锚及提醒证据保留。不同价格口径或缺少区间依据时不显示，并在列表说明原因。
           </p>
         </details>
       )}
@@ -424,70 +438,78 @@ export function ChartAnnotationPanel({
       )}
       {state.lines.length > 0 && (
         <ul className="chart-annotation-list">
-          {state.lines.map((line) => (
-            <li key={line.annotation_id}>
-              <i style={{ background: annotationColors[line.color] }} />
-              <span
-                className="chart-line-type-label"
-                data-type={savedLineSettings(line).line_type}
-              >
-                {lineTypeLabels[savedLineSettings(line).line_type]}
-              </span>
-              <span>{line.label || "未命名"}</span>
-              <strong>{num(line.price, 4)}</strong>
-              <span className="chart-line-rule-summary">
-                {savedLineSettings(line)
-                  .alert_modes.map(
-                    (mode) =>
-                      lineAlertRules[mode as keyof typeof lineAlertRules].title,
-                  )
-                  .join(" / ") || "不提醒"}
-                {line.auto_watchlist &&
-                savedLineSettings(line).alert_modes.length > 0
-                  ? " · 触发入自选"
-                  : ""}
-              </span>
-              <small>
-                {lineMatchesScope(line, state.scope)
-                  ? state.show
-                    ? "本图可见"
-                    : "已隐藏"
-                  : `${line.price_basis === "none" ? "未复权" : "前复权 " + line.anchor_date} · 本图隐藏`}
-              </small>
-              <button
-                className="icon-btn"
-                aria-label={`编辑水平线 ${line.label || num(line.price)}`}
-                disabled={state.busy}
-                onClick={() => {
-                  state.setEditing(line);
-                  state.setDrawing(false);
-                  state.setPrice(String(line.price));
-                  state.setLabel(line.label);
-                  state.setColor(line.color);
-                  state.setSettings(savedLineSettings(line));
-                }}
-              >
-                <Pencil size={13} />
-              </button>
-              <button
-                className="icon-btn danger-text"
-                aria-label={`删除水平线 ${line.label || num(line.price)}`}
-                disabled={state.busy}
-                onClick={() =>
-                  void state.mutate(
-                    () =>
-                      api(
-                        `/instruments/${encodeURIComponent(line.instrument_id)}/annotations/${encodeURIComponent(line.annotation_id)}`,
-                        { method: "DELETE" },
-                      ),
-                    "水平线已移除",
-                  )
-                }
-              >
-                <Trash2 size={14} />
-              </button>
-            </li>
-          ))}
+          {state.views.map((view) => {
+            const line = view.line;
+            return (
+              <li key={line.annotation_id}>
+                <i style={{ background: annotationColors[line.color] }} />
+                <span
+                  className="chart-line-type-label"
+                  data-type={savedLineSettings(line).line_type}
+                >
+                  {lineTypeLabels[savedLineSettings(line).line_type]}
+                </span>
+                <span>{line.label || "未命名"}</span>
+                <strong title={`原保存线价 · ${line.anchor_date || "未复权"}`}>
+                  {num(line.price, 4)}
+                </strong>
+                <span className="chart-line-rule-summary">
+                  {savedLineSettings(line)
+                    .alert_modes.map(
+                      (mode) =>
+                        lineAlertRules[mode as keyof typeof lineAlertRules]
+                          .title,
+                    )
+                    .join(" / ") || "不提醒"}
+                  {line.auto_watchlist &&
+                  savedLineSettings(line).alert_modes.length > 0
+                    ? " · 触发入自选"
+                    : ""}
+                </span>
+                <small title={view.reason}>
+                  {view.price != null
+                    ? state.show
+                      ? view.converted
+                        ? `本图 ${num(view.price, 4)} · 已换算`
+                        : "本图可见"
+                      : "已隐藏"
+                    : view.reason}
+                </small>
+                <button
+                  className="icon-btn"
+                  aria-label={`编辑水平线 ${line.label || num(line.price)}`}
+                  disabled={state.busy}
+                  onClick={() => {
+                    state.setEditing(line);
+                    state.setDrawing(false);
+                    state.setPrice(String(line.price));
+                    state.setLabel(line.label);
+                    state.setColor(line.color);
+                    state.setSettings(savedLineSettings(line));
+                  }}
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  className="icon-btn danger-text"
+                  aria-label={`删除水平线 ${line.label || num(line.price)}`}
+                  disabled={state.busy}
+                  onClick={() =>
+                    void state.mutate(
+                      () =>
+                        api(
+                          `/instruments/${encodeURIComponent(line.instrument_id)}/annotations/${encodeURIComponent(line.annotation_id)}`,
+                          { method: "DELETE" },
+                        ),
+                      "水平线已移除",
+                    )
+                  }
+                >
+                  <Trash2 size={14} />
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       {!state.result.loading && !state.lines.length && (

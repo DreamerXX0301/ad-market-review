@@ -5,6 +5,39 @@
   gap: 10px;
   flex-shrink: 0;
 }
+.stock-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+}
+.stock-title-row h2 {
+  margin: 0;
+}
+.stock-header-quote {
+  display: grid;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.stock-header-quote > div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.stock-header-quote strong {
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+.stock-header-quote > div > span {
+  font-size: 13px;
+  font-weight: 500;
+}
+.stock-header-quote small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
 
 .stock-navigation-controls {
   display: flex;

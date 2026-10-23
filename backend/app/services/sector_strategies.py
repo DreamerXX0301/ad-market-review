@@ -34,14 +34,15 @@ _PERSIST_LOCK = RLock()
 _PERSIST_SIZES = OrderedDict()
 
 
-def _summary_scope(plan, calendar):
+def _summary_scope(plan, calendar, include_higher_lows=False):
     """All immutable input scopes, plus the local derived-algorithm contract."""
     return {'contract': SUMMARY_CONTRACT, 'evaluator': EVALUATOR_VERSION,
         'indicators': INDICATOR_VERSION, 'normalization': charts.NORMALIZATION_VERSION,
         'source_root': str(charts._root().resolve()), 'snapshot_id': plan['snapshot_id'],
         'topic_code': plan['topic_code'], 'as_of': plan['as_of'],
         'catalog_identity': plan['instrument'], 'request_signature': plan['request_signature'],
-        'calendar_sha256': digest(calendar)}
+        'calendar_sha256': digest(calendar),
+        **({'higher_lows_version':'higher-lows-v1'} if include_higher_lows else {})}
 
 
 def _summary_paths(scope, create=False):
@@ -209,8 +210,14 @@ def _version(connection, sid, version, value):
     insert(connection, 'sector_strategy_version', {'strategy_id': sid, 'version': version,
         'period': value['period'], 'sector_kind': value['sector_kind'],
         'definition_json': js(value['definition']), 'definition_sha256': digest(value['definition']),
-        'policy_json': js(value['policy']), 'evaluator_version': EVALUATOR_VERSION, 'recorded_at_ms': now_ms()})
+        'policy_json': js(value['policy']), 'evaluator_version': _evaluator(value), 'recorded_at_ms': now_ms()})
     connection.execute('UPDATE sector_strategy SET current_version=? WHERE strategy_id=?', (version, sid))
+
+
+def _evaluator(value):
+    from app.domain.conditions import names
+    trees=[value['definition']]+value.get('policy',{}).get('alerts',[])+value.get('policy',{}).get('exits',[])
+    return 'sector-index-dwm-higher-lows-v2' if any('higher_lows' in names(tree) for tree in trees) else EVALUATOR_VERSION
 
 
 def create_strategy(payload):
@@ -227,7 +234,7 @@ def update_strategy(sid, payload):
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
         old = _view(connection, sid); value = _normalized(payload, old)
-        if any(value[key] != old[key] for key in ('period', 'sector_kind', 'definition', 'policy')) or old['evaluator_version'] != EVALUATOR_VERSION:
+        if any(value[key] != old[key] for key in ('period', 'sector_kind', 'definition', 'policy')) or old['evaluator_version'] != _evaluator(value):
             _version(connection, sid, old['version']+1, value)
         connection.execute('UPDATE sector_strategy SET name=?,archived=? WHERE strategy_id=?', (value['name'], int(value['archived']), sid))
         return _view(connection, sid)
@@ -303,7 +310,7 @@ def _traded(row):
     return all(value is not None and value > 0 for value in values) and values[1] >= max(values[0], values[2], values[3]) and values[2] <= min(values[0], values[3])
 
 
-def _indicators(record, calendar, day):
+def _indicators(record, calendar, day, include_higher_lows=False):
     daily = [{**row, 'corporate_action': False, 'corporate_action_coverage_known': True,
               'volume': finite(row.get('volume')), 'amount': finite(row.get('amount'))}
              for row in record['bars'] if row['date'] <= day]
@@ -361,10 +368,14 @@ def _indicators(record, calendar, day):
         for key in ('close_breakout_high', 'intraday_high_change_pct', 'breakout_valid',
                     'breakout_previous_sessions', 'breakout_blocking_distance', 'new_high_current_close'):
             result[period][key] = None
+    if include_higher_lows:
+        from app.analytics.higher_lows import latest as higher_lows_latest
+        for period in PERIODS:
+            result[period]['higher_lows_state']=higher_lows_latest(daily,calendar,day,period)
     return result, current
 
 
-def metrics_for_sector(market, topic_code, day, periods=('D',)):
+def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_higher_lows=False):
     """One verified daily input, all-period summaries, bounded warm reuse.
 
     Warm calls hash every frozen normalized/raw input again, never merely trust
@@ -375,7 +386,7 @@ def metrics_for_sector(market, topic_code, day, periods=('D',)):
     identity = {'target_type': 'sector', 'target_id': plan['topic_code'], 'topic_code': plan['topic_code'],
         'topic_id': plan['instrument']['topic_id'], 'name': plan['instrument']['name'],
         'sector_kind': plan['instrument']['sector_kind']}
-    scope = _summary_scope(plan, market.calendar())
+    scope = _summary_scope(plan, market.calendar(),include_higher_lows)
     key = (str(work_dir().resolve()), digest(scope))
     with _SUMMARY_LOCK: entry = _SUMMARIES.get(key)
     if entry:
@@ -398,7 +409,7 @@ def metrics_for_sector(market, topic_code, day, periods=('D',)):
             'normalization_version': charts.NORMALIZATION_VERSION,
             'source_request': record.get('cache_source_request', record.get('source_request')),
             'cache_as_of': record.get('cache_as_of', day), 'raw_lineage': record.get('raw_lineage')}
-        metrics, current_row = _indicators(record, market.calendar(), day)
+        metrics, current_row = _indicators(record, market.calendar(), day,include_higher_lows)
         value = {'metrics_by_period': metrics, 'close_price': finite(current_row.get('close')) if current_row else None,
             'cache_refs': proofs, 'coverage': {**record['coverage'], 'available': True,
                 'observation_date': day, 'price_basis': 'none', 'membership_independent': True,
@@ -511,7 +522,7 @@ def run_strategy(sid, payload=None, *, queued_job=None):
             fail('请求标识已使用或选板仍在运行，请查看原任务', 409)
         st = _view(connection, sid)
         if st['archived']: fail('板块策略已归档，不能运行', 409)
-        if st['evaluator_version'] != EVALUATOR_VERSION:
+        if st['evaluator_version'] != _evaluator(st):
             _version(connection, sid, st['version']+1, st); st = _view(connection, sid)
         day = current(connection)
         if any(payload.get(key, day) != day for key in ('date', 'business_date')): fail('选板只按当前业务日运行，盘面历史日期不影响策略', 409)
@@ -545,7 +556,9 @@ def run_strategy(sid, payload=None, *, queued_job=None):
         periods = periods_for(st['definition'], st['period'])
         for index, (code, item) in enumerate(sorted(selected.items()), 1):
             check_task()
-            prepared = metrics_for_sector(market, code, day, periods)
+            from app.domain.conditions import names
+            structured='higher_lows' in names(st['definition'])
+            prepared = metrics_for_sector(market, code, day, periods,**({'include_higher_lows':True} if structured else {}))
             check = evaluate(st['definition'], prepared['metrics_by_period'], st['period'])
             decision = 'matched' if check['result'] is True else 'unmatched' if check['result'] is False else 'unknown'
             refs[code] = prepared['cache_refs']

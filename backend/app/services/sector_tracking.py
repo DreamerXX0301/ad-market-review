@@ -44,10 +44,10 @@ def _guard(connection, context):
         fail('业务日或行情代际已变化，请重新操作板块跟踪。', 409)
 
 
-def _metrics_for(market, code, day, periods=('D',)):
+def _metrics_for(market, code, day, periods=('D',), include_higher_lows=False):
     from app.services.sector_strategies import metrics_for_sector
     try:
-        return metrics_for_sector(market, code, day, periods)
+        return metrics_for_sector(market, code, day, periods,**({'include_higher_lows':True} if include_higher_lows else {}))
     except (ValueError, OSError, HTTPException) as error:
         reason = str(getattr(error, 'detail', error))
         return {'metrics_by_period': {period: {'close': None, 'observed_date': None, 'reason': reason}
@@ -59,6 +59,11 @@ def _periods(policy, default):
     result = {'D', default}
     for node in policy['alerts']+policy['exits']: result.update(periods_for(node, default))
     return tuple(period for period in ('D', 'W', 'M') if period in result)
+
+
+def _has_structure(policy):
+    from app.domain.conditions import names
+    return any('higher_lows' in names(node) for node in policy['alerts']+policy['exits'])
 
 
 def _price(info, day):
@@ -232,9 +237,9 @@ def list_tracking(strategy_id=None, status='tracking', triggered_only=False):
     output = []; cached = {}
     for row, policy, events in prepared:
         valuation = row['end_business_date'] or context['day']; periods = _periods(policy, row['entry_period'])
-        key = (row['target_id'], valuation, periods)
+        structured=_has_structure(policy);key = (row['target_id'], valuation, periods,structured)
         frozen = _ended_info(row, events, valuation)
-        if frozen is None and key not in cached: cached[key] = _metrics_for(context['market'], row['target_id'], valuation, periods)
+        if frozen is None and key not in cached: cached[key] = _metrics_for(context['market'], row['target_id'], valuation, periods,**({'include_higher_lows':True} if structured else {}))
         item = _view(row, context['day'], context['calendar'], frozen if frozen is not None else cached[key], policy, events)
         if not triggered_only or item['alerts']: output.append(item)
     return {'items': output, 'total': len(output), 'counts': counts, 'business_date': context['day'], 'target_type': 'sector'}
@@ -247,7 +252,7 @@ def get_tracking(identifier):
         day = row['end_business_date'] or context['day']; policy, _ = _policy_at(connection, row, day)
         events = rows(connection, 'SELECT *,rowid AS _order FROM sector_tracking_event WHERE round_id=? ORDER BY business_date,recorded_at_ms,rowid', (identifier,))
     info = _ended_info(row, events, day)
-    if info is None: info = _metrics_for(context['market'], row['target_id'], day, _periods(policy, row['entry_period']))
+    if info is None: info = _metrics_for(context['market'], row['target_id'], day, _periods(policy, row['entry_period']),**({'include_higher_lows':True} if _has_structure(policy) else {}))
     return {**_view(row, context['day'], context['calendar'], info, policy, events), 'events': [_event_view(event) for event in events]}
 
 
@@ -327,12 +332,12 @@ def _review_impl(payload, context, job_id):
                 row = one(connection, 'SELECT * FROM sector_tracking_round WHERE round_id=?', (initial_row['round_id'],))
                 if row['status'] != 'tracking': break
                 policy, revision = _policy_at(connection, row, day)
-            periods = _periods(policy, row['entry_period']); cache_key = (row['target_id'], day, periods)
+            periods = _periods(policy, row['entry_period']);structured=_has_structure(policy);cache_key = (row['target_id'], day, periods,structured)
             if cache_key not in memo:
                 # Keep one round/day input at a time; do not retain750 histories
                 # per board or compute prices while a write transaction is held.
                 if len(memo) >= 64: memo.pop(next(iter(memo)))
-                memo[cache_key] = _metrics_for(context['market'], row['target_id'], day, periods)
+                memo[cache_key] = _metrics_for(context['market'], row['target_id'], day, periods,**({'include_higher_lows':True} if structured else {}))
             info = memo[cache_key]
             age = trading_age(context['calendar'], row['entry_business_date'], day)
             metrics, price = _with_anchors(row, info, day, age)

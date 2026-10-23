@@ -21,7 +21,8 @@ async function helper(name) {
   );
 }
 const preferences = await helper("./chartPreferences.ts");
-const { chartBoll } = await helper("./chartBoll.ts");
+const { chartBoll, bollCandleValues } = await helper("./chartBoll.ts");
+const { annotationColors, lineLabel } = await helper("./chartAnnotations.ts");
 const { chartPaneLayout } = await helper("./chartPaneLayout.ts");
 const { candleChartEndpoint } = await helper("./chartEndpoint.ts");
 const source = await fs.readFile(
@@ -53,7 +54,8 @@ const paths = [],
   annotations = [];
 let period = "D",
   option,
-  allowLive = false;
+  allowLive = false,
+  annotationViews = [];
 const settings = preferences.normalizeChartPreferences({
   version: 4,
   stockMas: [],
@@ -76,6 +78,9 @@ const scopeValues = {
   useRef: (current) => ({ current }),
   ...preferences,
   chartBoll,
+  bollCandleValues,
+  annotationColors,
+  lineLabel,
   chartPaneLayout,
   candleChartEndpoint,
   useChartPreferences: () => ({
@@ -98,7 +103,7 @@ const scopeValues = {
   },
   useChartAnnotations: (_id, _data, enabled) => {
     annotations.push(enabled);
-    return { enabled, visible: [], drawing: false };
+    return { enabled, visible: enabled ? annotationViews : [], drawing: false };
   },
   chartPalette: () => ({
     text: "#fff",
@@ -106,6 +111,9 @@ const scopeValues = {
     tooltip: "#111",
     up: "#f00",
     down: "#0f0",
+    bollUpper: "#f66",
+    bollMiddle: "#6ff",
+    bollLower: "#6f6",
   }),
   maColors: ["#1", "#2", "#3", "#4", "#5", "#6"],
   defaultChartWindow: () => ({ start: 0, end: 100 }),
@@ -122,6 +130,7 @@ const scopeValues = {
   chartSinceReturn: () => ({ value: null, reason: "" }),
   chartIndicatorAvailability: () => ({ missing: [], reason: "", label: "" }),
   chartDataNotes: () => [],
+  ChartToggle: ({ label }) => jsx("button", { children: label }),
   confirmedBarLimits: () => [],
   num: (value) => (value == null ? "—" : String(value)),
   percent: (value) => (value == null ? "—" : String(value) + "%"),
@@ -190,6 +199,13 @@ assert.ok(
     .filter((row) => row.name.startsWith("BOLL "))
     .every((row) => row.yAxisIndex === 1),
 );
+assert.deepEqual(option.series.find((row) => row.name === "BOLL K线").data, [
+  [10, 10, 9, 11],
+]);
+assert.deepEqual(option.series.find((row) => row.name === "K线").data, [
+  [10, 10, 9, 11],
+]);
+assert.ok(option.grid[1].height >= 140);
 period = "M";
 const missing = renderToStaticMarkup(
   jsx(Chart, {
@@ -216,6 +232,86 @@ assert.equal(
   true,
   "normal stock charts retain annotations",
 );
+const savedLine = {
+  annotation_id: "saved-line",
+  instrument_id: "000001.SZ",
+  price: 12.5,
+  color: "green",
+  label: "支撑",
+  line_type: "support",
+  price_basis: "forward_event_affine",
+  anchor_date: "2026-10-21",
+};
+annotationViews = [
+  {
+    line: savedLine,
+    price: 9.84,
+    anchor: "2026-10-22",
+    converted: true,
+    reason: "verified projection",
+  },
+];
+renderToStaticMarkup(
+  jsx(Chart, {
+    instrumentId: "000001.SZ",
+    instrumentKind: "stock",
+    showDataNotes: false,
+  }),
+);
+const plotted = option.series.find((row) => row.name === "我的水平线").markLine
+  .data[0];
+assert.equal(plotted.yAxis, 9.84);
+assert.match(plotted.label.formatter, /9\.84/);
+assert.equal(
+  savedLine.price,
+  12.5,
+  "plotting a projected price cannot rewrite the saved original",
+);
+assert.equal(savedLine.anchor_date, "2026-10-21");
+annotationViews = [];
+// A saved set may arrive in any order. Layout and the actual switches always
+// follow volume → BOLL → KDJ → MACD, including when any pane is disabled.
+const paneSeries = {
+  volume: "成交量",
+  boll: "BOLL K线",
+  kdj: "K",
+  macd: "MACD",
+};
+for (let mask = 0; mask < 16; mask++) {
+  const enabled = ["volume", "boll", "kdj", "macd"].filter(
+    (_key, index) => mask & (1 << index),
+  );
+  settings.stockPanels = enabled.filter((key) => key !== "boll").reverse();
+  settings.stockShowBoll = enabled.includes("boll");
+  const rendered = renderToStaticMarkup(
+    jsx(Chart, {
+      instrumentId: "000001.SZ",
+      instrumentKind: "stock",
+      frozenChartsByPeriod: { D: chartData },
+      showDataNotes: false,
+    }),
+  );
+  enabled.forEach((key, index) => {
+    const series = option.series.find((row) => row.name === paneSeries[key]);
+    assert.equal(series.xAxisIndex, index + 1, `${enabled}: ${key} x axis`);
+    assert.equal(series.yAxisIndex, index + 1, `${enabled}: ${key} y axis`);
+    if (key === "boll") assert.ok(option.grid[index + 1].height >= 140);
+  });
+  assert.ok(
+    rendered.indexOf(">成交量</button>") < rendered.indexOf(">BOLL</button>"),
+  );
+  assert.ok(
+    rendered.indexOf(">BOLL</button>") < rendered.indexOf(">KDJ</button>"),
+  );
+  assert.ok(
+    rendered.indexOf(">KDJ</button>") < rendered.indexOf(">MACD</button>"),
+  );
+  assert.deepEqual(
+    option.dataZoom[0].xAxisIndex,
+    option.grid.map((_grid, index) => index),
+  );
+  assert.deepEqual(option.axisPointer.link, [{ xAxisIndex: "all" }]);
+}
 console.log(
   "actual frozen CandleChart disables live GET/annotations, uses frozen BOLL pane and preserves missing-period placeholders",
 );

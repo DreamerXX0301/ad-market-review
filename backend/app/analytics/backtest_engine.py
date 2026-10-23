@@ -54,6 +54,11 @@ def _daily_breakout_lookback(node):
 def warmup(definition,exit_ma=0,include_daily_lookback=True):
     n=max(2,exit_ma)
     if include_daily_lookback:n=max(n,_daily_breakout_lookback(definition)+1)
+    def structure_window(node):
+        if 'history_event' in node:return structure_window(node['history_event']['then'])
+        if node.get('field')=='higher_lows':return node['value']+2
+        return max((structure_window(child) for child in node.get('all',node.get('any',[]))),default=0)
+    n=max(n,structure_window(definition))
     for field in current_names(definition):
         if field=='bullish_ma_alignment':n=max(n,60)
         match=re.search(r'ma(\d+)$',field)
@@ -177,6 +182,11 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
             series['W']=completed_indicator_bars(rows,cal,end,'W')
         if 'M' in required_periods:
             series['M']=completed_indicator_bars(rows,cal,end,'M')
+        if 'higher_lows' in names(dependencies):
+            from .higher_lows import summaries as higher_lows_summaries
+            for selected,values in series.items():
+                structure=higher_lows_summaries(rows,cal,end,selected)
+                for row in values:row['higher_lows_state']=structure.get(row['date'])
         # Each summary is computed once per symbol. Scoped conditions select a
         # closed bar whose date is at or before the signal day, never future OHLC.
         scoped={selected:{r['date']:metrics_from_enriched(r,values[index-1] if index else None)
@@ -312,4 +322,7 @@ def run_backtest(market,strategy,payload,progress=None):
     if progress:progress('撮合并对账权益',70)
     result=simulate([previous]+dates,quotes,signals,config,identities)
     result.update(config=config,trade_rules=bounds['trade_rules'],signals=signal_rows,data_quality=quality,start_date=start,end_date=end,warnings=bounds['warnings']+[f"样本共{quality['total_symbols']}只，可用{quality['eligible_symbols']}只，排除{quality['excluded_symbols']}只；逐项原因见data_quality。"],execution_universe=bounds['execution_universe'],engine_version=VERSION)
+    if any('higher_lows' in names(tree) for tree in [strategy['definition']]+[tree for tree in bounds['trade_rules'].values() if tree is not None]):
+        from .higher_lows import VERSION as structure_version
+        result['condition_contracts']={'higher_lows':structure_version}
     return result
