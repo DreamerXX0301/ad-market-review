@@ -13,7 +13,7 @@ import threading
 import duckdb
 
 from .indicators import INDICATOR_VERSION, aggregate_weekly, enrich_bars
-from .market_storage import VERSION as STORAGE_VERSION, OBJECT_ROOT, parquet_input, write_partitions, activity_window, write_reference, load_reference, REFERENCE_VERSION, ENCODER_VERSION, verify_immutable_file
+from .market_storage import VERSION as STORAGE_VERSION, OBJECT_ROOT, parquet_input, write_partitions, activity_window, write_reference, load_reference, REFERENCE_VERSION, ENCODER_VERSION, verify_immutable_file, safe_object
 
 INDEX_NAMES = {'000001.SH':'上证指数','399001.SZ':'深证成指','399006.SZ':'创业板指','000688.SH':'科创50'}
 MEMBERS = {'AI':('885728.TI','人工智能'), 'bank':('881155.TI','银行'), 'semiconductor':('881121.TI','半导体及元件')}
@@ -342,6 +342,41 @@ class MarketData:
         except BaseException:
             self._symbol_bars.clear();self._frame=None;self._frame_source_stamp=None;self._symbol_ranges={};self._daily_columns=None;self._daily_native_dtypes=None;self._daily_text_nulls=None;self._close_daily_reader();raise
 
+    def verify_condition_sources(self):
+        """Validate the fixed condition-input closure before a derived cache hit.
+
+        No history rows or database files are opened. Signature-aware immutable
+        SHA checks cover normalized prices, action evidence, and the reference
+        descriptor/parts carrying the calendar and dated source-pool metadata.
+        Legacy adapters without a complete manifest get no reusable token.
+        """
+        with self._lock:
+            head=self._load()
+            if not head:return None
+            files=head.get('files')
+            if not isinstance(files,list):return None
+            selected=[row for row in files if isinstance(row,dict) and isinstance(row.get('role'),str)
+                      and (row['role'] in ('daily.parquet','corporate-actions.parquet','reference.json')
+                           or row['role'].startswith(('daily-partition/','reference-part/')))]
+            roles=[row['role'] for row in selected]
+            if not {'daily.parquet','corporate-actions.parquet','reference.json'}<=set(roles):return None
+            if len(roles)!=len(set(roles)):raise ValueError('条件来源清单角色重复，不能复用派生指标')
+            signatures=[]
+            for row in selected:
+                expected=row.get('sha256');size=row.get('bytes');relative=row.get('path')
+                if (not isinstance(expected,str) or not re.fullmatch(r'[a-f0-9]{64}',expected)
+                        or isinstance(size,bool) or not isinstance(size,int) or size<0 or not isinstance(relative,str)):
+                    raise ValueError('条件来源清单缺少可信SHA或大小')
+                path=safe_object(self.data_dir,relative)
+                if not (path.is_relative_to(self.data_dir/'published'/head['snapshot_id'])
+                        or path.is_relative_to(self.data_dir/'published'/OBJECT_ROOT)):
+                    raise ValueError('条件来源超出固定行情目录')
+                verify_immutable_file(path,expected,size)
+                info=path.stat()
+                signatures.append((row['role'],relative,expected,size,info.st_dev,info.st_ino,info.st_mtime_ns,info.st_ctime_ns))
+            _,price_stamp=self._daily_source(head)
+            return ('verified-condition-sources-v1',str(self.data_dir),head['snapshot_id'],price_stamp,tuple(signatures))
+
     def _prepare_daily_reader(self,head,argument,stamp):
         """Called under the existing RLock; never opens a worker database file."""
         import pyarrow as pa
@@ -563,6 +598,56 @@ class MarketData:
                 if end:selected=selected.loc[selected.date<=end]
                 result[symbol]=selected.to_dict('records')
             return result
+
+    def closing_prices_for_instruments(self, instrument_ids, start=None, end=None):
+        """At most 256 securities' dated closes for source-event verification.
+
+        Keep duplicate dates and missing closes intact. These are evidence
+        inputs, not a last-quote lookup, and must preserve the raw reader's
+        strict bounds without converting unrelated OHLC/amount fields.
+        """
+        symbols=list(dict.fromkeys(canonical(symbol) for symbol in instrument_ids))
+        if len(symbols)>256:raise ValueError('逐股收盘证据每批最多256只证券')
+        result={symbol:[] for symbol in symbols}
+        if not symbols:return result
+        with self._lock:
+            head=self._load()
+            if not head:return result
+            if self._frame is not None:
+                _,stamp=self._daily_source(head)
+                if self._frame_source_stamp!=stamp:
+                    self._frame=None;self._frame_source_stamp=None;self._symbol_ranges={};self._daily_columns=None;self._daily_native_dtypes=None;self._daily_text_nulls=None
+            if self._frame is not None:
+                import pandas as pd
+                dates=self._frame['date'];pieces=[]
+                for symbol in symbols:
+                    bounds=self._symbol_ranges.get(symbol)
+                    if not bounds:continue
+                    left,right=bounds;days=dates.iloc[left:right]
+                    try:
+                        begin=left+int(days.searchsorted(start,side='left')) if start else left
+                        finish=left+int(days.searchsorted(end,side='right')) if end else right
+                        if begin<finish:pieces.append(self._frame.iloc[begin:finish][['instrument_id','date','close']])
+                    except ValueError:
+                        selected=self._frame.iloc[left:right]
+                        if start:selected=selected.loc[selected.date>=start]
+                        if end:selected=selected.loc[selected.date<=end]
+                        if not selected.empty:pieces.append(selected[['instrument_id','date','close']])
+                if not pieces:return result
+                selected=pd.concat(pieces).astype({name:self._daily_native_dtypes[name] for name in ('instrument_id','date','close')})
+                for row in selected.to_dict('records'):
+                    result[row['instrument_id']].append({'date':row['date'],'close':row['close']})
+                return result
+            clauses=['instrument_id IN (SELECT unnest(?))'];params=[symbols]
+            if start:clauses.append('date>=?');params.append(start)
+            if end:clauses.append('date<=?');params.append(end)
+            con=duckdb.connect(':memory:')
+            try:
+                selected=con.execute('SELECT instrument_id,date,close FROM read_parquet(?) WHERE '+' AND '.join(clauses)+' ORDER BY instrument_id,date',
+                    [parquet_input(self.data_dir/'published'/head['snapshot_id']/'daily.parquet',start=start,end=end),*params]).fetchdf().to_dict('records')
+            finally:con.close()
+        for row in selected:result[row['instrument_id']].append({'date':row['date'],'close':row['close']})
+        return result
 
     def actions_for_instruments(self, instrument_ids):
         """Batch action evidence; None means no action file, never zero actions."""

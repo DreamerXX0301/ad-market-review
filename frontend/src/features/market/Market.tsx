@@ -217,7 +217,11 @@ export function MarketOverview({
   indicesOnly?: boolean;
 }) {
   const [selected, setSelected] = useState("000001.SH");
-  const result = useApi<Row>(date ? `/market/overview?date=${date}` : null);
+  const result = useApi<Row>(
+    date
+      ? `/market/${indicesOnly ? "indices" : "overview"}?date=${date}`
+      : null,
+  );
   const data = result.data;
   const indices =
     data?.indices ||
@@ -625,7 +629,9 @@ export function MarketPage({
   );
   const data = result.data;
   const sectorResult = useApi<Row>(
-    route === "flow" && date ? `/market/sectors?date=${date}&limit=1000` : null,
+    route === "flow" && kind === "concept" && date
+      ? `/market/sectors?date=${date}&limit=1000`
+      : null,
   );
   const conceptFlow = route === "flow" && kind === "concept";
   const tableData = conceptFlow ? sectorResult.data : data;

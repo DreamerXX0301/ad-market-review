@@ -1,5 +1,6 @@
 """Shared display indicators on raw prices; restart after known actions/gaps."""
 from collections import deque
+from bisect import bisect_left, bisect_right
 from datetime import date
 from math import isfinite
 from .rolling_high import RollingHighState
@@ -133,10 +134,12 @@ def aggregate_weekly(rows, calendar=None, as_of=None):
     for key, bs in sorted(groups.items()):
         bs=sorted(bs,key=lambda row:row['date'])
         last = bs[-1]['date']
-        following = next((d for d in calendar if d > last), None)
+        following_index = bisect_right(calendar, last)
+        following = calendar[following_index] if following_index < len(calendar) else None
         observed={bar['date'] for bar in bs}
         missing_within=[day for day in expected_by_week.get(key,[]) if day not in observed]
-        missing_between=[day for day in calendar if result and result[-1]['date']<day<bs[0]['date']]
+        missing_between=(calendar[bisect_right(calendar,result[-1]['date']):bisect_left(calendar,bs[0]['date'])]
+                         if result else [])
         missing_dates=sorted(set(missing_within+missing_between))
         coverage_complete=not missing_within if expected_by_week.get(key) else None
         previous_incomplete=bool(result and result[-1]['weekly_quote_coverage_complete'] is False)

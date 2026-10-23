@@ -4,7 +4,7 @@ import hashlib,json,sqlite3
 from decimal import Decimal,ROUND_HALF_UP
 from fastapi import HTTPException
 from app.core import connect,get_market,now_ms,new_id
-from app.domain.conditions import validate,evaluate,metrics_for,metrics_from_enriched,names,specs,topic_dependencies,past_limit_up_metrics
+from app.domain.conditions import validate,evaluate,metrics_for,metrics_from_enriched,names,specs,topic_dependencies,past_limit_up_metrics,prepare_metric_bars
 from app.domain.universe import identity_flags
 from app.domain.tracking import trading_age
 from app.services.workspace_common import *
@@ -13,7 +13,7 @@ from app.services.strategy_limits import LIMIT_FIELDS, DAILY_LIMIT_FIELDS, COUNT
 from app.domain.trade_rules import normalize_trade_rules
 from app.domain.history_events import nodes as history_nodes, current_names
 from app.services.history_events import contexts_for_batch, prepare_shared, batch_size as history_batch_size
-from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics
+from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics,compile_metric_plan,cached_metrics_if_ready
 from app.services import task_service as tasks
 from app.services.workspace_deletion import require_strategy_present,strategy_visibility
 from app.services import strategy_hot_universe as hot_universe
@@ -205,9 +205,8 @@ def seed_workspace():
 def _candidate(r,master):
     return {**code_info(r['instrument_id'],master),'decision':r['decision'],'close_price':money(r['close_price_e8']),'metrics':obj(r['metrics_json'],{}),'checks':obj(r['checks_json'],{}),'topics':obj(r['topic_snapshot_json'],[])}
 
-def compact_candidate(metrics,checks,topics,decision,definition):
-    """Sparse non-matches retain evidence; immutable inputs can reconstruct other indicators."""
-    if decision=='matched':return metrics,checks,topics
+def candidate_requirements(definition):
+    """Compile sparse evidence fields once for a selection's fixed rule."""
     fields=names(definition)
     fields|={'close','change_pct','volume','amount','volume_ratio','observed_date','indicator_period','indicator_warmup_bars','signal_date','signal_close','signal_price','current_daily_close','entry_price_policy','price_basis','price_continuity','quality','_complete_topic_ids','identity_scope','identity_as_of'}
     for field in list(fields):
@@ -222,6 +221,13 @@ def compact_candidate(metrics,checks,topics,decision,definition):
         fields|={field+suffix for suffix in ('_date','_reason','_status','_evidence','_confirmed_count','_lower_bound','_upper_bound','_coverage')}
     if 'limit_up_1y' in fields:fields|={'limit_up_1y_reason','limit_up_1y_evidence'}
     references=topic_dependencies(definition)
+    return fields,references
+
+
+def compact_candidate(metrics,checks,topics,decision,definition,*,requirements=None):
+    """Sparse non-matches retain evidence; immutable inputs can reconstruct other indicators."""
+    if decision=='matched':return metrics,checks,topics
+    fields,references=requirements if requirements is not None else candidate_requirements(definition)
     reduced={key:value for key,value in metrics.items() if key in fields}
     if references:reduced['topic_ids']=[key for key in metrics.get('topic_ids') or [] if key in references]
     def small_check(node):
@@ -239,6 +245,26 @@ def selection_history_batch(market,symbols,day):
     if len(symbols)>32:raise ValueError('逐股策略历史每批最多32只证券')
     method=getattr(market,'condition_histories',None)
     return method(symbols,end=day) if callable(method) else {symbol:market.bars(symbol,as_of=day) for symbol in symbols}
+
+
+def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=True,require_history=False):
+    """Read original seeds only for cache misses, with at most 32 securities.
+
+    Weekly/monthly entry still uses the observation day's own raw close. A
+    warm technical summary never substitutes its closed-period signal price.
+    """
+    if len(symbols)>32:raise ValueError('逐股策略历史每批最多32只证券')
+    periods=[period for period in plan.periods if include_default or period!=plan.default]
+    ready={symbol:{period:cached_metrics_if_ready(day,period,instrument_id=symbol,generation=generation,request=plan.requests[period]) for period in periods} for symbol in symbols}
+    daily_method=getattr(market,'history_for_instruments',None)
+    needs_daily=include_default and plan.default in ('W','M')
+    missing=[symbol for symbol in symbols if require_history or any(value is None for value in ready[symbol].values()) or needs_daily and not callable(daily_method)]
+    histories=selection_history_batch(market,missing,day) if missing else {}
+    histories={symbol:prepare_metric_bars(values) for symbol,values in histories.items()}
+    daily={symbol:values for symbol,values in histories.items()}
+    daily_only=[symbol for symbol in symbols if symbol not in histories] if needs_daily else []
+    if daily_only:daily.update(daily_method(daily_only,start=day,end=day))
+    return histories,ready,daily
 
 def run_strategy(sid,payload=None,*,queued_job=None):
     payload=payload or {};key=str(payload.get('request_key') or new_id('selection-request'))
@@ -285,11 +311,17 @@ def run_strategy(sid,payload=None,*,queued_job=None):
         # Structures require exact calendar-defined OHLC windows; the dated
         # display panel intentionally does not carry these strict summaries.
         fast=st['period']=='D' and not required&{'higher_lows','boll_signal'}
-        from app.analytics.boll_conditions import configs_for
-        boll_by_period=configs_for(st['definition'],st['period'])
+        metric_plan=compile_metric_plan(st['definition'],st['period'])
+        candidate_fields=candidate_requirements(st['definition'])
         status_method=getattr(market,'status',None)
         generation=status_method().get('snapshot_id') if callable(status_method) else None
-        extra_periods=periods_for(st['definition'],st['period'])-{st['period']}
+        verify_sources=getattr(market,'verify_condition_sources',None)
+        source_token=verify_sources() if callable(verify_sources) else None
+        summary_generation=(generation,source_token) if generation and source_token is not None else generation
+        # Legacy adapters still verify their sources through the original
+        # bounded history read. Only a verified immutable closure can skip it.
+        probe_generation=summary_generation if source_token is not None else None
+        extra_periods=set(metric_plan.periods)-{st['period']}
         panel_rows={x['instrument_id']:x for x in market_panel(day)} if fast or 'limit_up' in required else {}
         fast=fast and all('indicator_warmup_bars' in x for x in panel_rows.values())
         previous_panel={}
@@ -306,25 +338,30 @@ def run_strategy(sid,payload=None,*,queued_job=None):
         ordered=sorted(master);event_contexts={};history_batch=(history_batch_size([st['definition']]) if event_nodes else 256) if fast else 32
         report('核验个股条件',0,f'准备核验 {len(ordered)} 只证券',{'actual_completed_batches':0,'actual_total_batches':len(ordered)})
         history_shared=prepare_shared(market,ordered,[st['definition']],calendar,day) if event_nodes else None
-        batch_bars={}
+        batch_bars={};batch_ready={};batch_daily={}
         for sequence,ident in enumerate(ordered):
             if sequence%128==0:check_task()
             if (not fast or extra_periods) and sequence%32==0:
-                batch_bars=selection_history_batch(market,ordered[sequence:sequence+32],day)
+                selected=ordered[sequence:sequence+32]
+                batch_bars,batch_ready,batch_daily=selection_metric_batch(market,selected,day,metric_plan,probe_generation,include_default=not fast,require_history=bool(event_nodes and history_shared is None and not fast))
                 if limit_evidence and not needs_count:
-                    limit_quotes=batch_quote_indexes(market,ordered[sequence:sequence+32],day,calendar,batch_bars)
+                    limit_quotes=batch_quote_indexes(market,selected,day,calendar,batch_bars if len(batch_bars)==len(selected) else None)
             if event_nodes and sequence%history_batch==0:
                 event_contexts=contexts_for_batch(market,ordered[sequence:sequence+history_batch],[st['definition']],calendar,day,batch_bars if not fast else None,shared=history_shared,limit_evidence=limit_evidence)
             item=master[ident]
             if item.get('kind',item.get('asset_type','stock')) not in ('stock','equity','a_share','A'):continue
             topic_ids=[x['topic_id'] for x in topics.get(ident,[])]
-            ms=metrics_from_enriched(panel_rows.get(ident),previous_panel.get(ident),topics=topic_ids) if fast else cached_metrics(batch_bars.get(ident,[]),day,calendar,st['period'],topics=topic_ids,instrument_id=ident,generation=generation,include_higher_lows='higher_lows' in required,boll_configs=boll_by_period.get(st['period']))
+            if fast:ms=metrics_from_enriched(panel_rows.get(ident),previous_panel.get(ident),topics=topic_ids)
+            else:
+                ms=batch_ready.get(ident,{}).get(st['period'])
+                if ms is None:ms=cached_metrics(batch_bars.get(ident,[]),day,calendar,st['period'],instrument_id=ident,generation=summary_generation,request=metric_plan.requests[st['period']])
+                ms['topic_ids']=topic_ids
             if breakout_values is not None:ms.update(breakout_values.get(ident,{'breakout_valid':False}))
             ms.update(identity_flags(item,day))
             ms['indicator_period']=st['period']
             if extra_periods:
                 ms=add_period_metrics(ms,batch_bars.get(ident,[]),day,calendar,st['definition'],st['period'],
-                                      instrument_id=ident,generation=generation)
+                                      instrument_id=ident,generation=summary_generation,plan=metric_plan,ready=batch_ready.get(ident))
             if topic_dependencies_:ms['_complete_topic_ids']=complete_topics
             if needs_count:
                 ms.update(count_values[ident])
@@ -336,10 +373,10 @@ def run_strategy(sid,payload=None,*,queued_job=None):
             decision='matched' if check['result'] is True else 'unmatched' if check['result'] is False else 'unknown'
             entry_close=ms.get('close')
             if st['period'] in ('W','M'):
-                daily=next((bar for bar in reversed(batch_bars.get(ident,[])) if str(bar.get('date',bar.get('trade_date','')))[:10]==day),None)
+                daily=next((bar for bar in reversed(batch_daily.get(ident,[])) if str(bar.get('date',bar.get('trade_date','')))[:10]==day),None)
                 entry_close=float(daily['close']) if daily and daily.get('close') is not None else None
                 ms.update(signal_date=ms.get('observed_date'),signal_close=ms.get('close'),current_daily_close=entry_close,entry_price_policy='business_day_close-v1')
-            stored_metrics,stored_checks,stored_topics=compact_candidate(ms,check,topics.get(ident,[]),decision,st['definition'])
+            stored_metrics,stored_checks,stored_topics=compact_candidate(ms,check,topics.get(ident,[]),decision,st['definition'],requirements=candidate_fields)
             result.append(dict(run_id=rid,instrument_id=ident,decision=decision,close_price_e8=e8(entry_close) if entry_close and entry_close>0 else None,checks_json=js(stored_checks),metrics_json=js(stored_metrics),topic_snapshot_json=js(stored_topics)))
             if sequence%128==0 or sequence+1==len(ordered):
                 report('核验个股条件',min(95,round((sequence+1)/max(1,len(ordered))*95)),

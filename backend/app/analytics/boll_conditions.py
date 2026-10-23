@@ -241,21 +241,22 @@ class _RollingBands:
         return {'middle': middle, 'upper': upper, 'lower': lower, 'bandwidth': width}
 
 
-def _empty_state(config, period, day=None):
+def _empty_state(config, period, day=None, *, required_periods=None):
     return {'version': VERSION, 'config': config, 'period': period, 'observed_date': day,
-        'covered_periods': 0, 'required_periods': warmup_for(config), 'result': None,
+        'covered_periods': 0, 'required_periods': warmup_for(config) if required_periods is None else required_periods, 'result': None,
         'reason': '尚无已完整结束并可核验的市场周期',
         'evidence': {'period': period, 'price_basis': 'none', 'last_blocker': None}}
 
 
 def _states(period_rows, period, config):
+    required_periods = warmup_for(config)
     bands = _RollingBands(config['band_period'])
     width_history = deque(); ordered = []
     recent = deque(maxlen=config['recent_squeeze_periods'])
     middles = deque(maxlen=config['slope_periods']+1)
     previous = None; covered = 0; blocker = None
     for row in period_rows:
-        state = _empty_state(config, period, row['date'])
+        state = _empty_state(config, period, row['date'], required_periods=required_periods)
         if not row['valid']:
             bands = _RollingBands(config['band_period'])
             width_history.clear(); ordered.clear(); recent.clear(); middles.clear()

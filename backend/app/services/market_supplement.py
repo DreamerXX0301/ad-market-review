@@ -31,16 +31,31 @@ def _root(): return published_dir()/'market-supplement'
 
 
 def load_supplement(snapshot_id=None, *, dates=None, fields=None):
-    head=_load(_root()/'head.json',{})
-    if snapshot_id and head.get('snapshot_id')!=snapshot_id:return {}
-    if not head:return {}
-    relative=head.get('artifact'); path=(_root()/str(relative)).resolve()
-    if not path.is_relative_to(_root().resolve()) or not path.is_file() or hash_file(path)!=head.get('sha256'):return {'quality':'unknown','failure_reason':'补充数据索引缺失或校验失败'}
+    return load_supplement_with_fingerprint(snapshot_id,dates=dates,fields=fields)[0]
+
+
+def load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=None):
+    """Return the same document plus its verified, private dependency identity.
+
+    The index SHA includes all CAS object hashes. Expansion still checks their
+    actual files on every load; a failed/partial verification never receives a
+    trusted identity. The fingerprint belongs only to this load and projection.
+    """
+    root=_root();head=_load(root/'head.json',{})
+    if snapshot_id and head.get('snapshot_id')!=snapshot_id:return {},None
+    if not head:return {},None
+    relative=head.get('artifact'); path=(root/str(relative)).resolve()
+    if not path.is_relative_to(root.resolve()) or not path.is_file() or hash_file(path)!=head.get('sha256'):return {'quality':'unknown','failure_reason':'补充数据索引缺失或校验失败'},None
     result=_load(path,{})
-    if result.get('version')!=VERSION:return {'quality':'unknown','failure_reason':'补充数据版本不匹配'}
+    if result.get('version')!=VERSION:return {'quality':'unknown','failure_reason':'补充数据版本不匹配'},None
     from .supplement_storage import expand_document
-    try:return expand_document(_root(),result,dates=dates,fields=fields)
-    except (ValueError,OSError,TypeError):return {'quality':'unknown','failure_reason':'补充数据索引引用缺失、损坏或版本不匹配'}
+    try:
+        dates=None if dates is None else tuple(dates);fields=None if fields is None else tuple(fields)
+        document=expand_document(root,result,dates=dates,fields=fields)
+        fingerprint=('verified-supplement-index-v1',str(root.resolve()),head.get('snapshot_id'),head['sha256'],
+                     None if dates is None else tuple(sorted(set(dates))),None if fields is None else tuple(sorted(set(fields))))
+        return document,fingerprint
+    except (ValueError,OSError,TypeError):return {'quality':'unknown','failure_reason':'补充数据索引引用缺失、损坏或版本不匹配'},None
 
 
 class SupplementCache:
