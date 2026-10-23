@@ -1,0 +1,130 @@
+.increment-progress-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  background: rgb(4 9 17 / 78%);
+  backdrop-filter: blur(7px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.increment-progress-dialog {
+  width: min(680px, 100%);
+  max-height: 90dvh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 28px;
+  background: var(--surface2);
+  color: var(--text);
+  box-shadow: 0 28px 100px rgb(0 0 0 / 35%);
+}
+.increment-progress-dialog header {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.increment-progress-dialog header > svg {
+  color: var(--blue);
+  flex-shrink: 0;
+}
+.increment-progress-dialog h2 {
+  margin: 0;
+  font-size: 22px;
+}
+.increment-progress-dialog p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.increment-progress-dialog header p {
+  margin: 5px 0 0;
+}
+.increment-progress-time {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 25px 0 12px;
+}
+.increment-progress-time span,
+.increment-progress-dialog small {
+  color: var(--muted);
+}
+.increment-progress-estimate {
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 18px;
+}
+.increment-progress-estimate small {
+  display: block;
+  margin-top: 7px;
+}
+.increment-progress-current {
+  display: grid;
+  gap: 6px;
+  margin: 16px 0 10px;
+}
+.increment-progress-current span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.increment-progress-dialog progress {
+  width: 100%;
+  height: 10px;
+  accent-color: var(--blue);
+  margin-bottom: 12px;
+}
+.increment-progress-tasks {
+  padding: 0;
+  list-style: none;
+  margin: 16px 0;
+  display: grid;
+  gap: 9px;
+}
+.increment-progress-tasks li {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.increment-progress-tasks li > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.increment-progress-tasks li span {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.increment-progress-tasks small {
+  display: block;
+  line-height: 1.5;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+.increment-progress-error {
+  border: 1px solid var(--amber);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 12px 0;
+  line-height: 1.6;
+}
+.increment-progress-error button {
+  margin-left: 10px;
+}
+.increment-progress-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 22px;
+}
+@media (max-width: 600px) {
+  .increment-progress-dialog {
+    padding: 20px;
+  }
+  .increment-progress-tasks li > div {
+    flex-wrap: wrap;
+  }
+}

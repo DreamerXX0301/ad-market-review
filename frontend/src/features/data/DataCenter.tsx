@@ -55,6 +55,11 @@ import "./DataCenter.css";
 import CoveragePanel from "./CoveragePanel";
 import PublishedStorageDetails from "./PublishedStorageDetails";
 import { publishedStorageView } from "./storagePresentation";
+import {
+  acceptIncrementSession,
+  beginIncrementSession,
+  rejectIncrementSession,
+} from "../../components/incrementSession";
 const activeStatuses = ["queued", "pending", "running"];
 const publishedStatuses = [
   "completed",
@@ -349,7 +354,7 @@ export default function DataCenter({
   initialTaskId?: string;
 }) {
   const result = useApi<Row>("/data/status"),
-    history = useApi<Row>("/tasks?limit=200");
+    history = useApi<Row>("/tasks?limit=200&summary=true");
   const [selectedId, setSelectedId] = useState(""),
     [followChain, setFollowChain] = useState(true),
     [busy, setBusy] = useState(""),
@@ -468,7 +473,11 @@ export default function DataCenter({
   async function start(mode: string) {
     setBusy(mode);
     setError("");
+    const key = requestKey();
+    let incrementSession: ReturnType<typeof beginIncrementSession> | null =
+      null;
     try {
+      if (mode === "increment") incrementSession = beginIncrementSession(key);
       const initialWindow = initializationWindowView(
         data?.initialization_window,
       );
@@ -494,8 +503,14 @@ export default function DataCenter({
                 ...(mode === "initialise"
                   ? { window: initialWindow.window }
                   : {}),
-                request_key: requestKey(),
+                request_key: key,
               });
+      if (incrementSession)
+        acceptIncrementSession(
+          incrementSession,
+          r.task_id || r.job_id,
+          r.request_key,
+        );
       setSelectedId(r.task_id || r.job_id);
       setFollowChain(true);
       history.reload();
@@ -503,6 +518,8 @@ export default function DataCenter({
       toast("同步任务已创建，可查看实际阶段与批次进度");
     } catch (e: any) {
       setError(e.message);
+      if (incrementSession && e.status >= 400 && e.status < 500)
+        rejectIncrementSession(incrementSession, e.message);
     } finally {
       setBusy("");
     }

@@ -13,7 +13,7 @@ import stat
 
 
 _GENERATION = re.compile(r"market-[0-9a-f]{24}\Z")
-_KEYS = ("current_market", "old_market", "supplement", "backtests", "metadata_other")
+_KEYS = ("current_market", "old_market", "shared_market", "supplement", "backtests", "metadata_other")
 
 
 def published_storage(root: Path, current_snapshot_id: str | None) -> dict:
@@ -44,7 +44,7 @@ def published_storage(root: Path, current_snapshot_id: str | None) -> dict:
     def category(top):
         if top and _GENERATION.fullmatch(top):
             return "current_market" if top == current else "old_market"
-        return {"market-supplement": "supplement", "backtests": "backtests"}.get(top, "metadata_other")
+        return {"market-objects": "shared_market", "market-supplement": "supplement", "backtests": "backtests"}.get(top, "metadata_other")
 
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 

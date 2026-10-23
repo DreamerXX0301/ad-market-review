@@ -21,6 +21,9 @@
 -- 018_market_sentiment_snapshots.sql sha256=6ffe051c931bcc3037649880443d50085b3d49affe18a06a3aada6d308305530
 -- 019_workspace_deletion.sql sha256=26c526211b3c05f20f1ef968165aac57d6b75ba0d70e7258f22d140279b25dd1
 -- 020_workspace_purge.sql sha256=67cbabe235f43458e654ddce6dfec8cd2778a4f758a3d7925bf67e83b656bc2c
+-- 021_chart_annotation_origins.sql sha256=7851f88ebaa7ac730c3023a5a83652c2207bc0993a3c7fa2748aeddd0b4c1ff5
+-- 022_strategy_hot_universe.sql sha256=e7543389e7bd1437107ce94d98548f8c3eae94064a716527422ec08b89784bb3
+-- 023_market_storage_gc.sql sha256=74b135a3e6749189a1d344216c145f4f271c809745a56c45e19865346903cdf7
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -87,7 +90,7 @@ CREATE TABLE chart_annotation (
     price_basis TEXT NOT NULL CHECK(price_basis IN ('none','forward_event_affine')),
     anchor_date TEXT,
     created_at_ms INTEGER NOT NULL,
-    updated_at_ms INTEGER NOT NULL, line_type TEXT NOT NULL DEFAULT 'reference' CHECK(line_type IN ('reference','support','resistance')), alert_modes_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(alert_modes_json) AND json_type(alert_modes_json)='array'), auto_watchlist INTEGER NOT NULL DEFAULT 0 CHECK(auto_watchlist IN (0,1)), revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0), effective_business_date TEXT CHECK(effective_business_date IS NULL OR date(effective_business_date,'+0 days') IS effective_business_date),
+    updated_at_ms INTEGER NOT NULL, line_type TEXT NOT NULL DEFAULT 'reference' CHECK(line_type IN ('reference','support','resistance')), alert_modes_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(alert_modes_json) AND json_type(alert_modes_json)='array'), auto_watchlist INTEGER NOT NULL DEFAULT 0 CHECK(auto_watchlist IN (0,1)), revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0), effective_business_date TEXT CHECK(effective_business_date IS NULL OR date(effective_business_date,'+0 days') IS effective_business_date), origin_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(origin_json) AND json_type(origin_json)='object'), origin_key TEXT, instrument_kind TEXT NOT NULL DEFAULT 'stock' CHECK(instrument_kind IN ('stock','index') AND (instrument_kind='stock' OR (price_basis='none' AND auto_watchlist=0 AND json_array_length(alert_modes_json)=0))),
     CHECK((price_basis='none' AND anchor_date IS NULL) OR
           (price_basis='forward_event_affine' AND anchor_date IS NOT NULL))
 );
@@ -262,6 +265,26 @@ CREATE TABLE market_sentiment_snapshot (
  CHECK(json_extract(payload_json,'$.provenance.rule_version') IS rule_version),
  CHECK(json_extract(payload_json,'$.provenance.input_fingerprint') IS input_fingerprint),
  CHECK(json_extract(payload_json,'$.provenance.mode') IS 'retained_retrospective')
+) STRICT;
+
+CREATE TABLE market_storage_collection (
+  collection_id TEXT PRIMARY KEY,
+  version TEXT NOT NULL CHECK(version='market-storage-gc-v1'),
+  scope_json TEXT NOT NULL CHECK(json_valid(scope_json)),
+  scope_sha256 TEXT NOT NULL CHECK(length(scope_sha256)=64),
+  status TEXT NOT NULL CHECK(status IN ('planned','deleting','completed')),
+  created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
+  completed_at_ms INTEGER
+) STRICT;
+
+CREATE TABLE market_storage_collection_file (
+  collection_id TEXT NOT NULL REFERENCES market_storage_collection(collection_id),
+  object_key TEXT NOT NULL CHECK(substr(object_key,1,1)<>'/' AND instr(object_key,'..')=0),
+  sha256 TEXT NOT NULL CHECK(length(sha256)=64),
+  byte_count INTEGER NOT NULL CHECK(byte_count>=0),
+  status TEXT NOT NULL CHECK(status IN ('planned','removed','absent')),
+  removed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(removed_bytes>=0),
+  PRIMARY KEY(collection_id,object_key)
 ) STRICT;
 
 CREATE TABLE platform_setting (
@@ -497,7 +520,8 @@ CREATE TABLE strategy_version (
   definition_sha256 TEXT NOT NULL CHECK(length(definition_sha256)=64),
   evaluator_version TEXT NOT NULL,
   recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0), trade_rules_json TEXT NOT NULL DEFAULT '{"entry":null,"exit":null}' CHECK(json_valid(trade_rules_json)), signal_period TEXT
-  CHECK(signal_period IS NULL OR signal_period IN ('D','W','M')),
+  CHECK(signal_period IS NULL OR signal_period IN ('D','W','M')), hot_universe_json TEXT
+  CHECK(hot_universe_json IS NULL OR json_valid(hot_universe_json)),
   PRIMARY KEY(strategy_id,version)
 ) STRICT;
 
@@ -686,6 +710,8 @@ CREATE INDEX candidates_by_result ON selection_candidate(run_id,decision);
 CREATE INDEX capability_latest ON capability_probe(connection_id,capability,probed_at_ms DESC);
 
 CREATE INDEX chart_annotation_instrument ON chart_annotation(instrument_id, created_at_ms, annotation_id);
+
+CREATE UNIQUE INDEX chart_annotation_origin_key ON chart_annotation(instrument_id,origin_key) WHERE origin_key IS NOT NULL;
 
 CREATE INDEX line_alert_by_day ON line_alert_event(trade_date DESC,created_at_ms DESC);
 
@@ -916,6 +942,20 @@ AND (OLD.price IS NOT NEW.price OR OLD.price_basis IS NOT NEW.price_basis OR OLD
  OR OLD.line_type IS NOT NEW.line_type OR OLD.alert_modes_json IS NOT NEW.alert_modes_json
  OR OLD.auto_watchlist IS NOT NEW.auto_watchlist OR OLD.revision IS NOT NEW.revision OR OLD.effective_business_date IS NOT NEW.effective_business_date)
 BEGIN INSERT INTO line_alert_rule_clock VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
+
+CREATE TRIGGER market_collection_file_identity_immutable BEFORE UPDATE ON market_storage_collection_file
+WHEN NEW.collection_id<>OLD.collection_id OR NEW.object_key<>OLD.object_key OR NEW.sha256<>OLD.sha256 OR NEW.byte_count<>OLD.byte_count OR OLD.status<>'planned'
+BEGIN SELECT RAISE(ABORT,'retain immutable market collection file receipt'); END;
+
+CREATE TRIGGER market_collection_file_retained BEFORE DELETE ON market_storage_collection_file
+BEGIN SELECT RAISE(ABORT,'retain market collection file history'); END;
+
+CREATE TRIGGER market_collection_identity_immutable BEFORE UPDATE ON market_storage_collection
+WHEN NEW.collection_id<>OLD.collection_id OR NEW.version<>OLD.version OR NEW.scope_json<>OLD.scope_json OR NEW.scope_sha256<>OLD.scope_sha256 OR NEW.created_at_ms<>OLD.created_at_ms OR OLD.status='completed'
+BEGIN SELECT RAISE(ABORT,'retain immutable market collection authorization'); END;
+
+CREATE TRIGGER market_collection_retained BEFORE DELETE ON market_storage_collection
+BEGIN SELECT RAISE(ABORT,'retain market collection history'); END;
 
 CREATE TRIGGER no_snapshot_id_replace BEFORE INSERT ON dataset_snapshot WHEN EXISTS(SELECT 1 FROM dataset_snapshot WHERE snapshot_id=NEW.snapshot_id) BEGIN SELECT RAISE(ABORT,'snapshot ID already exists; no replace'); END;
 

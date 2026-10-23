@@ -108,7 +108,7 @@ def hot_source(memberships,monkeypatch):
                 'raw_codes':[symbol[:6] for symbol in symbols],'ambiguous_code_rows':0,'quarantine':[],
                 'items':[{'instrument_id':symbol,'thscode':symbol,'date':observed,'last_price':prices[symbol]} for symbol in symbols]}
     document={'snapshot_id':'fixture-generation','annual_pools':{observed:record(observed,[a,b] if index in (2,18) else [b]) for index,observed in enumerate(calendar)}}
-    monkeypatch.setattr(market_supplement,'load_supplement',lambda _:deepcopy(document))
+    monkeypatch.setattr(market_supplement,'load_supplement',lambda _,**kwargs:deepcopy(document))
     def history(symbols,start=None,end=None):
         calls.append((set(symbols),start,end))
         return {symbol:[{'date':observed,'close':prices[symbol]} for observed in calendar if start<=observed<=end] for symbol in symbols}

@@ -16,6 +16,7 @@ from app.services.history_events import contexts_for_batch, prepare_shared, batc
 from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics
 from app.services import task_service as tasks
 from app.services.workspace_deletion import require_strategy_present,strategy_visibility
+from app.services import strategy_hot_universe as hot_universe
 ENGINE_VERSION="workspace-v8-bounded-history-events"
 
 
@@ -23,7 +24,8 @@ def stored_period(period):
     return {'period':'D' if period=='M' else period,'signal_period':period}
 
 
-def evaluator_for(definition,period,trade_rules=None):
+def evaluator_for(definition,period,trade_rules=None,hot_filter=None):
+    if hot_filter is not None:return 'workspace-v14-current-hot-universe'
     trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
     if any('higher_lows' in names(tree) for tree in trees):return 'workspace-v13-higher-lows-v1'
     if any(event.get('match')=='any' for tree in trees for event in history_nodes(tree)):
@@ -94,7 +96,7 @@ def strategy_view(c,sid):
     p=one(c,'SELECT * FROM tracking_policy_version WHERE strategy_id=? AND policy_version=?',(sid,r['current_policy_version']))
     latest=c.execute('SELECT run_id,business_date,status FROM selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1',(sid,)).fetchone()
     following,custom=active_policy_scope(c,sid)
-    return {**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'definition':obj(v['definition_json'],{}),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid)}
+    return {**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'definition':obj(v['definition_json'],{}),'hot_universe':obj(v.get('hot_universe_json')),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid)}
 
 def list_strategies(deleted=False,limit=None,offset=0):
     if not isinstance(deleted,bool) or (limit is not None and (isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=100)) or isinstance(offset,bool) or not isinstance(offset,int) or offset<0:fail('策略列表分页参数无效')
@@ -123,13 +125,14 @@ def create_strategy(payload,strategy_id=None):
     try:trade_rules=normalize_trade_rules(payload.get('trade_rules'))
     except ValueError as e:fail(str(e))
     policy=policy_normalized(payload.get('policy'))
+    hot_filter=hot_universe.normalize(payload.get('hot_universe'))
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         sid=strategy_id or new_id('strategy')
         from .workspace_purge import was_purged
         if was_purged(c,'strategy',sid):fail('此策略标识已永久删除，请使用新的策略标识',409)
         insert(c,'strategy',dict(strategy_id=sid,name=name,created_at_ms=now_ms()))
-        insert(c,'strategy_version',dict(strategy_id=sid,version=1,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),evaluator_version=evaluator_for(definition,period,trade_rules),recorded_at_ms=now_ms()))
+        insert(c,'strategy_version',dict(strategy_id=sid,version=1,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),hot_universe_json=js(hot_filter) if hot_filter else None,evaluator_version=evaluator_for(definition,period,trade_rules,hot_filter),recorded_at_ms=now_ms()))
         save_policy(c,sid,1,policy)
         c.execute('UPDATE strategy SET current_version=1,current_policy_version=1 WHERE strategy_id=?',(sid,))
         return strategy_view(c,sid)
@@ -150,9 +153,10 @@ def update_strategy(sid,payload):
         if names(definition)&{'close_above_entry_high','close_below_entry_low'}:fail('事件日高低价属于每轮入池跟踪基准，不能作为选股条件')
         try:trade_rules=normalize_trade_rules(payload.get('trade_rules',old['trade_rules']))
         except ValueError as e:fail(str(e))
-        if 'definition' in payload or 'period' in payload or 'trade_rules' in payload:
+        hot_filter=hot_universe.normalize(payload.get('hot_universe',old['hot_universe']))
+        if 'definition' in payload or 'period' in payload or 'trade_rules' in payload or 'hot_universe' in payload:
             version=old['version']+1
-            insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),evaluator_version=evaluator_for(definition,period,trade_rules),recorded_at_ms=now_ms()))
+            insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),hot_universe_json=js(hot_filter) if hot_filter else None,evaluator_version=evaluator_for(definition,period,trade_rules,hot_filter),recorded_at_ms=now_ms()))
             c.execute('UPDATE strategy SET current_version=? WHERE strategy_id=?',(version,sid))
         if 'policy' in payload:
             following,custom=active_policy_scope(c,sid)
@@ -172,10 +176,10 @@ def ensure_evaluator_version(c,sid):
     require_strategy_present(c,sid)
     st=strategy_view(c,sid)
     old=one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,st['version']))
-    desired=evaluator_for(st['definition'],st['period'],st.get('trade_rules'))
+    desired=evaluator_for(st['definition'],st['period'],st.get('trade_rules'),st.get('hot_universe'))
     if old['evaluator_version']!=desired:
         version=c.execute('SELECT max(version)+1 FROM strategy_version WHERE strategy_id=?',(sid,)).fetchone()[0]
-        insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(st['period']),definition_json=old['definition_json'],definition_sha256=old['definition_sha256'],trade_rules_json=old['trade_rules_json'],evaluator_version=desired,recorded_at_ms=now_ms()))
+        insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(st['period']),definition_json=old['definition_json'],definition_sha256=old['definition_sha256'],trade_rules_json=old['trade_rules_json'],hot_universe_json=old.get('hot_universe_json'),evaluator_version=desired,recorded_at_ms=now_ms()))
         c.execute('UPDATE strategy SET current_version=? WHERE strategy_id=?',(version,sid))
     return strategy_view(c,sid)
 
@@ -247,6 +251,8 @@ def run_strategy(sid,payload=None,*,queued_job=None):
         day=current(c);st=ensure_evaluator_version(c,sid)
         if st['archived']:fail('策略已归档，不能运行')
         deps,primary=freeze_inputs(c);topics=topic_map(c,day);topic_dependencies_=topic_dependencies(st['definition']);complete_topics=complete_topic_ids(c,topic_dependencies_)
+        from .strategy_batches import _topic_revision_signature
+        membership_signature=_topic_revision_signature(c) if st.get('hot_universe') else None
         if queued_job:
             from .strategy_batches import validate_item
             validate_item(c,queued_job,st,day,deps,primary)
@@ -267,6 +273,11 @@ def run_strategy(sid,payload=None,*,queued_job=None):
     try:
         report('准备个股策略数据',0,'读取已发布行情、交易日历和策略依赖')
         market=get_market();calendar=market.calendar();master=identities(day);result=[];required=names(st['definition'])
+        hot_evidence=None;hot_by_stock={}
+        if st.get('hot_universe'):
+            report('核验近期热点',0,'按留存收盘涨停及当前成员核验窗口排名；缺口保持待核验')
+            hot_evidence,hot_by_stock=hot_universe.freeze(st['hot_universe'],expected_day=day)
+            check_task()
         current_required=current_names(st['definition']);event_nodes=history_nodes(st['definition'])
         # Structures require exact calendar-defined OHLC windows; the dated
         # display panel intentionally does not carry these strict summaries.
@@ -315,7 +326,9 @@ def run_strategy(sid,payload=None,*,queued_job=None):
                 if 'limit_up_1y' in required:ms.update(past_limit_up_metrics(count_values[ident]))
             elif limit_evidence:ms.update(limit_evidence.metrics(ident,day,calendar,limit_quotes.get(ident,{})))
             context=event_contexts.get(ident)
-            check=evaluate(st['definition'],ms,context.at(day) if context else None);decision='matched' if check['result'] is True else 'unmatched' if check['result'] is False else 'unknown'
+            check=evaluate(st['definition'],ms,context.at(day) if context else None)
+            if hot_evidence is not None:check=hot_universe.combine(check,ident,hot_evidence,hot_by_stock)
+            decision='matched' if check['result'] is True else 'unmatched' if check['result'] is False else 'unknown'
             entry_close=ms.get('close')
             if st['period'] in ('W','M'):
                 daily=next((bar for bar in reversed(batch_bars.get(ident,[])) if str(bar.get('date',bar.get('trade_date','')))[:10]==day),None)
@@ -333,7 +346,11 @@ def run_strategy(sid,payload=None,*,queued_job=None):
             check_task(c)
             if current(c)!=day:fail('业务日已更新，请重新运行策略。',409)
             if freeze_inputs(c)!=(deps,primary):fail('行情或补充数据代际已更新，本次未保存混合来源结果，请重新运行策略。',409)
-            insert(c,'selection_run',dict(run_id=rid,job_id=job_id,strategy_id=sid,strategy_version=st['version'],business_date=day,primary_snapshot_id=primary,input_snapshots_json=js(deps),input_sha256=digest([deps,st['definition'],day]),status='running',universe_definition_json=js({'scope':'currently_imported_stock_master','count':len(result),'survivorship_warning':True,'candidate_storage_contract':'sparse-nonmatches-v1'}),created_at_ms=now_ms()))
+            if membership_signature is not None and _topic_revision_signature(c)!=membership_signature:fail('本地题材或成员已变化，本次未保存混合热点范围；请重新运行策略。',409)
+            universe_definition={'scope':'currently_imported_stock_master','count':len(result),'survivorship_warning':True,'candidate_storage_contract':'sparse-nonmatches-v1'}
+            if hot_evidence is not None:universe_definition['hot_universe']=hot_evidence
+            signature=[deps,st['definition'],day]+([hot_evidence] if hot_evidence is not None else [])
+            insert(c,'selection_run',dict(run_id=rid,job_id=job_id,strategy_id=sid,strategy_version=st['version'],business_date=day,primary_snapshot_id=primary,input_snapshots_json=js(deps),input_sha256=digest(signature),status='running',universe_definition_json=js(universe_definition),created_at_ms=now_ms()))
             for row in result:insert(c,'selection_candidate',row)
             c.execute("UPDATE selection_run SET status='completed',completed_at_ms=? WHERE run_id=?",(now_ms(),rid))
             for snap in set(deps.values()):pin(c,snap,'selection',rid)
@@ -352,7 +369,7 @@ def get_run(rid,decision=None):
     with connect() as c:
         run=one(c,'SELECT r.*,s.name strategy_name FROM selection_run r JOIN strategy s USING(strategy_id) WHERE run_id=?',(rid,),'策略运行不存在')
         allrows=rows(c,'SELECT * FROM selection_candidate WHERE run_id=? ORDER BY decision,instrument_id',(rid,));master=identities(run['business_date'])
-        return {k:v for k,v in run.items() if not k.endswith('_json')}|{'input_snapshots':obj(run['input_snapshots_json'],{}),'matched_count':sum(r['decision']=='matched' for r in allrows),'unmatched_count':sum(r['decision']=='unmatched' for r in allrows),'unknown_count':sum(r['decision']=='unknown' for r in allrows),'items':[_candidate(r,master) for r in allrows if decision is None or r['decision']==decision]}
+        return {k:v for k,v in run.items() if not k.endswith('_json')}|{'input_snapshots':obj(run['input_snapshots_json'],{}),'universe_definition':obj(run['universe_definition_json'],{}),'matched_count':sum(r['decision']=='matched' for r in allrows),'unmatched_count':sum(r['decision']=='unmatched' for r in allrows),'unknown_count':sum(r['decision']=='unknown' for r in allrows),'items':[_candidate(r,master) for r in allrows if decision is None or r['decision']==decision]}
 
 def list_runs(sid=None,limit=50):
     with connect() as c:

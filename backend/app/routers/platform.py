@@ -140,10 +140,15 @@ def configure(source_id:str,payload:dict=Body(...)):return source_service.config
 def verify(source_id:str):return source_service.verify(source_id)
 
 @router.get('/tasks')
-def tasks(limit:int=Query(50,ge=1,le=200)):return task_service.list_tasks(limit)
+def tasks(limit:int=Query(50,ge=1,le=200),summary:bool=False):return task_service.list_tasks(limit,summary=summary)
 
 @router.get('/tasks/activity')
 def task_activity():return task_service.task_activity()
+
+@router.get('/sync/session')
+def sync_session(task_id:str|None=Query(None,max_length=200),request_key:str|None=Query(None,max_length=200)):
+    from app.services.sync_progress import session
+    return json_clean(session(task_id=task_id,request_key=request_key))
 
 @router.get('/tasks/{task_id}')
 def task(task_id:str,after_seq:int=Query(0,ge=0)):

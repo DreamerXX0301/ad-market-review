@@ -90,6 +90,9 @@ def availability(market,strategy,exit_ma=0):
     # Current-day limit predicates retain their existing backtest restriction.
     if 'limit_up' not in current_names(dependencies):blocked.discard('limit_up')
     reason='；'.join(UNSUPPORTED[f] for f in sorted(blocked))
+    if strategy.get('hot_universe') is not None:
+        from app.services.strategy_hot_universe import HISTORICAL_REASON
+        reason='；'.join(value for value in (reason,HISTORICAL_REASON) if value)
     universe=universe_availability({'all':[ast,rules['entry']]} if rules['entry'] is not None else ast)
     reason='；'.join(value for value in (reason,universe['reason']) if value)
     warnings=list(WARNINGS)
@@ -137,6 +140,9 @@ def availability(market,strategy,exit_ma=0):
 
 def prepare(market,strategy,start,end,progress=None,exit_ma=0):
     """Explicit ex-post restricted sample, disclosed in report; stream per symbol."""
+    if strategy.get('hot_universe') is not None:
+        from app.services.strategy_hot_universe import HISTORICAL_REASON
+        raise ValueError(HISTORICAL_REASON)
     cal=market.calendar();dates=[d for d in cal if start<=d<=end];expected=set(dates)
     master={r['instrument_id']:r for r in market.instruments(limit=10000)}
     excluded=defaultdict(int);signals=defaultdict(list);quotes=defaultdict(dict);signal_rows=[];eligible=[];unknown=0;evaluated=0

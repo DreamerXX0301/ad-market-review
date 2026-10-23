@@ -10,6 +10,7 @@ import json
 import tempfile
 
 import duckdb
+from app.analytics.market_storage import descriptor_path, parquet_input
 
 BASIS = 'five-prior-unique-valid-traded-dates'
 SCOPE = '仅梯队20%制度展示的年龄下界；不补写上市日期，不用于回测或交易风控'
@@ -36,7 +37,7 @@ def quote_age_evidence(market, status, symbols, calendar, observed):
         if not folder.is_relative_to(base) or Path(status.get('path','')).resolve()!=folder:return result
         manifest=json.loads((folder/'manifest.json').read_text())
         if manifest.get('summary',{}).get('snapshot_id')!=snapshot:return result
-        raw=folder/'daily.parquet'
+        raw=descriptor_path(folder,'daily.parquet')
         if not raw.is_file():return result
         with tempfile.TemporaryDirectory(prefix='shixu-ladder-age-') as temporary:
             con=duckdb.connect(':memory:')
@@ -59,7 +60,7 @@ def quote_age_evidence(market, status, symbols, calendar, observed):
                         SELECT instrument_id,date,row_number() OVER(PARTITION BY instrument_id ORDER BY date) AS position
                         FROM per_day WHERE row_count=1 AND is_valid
                     ) SELECT instrument_id,list(date ORDER BY date) AS dates
-                        FROM ranked WHERE position<=5 GROUP BY instrument_id''',[str(raw),batch,prior,observed]).fetchall()
+                        FROM ranked WHERE position<=5 GROUP BY instrument_id''',[parquet_input(raw),batch,prior,observed]).fetchall()
                     for symbol,dates in rows:
                         ready=len(dates)==5
                         result[symbol]={**unknown(symbol,'观察日前未能确认五个不同有效成交日'),

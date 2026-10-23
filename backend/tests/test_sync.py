@@ -120,6 +120,12 @@ def test_same_day_is_no_change_and_new_day_merges_ten_day_increment(transport,mo
     repeat=start_job('increment',target='2026-10-19');result=sync.execute_sync(repeat)
     assert result['status']=='no_change' and get_market().status()['snapshot_id']==first
     assert tasks.task_view(repeat)['status']=='no_change'
+    assert result['coverage']['derived_file_written'] is False
+    repeated_root=sync.raw_dir()/'sync'/repeat
+    assert not (repeated_root/'year.parquet').exists()
+    assert not (repeated_root/'raw/fuyao_stock_master.json').exists()
+    assert not (repeated_root/'raw/fuyao_calendar_year.json').exists()
+    assert (repeated_root/'accepted/daily-k-10d.parquet').is_file()
     monkeypatch.setattr(sync,'now_china',lambda:datetime(2026,10,20,18,tzinfo=sync.CHINA))
     result=sync.execute_sync(start_job('increment'))
     assert get_market().status()['data_end']=='2026-10-20'
@@ -248,8 +254,12 @@ def test_cancel_during_catalog_registration_keeps_old_sqlite_generation(transpor
     with connect() as c:assert c.execute('SELECT business_date FROM business_clock WHERE singleton=1').fetchone()[0]=='2026-10-19'
 
 
-def test_bundle_external_members_kind_and_unknown_are_not_empty_complete(transport,tmp_path):
+def test_bundle_external_members_kind_and_unknown_are_not_empty_complete(transport,tmp_path,monkeypatch):
     # A real sync output supplies schemas; this fixture tests only bundle metadata semantics.
+    # Keep this explicit offline import fixture; post-publication derivative
+    # release is exercised separately, including original-response protection.
+    from app.services import market_derived_cleanup
+    monkeypatch.setattr(market_derived_cleanup,'release_after_publication',lambda *args,**kwargs:{'status':'fixture-retained'})
     sync.execute_sync(start_job())
     # Locate the immutable bundle from the completed manual job.
     folders=list((sync.raw_dir()/'sync').iterdir());folder=folders[0]
@@ -299,6 +309,8 @@ def test_pool_verified_identity_wrong_trade_date_price_blocks_publication(transp
 
 def test_import_flushes_artifacts_before_rename_and_rejects_corrupt_reuse(transport,monkeypatch):
     from app.analytics import market as market_module
+    from app.services import market_derived_cleanup
+    monkeypatch.setattr(market_derived_cleanup,'release_after_publication',lambda *args,**kwargs:{'status':'fixture-retained'})
     events=[];original_file=market_module.fsync_file;original_directory=market_module.fsync_directory;original_replace=market_module.os.replace
     def file_sync(path):events.append(('file',Path(path)));return original_file(path)
     def directory_sync(path):events.append(('directory',Path(path)));return original_directory(path)
@@ -311,7 +323,7 @@ def test_import_flushes_artifacts_before_rename_and_rejects_corrupt_reuse(transp
     sync.execute_sync(start_job())
     status=get_market().status();final=Path(status['path']);stage=final.parent/('.staging-'+final.name)
     rename_index=events.index(('rename',stage))
-    assert {p.name for kind,p in events[:rename_index] if kind=='file' and p.parent==stage}=={'raw-daily.parquet','daily.parquet','reference.json','corporate-actions.parquet','manifest.json'}
+    assert {p.name for kind,p in events[:rename_index] if kind=='file' and p.parent==stage}=={'raw-daily.manifest.json','daily.manifest.json','reference.json','corporate-actions.parquet','manifest.json'}
     assert events[rename_index-1]==('directory',stage)
     assert events[rename_index+1]==('directory',final.parent)
     head_index=events.index(('file',final.parent/'market-head.json.tmp'))

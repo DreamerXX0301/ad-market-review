@@ -115,7 +115,7 @@ def test_uninitialised_missing_directory_is_known_empty(tmp_path):
     result = storage.published_storage(tmp_path / 'not-created', None)
     assert result['complete'] and result['logical_bytes'] == result['allocated_bytes'] == 0
     assert result['file_count'] == result['market_generation_count'] == 0
-    assert len(result['categories']) == 5
+    assert len(result['categories']) == 6
 
 
 @pytest.mark.parametrize('root_kind', ['missing', 'file', 'symlink'])
@@ -220,3 +220,12 @@ def test_bootstrap_and_data_status_share_compatible_inventory_without_tasks(isol
     assert status['storage_accounting']['complete']
     with connect() as connection:
         assert connection.execute('SELECT count(*) FROM job').fetchone()[0] == jobs_before
+
+
+def test_shared_market_objects_are_counted_once_outside_generation_totals(tmp_path):
+    root=tmp_path/'published';path=root/'market-objects'/'daily'/'ab'/'fixture.parquet';path.parent.mkdir(parents=True);path.write_bytes(b'123456789')
+    result=storage.published_storage(root,None)
+    rows={row['key']:row for row in result['categories']}
+    assert rows['shared_market']['logical_bytes']==9
+    assert rows['current_market']['logical_bytes']==0 and rows['old_market']['logical_bytes']==0
+    assert result['logical_bytes']==9 and result['file_count']==1

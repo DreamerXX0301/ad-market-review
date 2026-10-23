@@ -11,6 +11,14 @@ export type ChartLine = {
   alert_modes?: string[];
   auto_watchlist?: boolean;
   revision?: number;
+  origin?: {
+    algorithm?: string;
+    period?: string;
+    as_of?: string;
+    snapshot_id?: string;
+    manual_override?: boolean;
+    evidence?: Array<{ date: string; confirmed_on: string; price: number }>;
+  };
 };
 export const lineTypeLabels: Record<ChartLineType, string> = {
   reference: "参考线",
@@ -63,6 +71,43 @@ export function newLineSettings(line_type: ChartLineType = "support") {
         : [...lineTypeModes[line_type]],
     auto_watchlist: line_type !== "reference",
   };
+}
+/** Algorithmic suggestions and all index lines are deliberately unarmed. */
+export function quietLineSettings(line_type: ChartLineType = "support") {
+  return { line_type, alert_modes: [] as string[], auto_watchlist: false };
+}
+export function levelOriginLabel(line: Partial<ChartLine>) {
+  const origin = line.origin;
+  if (!origin?.algorithm) return "手动划线";
+  const period =
+    ({ D: "日K", W: "完整周K", M: "完整月K" } as Record<string, string>)[
+      origin.period || ""
+    ] || origin.period;
+  return `${origin.manual_override ? "已手动修改 · " : ""}${period}候选 · 观察 ${origin.as_of} · ${origin.evidence?.length || 0}处历史分型`;
+}
+/** Never flash a candidate from the previous stock, period or generation. */
+export function levelPreviewMatchesChart(
+  preview: Record<string, any> | null,
+  chart: Record<string, any> | null,
+  instrumentId: string,
+) {
+  const parameters = preview?.parameters;
+  const scope = annotationScope(chart);
+  return (
+    !!preview &&
+    !!chart &&
+    !!scope &&
+    typeof chart.snapshot_id === "string" &&
+    !!chart.snapshot_id &&
+    (chart.instrument?.instrument_id || chart.instrument?.thscode) ===
+      instrumentId &&
+    preview.instrument_id === instrumentId &&
+    parameters?.snapshot_id === chart.snapshot_id &&
+    parameters?.as_of === chart.as_of &&
+    parameters?.period === chart.period &&
+    parameters?.price_basis ===
+      (scope.price_basis === "none" ? "none" : "forward")
+  );
 }
 export const annotationColors: Record<string, string> = {
   blue: "#79a9ff",

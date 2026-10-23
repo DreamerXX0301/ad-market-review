@@ -54,7 +54,7 @@ def _members(c,topic,day=None,catalog=None,overrides=None):
         else:members.discard(ident);origins.pop(ident,None)
     return members,origins
 
-def topic_view(c,r,with_members=False,catalog=None):
+def topic_view(c,r,with_members=False,catalog=None,known_master=None):
     catalog=_catalog_map() if catalog is None else catalog
     meta=catalog.get(r.get('provider_topic_key'),{})
     result={k:v for k,v in r.items() if k!='aliases_json'};result['aliases']=obj(r.get('aliases_json'),[])
@@ -63,7 +63,7 @@ def topic_view(c,r,with_members=False,catalog=None):
     result['observed_member_count']=len(members)
     result['member_count']=len(members) if result['members_complete'] else None
     if with_members:
-        day=current(c);master=identities(day);provider=_provider_members(r,catalog)
+        day=current(c);master=known_master if known_master is not None else identities(day);provider=_provider_members(r,catalog)
         latest={v['instrument_id']:v for v in rows(c,'SELECT * FROM topic_override WHERE topic_id=? AND effective_business_date<=? ORDER BY effective_business_date,recorded_at_ms,rowid',(r['topic_id'],day))}
         def member(ident,action):
             override=latest.get(ident,{}).get('action')
@@ -87,14 +87,22 @@ def get_topic(topic_id):
 def create_topic(payload):
     name=str(payload.get('name','')).strip()
     if not name or len(name)>100:fail('题材名称需要1至100字')
+    symbols=payload.get('instrument_ids',[])
+    if not isinstance(symbols,list) or len(symbols)>100 or any(not isinstance(symbol,str) for symbol in symbols):fail('instrument_ids需要最多100项的股票代码数组')
+    # File-backed source/master reads precede the short SQLite mutation. The
+    # date/head guard refuses a concurrent publication instead of mixing eras.
+    from .topic_members import _head,_guard
+    with connect() as c:day=current(c);head=_head(c)
+    master=identities(day);catalog=_catalog_map()
     with connect() as c:
         c.execute("BEGIN IMMEDIATE")
-        day=current(c);tid=new_id('topic');aliases=payload.get('aliases',[])
+        _guard(c,day,head)
+        tid=new_id('topic');aliases=payload.get('aliases',[])
         if not isinstance(aliases,list) or any(not isinstance(x,str) for x in aliases):fail('aliases必须为字符串数组')
         insert(c,'topic',dict(topic_id=tid,origin='manual',created_at_ms=now_ms()))
         insert(c,'topic_revision',dict(topic_id=tid,revision=1,name=name,description=str(payload.get('description',''))[:2000],aliases_json=js(aliases),archived=0,effective_business_date=day,recorded_at_ms=now_ms()))
-        for ident in payload.get('instrument_ids',[]):_add_member(c,tid,ident,'include','新建题材',day)
-        return topic_view(c,_topic(c,tid),True)
+        for ident in dict.fromkeys(symbol.upper() for symbol in symbols):_add_member(c,tid,ident,'include','新建题材',day,known_ids=master)
+        return topic_view(c,_topic(c,tid),True,catalog=catalog,known_master=master)
 
 def update_topic(topic_id,payload):
     with connect() as c:
@@ -114,12 +122,16 @@ def _add_member(c,topic_id,ident,action,reason,day,known_ids=None):
     insert(c,'topic_override',dict(override_id=new_id('override'),topic_id=topic_id,instrument_id=ident,action=action,effective_business_date=day,recorded_at_ms=now_ms(),supersedes_override_id=prev[0] if prev else None,reason=str(reason or '用户手动修改')[:500]))
 
 def add_member(topic_id,payload):
+    from .topic_members import _head,_guard
+    with connect() as c:day=current(c);head=_head(c)
+    master=identities(day);catalog=_catalog_map()
     with connect() as c:
         c.execute("BEGIN IMMEDIATE")
+        _guard(c,day,head)
         topic=_topic(c,topic_id)
         if topic['archived']:fail('题材已归档，请先恢复')
-        _add_member(c,topic_id,payload.get('instrument_id',''),payload.get('action','include'),payload.get('reason'),current(c))
-        return topic_view(c,_topic(c,topic_id),True)
+        _add_member(c,topic_id,payload.get('instrument_id',''),payload.get('action','include'),payload.get('reason'),day,known_ids=master)
+        return topic_view(c,_topic(c,topic_id),True,catalog=catalog,known_master=master)
 
 def topic_history(topic_id):
     with connect() as c:

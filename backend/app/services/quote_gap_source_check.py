@@ -198,6 +198,7 @@ def execute_check(job):
     stocks={row['instrument_id']:row for row in diagnosis['stocks']};identifiers=parameters['instrument_ids']
     if any(symbol not in stocks for symbol in identifiers):raise ValueError('来源核验范围不属于当前缺口清单')
     results=_accepted(job);adapter=source_service.client('fuyao')
+    from app.analytics.market_storage import parquet_input
     daily=next(row['path'] for row in context['files'] if row['role']=='daily.parquet')
     con=duckdb.connect(':memory:')
     try:
@@ -209,7 +210,7 @@ def execute_check(job):
             if symbol not in quote_cache:
                 batch=[value for value in identifiers[position:position+32] if value not in results]
                 quote_cache={value:{} for value in batch}
-                for row in con.execute('SELECT instrument_id,date,open,high,low,close,volume,amount FROM read_parquet(?) WHERE instrument_id IN (SELECT unnest(?))',[str(daily),batch]).fetchall():
+                for row in con.execute('SELECT instrument_id,date,open,high,low,close,volume,amount FROM read_parquet(?) WHERE instrument_id IN (SELECT unnest(?))',[parquet_input(daily),batch]).fetchall():
                     quote_cache[row[0]][row[1]]=dict(zip(('open','high','low','close','volume','amount'),row[2:]))
             stock=stocks[symbol];dates=sorted({day for episode in stock['episodes'] for day in episode['dates']})
             windows=request_windows(dates,context['reference']['calendar'])

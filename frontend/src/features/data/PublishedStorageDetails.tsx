@@ -35,6 +35,35 @@ export default function PublishedStorageDetails({
           </p>
         )}
         {view.reason && <p className="muted">{view.reason}</p>}
+        <div className="data-storage-scope">
+          <p>主行情存储：{view.layout}。</p>
+          {view.objectWrite && (
+            <p>
+              最近一次主行情对象写入：新增 {view.objectWrite.added.gb}，复用{" "}
+              {view.objectWrite.reused.gb}
+              ；不包含业务库、下载原包、补充资料与备份。
+              这是本代构建用量；首次转换包含全量成本，不代表每日增长。
+            </p>
+          )}
+          {view.retention && (
+            <>
+              <p>
+                活动窗口：{view.retention.activeBegin} →{" "}
+                {view.retention.activeEnd}；实际报价保留：
+                {view.retention.physicalBegin || "待核验"} →{" "}
+                {view.retention.physicalEnd || "待核验"}。
+              </p>
+              <p>
+                {view.retention.protectedSeeds
+                  ? "窗口外的递推指标种子与历史引用独立保护。"
+                  : "窗口外历史引用独立核验。"}
+                {view.retention.automaticCollection
+                  ? "已启用按引用回收。"
+                  : "自动物理回收未开启；维护清理先核验引用并预览，不按日期盲删。"}
+              </p>
+            </>
+          )}
+        </div>
         {view.valid && (
           <div className="data-storage-table-wrap">
             <table>
@@ -43,6 +72,7 @@ export default function PublishedStorageDetails({
                   <th scope="col">组成</th>
                   <th scope="col">逻辑大小</th>
                   <th scope="col">文件数</th>
+                  <th scope="col">占比</th>
                 </tr>
               </thead>
               <tbody>
@@ -61,6 +91,7 @@ export default function PublishedStorageDetails({
                       </small>
                     </td>
                     <td>{row.files}</td>
+                    <td>{row.percentage}</td>
                   </tr>
                 ))}
               </tbody>
@@ -83,7 +114,9 @@ export default function PublishedStorageDetails({
           {view.omitted.length > 0 && (
             <p>本次已排除：{view.omitted.join("、")}。</p>
           )}
-          <p>旧代际可能仍被历史事件、任务或报告引用，本页仅展示构成。</p>
+          <p>
+            共享行情对象按文件计量一次，由多个版本清单共同引用。旧代际可能仍被历史事件、任务或报告引用，本页仅展示构成，不将其直接当作可清理空间。
+          </p>
         </div>
       </div>
     </details>
