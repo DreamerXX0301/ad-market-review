@@ -37,6 +37,7 @@ async function moduleUrl(path) {
   const url = encoded(source); modules.set(path.href, url); return url;
 }
 const { TechnicalPresetControls } = await import(await moduleUrl(new URL("./RuleTreeEditor.tsx", import.meta.url)));
+const { default: Conditions, conditionsOf } = await import(await moduleUrl(new URL("./Conditions.tsx", import.meta.url)));
 const fields = ["change_pct", "macd_cross", "macd_dead_cross", "macd_dif", "macd_dea", "kd_cross", "kd_dead_cross", "kdj_k", "kdj_d"].map(field => ({
   field, type: field.endsWith("cross") ? "boolean" : "number",
   operators: ["==", "!=", ">", ">=", "<", "<="], supported_periods: ["D", "W", "M"], historical_event_supported: true,
@@ -111,3 +112,45 @@ for (const period of ["D", "W", "M"]) {
   assert.deepEqual(props.value.any.at(-1).all.map(leaf => [leaf.field, leaf.op, leaf.value, leaf.period]), [["kd_cross", "==", true, period], ["kdj_k", ">=", 30, period], ["kdj_k", "<=", 80, period]]);
 }
 console.log("quick condition workflow: collapsed by default, no preselection, selection/cancel/parameters do not mutate, explicit atomic insertion and scoped feedback across D/W/M passed");
+
+const volumeFields = [
+  ...["volume_expand", "volume_shrink"].map(field => ({ field, type: "boolean", hidden_in_builder: true, operators: ["==", "!="], supported_periods: ["D", "W", "M"], historical_event_supported: true })),
+  { field: "volume_ratio", type: "number", operators: [">", ">="], supported_periods: ["D", "W", "M"] },
+  { field: "volume", type: "number", operators: [">", "=="] },
+];
+for (const period of ["D", "W", "M"]) {
+  slots.splice(0); let inserted;
+  const old = Object.freeze({ all: Object.freeze([{ field: "volume_ratio", op: ">=", value: 3, period }]) });
+  const snapshot = JSON.stringify(old);
+  const props = { value: old, rootValue: old, fields: volumeFields, period, depth: 0, scope: "selection", onChange(next) { inserted = next; } };
+  const render = () => { cursor = 0; return TechnicalPresetControls(props); };
+  let view = render();
+  button(view, "快捷添加条件").props.onClick(); view = render();
+  assert.equal(picker(view).props.value, "");
+  for (const id of ["volume-expand", "volume-shrink"]) {
+    picker(view).props.onChange({ target: { value: id } }); view = render();
+    assert.equal(inserted, undefined, "selection is not saved or added automatically");
+    assert.equal(nodes(view).filter(node => node.type === "input").length, 0, "simple volume change never asks for a multiple");
+    assert.match(text(view), /相等不算/);
+    assert.match(text(view), /前一市场交易日.*前一完整周\/月/);
+  }
+  button(view, "加入条件").props.onClick();
+  assert.deepEqual(inserted.all.at(-1), { field: "volume_shrink", op: "==", value: true, period });
+  assert.equal(JSON.stringify(old), snapshot, "existing volume multiple remains untouched");
+  for (const field of ["volume_expand", "volume_shrink"]) {
+    const condition = Object.freeze({ field, op: "==", value: true, period });
+    cursor = 0;
+    const form = Conditions({ conditions: [condition], onChange() { throw new Error("render must not rewrite saved rules"); }, fields: volumeFields, period, showAddButton: false });
+    const options = nodes(form).filter(node => node.type === "option");
+    assert(options.some(option => option.props.value === "volume_expand"));
+    assert(options.some(option => option.props.value === "volume_shrink"));
+    assert(options.some(option => option.props.value === "volume_ratio"), "custom multiples remain available");
+    assert.equal(nodes(form).filter(node => node.type === "input").length, 0, "saved boolean remains a yes/no editor");
+    assert.deepEqual(conditionsOf({ all: [condition] }), [condition], "editing does not convert the boolean to numeric input or lose its period");
+    assert.match(text(form), /相等时两者均为“否”/);
+  }
+  cursor = 0;
+  const mistaken = Conditions({ conditions: [{ field: "volume", op: ">", right_field: "volume" }], onChange() {}, fields: volumeFields, period, showAddButton: false });
+  assert.match(text(mistaken), /同一周期的数据，不是昨天/);
+}
+console.log("volume conditions: real hidden API fields exposed, D/W/M simple yes/no and explicit shortcut insertion, no multiplier input, existing rules unchanged and same-field warning passed");

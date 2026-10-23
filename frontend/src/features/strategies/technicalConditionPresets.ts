@@ -2,6 +2,8 @@ import type { Row } from "../../lib/api";
 import type { RuleNode } from "./historicalRules";
 
 export type TechnicalPresetId =
+  | "volume-expand"
+  | "volume-shrink"
   | "macd-above-zero"
   | "kd-low-cross"
   | "kd-above"
@@ -18,6 +20,20 @@ export const technicalConditionPresets: {
   description: string;
   requirements: [string, string][];
 }[] = [
+  {
+    id: "volume-expand",
+    label: "成交量大于前一周期（放量）",
+    description:
+      "当期成交量严格大于前一可比周期，相等不算放量，无需填写倍数。日K比较前一市场交易日，周/月K比较前一完整周/月；缺报价或零量停牌时待核验。若要至少1.5倍，另选成交量倍数条件。",
+    requirements: [["volume_expand", "=="]],
+  },
+  {
+    id: "volume-shrink",
+    label: "成交量小于前一周期（缩量）",
+    description:
+      "当期成交量严格小于前一可比周期，相等不算缩量，无需填写倍数。日K比较前一市场交易日，周/月K比较前一完整周/月；不放量不等于缩量，缺报价或零量停牌时待核验。",
+    requirements: [["volume_shrink", "=="]],
+  },
   {
     id: "macd-above-zero",
     label: "MACD 水上金叉",
@@ -166,6 +182,14 @@ export function createTechnicalPreset(
 ): RuleNode {
   if (!["D", "W", "M"].includes(period))
     throw new Error("请选择日K、完整周K或完整月K");
+  if (id === "volume-expand" || id === "volume-shrink") {
+    return {
+      field: id === "volume-expand" ? "volume_expand" : "volume_shrink",
+      op: "==",
+      value: true,
+      period,
+    };
+  }
   if (id === "macd-above-zero")
     return {
       all: [

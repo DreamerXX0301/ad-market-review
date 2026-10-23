@@ -61,15 +61,21 @@ export function metricCycleLabel(
 ): string {
   const cycle = period === "M" ? "月" : period === "W" ? "周" : "日";
   if (field === "volume_ratio")
-    return cycle === "日" ? "较昨日成交量倍数" : `较前一完整${cycle}成交量倍数`;
+    return cycle === "日"
+      ? "较前一交易日成交量倍数"
+      : `较前一完整${cycle}成交量倍数`;
   if (field === "change_pct")
     return cycle === "日" ? "当日涨跌幅 (%)" : `完整${cycle}涨跌幅 (%)`;
   const cross = /^cross_above_ma(\d+)$/.exec(field);
   if (cross)
     return `${cycle === "日" ? "今日" : `当${cycle}`}收盘上穿 MA${cross[1]}`;
   if (field === "volume_expand")
-    return cycle === "日" ? "今日放量" : `当完整${cycle}放量`;
+    return cycle === "日"
+      ? "成交量大于前一交易日（放量）"
+      : `成交量大于前一完整${cycle}（放量）`;
   if (field === "volume_shrink")
-    return cycle === "日" ? "今日缩量" : `当完整${cycle}缩量`;
+    return cycle === "日"
+      ? "成交量小于前一交易日（缩量）"
+      : `成交量小于前一完整${cycle}（缩量）`;
   return fallback;
 }

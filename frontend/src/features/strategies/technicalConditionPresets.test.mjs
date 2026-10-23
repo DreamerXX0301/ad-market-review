@@ -25,6 +25,10 @@ const {
 );
 
 for (const period of ["D", "W", "M"]) {
+  for (const [id, field] of [["volume-expand", "volume_expand"], ["volume-shrink", "volume_shrink"]]) {
+    assert.deepEqual(createTechnicalPreset(id, period), { field, op: "==", value: true, period });
+    assert.deepEqual(availableTechnicalPresets([{ field, operators: ["=="], hidden_in_builder: true, supported_periods: [period] }], period).map(p => p.id), [id]);
+  }
   assert.deepEqual(createTechnicalPreset("macd-above-zero", period), {
     all: [
       { field: "macd_cross", op: "==", value: true, period },
