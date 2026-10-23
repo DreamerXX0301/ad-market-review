@@ -42,12 +42,14 @@ const { defaultChartWindow, projectEventBaseline } =
   await moduleAt("./chartDisplay.ts");
 const {
   CHART_PREFERENCES_KEY,
+  PREVIOUS_CHART_PREFERENCES_KEY,
   LEGACY_CHART_PREFERENCES_KEY,
   effectiveChartMas,
   normalizeChartPreferences,
   parseChartPreferences,
   createChartPreferenceStore,
   effectiveChartPriceBasis,
+  effectiveChartWaves,
 } = await moduleAt("./chartPreferences.ts");
 const { amount, compactQuantity, percent } = await moduleAt("../lib/format.ts");
 const { trackingTopicMatch, matchesTrackingText, trackingProgress } =
@@ -554,12 +556,16 @@ assert.deepEqual(
     showLimits: false,
   }),
   {
-    version: 2,
+    version: 3,
     stockMas: [5, 10, 20, 30],
     indexMas: [5, 250],
     stockPriceBasis: "forward",
     showLimits: false,
     showEventBaseline: true,
+    stockShowWaves: true,
+    indexShowWaves: true,
+    stockWaveMode: "turning",
+    indexWaveMode: "latest",
   },
 );
 assert.deepEqual(
@@ -575,7 +581,7 @@ let rawPreferences = null,
 const storage = {
   getItem(key) {
     assert.ok(
-      [CHART_PREFERENCES_KEY, LEGACY_CHART_PREFERENCES_KEY].includes(key),
+      [CHART_PREFERENCES_KEY, PREVIOUS_CHART_PREFERENCES_KEY, LEGACY_CHART_PREFERENCES_KEY].includes(key),
     );
     return key === CHART_PREFERENCES_KEY ? rawPreferences : null;
   },
@@ -652,6 +658,64 @@ assert.equal(deniedStore.getSnapshot().persistent, false);
 const memoryStore = createChartPreferenceStore(null);
 assert.doesNotThrow(() => memoryStore.update({ showLimits: false }));
 assert.equal(memoryStore.getSnapshot().preferences.showLimits, false);
+
+// Wave defaults migrate existing display choices, then stay independent by kind.
+const v2Raw = JSON.stringify({
+  version: 2,
+  stockMas: [30, 60],
+  indexMas: [250],
+  stockPriceBasis: "forward",
+  showLimits: false,
+  showEventBaseline: false,
+});
+const waveStorage = new Map([[PREVIOUS_CHART_PREFERENCES_KEY, v2Raw]]);
+const waveStorageAdapter = {
+  getItem: (key) => waveStorage.get(key) ?? null,
+  setItem: (key, value) => waveStorage.set(key, value),
+};
+const waveStore = createChartPreferenceStore(waveStorageAdapter);
+assert.deepEqual(waveStore.getSnapshot().preferences.stockMas, [30, 60]);
+assert.deepEqual(waveStore.getSnapshot().preferences.indexMas, [250]);
+assert.equal(waveStore.getSnapshot().preferences.stockPriceBasis, "forward");
+assert.equal(waveStore.getSnapshot().preferences.showLimits, false);
+assert.equal(waveStore.getSnapshot().preferences.showEventBaseline, false);
+assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, false), {
+  showWaves: true, waveMode: "turning",
+});
+assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, true), {
+  showWaves: true, waveMode: "latest",
+});
+waveStore.update({ stockShowWaves: false, stockWaveMode: "down" });
+waveStore.update({ indexWaveMode: "up" });
+let waveReload = createChartPreferenceStore(waveStorageAdapter);
+assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, false), {
+  showWaves: false, waveMode: "down",
+});
+assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, true), {
+  showWaves: true, waveMode: "up",
+});
+assert.equal(waveStorage.get(PREVIOUS_CHART_PREFERENCES_KEY), v2Raw);
+// An old tab may write its v2 key; it cannot replace saved v3 wave settings.
+waveStorage.set(PREVIOUS_CHART_PREFERENCES_KEY, JSON.stringify({ version: 2, stockMas: [] }));
+waveReload = createChartPreferenceStore(waveStorageAdapter);
+assert.equal(waveReload.getSnapshot().preferences.stockWaveMode, "down");
+assert.deepEqual(waveReload.getSnapshot().preferences.stockMas, [30, 60]);
+for (const mode of ["latest", "up", "down", "turning"]) {
+  waveStore.update({ stockWaveMode: mode });
+  assert.equal(createChartPreferenceStore(waveStorageAdapter).getSnapshot().preferences.stockWaveMode, mode);
+}
+for (const mode of ["unknown", null, {}, 1]) {
+  const sanitized = normalizeChartPreferences({ version: 3, stockWaveMode: mode, indexWaveMode: mode, stockShowWaves: "false" });
+  assert.deepEqual(effectiveChartWaves(sanitized, false), { showWaves: true, waveMode: "turning" });
+  assert.deepEqual(effectiveChartWaves(sanitized, true), { showWaves: true, waveMode: "latest" });
+}
+waveStore.receiveStorage(JSON.stringify({ version: 3, stockShowWaves: false, stockWaveMode: "up" }));
+assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "up" });
+waveStore.reset();
+assert.deepEqual(waveStore.getSnapshot().preferences, defaultPreferences);
+deniedStore.update({ stockShowWaves: false, stockWaveMode: "up" });
+assert.deepEqual(effectiveChartWaves(deniedStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "up" });
+assert.equal(deniedStore.getSnapshot().persistent, false);
 // Execute the actual App theme adapters in isolation: restricted localStorage
 // must not throw before the chart preference store can fall back to memory.
 const appSource = await fs.readFile(

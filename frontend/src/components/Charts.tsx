@@ -93,6 +93,7 @@ import type { StockNavigation } from "./stockNavigation";
 import {
   effectiveChartMas,
   effectiveChartPriceBasis,
+  effectiveChartWaves,
   MA_WINDOWS,
 } from "./chartPreferences";
 import { useChartPreferences } from "./useChartPreferences";
@@ -237,10 +238,6 @@ export function CandleChart({
       kind: string;
     } | null>(null),
     [activeDate, setActiveDate] = useState<string | null>(null),
-    [showWaves, setShowWaves] = useState(true),
-    [waveMode, setWaveMode] = useState<WaveMode>(
-      knownIndex || instrumentKind === "index" ? "latest" : "turning",
-    ),
     [wavePatternKey, setWavePatternKey] = useState("latest"),
     [panels, setPanels] = useState(["volume", "macd", "kdj", "breadth"]),
     [themeTick, setThemeTick] = useState(0);
@@ -252,6 +249,13 @@ export function CandleChart({
   const priceBasis = effectiveChartPriceBasis(preferences, isIndex);
   const cycleLabel = period === "D" ? "日" : period === "W" ? "周" : "月";
   const mas = effectiveChartMas(preferences, isIndex);
+  const { showWaves, waveMode } = effectiveChartWaves(preferences, isIndex);
+  const setShowWaves = (value: boolean) =>
+    update(isIndex ? { indexShowWaves: value } : { stockShowWaves: value });
+  const setWaveMode = (value: WaveMode) => {
+    update(isIndex ? { indexWaveMode: value } : { stockWaveMode: value });
+    setWavePatternKey("latest");
+  };
   const { showLimits, showEventBaseline } = preferences;
   const setPriceBasis = (value: string) => {
     if (!isIndex)
@@ -326,9 +330,8 @@ export function CandleChart({
   useEffect(() => setActiveDate(null), [instrumentId, asOf, period]);
   useEffect(() => setWavePatternKey("latest"), [instrumentId, asOf, period]);
   useEffect(() => {
-    setWaveMode(isIndex ? "latest" : "turning");
     setWavePatternKey("latest");
-  }, [instrumentId, isIndex]);
+  }, [instrumentId, isIndex, waveMode]);
   useEffect(() => {
     if (data) {
       if (data.instrument?.kind)
@@ -965,7 +968,7 @@ export function CandleChart({
         )}
         <button
           className="btn small chart-preferences-button"
-          title="指数与个股均线分别保存；个股复权和标记修改后自动保存"
+          title="指数与个股的均线、波浪显示分别保存；修改后自动保存"
           onClick={() => setPreferencesOpen(true)}
         >
           <Settings2 size={13} />
@@ -1016,7 +1019,6 @@ export function CandleChart({
               value={waveMode}
               onChange={(value) => {
                 setWaveMode(value as WaveMode);
-                setWavePatternKey("latest");
               }}
               options={[
                 { value: "latest", label: "最新结构" },
@@ -1575,13 +1577,14 @@ export function CandleChart({
       {showDataNotes && <DataNotes items={chartDataNotes(data?.warnings)} />}
       {preferencesOpen && (
         <Modal
-          title={`图表偏好 · ${isIndex ? "指数" : "个股"}均线`}
+          title={`图表偏好 · ${isIndex ? "指数" : "个股"}`}
           onClose={() => setPreferencesOpen(false)}
         >
           <div className="modal-body chart-preferences-form">
             <p className="muted">
-              均线按指数和个股分别保存，同类型图表同步。修改
-              {isIndex ? "指数" : "个股"}均线不会影响{isIndex ? "个股" : "指数"}
+              均线、波浪结构开关及显示范围按指数和个股分别保存，同类型图表同步。修改
+              {isIndex ? "指数" : "个股"}的上述设置不会影响
+              {isIndex ? "个股" : "指数"}
               ；切换、重开和刷新沿用。日 / 周 /
               月周期和缩放范围由各张图独立设置。
             </p>
@@ -1598,6 +1601,32 @@ export function CandleChart({
                   />
                 ))}
               </div>
+            </fieldset>
+            <fieldset>
+              <legend>{isIndex ? "指数" : "个股"}默认波浪结构</legend>
+              <ChartToggle
+                label="默认显示波浪结构"
+                checked={showWaves}
+                onChange={setShowWaves}
+                color="#b292f0"
+              />
+              <label>
+                默认显示范围
+                <ChartSelect
+                  label="默认波浪结构显示范围"
+                  value={waveMode}
+                  onChange={(value) => setWaveMode(value as WaveMode)}
+                  options={[
+                    { value: "latest", label: "最新结构" },
+                    { value: "up", label: "↑ 上涨候选" },
+                    { value: "down", label: "↓ 下跌候选" },
+                    { value: "turning", label: "仅转折" },
+                  ]}
+                />
+              </label>
+              <p className="muted">
+                工具栏修改也会自动保存；具体结构日期由每张图独立选择。
+              </p>
             </fieldset>
             <p className="muted">
               首次升级时，旧共享均线保留为指数设置；个股默认使用MA5、10、20、30，也可独立开启60、250。
@@ -1643,7 +1672,7 @@ export function CandleChart({
           </div>
           <div className="modal-footer">
             <button className="btn" onClick={reset}>
-              恢复默认偏好
+              恢复全部默认偏好
             </button>
             <button
               className="btn primary"
