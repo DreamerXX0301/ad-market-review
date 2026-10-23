@@ -3,7 +3,7 @@
 from __future__ import annotations
 import argparse,json,os,shutil,sqlite3,tempfile,time,uuid
 from pathlib import Path
-from backup import sha,safe_path,connect_sqlite,check_db
+from backup import sha,safe_path,connect_sqlite,check_db,finder_metadata
 
 def verify_backup(bundle):
     bundle=Path(bundle).expanduser().resolve()
@@ -12,13 +12,19 @@ def verify_backup(bundle):
     if manifest.get('format')!='shixu-backup-v1' or manifest.get('master_key_included') is not False:raise ValueError('Unsupported/unsafe backup format')
     expected=set()
     for item in manifest['files']:
-        key=item['path'];path=safe_path(bundle,key)
+        key=item['path']
+        if Path(key).name=='.DS_Store':raise ValueError('Finder metadata is listed in the manifest; create a fresh backup')
+        path=safe_path(bundle,key)
         if key in expected:raise ValueError('Duplicate manifest file')
         if not path.is_file() or path.stat().st_size!=item['bytes'] or sha(path)!=item['sha256']:raise ValueError('Backup checksum mismatch: '+key)
         if key not in ('business/app.sqlite3',) and not key.startswith(('published/','credentials/')):raise ValueError('Unexpected file category')
         if key.startswith('credentials/') and not (len(Path(key).parts)==2 and key.endswith('.enc')):raise ValueError('Only ciphertext files can be restored')
         expected.add(key)
-    actual={str(p.relative_to(bundle)) for p in bundle.rglob('*') if p.is_file() and p.name!='backup-manifest.json'}
+    actual=set()
+    for p in bundle.rglob('*'):
+        if p.is_symlink():raise ValueError('Symlink in backup bundle')
+        if finder_metadata(p):continue
+        if p.is_file() and p!=bundle/'backup-manifest.json':actual.add(str(p.relative_to(bundle)))
     if actual!=expected or 'business/app.sqlite3' not in expected:raise ValueError('Backup inventory differs from manifest')
     c=connect_sqlite(bundle/'business/app.sqlite3','ro')
     try:check_db(c)

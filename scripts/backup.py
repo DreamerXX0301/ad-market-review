@@ -4,7 +4,7 @@
 No network, decryption, master-key reads, live DuckDB copies, or recursive data-dir copying.
 """
 from __future__ import annotations
-import argparse,datetime as dt,hashlib,json,os,shutil,sqlite3,tempfile,time,uuid
+import argparse,datetime as dt,hashlib,json,os,shutil,sqlite3,stat,tempfile,time,uuid
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -14,6 +14,13 @@ def sha(path):
     with Path(path).open('rb') as reader:
         for block in iter(lambda:reader.read(1024*1024),b''):h.update(block)
     return h.hexdigest()
+
+def finder_metadata(path):
+    """Only Finder's ordinary metadata file is outside backup evidence."""
+    if path.name!='.DS_Store':return False
+    try:return stat.S_ISREG(path.lstat().st_mode)
+    except FileNotFoundError:return False
+
 def safe_path(root,key):
     relative=Path(key)
     if relative.is_absolute() or not relative.parts or '..' in relative.parts:raise ValueError('Unsafe relative path in backup metadata')
@@ -186,10 +193,14 @@ def perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credentia
                 credential_files.append(src.name)
         files=[]
         for path in sorted(stage.rglob('*')):
+            if path.is_symlink():raise ValueError('Symlink in backup staging directory')
+            if finder_metadata(path):continue
             if path.is_file():files.append({'path':str(path.relative_to(stage)),'sha256':sha(path),'bytes':path.stat().st_size})
         manifest={'format':'shixu-backup-v1','backup_id':owner,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),'sqlite_version':sqlite3.sqlite_version,'heads':heads,'retained_snapshot_count':len(snapshots),'credential_ciphertexts':credential_files,'master_key_included':False,'files':files,'notes':['Online SQLite backup; immutable file references pinned while copying','Optional public market-supplement JSON objects and mutable pointers copied only after checksum and stable-inventory verification','Bulk raw downloads and active DuckDB work files intentionally excluded','Do not change provider credentials during a backup; ciphertext storage is not cross-store versioned']}
         (stage/'backup-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
         for f in stage.rglob('*'):
+            if f.is_symlink():raise ValueError('Symlink in backup staging directory')
+            if finder_metadata(f):continue
             if f.is_file():
                 with f.open('rb') as reader:os.fsync(reader.fileno())
         os.replace(stage,output)
