@@ -128,29 +128,10 @@
   height: 30px;
   font-size: 11px;
 }
-.ladder-anchor-nav {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-.ladder-anchor-nav > button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border-soft);
-  background: var(--surface);
-  color: var(--subtle);
-  border-radius: 5px;
-  padding: 6px 10px;
-  font-size: 10px;
-}
-.ladder-anchor-nav > button > span {
-  color: var(--muted);
-}
-.ladder-anchor-nav > button:hover {
-  color: var(--blue);
-  border-color: var(--blue);
+.ladder-supplemental-sections {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
 }
 .ladder-filter-state {
   display: flex;
@@ -303,6 +284,13 @@
   text-align: left;
   color: var(--text);
 }
+.ladder-stock-identity-wrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 7px;
+  row-gap: 2px;
+}
 .ladder-stock-identity > strong {
   font-size: 14px;
   font-weight: 600;
@@ -333,6 +321,22 @@
   font-size: 9px;
 }
 .ladder-stock-topics {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.ladder-attribution-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.ladder-attribution-label {
+  flex: 0 0 40px;
+  color: var(--muted);
+  font-size: 9px;
+}
+.ladder-attribution-values {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -392,6 +396,15 @@
   color: var(--muted);
   font-size: 9px;
   line-height: 1.6;
+}
+.ladder-source-industry {
+  color: var(--subtle);
+}
+.ladder-source-reason {
+  color: var(--subtle);
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .ladder-stock-timing {
   display: flex;
@@ -843,16 +856,6 @@
   line-height: 1.7;
   border-bottom: 1px solid var(--border-soft);
   background: color-mix(in srgb, var(--accent-secondary) 3%, var(--surface));
-}
-.ladder-class-tabs-caption {
-  color: var(--muted);
-  font-size: 10px;
-  margin-right: 3px;
-}
-.ladder-anchor-nav > button[aria-pressed="true"] {
-  color: var(--blue);
-  background: var(--blue-bg);
-  border-color: var(--blue);
 }
 .ladder-other-title {
   font-size: 13px;

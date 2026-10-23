@@ -1,0 +1,341 @@
+.chart-annotations {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--blue) 5%, var(--surface));
+  padding: 14px;
+  margin: 10px 0 16px;
+}
+.chart-annotation-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.chart-annotation-heading > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: 1;
+  align-items: center;
+}
+.chart-annotation-heading strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.chart-annotation-heading span,
+.chart-annotation-help,
+.chart-annotation-list small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.chart-annotation-heading label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.chart-annotation-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 9px;
+  max-width: 920px;
+}
+.chart-line-types {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  margin: 0 0 12px;
+  background: var(--surface2);
+}
+.chart-line-types legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.chart-line-types > label {
+  display: flex;
+  align-items: center;
+  position: relative;
+  padding: 7px 17px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  background: transparent;
+  color: var(--muted);
+}
+.chart-line-types input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.chart-line-types label:focus-within {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.chart-line-types small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.chart-line-types .selected[data-type="support"] {
+  color: #45c6a4;
+  border-color: color-mix(in srgb, #45c6a4 55%, var(--border));
+  background: color-mix(in srgb, #45c6a4 8%, var(--surface));
+}
+.chart-line-types .selected[data-type="resistance"] {
+  color: #e8c16b;
+  border-color: color-mix(in srgb, #e8c16b 55%, var(--border));
+  background: color-mix(in srgb, #e8c16b 8%, var(--surface));
+}
+.chart-line-types .selected[data-type="reference"] {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.chart-line-alert-settings {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+}
+.chart-line-alert-rules {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-width: 760px;
+}
+.chart-line-alert-rules > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.chart-line-alert-rules > label:has(input:checked) {
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--border));
+  background: color-mix(in srgb, var(--blue) 4%, var(--surface));
+}
+.chart-line-alert-rules input {
+  margin-top: 3px;
+}
+.chart-line-alert-rules span {
+  display: grid;
+  gap: 5px;
+}
+.chart-line-alert-rules strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.chart-line-alert-rules small,
+.chart-line-auto-watchlist small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.chart-line-auto-watchlist {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+.chart-annotation-form .chart-line-price-input input {
+  width: 140px;
+  height: 38px;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.chart-annotation-form .chart-line-name-input {
+  flex: 1 1 140px;
+  max-width: 230px;
+}
+.chart-annotation-form .chart-line-name-input input {
+  width: 100%;
+  height: 38px;
+  font-size: 12px;
+}
+.chart-line-pick,
+.chart-line-actions > .btn {
+  height: 38px;
+  min-height: 38px;
+}
+.chart-line-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-left: auto;
+}
+.chart-line-actions .btn.small {
+  min-width: 84px;
+  padding: 0 13px;
+  font-size: 11px;
+}
+.chart-line-colors {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 38px;
+}
+.chart-line-colors > button {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.chart-line-colors > button.selected {
+  border-color: var(--line-color);
+  background: color-mix(in srgb, var(--line-color) 10%, transparent);
+}
+.chart-line-colors span {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--line-color);
+}
+.chart-annotation-explainer {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.chart-annotation-explainer summary {
+  width: fit-content;
+  cursor: pointer;
+}
+.chart-annotation-explainer p {
+  margin: 8px 0 0;
+}
+.chart-line-type-label {
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 10px;
+}
+.chart-line-type-label[data-type="support"] {
+  color: #45c6a4;
+}
+.chart-line-type-label[data-type="resistance"] {
+  color: #e8c16b;
+}
+.chart-line-rule-summary {
+  color: var(--muted);
+  font-size: 10px;
+}
+.chart-annotation-list li > .chart-line-rule-summary {
+  max-width: 280px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.chart-annotation-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.chart-annotation-form input {
+  width: 140px;
+  min-height: 34px;
+}
+.chart-annotation-form select {
+  min-height: 34px;
+}
+.chart-annotation-help {
+  margin: 10px 0 0;
+  line-height: 1.6;
+}
+.chart-annotation-list {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  margin: 10px 0 0;
+  list-style: none;
+  max-height: 225px;
+  overflow: auto;
+}
+.chart-annotation-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.chart-annotation-list li > span {
+  overflow-wrap: anywhere;
+}
+.chart-annotation-list li > i {
+  width: 19px;
+  height: 2px;
+  flex-shrink: 0;
+}
+.chart-annotation-list li > strong {
+  font-variant-numeric: tabular-nums;
+}
+.chart-annotation-list li > small {
+  margin-left: auto;
+}
+.chart-annotation-toggle.active {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.chart-annotation-toggle > span {
+  border-radius: 4px;
+  padding: 0 4px;
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+}
+.candle-plot.drawing-line canvas {
+  cursor: crosshair;
+}
+@media (max-width: 650px) {
+  .chart-line-alert-rules {
+    grid-template-columns: 1fr;
+  }
+  .chart-line-types > label {
+    flex: 1;
+    flex-wrap: wrap;
+  }
+  .chart-line-types {
+    display: flex;
+  }
+  .chart-annotation-form .chart-line-name-input {
+    flex-basis: 150px;
+    max-width: none;
+  }
+  .chart-line-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+  .chart-line-actions > .btn {
+    flex: 1;
+  }
+  .chart-annotation-heading {
+    flex-wrap: wrap;
+  }
+  .chart-annotation-heading > div {
+    flex-basis: 100%;
+  }
+  .chart-annotation-form label {
+    flex: 1;
+  }
+  .chart-annotation-form input {
+    width: 100%;
+    min-width: 105px;
+  }
+}

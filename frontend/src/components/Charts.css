@@ -232,3 +232,69 @@
     display: none;
   }
 }
+.equity-curve-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 18px 0;
+}
+.equity-curve-toolbar .segmented button {
+  padding: 6px 11px;
+  font-size: 11px;
+}
+.equity-curve-toolbar small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.equity-tooltip {
+  min-width: 180px;
+  font-variant-numeric: tabular-nums;
+}
+.equity-tooltip > strong {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.equity-tooltip > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  line-height: 1.9;
+}
+.equity-tooltip b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.equity-tooltip > small {
+  display: block;
+  color: var(--muted);
+  margin-top: 6px;
+  font-size: 10px;
+}
+.chart-history-events {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #bd96f3 25%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, #bd96f3 5%, var(--surface));
+  font-size: 12px;
+}
+.chart-history-events > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.chart-history-events strong {
+  color: #bd96f3;
+}
+.chart-history-events small,
+.chart-history-events .unavailable {
+  color: var(--muted);
+}

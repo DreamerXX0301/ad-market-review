@@ -3,7 +3,12 @@ import { BookOpen, FileText, Play, RefreshCw } from "lucide-react";
 import { api, list, post, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { dateTime, textValue, label } from "../../lib/format";
+import {
+  isHiddenIndicatorField,
+  visibleIndicatorData,
+} from "../../lib/indicatorVisibility";
 import InstrumentSearch from "../../components/InstrumentSearch";
+import CopyStockCode from "../../components/CopyStockCode";
 import {
   Badge,
   Empty,
@@ -39,10 +44,9 @@ function ResearchSection({ section }: { section: Row }) {
         subtitle={`${content["数据日"] || ""} · ${content["价格口径"] === "none" ? "未复权" : content["价格口径"] || ""} · 成交量：${content["成交量单位"] || "以来源为准"}`}
       >
         <Table
-          rows={Object.entries(content["指标"]).map(([field, value]) => ({
-            field,
-            value,
-          }))}
+          rows={Object.entries(content["指标"])
+            .filter(([field]) => !isHiddenIndicatorField(field))
+            .map(([field, value]) => ({ field, value }))}
           columns={[
             {
               key: "field",
@@ -62,9 +66,7 @@ function ResearchSection({ section }: { section: Row }) {
   return (
     <Panel title={section.title}>
       <div className="prose">
-        <p style={{ whiteSpace: "pre-wrap" }}>
-          {typeof content === "string" ? content : textValue(content)}
-        </p>
+        <p style={{ whiteSpace: "pre-wrap" }}>{textValue(content)}</p>
       </div>
     </Panel>
   );
@@ -313,7 +315,7 @@ export default function Research({
           {selected && (
             <div className="selected-instrument">
               <strong>{selected.name}</strong>
-              <code>{selected.instrument_id}</code>
+              <CopyStockCode instrumentId={selected.instrument_id} />
             </div>
           )}
           <button
@@ -558,7 +560,11 @@ export default function Research({
                 </p>
               )}
             <pre className="material-json">
-              {JSON.stringify(material.data || material, null, 2)}
+              {JSON.stringify(
+                visibleIndicatorData(material.data || material),
+                null,
+                2,
+              )}
             </pre>
           </div>
         </Modal>

@@ -5,12 +5,30 @@ const source = await fs.readFile(
   new URL("./sectorPresentation.ts", import.meta.url),
   "utf8",
 );
-const compiled = ts.transpileModule(source, {
+const visibilitySource = await fs.readFile(
+  new URL("../../lib/indicatorVisibility.ts", import.meta.url),
+  "utf8",
+);
+const visibilityCode = ts.transpileModule(visibilitySource, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
     target: ts.ScriptTarget.ES2022,
   },
 }).outputText;
+const visibilityModule =
+  "data:text/javascript;base64," +
+  Buffer.from(visibilityCode).toString("base64");
+const compiled = ts
+  .transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ES2022,
+      target: ts.ScriptTarget.ES2022,
+    },
+  })
+  .outputText.replaceAll(
+    '"../../lib/indicatorVisibility"',
+    JSON.stringify(visibilityModule),
+  );
 const {
   sectorDefaultLeaf,
   sectorStrategyBody,
@@ -24,6 +42,7 @@ const {
   sectorMemberBoard,
   sectorMembersEndpoint,
   sectorCheckLeaves,
+  sectorSelectableFields,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
@@ -275,3 +294,37 @@ assert.equal(
   60,
   "editing does not mutate the saved policy",
 );
+
+const hiddenFields = [
+  { field: "kdj_j", label: "KDJ J", type: "number", operators: [">="] },
+  fields[0],
+];
+assert.deepEqual(sectorSelectableFields(hiddenFields), [fields[0]]);
+assert.equal(sectorDefaultLeaf(hiddenFields).field, "close");
+assert.deepEqual(sectorDefaultLeaf([hiddenFields[0]]), {});
+const hiddenRule = { field: "kdj_j", op: ">=", value: 93.2 };
+assert.equal(
+  sectorRuleText(hiddenRule, hiddenFields),
+  "已隐藏的指标条件（保留原配置）",
+);
+assert.equal(
+  sectorRuleText(
+    { field: "close", op: ">", right_field: "kdj_j" },
+    hiddenFields,
+  ),
+  "已隐藏的指标条件（保留原配置）",
+);
+const visibleChecks = sectorCheckLeaves({
+  checks: [
+    { ...hiddenRule, actual: 94, result: true },
+    { field: "kdj_k", actual: 0, result: false },
+    { field: "kdj_d", actual: null, result: null },
+  ],
+});
+assert.deepEqual(visibleChecks[0], {
+  hidden: true,
+  description: "已隐藏的指标条件（保留原配置）",
+});
+assert.equal(visibleChecks[1].actual, 0);
+assert.equal(visibleChecks[2].actual, null);
+assert.equal(hiddenRule.value, 93.2, "the saved rule is preserved");

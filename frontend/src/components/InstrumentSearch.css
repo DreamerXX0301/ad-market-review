@@ -10,7 +10,14 @@
   border-radius: 9px;
   padding: 4px;
 }
-.instrument-search-popover > button {
+.instrument-search-result {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-right: 8px;
+  border-radius: 5px;
+}
+.instrument-search-result > .instrument-search-choose {
   border: 0;
   background: transparent;
   padding: 10px 11px;
@@ -18,13 +25,15 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  flex: 1;
+  min-width: 0;
   gap: 12px;
   text-align: left;
   border-radius: 5px;
   cursor: pointer;
 }
-.instrument-search-popover > button:hover,
-.instrument-search-popover > button[aria-selected="true"] {
+.instrument-search-result:hover,
+.instrument-search-result[data-active="true"] {
   background: var(--blue-bg);
 }
 .instrument-search-popover strong {

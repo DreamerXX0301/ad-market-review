@@ -8,11 +8,15 @@ or an intraday capital-rotation sequence.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
 from datetime import date
 from html import unescape
 from html.parser import HTMLParser
+import hashlib
+import json
 import math
 import re
+import time
 
 import httpx
 
@@ -166,7 +170,7 @@ def normalize_history(payload: dict, topic: dict, target: str, calendar=None) ->
                      'source': SOURCE, 'calculation': CALCULATION, 'amount_unit': 'CNY', 'percentage_unit': 'pct', 'date_evidence': 'provider-f51', 'directory_name_scope': 'current'})
     rows.sort(key=lambda row: row['date'])
     if not rows or rows[-1]['date'] != target:
-        raise ProviderError('资金流历史缺少目标交易日 ' + target)
+        raise ProviderError('资金流历史缺少目标交易日 ' + target, code='fund-data-gap')
     expected = sorted({day for day in calendar or [] if day <= target})[-20:]
     if calendar is not None and (not expected or expected[-1] != target):
         raise ProviderError('目标日不属于已留存完成交易日')
@@ -179,7 +183,7 @@ def normalize_history(payload: dict, topic: dict, target: str, calendar=None) ->
     return {'item': selected[-1], 'history': selected, 'history_complete': not missing and (len(selected) == 20 if calendar is None else len(selected) == len(expected)), 'missing_history_dates': missing}
 
 
-def fetch_sector_fund_history(client, target: str, *, scope='industry', limit=None, max_requests=200, calendar=None, progress=None, cache_lookup=None, cache_save=None, request_interval=.12, workers=3) -> dict:
+def fetch_sector_fund_history(client, target: str, *, scope='industry', limit=None, max_requests=200, calendar=None, progress=None, cache_lookup=None, cache_save=None, request_interval=.12, workers=3, request_budget=None, guard=None, retry_codes=None, prior_failures=None) -> dict:
     """Fetch the declared public directory, then dated histories within a budget.
 
     max_requests bounds logical provider calls (each has at most three attempts).
@@ -194,6 +198,12 @@ def fetch_sector_fund_history(client, target: str, *, scope='industry', limit=No
         raise ValueError('资金流数量上限应为空或正整数')
     if not 1 <= workers <= 3 or not 0 <= request_interval <= 5:
         raise ValueError('资金流并发上限3，间隔需为0至5秒')
+    if request_budget is not None:
+        return asyncio.run(_fetch_budgeted(client, target, scope=scope, limit=limit,
+            max_requests=max_requests, calendar=calendar, progress=progress,
+            cache_lookup=cache_lookup, cache_save=cache_save,
+            request_interval=request_interval, workers=workers,
+            budget=request_budget, guard=guard, retry_codes=retry_codes, prior_failures=prior_failures))
     raw_directory = _directory(client)
     catalog = parse_directory(raw_directory, scope)
     selected = catalog[:limit] if limit is not None else catalog
@@ -259,3 +269,161 @@ def fetch_sector_fund_history(client, target: str, *, scope='industry', limit=No
     coverage = {'scope': scope, 'directory_contract': DIRECTORY_CONTRACT, 'directory_source': DIRECTORY_URL, 'directory_count': len(catalog), 'selected_count': len(selected), 'accepted_count': len(items), 'failed_count': len(failures), 'unrequested_count': len(unrequested), 'unrequested_codes': [topic['topic_code'] for topic in unrequested], 'unselected_count': len(catalog)-len(selected), 'cached_count': cached, 'logical_request_count': len(requested) + 1, 'max_logical_requests': max_requests, 'max_transport_attempts': max_requests * 3,
                 'mode': 'declared-directory' if len(selected) == len(catalog) else 'sample', 'complete': complete, 'history_complete_count': history_complete, 'history_20d_complete': complete and history_complete == len(items), 'history_gaps': gaps, 'scope_label': '东财资金页行业目录' if scope == 'industry' else '东财资金页概念目录' if scope == 'concept' else '东财资金页行业及概念目录', 'current_directory_not_historical_pit': True}
     return {'items': sorted(items, key=lambda row: (-row['net_inflow'], row['topic_code'])), 'history': sorted(history, key=lambda row: (row['date'], row['topic_code'])), 'date': target, 'source': SOURCE, 'complete': complete, 'coverage': coverage, 'raw_pages': pages, 'failures': failures, 'intraday_sequence_available': False, 'history_kind': 'cross-day-fund-trend', 'calculation': CALCULATION}
+
+
+async def _fetch_budgeted(client, target, *, scope, limit, max_requests, calendar,
+        progress, cache_lookup, cache_save, request_interval, workers, budget, guard, retry_codes, prior_failures):
+    """New frozen policy only: no executor queue or detached HTTP threads."""
+    from app.adapters.public_fund_budget import FundSourceError, fund_response
+    from app.adapters.public_market import BASES
+    start_logical = budget.logical_request_count
+    start_attempts = budget.actual_transport_attempt_count
+    pages = []; items = []; history = []; failures = []; gaps = []
+    cached = 0; history_complete = 0; local_seconds = 0
+    catalog = []; selected = []; pending = []; unrequested = []; deferred = []; started_codes = set()
+
+    def accept(topic, payload, origin):
+        nonlocal history_complete, local_seconds
+        started = time.monotonic()
+        try:
+            normalized = normalize_history(payload, topic, target, calendar)
+            if cache_save and origin == 'public-request':
+                cache_save(topic['topic_code'], target, normalized, payload)
+            items.append(normalized['item']); history.extend(normalized['history'])
+            history_complete += int(normalized['history_complete'])
+            if not normalized['history_complete']:
+                gaps.append({'topic_code': topic['topic_code'], 'dates': normalized['missing_history_dates'], 'observed_days': len(normalized['history'])})
+            pages.append({'kind': 'daily_history', 'topic_code': topic['topic_code'], 'source': origin, 'response': payload})
+        finally:
+            local_seconds += time.monotonic() - started
+
+    def reject(topic, reason, stage, *, kind=None, retryable=False):
+        failures.append({'topic_code': topic['topic_code'], 'name': topic['name'], 'kind': topic['kind'],
+            'reason': reason, 'stage': stage, 'failure_kind': kind, 'retryable': retryable})
+
+    if guard: guard()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20, connect=8), follow_redirects=False,
+            transport=getattr(client, 'transport', None),
+            limits=httpx.Limits(max_connections=workers, max_keepalive_connections=workers)) as connection:
+        try:
+            directory_task = asyncio.create_task(fund_response(connection, budget, DIRECTORY_URL, html=True))
+            try:
+                while not directory_task.done():
+                    if guard: guard()
+                    await asyncio.wait({directory_task}, timeout=min(.25, max(.001, budget.remaining())))
+                raw = directory_task.result()
+            finally:
+                if not directory_task.done(): directory_task.cancel()
+                await asyncio.gather(directory_task, return_exceptions=True)
+            pages.append({'kind': 'directory', 'url': DIRECTORY_URL, 'directory_contract': DIRECTORY_CONTRACT, 'response_text': raw})
+            if any(marker in raw.lower() for marker in ('captcha', '验证码', '安全验证')):
+                raise FundSourceError('公开行业目录返回安全验证页面，未绕过验证', 'schema')
+            catalog = parse_directory(raw, scope)
+        except (ProviderError, ValueError, TypeError) as error:
+            kind = getattr(error, 'kind', 'schema')
+            failures.append({'stage': 'directory', 'reason': str(error), 'failure_kind': kind, 'retryable': getattr(error, 'retryable', False)})
+        else:
+            selected = catalog[:limit] if limit is not None else catalog
+            for topic in selected:
+                if guard: guard()
+                started = time.monotonic()
+                payload = cache_lookup(topic['topic_code'], target) if cache_lookup else None
+                local_seconds += time.monotonic() - started
+                if payload is not None:
+                    try:
+                        accept(topic, payload, 'validated-cache'); cached += 1
+                        continue
+                    except (ProviderError, ValueError, TypeError):
+                        pass
+                if retry_codes is not None and topic['topic_code'] not in retry_codes:
+                    previous = (prior_failures or {}).get(topic['topic_code'])
+                    if previous:
+                        failures.append({**previous, 'carried_from_previous_round': True})
+                    else:
+                        reject(topic, '首轮未确认可暂时重试，本轮不重复请求并保留未知', 'retry_not_eligible')
+                    deferred.append(topic)
+                    continue
+                pending.append(topic)
+            submitted = 0; tasks = {}; completed = asyncio.Queue()
+            allowance = min(max_requests - 1, budget.max_logical_requests - budget.logical_request_count)
+
+            async def fetch(topic):
+                if request_interval:
+                    # No synchronous sleep: deadline/pause can cancel the wait.
+                    await asyncio.sleep(min(request_interval, budget.remaining()))
+                params = {'lmt': '0', 'klt': '101', 'secid': '90.' + topic['topic_code'],
+                    'fields1': 'f1,f2,f3,f7', 'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63',
+                    'ut': 'b2884a393a59ad64002292a3e90d46a5'}
+                return await fund_response(connection, budget, BASES['eastmoney_history'] + HISTORY_PATH,
+                    params=params, on_transport=lambda: started_codes.add(topic['topic_code']))
+
+            def fill():
+                nonlocal submitted
+                while len(tasks) < workers and submitted < min(len(pending), allowance) and budget.available():
+                    topic = pending[submitted]; submitted += 1
+                    task = asyncio.create_task(fetch(topic)); tasks[task] = topic
+                    task.add_done_callback(completed.put_nowait)
+                    budget.peak_inflight_requests = max(budget.peak_inflight_requests, len(tasks))
+
+            try:
+                fill()
+                while tasks:
+                    if guard: guard()
+                    if budget.circuit_open or budget.remaining() <= 0:
+                        if not budget.circuit_open: budget.stop_reason = 'request_deadline'
+                        break
+                    try:
+                        task = await asyncio.wait_for(completed.get(), min(.25, budget.remaining()))
+                    except TimeoutError:
+                        continue
+                    topic = tasks.pop(task)
+                    try:
+                        payload = task.result()
+                        try:
+                            accept(topic, payload, 'public-request')
+                        except (ProviderError, ValueError, TypeError):
+                            pages.append({'kind': 'rejected_daily_history', 'topic_code': topic['topic_code'], 'response': payload})
+                            raise
+                        budget.outcome()
+                    except (ProviderError, ValueError, TypeError) as error:
+                        kind = getattr(error, 'kind', 'data_gap' if getattr(error, 'code', None) == 'fund-data-gap' else 'schema')
+                        budget.outcome(kind)
+                        reject(topic, str(error), 'daily_history', kind=kind, retryable=getattr(error, 'retryable', False))
+                    if progress: progress(len(items) + len(failures), len(selected), topic['topic_code'])
+                    fill()
+            finally:
+                # Cancellation is awaited before the client/loop exits. There
+                # is no background thread continuing after a claimed deadline.
+                for task in tasks: task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            for topic in tasks.values():
+                reject(topic, '资金来源停发或网络阶段截止，停止处理并取消尚在途请求，保留未知', budget.stop_reason or 'request_cancelled', kind=budget.stop_reason)
+            for topic in pending[submitted:]:
+                reject(topic, '达到资金流请求预算、故障停发或截止时间，未请求并保留未知', budget.stop_reason or 'request_budget', kind=budget.stop_reason)
+            unrequested = deferred + [topic for topic in pending if topic['topic_code'] not in started_codes]
+            if unrequested and not budget.stop_reason:
+                if budget.actual_transport_attempt_count >= budget.max_transport_attempts:
+                    budget.stop_reason = 'transport_budget'
+                elif budget.logical_request_count >= budget.max_logical_requests:
+                    budget.stop_reason = 'request_budget'
+            for failure in failures:
+                if failure.get('topic_code'):
+                    failure['provider_request_started'] = failure['topic_code'] in started_codes
+
+    complete = bool(catalog) and len(items) == len(catalog) and len(selected) == len(catalog) and not failures
+    coverage = {**budget.snapshot(), 'scope': scope, 'directory_contract': DIRECTORY_CONTRACT, 'directory_source': DIRECTORY_URL,
+        'directory_signature': hashlib.sha256(json.dumps(catalog, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest() if catalog else None,
+        'directory_count': len(catalog) if catalog else None, 'selected_count': len(selected), 'accepted_count': len(items),
+        'failed_count': len(failures), 'unrequested_count': len(unrequested), 'unrequested_codes': [t['topic_code'] for t in unrequested],
+        'unselected_count': len(catalog) - len(selected), 'cached_count': cached,
+        'logical_request_count': budget.logical_request_count - start_logical,
+        'actual_transport_attempt_count': budget.actual_transport_attempt_count - start_attempts,
+        'complete': complete, 'history_complete_count': history_complete, 'history_20d_complete': complete and history_complete == len(items),
+        'history_gaps': gaps, 'mode': 'declared-directory' if len(selected) == len(catalog) else 'sample',
+        'scope_label': '东财资金页行业目录' if scope == 'industry' else '东财资金页概念目录' if scope == 'concept' else '东财资金页行业及概念目录',
+        'current_directory_not_historical_pit': True, 'local_cache_validation_seconds': local_seconds,
+        'retry_eligible': not budget.stop_reason and any(f.get('retryable') for f in failures)}
+    return {'items': sorted(items, key=lambda row: (-row['net_inflow'], row['topic_code'])),
+        'history': sorted(history, key=lambda row: (row['date'], row['topic_code'])), 'date': target, 'source': SOURCE,
+        'complete': complete, 'coverage': coverage, 'raw_pages': pages, 'failures': failures,
+        'intraday_sequence_available': False, 'history_kind': 'cross-day-fund-trend', 'calculation': CALCULATION}

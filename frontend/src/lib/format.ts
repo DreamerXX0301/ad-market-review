@@ -1,3 +1,8 @@
+import {
+  isHiddenIndicatorField,
+  visibleIndicatorData,
+} from "./indicatorVisibility";
+
 export const num = (v: any, digits = 2) =>
   v === null || v === undefined || v === "" || !Number.isFinite(Number(v))
     ? "—"
@@ -35,6 +40,23 @@ export const bytes = (v: any) => {
       ? `${num(n / 2 ** 20)} MiB`
       : `${num(n / 1024)} KiB`;
 };
+/** Total wall-clock time supplied by the server, including queued/paused time. */
+export function duration(milliseconds: unknown): string {
+  if (
+    typeof milliseconds !== "number" ||
+    !Number.isFinite(milliseconds) ||
+    milliseconds < 0
+  )
+    return "—";
+  if (milliseconds === 0) return "0秒";
+  if (milliseconds < 1000) return "不足1秒";
+  const seconds = Math.floor(milliseconds / 1000);
+  if (seconds < 60) return `${seconds}秒`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = String(seconds % 60).padStart(2, "0");
+  if (minutes < 60) return `${minutes}分${remainingSeconds}秒`;
+  return `${Math.floor(minutes / 60)}小时${String(minutes % 60).padStart(2, "0")}分${remainingSeconds}秒`;
+}
 export const tone = (v: any) =>
   v == null ? "muted" : Number(v) > 0 ? "up" : Number(v) < 0 ? "down" : "muted";
 export const dateTime = (v: any) =>
@@ -47,8 +69,10 @@ export const dateTime = (v: any) =>
       : String(v)
           .replace("T", " ")
           .replace(/\.\d+Z$/, " UTC");
-export const textValue = (v: any): string =>
-  v == null
+export const textValue = (input: any): string => {
+  if (isHiddenIndicatorField(input)) return "已隐藏的指标";
+  const v = visibleIndicatorData(input);
+  return v == null
     ? "—"
     : typeof v === "boolean"
       ? v
@@ -69,6 +93,7 @@ export const textValue = (v: any): string =>
         : typeof v === "object"
           ? v.name || v.label || JSON.stringify(v)
           : String(v);
+};
 export const label: Record<string, string> = {
   start: "区间起点",
   end: "区间终点",

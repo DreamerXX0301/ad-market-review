@@ -1,0 +1,164 @@
+.purge-dialog-body {
+  padding: 20px 22px;
+  display: grid;
+  gap: 16px;
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.purge-target-name {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.purge-warning {
+  color: var(--red);
+}
+.purge-scope {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 20px;
+  margin: 0;
+}
+.purge-scope > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.purge-scope dd {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+.purge-file-scope {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 14px;
+}
+.purge-file-scope strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.purge-file-scope small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+.purge-retained {
+  color: var(--muted);
+  font-size: 11px;
+}
+.purge-retained ul,
+.purge-protection ul {
+  padding-left: 18px;
+  margin: 5px 0 0;
+}
+.purge-protection {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--blue) 30%, var(--border-soft));
+  background: var(--blue-bg);
+  border-radius: 6px;
+}
+.purge-protection strong,
+.purge-job-status > strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+}
+.purge-protection summary {
+  cursor: pointer;
+  margin-top: 6px;
+  color: var(--blue);
+}
+.purge-stock-link {
+  background: transparent;
+  border: 0;
+  color: var(--blue);
+  text-align: left;
+  padding: 3px 0;
+}
+.purge-stock-link span {
+  margin-left: 8px;
+  color: var(--muted);
+}
+.purge-confirm-label {
+  display: grid;
+  gap: 7px;
+  color: var(--text);
+}
+.purge-confirm-label input {
+  width: 100%;
+}
+.purge-refresh-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+}
+.purge-job-status {
+  display: grid;
+  gap: 12px;
+}
+.purge-job-status.complete > strong {
+  color: var(--green);
+}
+.purge-pending-jobs {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.purge-pending-job {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+}
+.purge-pending-job small {
+  color: var(--blue);
+  white-space: nowrap;
+}
+.recycle-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.backtest-purge-actions {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+}
+.backtest-purge-actions .btn.small {
+  padding: 4px 6px;
+  font-size: 9px;
+}
+.backtest-history > .purge-pending-jobs {
+  margin: 0 10px 12px;
+}
+@media (max-width: 560px) {
+  .purge-scope {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .strategy-recycle-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .purge-file-scope {
+    grid-template-columns: 1fr;
+  }
+}

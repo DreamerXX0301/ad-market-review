@@ -12,8 +12,16 @@ const compile = (source) =>
 const moduleUrl = (source) =>
   "data:text/javascript;base64," +
   Buffer.from(compile(source)).toString("base64");
+const visibilityUrl = moduleUrl(
+  await fs.readFile(
+    new URL("../../lib/indicatorVisibility.ts", import.meta.url),
+    "utf8",
+  ),
+);
 const formatUrl = moduleUrl(
-  await fs.readFile(new URL("../../lib/format.ts", import.meta.url), "utf8"),
+  (
+    await fs.readFile(new URL("../../lib/format.ts", import.meta.url), "utf8")
+  ).replace('"./indicatorVisibility"', JSON.stringify(visibilityUrl)),
 );
 const evidenceUrl = moduleUrl(
   await fs.readFile(
@@ -55,11 +63,29 @@ const functions = ast.statements.filter(
 );
 const helpers = await import(
   moduleUrl(
-    `import {num,textValue} from ${JSON.stringify(formatUrl)}; import {yearlyLimitCountText} from ${JSON.stringify(evidenceUrl)}; import {historyCheckText,historyRuleSummary} from ${JSON.stringify(historicalUrl)};\n` +
+    `import {num,textValue} from ${JSON.stringify(formatUrl)}; import {yearlyLimitCountText} from ${JSON.stringify(evidenceUrl)}; import {historyCheckText,historyRuleSummary,conditionReasonText,HIDDEN_CONDITION_TEXT,isHiddenConditionField,isHiddenConditionRule} from ${JSON.stringify(historicalUrl)};\n` +
       functions.map((node) => node.getText(ast)).join("\n"),
   )
 );
 assert.equal(helpers.ruleOperator("new_high"), "回看");
+assert.equal(helpers.fieldLabel("kdj_j", "KDJ J"), "已隐藏的指标");
+for (const check of [
+  { field: "kdj_j", op: ">", value: 54.78, actual: 60.25 },
+  {
+    field: "kdj_k",
+    op: ">",
+    right_field: "kdj_j",
+    actual: 60.25,
+    right_actual: 54.78,
+  },
+]) {
+  const snapshot = JSON.stringify(check);
+  assert.equal(
+    helpers.summarizeChecks(check),
+    "已隐藏的指标条件（保留原配置）",
+  );
+  assert.equal(JSON.stringify(check), snapshot);
+}
 assert.match(
   helpers.summarizeChecks({
     type: "history_event",

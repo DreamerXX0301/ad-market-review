@@ -47,6 +47,43 @@ export const ladderStockKey = (row: Row) =>
     .trim()
     .toUpperCase();
 
+/** A membership partition is not evidence of a stock's daily limit-up cause. */
+export function ladderCardAttribution(row: Row, displayTopic?: LadderTopic) {
+  const topics = ladderTopics(row);
+  const sourceText = (value: unknown) => {
+    const text = typeof value === "string" ? value.trim() : "";
+    return text && !/^[—–-]+$/.test(text) ? text : null;
+  };
+  const sourceIndustry = sourceText(row.source_industry);
+  const sourceReason = sourceText(row.reason);
+  const industryTopics = topics
+    .filter((topic) => topic.kind === "industry")
+    .sort(
+      (left, right) =>
+        Number(right.name === sourceIndustry) -
+        Number(left.name === sourceIndustry),
+    );
+  const conceptTopics = topics
+    .filter(
+      (topic) => topic.kind === "concept" && !isStructuralLadderTopic(topic),
+    )
+    .sort(
+      (left, right) =>
+        Number(right.key === displayTopic?.key) -
+        Number(left.key === displayTopic?.key),
+    );
+  const classified = new Set(
+    [...industryTopics, ...conceptTopics].map((topic) => topic.key),
+  );
+  return {
+    industryTopics,
+    sourceIndustry,
+    conceptTopics,
+    otherTopics: topics.filter((topic) => !classified.has(topic.key)),
+    sourceReason,
+  };
+}
+
 export type LadderDisplayGroup = {
   key: string;
   topic: LadderTopic | null;

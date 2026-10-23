@@ -1,6 +1,12 @@
 import type { Row } from "../../lib/api";
 import { Plus, Trash2 } from "lucide-react";
-import { sectorDefaultLeaf, sectorLeafEditorKind } from "./sectorPresentation";
+import {
+  sectorConditionHidden,
+  sectorDefaultLeaf,
+  sectorLeafEditorKind,
+  sectorSelectableFields,
+} from "./sectorPresentation";
+import { HIDDEN_INDICATOR_CONDITION_TEXT } from "../../lib/indicatorVisibility";
 import "./SectorWorkspace.css";
 
 export default function SectorRuleBuilder({
@@ -16,6 +22,7 @@ export default function SectorRuleBuilder({
   period: string;
   depth?: number;
 }) {
+  const visibleFields = sectorSelectableFields(fields);
   const group = Array.isArray(value.all)
     ? "all"
     : Array.isArray(value.any)
@@ -63,7 +70,7 @@ export default function SectorRuleBuilder({
         <div className="button-group">
           <button
             className="btn small"
-            disabled={!fields.length}
+            disabled={!visibleFields.length}
             onClick={() =>
               onChange({
                 [group]: [...children, sectorDefaultLeaf(fields, period)],
@@ -76,7 +83,7 @@ export default function SectorRuleBuilder({
           {depth < 7 && (
             <button
               className="btn small"
-              disabled={!fields.length}
+              disabled={!visibleFields.length}
               onClick={() =>
                 onChange({
                   [group]: [
@@ -93,18 +100,24 @@ export default function SectorRuleBuilder({
       </section>
     );
   }
-  const spec = fields.find((item) => item.field === value.field);
+  if (sectorConditionHidden(value))
+    return (
+      <div className="sector-rule-leaf muted">
+        {HIDDEN_INDICATOR_CONDITION_TEXT}
+      </div>
+    );
+  const spec = visibleFields.find((item) => item.field === value.field);
   const selectedPeriod = value.period || spec?.fixed_period || period;
   const rightField = value.right_field != null;
   const lookback = sectorLeafEditorKind(spec) === "lookback";
-  const numericFields = fields.filter(
+  const numericFields = visibleFields.filter(
     (field) =>
       field.type === "number" &&
       !field.constant_only &&
       (!field.fixed_period || field.fixed_period === selectedPeriod),
   );
   const changeField = (field: string) => {
-    const next = fields.find((item) => item.field === field);
+    const next = visibleFields.find((item) => item.field === field);
     if (next)
       onChange({
         field,
@@ -157,7 +170,7 @@ export default function SectorRuleBuilder({
               {value.field ? `不支持：${value.field}` : "请选择条件"}
             </option>
           )}
-          {fields.map((field) => (
+          {visibleFields.map((field) => (
             <option key={field.field} value={field.field}>
               {field.label}
             </option>

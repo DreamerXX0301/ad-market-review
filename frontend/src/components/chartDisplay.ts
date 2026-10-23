@@ -40,6 +40,7 @@ function nonnegative(value: unknown): value is number {
 export function projectEventBaseline(
   baseline: ChartEventBaseline | undefined,
   chart: Row | null | undefined,
+  referencePrice: number | undefined = baseline?.rawClose,
 ) {
   const unavailable = (reason: string) => ({
     price: null,
@@ -52,6 +53,8 @@ export function projectEventBaseline(
     return unavailable("事件日期无效，未显示基准线");
   if (!positive(baseline.rawClose))
     return unavailable("冻结事件收盘价无效，未显示基准线");
+  if (!positive(referencePrice))
+    return unavailable("冻结事件参照价无效，未显示基准线");
   if ((baseline.priceBasis ?? "none") !== "none")
     return unavailable("事件价格不是已知的未复权原始价，未显示基准线");
   if (!chart || !validDate(chart.as_of))
@@ -90,7 +93,7 @@ export function projectEventBaseline(
   }
   if (chart.price_basis === "none")
     return {
-      price: baseline.rawClose,
+      price: referencePrice,
       reason: "冻结入池事件日的未复权收盘价；仅作跟踪参照，不代表成交买价",
       converted: false,
       anchor: null,
@@ -121,7 +124,7 @@ export function projectEventBaseline(
     String(a.date).localeCompare(String(b.date)),
   );
   let previousDate: string | null = null;
-  let price = baseline.rawClose;
+  let price = referencePrice;
   for (const event of events) {
     if (
       !validDate(event.date) ||

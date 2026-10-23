@@ -23,14 +23,14 @@ concurrency:
 
 jobs:
   checks:
-    if: github.ref == 'refs/heads/main' && github.repository == 'DreamerXX0301/ad-market-review' && inputs.confirm
+    if: github.ref == 'refs/heads/master' && github.repository == 'DreamerXX0301/ad-market-review' && inputs.confirm
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 
   build:
     needs: checks
-    if: github.ref == 'refs/heads/main' && github.repository == 'DreamerXX0301/ad-market-review' && inputs.confirm
+    if: github.ref == 'refs/heads/master' && github.repository == 'DreamerXX0301/ad-market-review' && inputs.confirm
     strategy:
       fail-fast: false
       matrix:

@@ -23,9 +23,224 @@ const {
   sectorChartsInitializationView,
   sectorChartsTaskBlocked,
   isSectorChartsInitialTask,
+  datasetCoverageView,
+  listingIdentityView,
+  listingConfirmationDraft,
+  listingEvidenceLines,
+  filterGapDiagnosisStocks,
+  gapEpisodeView,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
+assert.equal(
+  listingIdentityView({
+    catalog_count: 5580,
+    listed_count: 5575,
+    pending_listing_count: 5,
+    unknown_count: 0,
+  }).complete,
+  true,
+);
+assert.equal(
+  listingIdentityView({
+    catalog_count: 5580,
+    listed_count: 5575,
+    pending_listing_count: 4,
+    unknown_count: 1,
+  }).expected,
+  5576,
+  "unknown remains in the denominator",
+);
+assert.equal(
+  listingIdentityView({
+    catalog_count: 5580,
+    listed_count: 5575,
+    pending_listing_count: 5,
+  }).expected,
+  null,
+  "absent unknown count cannot mean zero",
+);
+assert.equal(
+  listingIdentityView({
+    catalog_count: 5580,
+    listed_count: 5575,
+    pending_listing_count: 6,
+    unknown_count: 0,
+  }).complete,
+  false,
+  "contradictory totals cannot show 100%",
+);
+const confirmation = listingConfirmationDraft(
+  "000001.sz，000001.SZ\n600000.SH",
+  "pending",
+  " 人工核验说明 ",
+  " 补充公告 ",
+  "2026-10-21",
+);
+assert.deepEqual(confirmation.payload, {
+  instrument_ids: ["000001.SZ", "600000.SH"],
+  status: "pending",
+  reason: "人工核验说明",
+  evidence: "补充公告",
+  observed_business_date: "2026-10-21",
+});
+for (const args of [
+  ["000001", "pending", "有依据", "", "2026-10-21"],
+  ["000001.SZ", "listed", "依据", "", "2026-10-21"],
+  ["000001.SZ", "pending", "", "", "2026-10-21"],
+  ["000001.SZ", "pending", "依据", "", ""],
+  ["000001.SZ", "pending", "依据", "a".repeat(4001), "2026-10-21"],
+])
+  assert.ok(listingConfirmationDraft(...args).error);
+assert.equal(
+  listingEvidenceLines({
+    reference: { quote_presence: { valid_quote_count: 0 } },
+  })[0],
+  "本代有效成交报价 0 条",
+);
+const gapRows = [
+  {
+    instrument_id: "B",
+    missing_sessions: 2,
+    episode_count: 2,
+    longest_episode_sessions: 1,
+    episodes: [
+      {
+        reason: "来源也未返回",
+        start_date: "2026-10-20",
+        dates: ["2026-10-21"],
+      },
+    ],
+  },
+  {
+    instrument_id: "A",
+    missing_sessions: 9,
+    episode_count: 1,
+    longest_episode_sessions: 9,
+    episodes: [],
+  },
+];
+assert.deepEqual(
+  filterGapDiagnosisStocks({ stocks: gapRows }, "", "missing_sessions").map(
+    (x) => x.instrument_id,
+  ),
+  ["A", "B"],
+);
+assert.equal(
+  filterGapDiagnosisStocks(
+    { stocks: gapRows },
+    "2026-10-21",
+    "episode_count",
+  )[0].instrument_id,
+  "B",
+);
+assert.equal(
+  filterGapDiagnosisStocks({ stocks: gapRows }, "来源也未返回", "episode_count")
+    .length,
+  1,
+);
+assert.deepEqual(
+  gapRows.map((x) => x.instrument_id),
+  ["B", "A"],
+  "sorting does not mutate persisted diagnostic order",
+);
+assert.equal(
+  gapEpisodeView({
+    type_label: "本地缺口",
+    source_verification: { status: "source_no_quote", reason: "源也无报价" },
+  }).label,
+  "来源同样无报价",
+);
+assert.equal(
+  dataTaskTitle({
+    kind: "source_check",
+    parameters: { operation: "quote_gap_source_check" },
+  }),
+  "向来源核验报价缺口",
+);
+assert.equal(
+  datasetCoverageView({ row_count: 6000000, expected_rows: 6000000 }).percent,
+  null,
+  "record share cannot become a coverage denominator",
+);
+assert.equal(
+  datasetCoverageView({
+    coverage_progress: {
+      state: "known",
+      observed_count: 80,
+      expected_count: 100,
+      dimension: "listing_dates",
+      unit: "只",
+    },
+  }).percent,
+  80,
+);
+for (const progress of [
+  { state: "known", observed_count: 0, expected_count: 0 },
+  { state: "known", observed_count: 101, expected_count: 100 },
+  { state: "unknown", observed_count: 100, expected_count: 100 },
+  { state: "known", observed_count: null, expected_count: 100 },
+])
+  assert.equal(
+    datasetCoverageView({ coverage_progress: progress }).percent,
+    null,
+    "unknown/conflicting evidence does not show a percentage",
+  );
+const coveredMeasure = datasetCoverageView({
+  status: "partial",
+  coverage_progress: {
+    state: "known",
+    observed_count: 5,
+    expected_count: 5,
+    coverage_status: "covered",
+    coverage_label: "当前范围已覆盖",
+  },
+});
+assert.equal(
+  coveredMeasure.displayState,
+  "covered",
+  "snapshot quality cannot override the narrower coverage dimension",
+);
+assert.equal(coveredMeasure.displayLabel, "当前范围已覆盖");
+assert.equal(coveredMeasure.percentText, "100%");
+const partialMeasure = datasetCoverageView({
+  status: "ready",
+  coverage_progress: {
+    state: "known",
+    observed_count: 9999999,
+    expected_count: 10000000,
+  },
+});
+assert.equal(partialMeasure.displayState, "partial");
+assert.equal(
+  partialMeasure.percentText,
+  "<100%",
+  "rounding cannot paint an incomplete measure as 100%",
+);
+const contradictoryMeasure = datasetCoverageView({
+  coverage_progress: {
+    state: "unknown",
+    observed_count: 100,
+    expected_count: null,
+    coverage_status: "covered",
+    coverage_label: "当前范围已覆盖",
+  },
+});
+assert.equal(contradictoryMeasure.displayState, "unknown");
+assert.notEqual(contradictoryMeasure.displayLabel, "当前范围已覆盖");
+const onDemandMeasure = datasetCoverageView({
+  module: "indicators",
+  row_count: 6000000,
+  coverage_progress: {
+    state: "unknown",
+    observed_count: null,
+    expected_count: null,
+    coverage_status: "on_demand",
+    coverage_label: "按需计算",
+  },
+});
+assert.equal(onDemandMeasure.displayState, "on_demand");
+assert.equal(onDemandMeasure.percent, null);
 assert.equal(initializationView(undefined).canInitialize, false);
 assert.equal(
   initializationView({ ready: true }).known,

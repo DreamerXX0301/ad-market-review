@@ -1,0 +1,239 @@
+.strategy-batch-toolbar {
+  padding: 18px 20px;
+  border: 1px solid
+    color-mix(in srgb, var(--accent-secondary) 30%, var(--border));
+  border-radius: 14px;
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--accent-secondary) 9%, var(--surface)),
+    var(--surface)
+  );
+}
+.strategy-batch-heading {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.strategy-batch-heading > svg {
+  color: var(--accent-secondary);
+  flex-shrink: 0;
+}
+.strategy-batch-heading strong {
+  font-size: 14px;
+  display: block;
+}
+.strategy-batch-heading small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 5px;
+  line-height: 1.6;
+}
+.strategy-batch-controls,
+.strategy-batch-controls > label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.strategy-batch-controls > label {
+  font-size: 12px;
+  color: var(--subtle);
+  cursor: pointer;
+}
+.strategy-batch-controls input,
+.strategy-select-checkbox input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent-secondary);
+  cursor: pointer;
+}
+.strategy-batch-controls b {
+  color: var(--accent-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.strategy-batch-control-spacer {
+  flex: 1;
+}
+.strategy-batch-progress {
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  border-radius: 10px;
+  margin-top: 16px;
+}
+.strategy-batch-progress-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.strategy-batch-progress-heading strong {
+  color: var(--accent-secondary);
+  font-size: 12px;
+}
+.strategy-batch-progress-heading span {
+  color: var(--subtle);
+  flex: 1;
+}
+.strategy-batch-progress-heading > .strategy-batch-mode {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 3px 7px;
+  border-radius: 5px;
+}
+.strategy-batch-mode.automatic {
+  color: var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 11%, transparent);
+}
+.strategy-batch-mode.legacy {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+}
+.strategy-batch-tracking-summary {
+  font-size: 11px;
+  line-height: 1.7;
+  margin: 9px 0 0;
+  color: var(--subtle);
+}
+.strategy-batch-tracking-summary.automatic {
+  color: var(--cyan);
+}
+.strategy-batch-tracking-summary.legacy {
+  color: var(--muted);
+}
+.strategy-batch-items .strategy-batch-item-tracking {
+  color: var(--subtle);
+}
+.strategy-batch-progress-heading b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.strategy-batch-progress > progress {
+  display: block;
+  height: 6px;
+  width: 100%;
+  margin: 12px 0;
+  accent-color: var(--accent-secondary);
+}
+.strategy-batch-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.strategy-batch-current > span {
+  flex: 1;
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 160px;
+}
+.strategy-batch-progress > details {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.strategy-batch-progress > details > summary {
+  color: var(--subtle);
+  cursor: pointer;
+  font-size: 11px;
+}
+.strategy-batch-items {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.strategy-batch-items > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  background: var(--surface2);
+  border-radius: 7px;
+}
+.strategy-batch-items > div > div {
+  flex: 1;
+  min-width: 0;
+}
+.strategy-batch-items strong {
+  font-size: 11px;
+}
+.strategy-batch-items small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.strategy-batch-sequence {
+  color: var(--muted);
+  font-size: 11px;
+  width: 18px;
+  text-align: center;
+}
+.strategy-batch-item-state {
+  color: var(--subtle);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.strategy-batch-item-state.succeeded {
+  color: var(--cyan);
+}
+.strategy-batch-item-state.failed {
+  color: var(--red);
+}
+.strategy-batch-history {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 12px;
+}
+.strategy-batch-history select {
+  max-width: 330px;
+  min-width: 180px;
+}
+.strategy-batch-toolbar > .error-box {
+  margin-top: 12px;
+}
+.strategy-select-card {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr);
+  align-items: start;
+  gap: 3px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+}
+.strategy-select-card.checked {
+  background: color-mix(in srgb, var(--accent-secondary) 7%, transparent);
+}
+.strategy-select-checkbox {
+  display: grid;
+  place-items: center;
+  padding: 16px 0;
+  cursor: pointer;
+}
+.strategy-select-card > .strategy-card {
+  width: 100%;
+  margin: 0;
+}
+@media (max-width: 680px) {
+  .strategy-batch-toolbar {
+    padding: 14px;
+  }
+  .strategy-batch-control-spacer {
+    display: none;
+  }
+  .strategy-batch-controls > .btn {
+    flex: 1 1 180px;
+  }
+  .strategy-list > .strategy-select-card {
+    flex: 0 0 235px;
+  }
+  .strategy-batch-items > div {
+    flex-wrap: wrap;
+  }
+}

@@ -22,6 +22,7 @@ import SectorMembersDialog from "./SectorMembersDialog";
 import type { SectorMemberStockCallback } from "./SectorMembersDialog";
 import SectorPolicyEditor from "./SectorPolicyEditor";
 import { sectorKindLabel } from "./sectorPresentation";
+import TrackingTabs from "../tracking/TrackingTabs";
 import "./SectorWorkspace.css";
 
 export default function SectorTracking({
@@ -65,6 +66,14 @@ export default function SectorTracking({
       ? list(events.data).map((event) => ({
           ...byRound.get(event.round_id),
           ...event,
+          // A saved alert's quote belongs to its trigger day, never today's
+          // mutable round view. Missing historical proof stays unknown.
+          today_change_pct:
+            event.evidence?.metrics_by_period?.D?.change_pct ?? null,
+          current_price: event.evidence?.metrics_by_period?.D?.close ?? null,
+          latest_price: event.evidence?.metrics_by_period?.D?.close ?? null,
+          tracking_change_pct:
+            event.evidence?.metrics_by_period?.D?.tracking_change_pct ?? null,
         }))
       : rounds
   ).filter(
@@ -133,22 +142,18 @@ export default function SectorTracking({
           </button>
         }
       >
-        <div className="result-toolbar">
-          <div className="tabs">
-            {[
-              ["tracking", "跟踪中"],
-              ["alerts", "触发提醒"],
-              ["ended", "结束历史"],
-            ].map(([key, name]) => (
-              <button
-                key={key}
-                className={key === tab ? "active" : ""}
-                onClick={() => setTab(key)}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
+        <div className="result-toolbar tracking-view-toolbar">
+          <TrackingTabs
+            value={tab}
+            onChange={setTab}
+            activeKey="tracking"
+            historyKey="ended"
+            counts={{
+              active: result.data?.counts?.active,
+              alerts: events.data?.total,
+              history: result.data?.counts?.history,
+            }}
+          />
           <div className="button-group">
             <select
               aria-label="板块跟踪策略"

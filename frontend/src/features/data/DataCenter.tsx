@@ -16,8 +16,8 @@ import {
 import { api, list, post, requestKey, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
-  bytes,
   dateTime,
+  duration,
   integer,
   label,
   num,
@@ -52,6 +52,9 @@ import {
   visibleWarnings,
 } from "./dataPresentation";
 import "./DataCenter.css";
+import CoveragePanel from "./CoveragePanel";
+import PublishedStorageDetails from "./PublishedStorageDetails";
+import { publishedStorageView } from "./storagePresentation";
 const activeStatuses = ["queued", "pending", "running"];
 const publishedStatuses = [
   "completed",
@@ -356,6 +359,7 @@ export default function DataCenter({
   const toast = useToast();
   const data = result.data,
     summary = data?.summary || data?.data_summary || {};
+  const storage = publishedStorageView(summary);
   const recent = list(history.data);
   const previousHistoryStatuses = useRef<Map<string, string> | null>(null);
   const chain = taskChainState(task.data);
@@ -608,9 +612,9 @@ export default function DataCenter({
           sub={`${summary.first_date || "—"} → ${summary.last_date || data?.business_date || "—"}`}
         />
         <Stat
-          label="压缩存储"
-          value={bytes(summary.storage_bytes)}
-          sub="仅以实际数据文件计量"
+          label="本实例已发布文件"
+          value={storage.value}
+          sub={storage.sub}
         />
         <Stat
           label="当前业务日"
@@ -618,6 +622,7 @@ export default function DataCenter({
           sub="各模块分别发布覆盖水位"
         />
       </div>
+      <PublishedStorageDetails view={storage} />
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
@@ -950,65 +955,20 @@ export default function DataCenter({
         </Panel>
       )}
       {task.error && <ErrorBox message={task.error} retry={task.reload} />}
-      <Panel
-        title="数据覆盖"
-        subtitle="按模块查看实际范围、质量与缺口"
-        actions={
-          <button
-            className="icon-btn"
-            aria-label="刷新数据覆盖"
-            onClick={result.reload}
-          >
-            <RefreshCw size={14} />
-          </button>
-        }
-      >
-        {result.loading ? (
-          <Loading />
-        ) : data?.datasets?.length ? (
-          <div className="dataset-grid">
-            {data.datasets.map((dataset: Row, i: number) => (
-              <div
-                className="dataset-card"
-                key={dataset.module || dataset.name || i}
-              >
-                <div>
-                  <h3>{dataset.name || dataset.label || dataset.module}</h3>
-                  <Status
-                    value={dataset.status || dataset.quality || "unknown"}
-                  />
-                </div>
-                <strong>{integer(dataset.row_count ?? dataset.count)}</strong>
-                <p>
-                  {dataset.description || dataset.scope || "实际已发布数据"}
-                </p>
-                <footer>
-                  <span>
-                    起 <b>{dataset.first_date || dataset.data_start || "—"}</b>
-                  </span>
-                  <span>
-                    止 <b>{dataset.last_date || dataset.data_end || "—"}</b>
-                  </span>
-                </footer>
-                {dataset.reason && (
-                  <details className="data-dataset-gap">
-                    <summary>
-                      <ChevronRight size={12} />
-                      查看缺口说明
-                    </summary>
-                    <small>{dataset.reason}</small>
-                  </details>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <Empty
-            title="尚无已发布数据集"
-            description="配置来源并手动初始化；初始化完成后才更新各模块覆盖。"
-          />
-        )}
-      </Panel>
+      <CoveragePanel
+        datasets={data?.datasets || []}
+        audit={data?.coverage_check}
+        loading={result.loading}
+        disabled={!!busy || running}
+        remoteConfigured={!needsSource}
+        onReload={result.reload}
+        onTask={(next) => {
+          setSelectedId(next.task_id || next.job_id);
+          setFollowChain(false);
+          history.reload();
+          result.reload();
+        }}
+      />
       <Panel
         title={
           <>
@@ -1078,9 +1038,10 @@ export default function DataCenter({
               },
               {
                 key: "duration_ms",
-                title: "耗时",
-                render: (v) =>
-                  v == null ? "—" : `${num(Number(v) / 1000, 0)} 秒`,
+                title: "总历时",
+                description:
+                  "从任务提交到完成或当前时刻，包含排队、暂停等等待时间，不等于纯执行耗时。",
+                render: (v) => duration(v),
               },
               {
                 key: "row_count",

@@ -1,0 +1,297 @@
+.watchlist-button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.watchlist-button.selected {
+  color: var(--amber, #e9b956);
+  border-color: color-mix(in srgb, #e9b956 38%, transparent);
+  background: color-mix(in srgb, #e9b956 9%, transparent);
+}
+.watchlist-button.compact {
+  display: inline-flex;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.watchlist-intro {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 0 24px;
+}
+.watchlist-intro-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  color: #e9b956;
+  background: color-mix(in srgb, #e9b956 12%, transparent);
+}
+.watchlist-intro h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 8px;
+  font-size: 21px;
+}
+.watchlist-intro p {
+  margin: 0;
+  color: var(--muted);
+}
+.watchlist-intro > .muted {
+  margin-left: auto;
+}
+.watchlist-source {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.watchlist-source small {
+  color: var(--muted);
+}
+.watchlist-performance {
+  display: grid;
+  gap: 6px;
+  min-width: 105px;
+  font-variant-numeric: tabular-nums;
+}
+.watchlist-performance small {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.watchlist-panel > .panel-head {
+  padding: 18px 24px;
+}
+.watchlist-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.watchlist-search {
+  display: flex;
+  align-items: center;
+  flex: 1 1 360px;
+  max-width: 520px;
+  min-width: 0;
+  gap: 10px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface2);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.watchlist-search:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 12%, transparent);
+}
+.watchlist-search > svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.watchlist-search > input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+.watchlist-search > input:focus {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+.watchlist-search > .icon-btn {
+  width: 25px;
+  height: 25px;
+  flex-shrink: 0;
+}
+.watchlist-result-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.watchlist-toolbar > .watchlist-source-filter {
+  flex: 0 0 144px;
+  width: 144px;
+  height: 40px;
+  min-width: 0;
+  border-radius: 9px;
+  font-size: 12px;
+}
+.watchlist-memberships {
+  min-width: 150px;
+  max-width: 250px;
+}
+.watchlist-membership-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 5px;
+}
+.watchlist-classification-chip {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 7px;
+  border-radius: 5px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.watchlist-classification-chip[data-kind="concept"] {
+  color: var(--accent-secondary, #ad94eb);
+  background: color-mix(
+    in srgb,
+    var(--accent-secondary, #ad94eb) 11%,
+    var(--surface)
+  );
+}
+.watchlist-memberships > details > summary {
+  width: fit-content;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+.watchlist-memberships > details[open] > .watchlist-membership-chips {
+  max-height: 160px;
+  overflow-y: auto;
+  padding-top: 8px;
+}
+.watchlist-membership-unknown {
+  color: var(--muted);
+  font-size: 10px;
+}
+.watchlist-result-count strong {
+  color: var(--subtle);
+  font-weight: 600;
+}
+.watchlist-empty {
+  display: grid;
+  gap: 20px;
+  padding: 30px 24px 24px;
+}
+.watchlist-empty-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.watchlist-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--amber, #e9b956) 10%, var(--surface));
+  color: var(--amber, #e9b956);
+}
+.watchlist-empty-heading h3 {
+  margin: 0 0 7px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.watchlist-empty-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.watchlist-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-left: 62px;
+}
+.watchlist-empty-actions > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+}
+.watchlist-empty-actions > a > svg {
+  color: var(--blue);
+}
+.watchlist-empty-actions > a > svg:last-child {
+  margin-left: 8px;
+  color: var(--muted);
+}
+.watchlist-empty-actions > a:hover {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 7%, var(--surface));
+}
+.watchlist-empty-note {
+  padding: 16px 0 0;
+  border-top: 1px solid var(--border-soft);
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+@media (max-width: 640px) {
+  .watchlist-intro > .muted {
+    margin-left: 68px;
+  }
+  .watchlist-panel > .panel-head {
+    padding: 16px;
+  }
+  .watchlist-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+  .watchlist-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .watchlist-result-count {
+    margin-left: auto;
+  }
+  .watchlist-empty {
+    padding: 24px 16px 18px;
+    gap: 16px;
+  }
+  .watchlist-empty-heading {
+    align-items: flex-start;
+  }
+  .watchlist-empty-heading h3 {
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .watchlist-empty-actions {
+    padding-left: 0;
+  }
+  .watchlist-empty-actions > a {
+    flex: 1 1 220px;
+  }
+}

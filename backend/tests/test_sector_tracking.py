@@ -298,6 +298,17 @@ def test_same_sector_can_have_independent_rounds_for_two_strategies_with_shared_
     assert len(local['calls']) == 1
 
 
+def test_sector_tab_counts_keep_strategy_scope_before_view_filters(local):
+    first_strategy, _, first = add(local)
+    _, _, second = add(local)
+    tracking.remove_tracking(second, {'reason':'fixture ended'})
+    result = tracking.list_tracking(status='tracking', triggered_only=True)
+    assert result['items'] == [] and result['counts'] == {'active':1,'history':1}
+    scoped = tracking.list_tracking(strategy_id=first_strategy['strategy_id'], status='all')
+    assert scoped['counts'] == {'active':1,'history':0}
+    assert scoped['items'][0]['round_id'] == first
+
+
 def test_ended_history_uses_immutable_review_quote_not_later_cache_state(local):
     _, _, rid = add(local, {'duration_sessions': 1})
     day = advance(local, 71); local['values'][(CODE, day)] = {'close': 105}

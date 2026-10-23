@@ -102,7 +102,11 @@ def test_asof_has_no_future_prices_or_events_and_empty_samples_are_unknown(marke
     market.ref['_supplement']['annual_pools']['2099-01-01']={'items':[{'instrument_id':B,'last_price':999}]}
     # Preserve the actual observation rows; future rows cannot enter the query.
     current=[{**history[-2],'price_continuity':True,'corporate_action_coverage_known':True,'change_pct':0} for history in market.history.values()]
-    assert describe_sentiment(market,market.ref,current,TODAY)==before
+    after=describe_sentiment(market,market.ref,current,TODAY)
+    # Computation time is actual wall time, not fabricated historical time.
+    assert after['provenance'].pop('computed_at')
+    assert before['provenance'].pop('computed_at')
+    assert after==before
     empty=market_distribution([],TODAY)
     assert empty['coverage_pct'] is None
     assert all(item['value'] is None for item in empty['metrics'])

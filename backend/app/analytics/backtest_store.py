@@ -11,6 +11,7 @@ from .market import MarketData
 from .backtest_engine import VERSION,availability,config_checked,run_backtest
 from app.domain.conditions import names
 from app.services.task_service import TaskCancelled,TaskPaused,append_event
+from app.services.workspace_deletion import require_strategy_present,backtest_block_reason
 
 
 class BacktestRequestConflict(ValueError):
@@ -25,6 +26,7 @@ def insert(c,table,row):
 def context(strategy_id):
     with connect() as c:
         c.execute('BEGIN')
+        require_strategy_present(c,strategy_id)
         strategy=c.execute('SELECT s.name,s.strategy_id,v.* FROM strategy s JOIN strategy_version v ON v.strategy_id=s.strategy_id AND v.version=s.current_version WHERE s.strategy_id=? AND s.archived=0',(strategy_id,)).fetchone()
         if not strategy:raise ValueError('策略不存在或已归档')
         snapshots=[dict(r) for r in c.execute("SELECT s.* FROM published_head h JOIN dataset_snapshot s ON s.snapshot_id=h.snapshot_id WHERE h.module IN ('calendar','security_identity','daily_raw','corporate_actions','analysis_bars','indicators')")]
@@ -42,6 +44,14 @@ def get_availability(strategy_id):
 
 
 def create_backtest(payload):
+    requested_key=payload.get('request_key')
+    if isinstance(requested_key,str):
+        with connect() as c:
+            previous=c.execute("SELECT j.kind,b.backtest_id FROM job j LEFT JOIN backtest_run b USING(job_id) WHERE j.request_key=?",(requested_key,)).fetchone()
+            if previous and previous['kind']=='backtest' and not previous['backtest_id']:
+                raise BacktestRequestConflict('此请求对应的回测已永久删除，请使用新的请求键')
+            if c.execute('SELECT 1 FROM job j JOIN backtest_run b USING(job_id) JOIN backtest_deletion d USING(backtest_id) WHERE j.request_key=?',(requested_key,)).fetchone():
+                raise BacktestRequestConflict('此请求对应的回测已移入回收站，请先恢复或使用新的请求键')
     market,strategy,inputs,generation=context(payload.get('strategy_id'))
     config=config_checked(payload);bounds=availability(market,strategy,config['exit_ma'])
     if not bounds['available']:raise ValueError(bounds['reason'])
@@ -53,13 +63,17 @@ def create_backtest(payload):
     requested_key=payload.get('request_key')
     if requested_key is not None and (not isinstance(requested_key,str) or not requested_key.strip() or len(requested_key)>200):raise ValueError('request_key必须为1至200字符的非空字符串')
     request_key=requested_key if requested_key is not None else new_id('manual-backtest')
-    key=digest({'strategy':frozen,'config':config,'start':start,'end':end,'inputs':inputs})
+    key=digest({'strategy':frozen,'config':config,'start':start,'end':end,'inputs':inputs,'engine_version':VERSION})
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        previous=c.execute('SELECT j.kind,b.backtest_id,b.status,b.input_sha256 FROM job j LEFT JOIN backtest_run b ON b.job_id=j.job_id WHERE j.request_key=?',(request_key,)).fetchone()
+        require_strategy_present(c,strategy['strategy_id'])
+        if c.execute('SELECT archived FROM strategy WHERE strategy_id=?',(strategy['strategy_id'],)).fetchone()['archived']:
+            raise BacktestRequestConflict('策略已归档，不能创建回测')
+        previous=c.execute('SELECT j.kind,b.backtest_id,b.status,b.input_sha256,d.deleted_at_ms FROM job j LEFT JOIN backtest_run b ON b.job_id=j.job_id LEFT JOIN backtest_deletion d ON d.backtest_id=b.backtest_id WHERE j.request_key=?',(request_key,)).fetchone()
         if previous:
+            if previous['deleted_at_ms'] is not None:raise BacktestRequestConflict('此请求对应的回测已移入回收站，请先恢复或使用新的请求键')
             if previous['kind']!='backtest' or not previous['backtest_id']:raise BacktestRequestConflict('request_key已被其他任务占用，请使用新的请求键')
-            if previous['input_sha256']!=key:raise BacktestRequestConflict('request_key对应的策略、区间、参数或输入快照不同，请使用新的请求键')
+            if previous['input_sha256']!=key:raise BacktestRequestConflict('request_key对应的策略、区间、参数或输入快照不同，或冻结引擎版本不同，请使用新的请求键')
             return {'backtest_id':previous['backtest_id'],'status':previous['status'],'reused':True}
         active=c.execute("SELECT b.backtest_id,b.status FROM backtest_run b JOIN job j ON b.job_id=j.job_id WHERE j.logical_key=? AND j.status IN ('queued','running','paused')",('backtest:'+key,)).fetchone()
         if active:return {'backtest_id':active[0],'status':active[1],'reused':True}
@@ -77,17 +91,30 @@ def _metadata(row):
     frozen=json.loads(row['strategy_snapshot_json']);summary=json.loads(row['summary_json']) if row['summary_json'] else {}
     state=row['status']
     if state!='completed' and row.get('job_status') in ('cancelled','paused'):state=row['job_status']
-    return {'backtest_id':row['backtest_id'],'job_id':row['job_id'],'status':state,'calculation_status':row['status'],'task_status':row.get('job_status'),'strategy_id':row['strategy_id'],'strategy_name':frozen['name'],'strategy_version':row['strategy_version'],'trade_rules':frozen.get('trade_rules',{'entry':None,'exit':None}),'start_date':row['requested_start'],'end_date':row['requested_end'],'config':json.loads(row['execution_config_json']),'stats':summary.get('stats'),'error':summary.get('error'),'created_at_ms':row['created_at_ms'],'completed_at_ms':row['completed_at_ms'],'engine_version':row['engine_version']}
+    deleted=row.get('deleted_at_ms') is not None
+    blocked=backtest_block_reason(row)
+    purge=json.loads(row['active_purge_json']) if row.get('active_purge_json') else None
+    restore_blocked='永久清理已确认，请查看清理任务' if purge and purge['status'] in ('queued','cleaning') else None
+    restore_blocked=restore_blocked or ('请先恢复所属策略' if deleted and row.get('strategy_deleted') else None)
+    return {'backtest_id':row['backtest_id'],'job_id':row['job_id'],'status':state,'calculation_status':row['status'],'task_status':row.get('job_status'),'strategy_id':row['strategy_id'],'strategy_name':frozen['name'],'strategy_version':row['strategy_version'],'trade_rules':frozen.get('trade_rules',{'entry':None,'exit':None}),'start_date':row['requested_start'],'end_date':row['requested_end'],'config':json.loads(row['execution_config_json']),'stats':summary.get('stats'),'error':summary.get('error'),'created_at_ms':row['created_at_ms'],'completed_at_ms':row['completed_at_ms'],'engine_version':row['engine_version'],
+            'active_purge':purge,'deleted':deleted,'deleted_at_ms':row.get('deleted_at_ms'),'can_delete':not deleted and blocked is None,'delete_blocked_reason':blocked if not deleted else None,'can_restore':deleted and restore_blocked is None,'restore_blocked_reason':restore_blocked}
 
 
-def list_backtests():
-    with connect() as c:items=[_metadata(dict(r)) for r in c.execute('SELECT b.*,j.status job_status FROM backtest_run b JOIN job j ON j.job_id=b.job_id ORDER BY b.created_at_ms DESC LIMIT 100')]
-    return {'items':items,'total':len(items)}
+_READ_SELECT="""SELECT b.*,j.status job_status,j.lease_owner,j.lease_expires_at_ms,d.deleted_at_ms,sd.strategy_id strategy_deleted,(SELECT json_object('purge_id',p.purge_id,'status',p.status,'business_deleted',p.business_deleted) FROM workspace_purge p WHERE p.target_kind='backtest' AND p.target_id=b.backtest_id AND p.superseded_by IS NULL AND p.status IN ('queued','cleaning','failed') ORDER BY p.created_at_ms DESC,p.rowid DESC LIMIT 1) active_purge_json FROM backtest_run b JOIN job j ON j.job_id=b.job_id LEFT JOIN backtest_deletion d USING(backtest_id) LEFT JOIN strategy_deletion sd ON sd.strategy_id=b.strategy_id"""
+
+
+def list_backtests(deleted=False,limit=100,offset=0):
+    if not isinstance(deleted,bool) or isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=100 or isinstance(offset,bool) or not isinstance(offset,int) or offset<0:raise ValueError('回测列表分页参数无效')
+    condition='d.backtest_id IS NOT NULL' if deleted else 'd.backtest_id IS NULL'
+    with connect() as c:
+        items=[_metadata(dict(r)) for r in c.execute(_READ_SELECT+' WHERE '+condition+' ORDER BY b.created_at_ms DESC,b.backtest_id LIMIT ? OFFSET ?',(limit,offset))]
+        total=c.execute('SELECT count(*) FROM backtest_run b LEFT JOIN backtest_deletion d USING(backtest_id) WHERE '+condition).fetchone()[0]
+    return {'items':items,'total':total,'limit':limit,'offset':offset,'has_more':offset+len(items)<total}
 
 
 def get_backtest(backtest_id):
     with connect() as c:
-        row=c.execute('SELECT b.*,j.status job_status FROM backtest_run b JOIN job j ON j.job_id=b.job_id WHERE backtest_id=?',(backtest_id,)).fetchone()
+        row=c.execute(_READ_SELECT+' WHERE b.backtest_id=? AND d.backtest_id IS NULL',(backtest_id,)).fetchone()
         if not row:raise KeyError('回测不存在')
         row=dict(row);result=_metadata(row)
         if row['status']=='completed':
@@ -100,18 +127,55 @@ def get_backtest(backtest_id):
     return result
 
 
+def delete_backtest(backtest_id):
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute(_READ_SELECT+' WHERE b.backtest_id=?',(backtest_id,)).fetchone()
+        if not row:raise KeyError('回测不存在')
+        row=dict(row)
+        if row['deleted_at_ms'] is None:
+            reason=backtest_block_reason(row)
+            if reason:raise BacktestRequestConflict(reason)
+            stamp=now_ms()
+            c.execute('INSERT INTO backtest_deletion(backtest_id,deleted_at_ms) VALUES(?,?)',(backtest_id,stamp))
+        else:stamp=row['deleted_at_ms']
+        return {'backtest_id':backtest_id,'deleted':True,'deleted_at_ms':stamp,'status':_metadata(row)['status']}
+
+
+def restore_backtest(backtest_id):
+    from app.services.workspace_purge import require_not_purging
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        require_not_purging(c,'backtest',backtest_id)
+        row=c.execute(_READ_SELECT+' WHERE b.backtest_id=?',(backtest_id,)).fetchone()
+        if not row:raise KeyError('回测不存在')
+        row=dict(row)
+        require_not_purging(c,'strategy',row['strategy_id'])
+        if row['deleted_at_ms'] is not None and row['strategy_deleted']:
+            raise BacktestRequestConflict('请先恢复所属策略，再恢复关联回测')
+        c.execute('DELETE FROM backtest_deletion WHERE backtest_id=?',(backtest_id,))
+        return {'backtest_id':backtest_id,'deleted':False,'deleted_at_ms':None,'status':_metadata(row)['status']}
+
+
 def execute_backtest(job_id,progress=None):
     with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
         row=c.execute('SELECT * FROM backtest_run WHERE job_id=?',(job_id,)).fetchone()
         if not row:raise ValueError('回测任务没有冻结输入')
         row=dict(row)
+        if c.execute('SELECT 1 FROM backtest_deletion WHERE backtest_id=?',(row['backtest_id'],)).fetchone():raise ValueError('回测已移入回收站，不能继续执行')
+        require_strategy_present(c,row['strategy_id'])
         if row['status']=='completed':return get_backtest(row['backtest_id'])
         if row['status']=='queued':c.execute("UPDATE backtest_run SET status='running' WHERE backtest_id=?",(row['backtest_id'],))
         elif row['status']!='running':raise ValueError('仅恢复授权running回测；已失败/取消需手动新建')
     try:
+        if row['engine_version'] != VERSION:
+            raise ValueError('回测冻结引擎版本'+row['engine_version']+'与当前'+VERSION+'不同；保留旧任务与结果，请使用当前版本手动新建回测')
         frozen=json.loads(row['strategy_snapshot_json']);config=json.loads(row['execution_config_json'])
         market=MarketData(data_dir(),snapshot_id=frozen['market_snapshot_id'])
         result=run_backtest(market,frozen,{**config,'start_date':row['requested_start'],'end_date':row['requested_end']},progress)
+        if result.get('engine_version') != row['engine_version']:
+            raise ValueError('回测计算结果的引擎版本与冻结输入不同，拒绝发布')
         bid=row['backtest_id'];result.update(backtest_id=bid,job_id=job_id,status='completed',strategy_id=frozen['strategy_id'],strategy_name=frozen['name'],strategy_version=frozen['version'],input_snapshots=json.loads(row['input_snapshots_json']),market_snapshot_id=frozen['market_snapshot_id'],input_sha256=row['input_sha256'])
         folder=published_dir()/'backtests'/bid
         stage=published_dir()/'backtests'/('.staging-'+bid)

@@ -17,6 +17,7 @@ import { MarketOverview, MarketPage } from "./features/market/Market";
 import Topics from "./features/topics/Topics";
 import Strategies from "./features/strategies/Strategies";
 import Tracking from "./features/tracking/Tracking";
+import Watchlist from "./features/watchlist/Watchlist";
 import Backtests from "./features/backtests/Backtests";
 import DataCenter from "./features/data/DataCenter";
 import Sources from "./features/sources/Sources";
@@ -222,7 +223,13 @@ export default function App() {
       case "topics":
         return <Topics onStock={openStock} onNavigate={navigate} />;
       case "strategy":
-        return <Strategies onStock={openStock} onNavigate={navigate} />;
+        return (
+          <Strategies
+            onStock={openStock}
+            onNavigate={navigate}
+            dataDate={bootstrap.data?.data_date}
+          />
+        );
       case "tracking":
         return (
           <Tracking
@@ -232,11 +239,15 @@ export default function App() {
             initialStrategyId={context.tracking?.strategy_id}
           />
         );
+      case "watchlist":
+        return <Watchlist onStock={openStock} />;
       case "backtest":
         return (
           <Backtests
             onStock={openStock}
             initialStrategyId={context.backtest?.strategy_id}
+            marketDates={dates}
+            dataVersion={bootstrap.data?.market_snapshot_id}
           />
         );
       case "data":
@@ -270,6 +281,8 @@ export default function App() {
         onDate={setDate}
         dates={dates}
         dataDate={bootstrap.data?.data_date}
+        dataLoading={bootstrap.loading}
+        dataError={!!bootstrap.error}
         theme={theme}
         onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onStock={openStock}

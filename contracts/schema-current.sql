@@ -11,11 +11,27 @@
 -- 008_sector_strategies.sql sha256=9a414b47d1d3185071d2eb57c95d15c4419a6195cca32e3609ec11bca218036c
 -- 009_sector_tracking.sql sha256=157f97a2cf76fee977274f50234c2c281b3dabebc08423dcc941349324f458c7
 -- 010_stock_signal_period.sql sha256=5c3fd0c35ca5481f444a15e883f3b8aa9c1f71a9319e5cf0cf675e81e0bcbc6b
+-- 011_watchlist.sql sha256=bfd581f9a0570ea205c56b4de5003d93021dcbe90fb11900c38ce0eee919d6c1
+-- 012_chart_annotations.sql sha256=c665f0c65dd0dd1cf7bee84c5f85173dbc3cc46470f52face90927e3cd178c3d
+-- 013_watchlist_entry_return.sql sha256=ff40af45908638f25cf5c34cc60e193b7e0ace3ec83606ee54a609c7ded6c00d
+-- 014_tracking_baseline_lookup.sql sha256=4fa2720c656f343cdff78eb3f3bc0f4e7a4c61be72f83cd32086a9539fbd4eee
+-- 015_line_alerts.sql sha256=41f6eb06bc859a37919d818f31f5b5e95f52785519e0f7d298c87aaf984c8bce
+-- 016_listing_status.sql sha256=dc8e44dcffcda6ccb403b5e961211d53be26d86cb4aa87750edfc67d30ce5411
+-- 017_market_mainlines.sql sha256=a9978baccc2965efa7687857bd027a13dc12fae1aa2e17df09c1ce198dfd3df5
+-- 018_market_sentiment_snapshots.sql sha256=6ffe051c931bcc3037649880443d50085b3d49affe18a06a3aada6d308305530
+-- 019_workspace_deletion.sql sha256=26c526211b3c05f20f1ef968165aac57d6b75ba0d70e7258f22d140279b25dd1
+-- 020_workspace_purge.sql sha256=67cbabe235f43458e654ddce6dfec8cd2778a4f758a3d7925bf67e83b656bc2c
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
 
 CREATE TABLE _schema_migration (name TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at_ms INTEGER NOT NULL);
+
+CREATE TABLE backtest_deletion (
+  backtest_id TEXT PRIMARY KEY REFERENCES backtest_run(backtest_id),
+  deleted_at_ms INTEGER NOT NULL CHECK(deleted_at_ms>0),
+  strategy_deletion_id TEXT REFERENCES strategy_deletion(deletion_id)
+) STRICT;
 
 CREATE TABLE backtest_run (
   backtest_id TEXT PRIMARY KEY,
@@ -61,6 +77,20 @@ CREATE TABLE capability_probe (
   evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)), -- 已脱敏证据、单位、实际范围，不是原始鉴权响应
   request_id TEXT
 ) STRICT;
+
+CREATE TABLE chart_annotation (
+    annotation_id TEXT PRIMARY KEY,
+    instrument_id TEXT NOT NULL,
+    price REAL NOT NULL CHECK(price > 0),
+    label TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL CHECK(color IN ('blue','amber','red','green','violet')),
+    price_basis TEXT NOT NULL CHECK(price_basis IN ('none','forward_event_affine')),
+    anchor_date TEXT,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL, line_type TEXT NOT NULL DEFAULT 'reference' CHECK(line_type IN ('reference','support','resistance')), alert_modes_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(alert_modes_json) AND json_type(alert_modes_json)='array'), auto_watchlist INTEGER NOT NULL DEFAULT 0 CHECK(auto_watchlist IN (0,1)), revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0), effective_business_date TEXT CHECK(effective_business_date IS NULL OR date(effective_business_date,'+0 days') IS effective_business_date),
+    CHECK((price_basis='none' AND anchor_date IS NULL) OR
+          (price_basis='forward_event_affine' AND anchor_date IS NOT NULL))
+);
 
 CREATE TABLE dataset_snapshot (
   snapshot_id TEXT PRIMARY KEY,
@@ -118,6 +148,120 @@ CREATE TABLE job_event (
  message TEXT NOT NULL,
  details_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(details_json)), -- 已脱敏结构；禁止Key/签名URL
  PRIMARY KEY(job_id,seq)
+) STRICT;
+
+CREATE TABLE line_alert_check (
+ job_id TEXT PRIMARY KEY REFERENCES job(job_id),
+ business_date TEXT NOT NULL,
+ market_snapshot_id TEXT NOT NULL,
+ rules_signature TEXT NOT NULL,
+ checked_rules INTEGER NOT NULL,
+ trigger_count INTEGER NOT NULL,
+ unknown_count INTEGER NOT NULL,
+ checked_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE line_alert_evaluation (
+ job_id TEXT NOT NULL REFERENCES job(job_id),
+ annotation_id TEXT NOT NULL,
+ annotation_revision INTEGER NOT NULL,
+ rule TEXT NOT NULL,
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ state TEXT NOT NULL CHECK(state IN ('triggered','invalidated','not_triggered','unknown')),
+ reason TEXT,
+ event_id TEXT REFERENCES line_alert_event(event_id),
+ recorded_at_ms INTEGER NOT NULL,
+ PRIMARY KEY(job_id,annotation_id,annotation_revision,rule,trade_date)
+) STRICT;
+
+CREATE TABLE line_alert_event (
+ event_id TEXT PRIMARY KEY,
+ annotation_id TEXT NOT NULL,
+ annotation_revision INTEGER NOT NULL,
+ instrument_id TEXT NOT NULL,
+ line_type TEXT NOT NULL CHECK(line_type IN ('support','resistance')),
+ rule TEXT NOT NULL,
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ state TEXT NOT NULL CHECK(state IN ('triggered','invalidated')),
+ job_id TEXT NOT NULL REFERENCES job(job_id),
+ event_json TEXT NOT NULL CHECK(json_valid(event_json)),
+ created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
+ UNIQUE(annotation_id,annotation_revision,rule,trade_date)
+) STRICT;
+
+CREATE TABLE line_alert_rule_clock (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ revision INTEGER NOT NULL CHECK(revision>0)
+) STRICT;
+
+CREATE TABLE listing_status_confirmation (
+ confirmation_id TEXT PRIMARY KEY,
+ instrument_id TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('pending','unknown')),
+ source_kind TEXT NOT NULL CHECK(source_kind='manual_user_confirmation'),
+ observed_business_date TEXT NOT NULL CHECK(date(observed_business_date,'+0 days') IS observed_business_date),
+ reason TEXT NOT NULL,
+ evidence TEXT NOT NULL,
+ primary_snapshot_id TEXT NOT NULL REFERENCES dataset_snapshot(snapshot_id),
+ market_snapshot_id TEXT NOT NULL,
+ quote_presence_json TEXT NOT NULL CHECK(json_valid(quote_presence_json)),
+ request_key TEXT NOT NULL,
+ request_hash TEXT NOT NULL,
+ created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
+ UNIQUE(request_key,instrument_id)
+) STRICT;
+
+CREATE TABLE listing_status_revision (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ revision INTEGER NOT NULL CHECK(revision>0)
+) STRICT;
+
+CREATE TABLE listing_status_summary (
+ summary_id TEXT PRIMARY KEY,
+ market_snapshot_id TEXT NOT NULL,
+ primary_snapshot_id TEXT NOT NULL REFERENCES dataset_snapshot(snapshot_id),
+ business_date TEXT NOT NULL CHECK(date(business_date,'+0 days') IS business_date),
+ manual_revision INTEGER NOT NULL CHECK(manual_revision>=0),
+ reference_hash TEXT NOT NULL,
+ identities_json TEXT NOT NULL CHECK(json_valid(identities_json)),
+ presence_json TEXT NOT NULL CHECK(json_valid(presence_json)),
+ checked_at_ms INTEGER NOT NULL,
+ UNIQUE(primary_snapshot_id,market_snapshot_id,business_date,manual_revision,reference_hash)
+) STRICT;
+
+CREATE TABLE market_mainline_revision (
+ revision_id TEXT PRIMARY KEY,
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ instrument_id TEXT NOT NULL,
+ instrument_name TEXT NOT NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ action TEXT NOT NULL CHECK(action IN ('replace','revoke')),
+ source_kind TEXT NOT NULL CHECK(source_kind='manual_user_entry'),
+ change_reason TEXT NOT NULL CHECK(length(trim(change_reason))>0),
+ attributions_json TEXT NOT NULL CHECK(json_valid(attributions_json) AND json_type(attributions_json)='array'),
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0),
+ supersedes_revision_id TEXT REFERENCES market_mainline_revision(revision_id),
+ UNIQUE(trade_date,instrument_id,revision),
+ CHECK((action='revoke' AND json_array_length(attributions_json)=0)
+    OR (action='replace' AND json_array_length(attributions_json) BETWEEN 1 AND 12))
+) STRICT;
+
+CREATE TABLE market_sentiment_snapshot (
+ snapshot_id TEXT PRIMARY KEY,
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0),
+ record_mode TEXT NOT NULL CHECK(record_mode='manual_retained_capture'),
+ model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 128),
+ rule_version TEXT NOT NULL CHECK(length(rule_version) BETWEEN 1 AND 128),
+ input_fingerprint TEXT NOT NULL CHECK(length(input_fingerprint)=64 AND input_fingerprint NOT GLOB '*[^0-9a-f]*'),
+ content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+ payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='object' AND length(payload_json)<=1048576),
+ UNIQUE(trade_date,rule_version,input_fingerprint),
+ CHECK(json_extract(payload_json,'$.date') IS trade_date),
+ CHECK(json_extract(payload_json,'$.model') IS model),
+ CHECK(json_extract(payload_json,'$.provenance.rule_version') IS rule_version),
+ CHECK(json_extract(payload_json,'$.provenance.input_fingerprint') IS input_fingerprint),
+ CHECK(json_extract(payload_json,'$.provenance.mode') IS 'retained_retrospective')
 ) STRICT;
 
 CREATE TABLE platform_setting (
@@ -338,6 +482,13 @@ CREATE TABLE strategy (
   FOREIGN KEY(strategy_id,current_policy_version) REFERENCES tracking_policy_version(strategy_id,policy_version)
 ) STRICT;
 
+CREATE TABLE strategy_deletion (
+  strategy_id TEXT PRIMARY KEY REFERENCES strategy(strategy_id),
+  deletion_id TEXT NOT NULL UNIQUE,
+  deleted_at_ms INTEGER NOT NULL CHECK(deleted_at_ms>0),
+  previous_archived INTEGER NOT NULL CHECK(previous_archived IN (0,1))
+) STRICT;
+
 CREATE TABLE strategy_version (
   strategy_id TEXT NOT NULL REFERENCES strategy(strategy_id),
   version INTEGER NOT NULL CHECK(version>0),
@@ -472,13 +623,83 @@ CREATE TABLE tracking_round (
   CHECK(status<>'expired' OR end_business_date>entry_business_date)
 ) STRICT;
 
+CREATE TABLE watchlist_item (
+  instrument_id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('stock','tracking','sector','topic')),
+  source_id TEXT,
+  source_name TEXT NOT NULL,
+  observed_date TEXT CHECK(observed_date IS NULL OR date(observed_date,'+0 days') IS observed_date),
+  added_business_date TEXT NOT NULL CHECK(date(added_business_date,'+0 days') IS added_business_date),
+  tracking_round_id TEXT REFERENCES tracking_round(round_id),
+  tracking_entry_date TEXT CHECK(tracking_entry_date IS NULL OR date(tracking_entry_date,'+0 days') IS tracking_entry_date),
+  event_price_e8 INTEGER CHECK(event_price_e8 IS NULL OR event_price_e8>0),
+  event_basis_json TEXT NOT NULL CHECK(json_valid(event_basis_json)),
+  created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0), watchlist_entry_price_e8 INTEGER
+  CHECK(watchlist_entry_price_e8 IS NULL OR watchlist_entry_price_e8>0), watchlist_entry_basis_json TEXT NOT NULL DEFAULT '{}'
+  CHECK(json_valid(watchlist_entry_basis_json)),
+  CHECK((tracking_round_id IS NULL AND tracking_entry_date IS NULL AND event_price_e8 IS NULL)
+     OR (tracking_round_id IS NOT NULL AND tracking_entry_date IS NOT NULL AND event_price_e8 IS NOT NULL))
+) STRICT;
+
+CREATE TABLE workspace_purge (
+  purge_id TEXT PRIMARY KEY,
+  target_kind TEXT NOT NULL CHECK(target_kind IN ('strategy','backtest')),
+  target_id TEXT NOT NULL,
+  target_name TEXT NOT NULL,
+  job_id TEXT NOT NULL UNIQUE REFERENCES job(job_id),
+  scope_sha256 TEXT NOT NULL CHECK(length(scope_sha256)=64),
+  scope_json TEXT NOT NULL CHECK(json_valid(scope_json)),
+  status TEXT NOT NULL CHECK(status IN ('queued','cleaning','completed','failed')),
+  business_deleted INTEGER NOT NULL DEFAULT 0 CHECK(business_deleted IN (0,1)),
+  created_at_ms INTEGER NOT NULL,
+  completed_at_ms INTEGER,
+  error TEXT,
+  superseded_by TEXT REFERENCES workspace_purge(purge_id)
+) STRICT;
+
+CREATE TABLE workspace_purge_audit (
+  purge_id TEXT NOT NULL REFERENCES workspace_purge(purge_id),
+  stage TEXT NOT NULL,
+  occurred_at_ms INTEGER NOT NULL,
+  details_json TEXT NOT NULL CHECK(json_valid(details_json)),
+  PRIMARY KEY(purge_id,stage)
+) STRICT;
+
+CREATE TABLE workspace_purge_file (
+  purge_id TEXT NOT NULL REFERENCES workspace_purge(purge_id),
+  snapshot_id TEXT NOT NULL REFERENCES dataset_snapshot(snapshot_id),
+  object_key TEXT NOT NULL,
+  sha256 TEXT NOT NULL CHECK(length(sha256)=64),
+  byte_count INTEGER NOT NULL CHECK(byte_count>=0),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','removed','absent','failed')),
+  removed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(removed_bytes>=0),
+  error TEXT,
+  PRIMARY KEY(purge_id,object_key)
+) STRICT;
+
 CREATE INDEX artifact_content_references ON snapshot_artifact(sha256);
+
+CREATE INDEX backtest_deletion_strategy_batch ON backtest_deletion(strategy_deletion_id);
 
 CREATE INDEX candidates_by_result ON selection_candidate(run_id,decision);
 
 CREATE INDEX capability_latest ON capability_probe(connection_id,capability,probed_at_ms DESC);
 
+CREATE INDEX chart_annotation_instrument ON chart_annotation(instrument_id, created_at_ms, annotation_id);
+
+CREATE INDEX line_alert_by_day ON line_alert_event(trade_date DESC,created_at_ms DESC);
+
+CREATE INDEX line_alert_by_stock ON line_alert_event(instrument_id,trade_date DESC,created_at_ms DESC);
+
+CREATE INDEX line_alert_evaluation_progress ON line_alert_evaluation(annotation_id,annotation_revision,rule,trade_date);
+
+CREATE INDEX listing_confirmation_by_stock ON listing_status_confirmation(instrument_id,created_at_ms DESC);
+
+CREATE INDEX listing_summary_lookup ON listing_status_summary(market_snapshot_id,business_date,manual_revision);
+
 CREATE INDEX live_pins ON retention_pin(snapshot_id,expires_at_ms);
+
+CREATE INDEX mainline_by_date_known ON market_mainline_revision(trade_date,recorded_at_ms,instrument_id,revision);
 
 CREATE UNIQUE INDEX one_accepted_batch ON sync_batch(job_id,capability,batch_key) WHERE status='accepted';
 
@@ -487,6 +708,8 @@ CREATE UNIQUE INDEX one_active_logical_job ON job(logical_key) WHERE status IN (
 CREATE UNIQUE INDEX one_active_sector_tracking ON sector_tracking_round(strategy_id,target_id) WHERE status='tracking';
 
 CREATE UNIQUE INDEX one_active_tracking_round ON tracking_round(strategy_id,instrument_id) WHERE status='tracking';
+
+CREATE UNIQUE INDEX one_active_workspace_purge ON workspace_purge(target_kind,target_id) WHERE status IN ('queued','cleaning');
 
 CREATE UNIQUE INDEX only_one_running_job ON job((1)) WHERE status='running';
 
@@ -500,15 +723,29 @@ CREATE INDEX sector_tracking_event_list ON sector_tracking_event(business_date D
 
 CREATE INDEX sector_tracking_status ON sector_tracking_round(status,strategy_id,created_at_ms);
 
+CREATE INDEX sentiment_snapshot_by_date ON market_sentiment_snapshot(trade_date,recorded_at_ms DESC,snapshot_id DESC);
+
+CREATE INDEX sentiment_snapshot_by_known ON market_sentiment_snapshot(recorded_at_ms DESC,snapshot_id DESC);
+
 CREATE INDEX snapshots_by_module_date ON dataset_snapshot(module,scope_key,data_end DESC);
 
 CREATE INDEX topic_override_asof ON topic_override(topic_id,instrument_id,effective_business_date,recorded_at_ms);
 
+CREATE INDEX tracking_round_by_instrument_date
+ON tracking_round(instrument_id, entry_business_date DESC, created_at_ms DESC);
+
 CREATE INDEX trigger_list ON tracking_event(event_type,business_date DESC,round_id);
+
+CREATE INDEX watchlist_created ON watchlist_item(created_at_ms DESC,instrument_id);
+
+CREATE INDEX workspace_purge_target ON workspace_purge(target_kind,target_id,business_deleted);
 
 CREATE VIEW published_watermark AS SELECT h.module,h.scope_key,h.snapshot_id,
   s.data_end AS imported_through,s.quality,s.knowledge_cutoff_ms
   FROM published_head h JOIN dataset_snapshot s USING(snapshot_id);
+
+CREATE TRIGGER advance_listing_status_revision AFTER INSERT ON listing_status_confirmation
+BEGIN INSERT INTO listing_status_revision VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
 
 CREATE TRIGGER append_only_capability_probe_delete BEFORE DELETE ON capability_probe BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
@@ -518,7 +755,7 @@ CREATE TRIGGER append_only_job_event_delete BEFORE DELETE ON job_event BEGIN SEL
 
 CREATE TRIGGER append_only_job_event_update BEFORE UPDATE ON job_event BEGIN SELECT RAISE(ABORT,'task log is append only'); END;
 
-CREATE TRIGGER append_only_strategy_version_delete BEFORE DELETE ON strategy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+CREATE TRIGGER append_only_strategy_version_delete BEFORE DELETE ON strategy_version WHEN workspace_purge_allowed('strategy',OLD.strategy_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_strategy_version_update BEFORE UPDATE ON strategy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
@@ -530,15 +767,15 @@ CREATE TRIGGER append_only_topic_revision_delete BEFORE DELETE ON topic_revision
 
 CREATE TRIGGER append_only_topic_revision_update BEFORE UPDATE ON topic_revision BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
-CREATE TRIGGER append_only_tracking_event_delete BEFORE DELETE ON tracking_event BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+CREATE TRIGGER append_only_tracking_event_delete BEFORE DELETE ON tracking_event WHEN workspace_purge_allowed('round',OLD.round_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_tracking_event_update BEFORE UPDATE ON tracking_event BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
-CREATE TRIGGER append_only_tracking_policy_application_delete BEFORE DELETE ON tracking_policy_application BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+CREATE TRIGGER append_only_tracking_policy_application_delete BEFORE DELETE ON tracking_policy_application WHEN workspace_purge_allowed('round',OLD.round_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_tracking_policy_application_update BEFORE UPDATE ON tracking_policy_application BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
-CREATE TRIGGER append_only_tracking_policy_version_delete BEFORE DELETE ON tracking_policy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+CREATE TRIGGER append_only_tracking_policy_version_delete BEFORE DELETE ON tracking_policy_version WHEN workspace_purge_allowed('strategy',OLD.strategy_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_tracking_policy_version_update BEFORE UPDATE ON tracking_policy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
@@ -578,6 +815,16 @@ END;
 
 CREATE TRIGGER candidate_sealed_insert BEFORE INSERT ON selection_candidate WHEN (SELECT status FROM selection_run WHERE run_id=NEW.run_id)<>'running' BEGIN SELECT RAISE(ABORT,'completed candidate set is immutable'); END;
 
+CREATE TRIGGER chain_mainline_revision BEFORE INSERT ON market_mainline_revision
+BEGIN
+ SELECT CASE WHEN NEW.revision!=coalesce((SELECT max(revision) FROM market_mainline_revision WHERE trade_date=NEW.trade_date AND instrument_id=NEW.instrument_id),0)+1
+ THEN RAISE(ABORT,'daily mainline revision must append') END;
+ SELECT CASE WHEN NEW.supersedes_revision_id IS NOT (SELECT revision_id FROM market_mainline_revision WHERE trade_date=NEW.trade_date AND instrument_id=NEW.instrument_id ORDER BY revision DESC LIMIT 1)
+ THEN RAISE(ABORT,'daily mainline predecessor mismatch') END;
+ SELECT CASE WHEN NEW.recorded_at_ms<coalesce((SELECT recorded_at_ms FROM market_mainline_revision WHERE trade_date=NEW.trade_date AND instrument_id=NEW.instrument_id ORDER BY revision DESC LIMIT 1),0)
+ THEN RAISE(ABORT,'daily mainline clock moved backwards') END;
+END;
+
 CREATE TRIGGER completed_backtest_gate BEFORE UPDATE OF status ON backtest_run WHEN NEW.status='completed' BEGIN
  SELECT CASE WHEN OLD.status<>'running' THEN RAISE(ABORT,'backtest must run accepted range before completion') END;
  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM dataset_snapshot WHERE snapshot_id=NEW.result_snapshot_id AND module='backtest_result' AND state='published') THEN RAISE(ABORT,'completed backtest requires a published result') END;
@@ -585,7 +832,7 @@ END;
 
 CREATE TRIGGER completed_backtest_immutable BEFORE UPDATE ON backtest_run WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'completed backtest is immutable; rerun with new ID'); END;
 
-CREATE TRIGGER completed_backtest_no_delete BEFORE DELETE ON backtest_run WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'retain completed backtest metadata'); END;
+CREATE TRIGGER completed_backtest_no_delete BEFORE DELETE ON backtest_run WHEN OLD.status='completed' AND workspace_purge_allowed('backtest',OLD.backtest_id)=0 BEGIN SELECT RAISE(ABORT,'retain completed backtest metadata'); END;
 
 CREATE TRIGGER event_not_future_business_day BEFORE INSERT ON tracking_event
 WHEN NEW.business_date>(SELECT business_date FROM business_clock WHERE singleton=1)
@@ -598,11 +845,11 @@ BEGIN SELECT RAISE(ABORT,'policy migration requires an audited application'); EN
 CREATE TRIGGER freeze_published_snapshot BEFORE UPDATE ON dataset_snapshot
 WHEN OLD.state='published' BEGIN SELECT RAISE(ABORT,'published snapshot is immutable; create a revision'); END;
 
-CREATE TRIGGER freeze_selection_candidate_delete BEFORE DELETE ON selection_candidate WHEN (SELECT status FROM selection_run WHERE run_id=OLD.run_id)='completed' BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
+CREATE TRIGGER freeze_selection_candidate_delete BEFORE DELETE ON selection_candidate WHEN (SELECT status FROM selection_run WHERE run_id=OLD.run_id)='completed' AND workspace_purge_allowed('selection',OLD.run_id)=0 BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
 
 CREATE TRIGGER freeze_selection_candidate_update BEFORE UPDATE ON selection_candidate WHEN (SELECT status FROM selection_run WHERE run_id=OLD.run_id)='completed' OR (SELECT status FROM selection_run WHERE run_id=NEW.run_id)='completed' BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
 
-CREATE TRIGGER freeze_selection_run_delete BEFORE DELETE ON selection_run WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
+CREATE TRIGGER freeze_selection_run_delete BEFORE DELETE ON selection_run WHEN OLD.status='completed' AND workspace_purge_allowed('selection',OLD.run_id)=0 BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
 
 CREATE TRIGGER freeze_selection_run_update BEFORE UPDATE ON selection_run WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'completed run and candidates are immutable'); END;
 
@@ -655,6 +902,21 @@ CREATE TRIGGER job_event_order BEFORE INSERT ON job_event
 WHEN NEW.seq<>coalesce((SELECT max(seq)+1 FROM job_event WHERE job_id=NEW.job_id),1)
 BEGIN SELECT RAISE(ABORT,'job events require contiguous per-job seq'); END;
 
+CREATE TRIGGER line_alert_rule_delete AFTER DELETE ON chart_annotation
+WHEN OLD.line_type!='reference' AND json_array_length(OLD.alert_modes_json)>0
+BEGIN INSERT INTO line_alert_rule_clock VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
+
+CREATE TRIGGER line_alert_rule_insert AFTER INSERT ON chart_annotation
+WHEN NEW.line_type!='reference' AND json_array_length(NEW.alert_modes_json)>0
+BEGIN INSERT INTO line_alert_rule_clock VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
+
+CREATE TRIGGER line_alert_rule_update AFTER UPDATE OF price,price_basis,anchor_date,line_type,alert_modes_json,auto_watchlist,revision,effective_business_date ON chart_annotation
+WHEN (OLD.line_type!='reference' AND json_array_length(OLD.alert_modes_json)>0 OR NEW.line_type!='reference' AND json_array_length(NEW.alert_modes_json)>0)
+AND (OLD.price IS NOT NEW.price OR OLD.price_basis IS NOT NEW.price_basis OR OLD.anchor_date IS NOT NEW.anchor_date
+ OR OLD.line_type IS NOT NEW.line_type OR OLD.alert_modes_json IS NOT NEW.alert_modes_json
+ OR OLD.auto_watchlist IS NOT NEW.auto_watchlist OR OLD.revision IS NOT NEW.revision OR OLD.effective_business_date IS NOT NEW.effective_business_date)
+BEGIN INSERT INTO line_alert_rule_clock VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
+
 CREATE TRIGGER no_snapshot_id_replace BEFORE INSERT ON dataset_snapshot WHEN EXISTS(SELECT 1 FROM dataset_snapshot WHERE snapshot_id=NEW.snapshot_id) BEGIN SELECT RAISE(ABORT,'snapshot ID already exists; no replace'); END;
 
 CREATE TRIGGER no_tracking_reactivation BEFORE UPDATE OF status ON tracking_round WHEN OLD.status<>'tracking' AND NEW.status<>OLD.status
@@ -684,8 +946,33 @@ BEGIN
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM snapshot_coverage WHERE snapshot_id=NEW.snapshot_id) THEN RAISE(ABORT,'published snapshot requires coverage') END;
 END;
 
+CREATE TRIGGER retain_line_alert_delete BEFORE DELETE ON line_alert_event BEGIN SELECT RAISE(ABORT,'retain line alert evidence'); END;
+
+CREATE TRIGGER retain_line_alert_update BEFORE UPDATE ON line_alert_event BEGIN SELECT RAISE(ABORT,'retain line alert evidence'); END;
+
+CREATE TRIGGER retain_listing_confirmation_delete BEFORE DELETE ON listing_status_confirmation BEGIN SELECT RAISE(ABORT,'retain listing confirmation audit'); END;
+
+CREATE TRIGGER retain_listing_confirmation_update BEFORE UPDATE ON listing_status_confirmation BEGIN SELECT RAISE(ABORT,'retain listing confirmation audit'); END;
+
+CREATE TRIGGER retain_mainline_revision_delete BEFORE DELETE ON market_mainline_revision
+BEGIN SELECT RAISE(ABORT,'retain daily mainline audit'); END;
+
+CREATE TRIGGER retain_mainline_revision_update BEFORE UPDATE ON market_mainline_revision
+BEGIN SELECT RAISE(ABORT,'retain daily mainline audit'); END;
+
 CREATE TRIGGER retain_published_snapshot_metadata BEFORE DELETE ON dataset_snapshot
 WHEN OLD.state='published' BEGIN SELECT RAISE(ABORT,'retain publication metadata; GC artifacts separately'); END;
+
+CREATE TRIGGER retain_sentiment_snapshot_delete BEFORE DELETE ON market_sentiment_snapshot
+BEGIN SELECT RAISE(ABORT,'retain manual sentiment snapshot'); END;
+
+CREATE TRIGGER retain_sentiment_snapshot_replace BEFORE INSERT ON market_sentiment_snapshot
+WHEN EXISTS(SELECT 1 FROM market_sentiment_snapshot WHERE snapshot_id=NEW.snapshot_id
+ OR (trade_date=NEW.trade_date AND rule_version=NEW.rule_version AND input_fingerprint=NEW.input_fingerprint))
+BEGIN SELECT RAISE(ABORT,'retain manual sentiment snapshot'); END;
+
+CREATE TRIGGER retain_sentiment_snapshot_update BEFORE UPDATE ON market_sentiment_snapshot
+BEGIN SELECT RAISE(ABORT,'retain manual sentiment snapshot'); END;
 
 CREATE TRIGGER sector_tracking_entry_gate BEFORE INSERT ON sector_tracking_round BEGIN
  SELECT CASE WHEN NOT EXISTS(
@@ -742,6 +1029,10 @@ CREATE TRIGGER selection_input_immutable BEFORE UPDATE ON selection_run
 WHEN NEW.strategy_id<>OLD.strategy_id OR NEW.strategy_version<>OLD.strategy_version OR NEW.business_date<>OLD.business_date OR NEW.primary_snapshot_id<>OLD.primary_snapshot_id OR NEW.input_snapshots_json<>OLD.input_snapshots_json OR NEW.input_sha256<>OLD.input_sha256 OR NEW.universe_definition_json<>OLD.universe_definition_json
 BEGIN SELECT RAISE(ABORT,'selection input is frozen at creation'); END;
 
+CREATE TRIGGER sentiment_snapshot_clock BEFORE INSERT ON market_sentiment_snapshot
+WHEN NEW.recorded_at_ms<coalesce((SELECT max(recorded_at_ms) FROM market_sentiment_snapshot),0)
+BEGIN SELECT RAISE(ABORT,'sentiment snapshot clock moved backwards'); END;
+
 CREATE TRIGGER snapshot_ready_coverage BEFORE UPDATE OF state ON dataset_snapshot WHEN NEW.state='published' AND NEW.quality='ready' BEGIN
  SELECT CASE WHEN EXISTS(SELECT 1 FROM snapshot_coverage WHERE snapshot_id=NEW.snapshot_id AND coverage_state<>'ready') THEN RAISE(ABORT,'ready snapshot cannot hide partial coverage') END;
 END;
@@ -795,7 +1086,7 @@ CREATE TRIGGER tracking_exit_evidence BEFORE INSERT ON tracking_event WHEN NEW.e
  THEN RAISE(ABORT,'entry-price exit requires strict break of this round frozen baseline') END;
 END;
 
-CREATE TRIGGER tracking_round_no_delete BEFORE DELETE ON tracking_round BEGIN SELECT RAISE(ABORT,'soft-end tracking round; retain history'); END;
+CREATE TRIGGER tracking_round_no_delete BEFORE DELETE ON tracking_round WHEN workspace_purge_allowed('round',OLD.round_id)=0 BEGIN SELECT RAISE(ABORT,'soft-end tracking round; retain history'); END;
 
 CREATE TRIGGER tracking_status_requires_event BEFORE UPDATE OF status ON tracking_round WHEN NEW.status<>OLD.status BEGIN
  SELECT CASE WHEN NEW.end_reason IS NULL OR length(NEW.end_reason)=0 OR NOT EXISTS(SELECT 1 FROM tracking_event e WHERE e.round_id=OLD.round_id AND e.business_date=NEW.end_business_date
@@ -807,5 +1098,32 @@ CREATE TRIGGER tracking_terminal_event_gate BEFORE INSERT ON tracking_event WHEN
  SELECT CASE WHEN (SELECT status FROM tracking_round WHERE round_id=NEW.round_id)<>'tracking' THEN RAISE(ABORT,'ended round does not emit new live triggers') END;
  SELECT CASE WHEN NEW.event_type='expire' AND NOT EXISTS(SELECT 1 FROM tracking_round r JOIN tracking_policy_version p ON p.strategy_id=r.strategy_id AND p.policy_version=json_extract(NEW.evidence_json,'$.policy_version') WHERE r.round_id=NEW.round_id AND NEW.trading_age>=p.duration_sessions) THEN RAISE(ABORT,'expiry requires policy trading-session age') END;
 END;
+
+CREATE TRIGGER watchlist_entry_baseline_frozen BEFORE UPDATE ON watchlist_item
+WHEN OLD.watchlist_entry_price_e8 IS NOT NULL AND (
+  NEW.watchlist_entry_price_e8 IS NOT OLD.watchlist_entry_price_e8
+  OR NEW.watchlist_entry_basis_json IS NOT OLD.watchlist_entry_basis_json
+  OR NEW.added_business_date IS NOT OLD.added_business_date
+  OR NEW.instrument_id IS NOT OLD.instrument_id
+  OR NEW.created_at_ms IS NOT OLD.created_at_ms
+) BEGIN
+  SELECT RAISE(ABORT,'watchlist first-added closing baseline is immutable');
+END;
+
+CREATE TRIGGER workspace_purge_audit_delete BEFORE DELETE ON workspace_purge_audit BEGIN SELECT RAISE(ABORT,'retain permanent deletion audit'); END;
+
+CREATE TRIGGER workspace_purge_audit_update BEFORE UPDATE ON workspace_purge_audit BEGIN SELECT RAISE(ABORT,'retain permanent deletion audit'); END;
+
+CREATE TRIGGER workspace_purge_file_identity BEFORE UPDATE ON workspace_purge_file
+WHEN NEW.purge_id<>OLD.purge_id OR NEW.snapshot_id<>OLD.snapshot_id OR NEW.object_key<>OLD.object_key OR NEW.sha256<>OLD.sha256 OR NEW.byte_count<>OLD.byte_count OR NEW.removed_bytes<OLD.removed_bytes
+BEGIN SELECT RAISE(ABORT,'purge file authorization is immutable'); END;
+
+CREATE TRIGGER workspace_purge_file_retained BEFORE DELETE ON workspace_purge_file BEGIN SELECT RAISE(ABORT,'retain permanent deletion file audit'); END;
+
+CREATE TRIGGER workspace_purge_identity BEFORE UPDATE ON workspace_purge
+WHEN NEW.purge_id<>OLD.purge_id OR NEW.target_kind<>OLD.target_kind OR NEW.target_id<>OLD.target_id OR NEW.target_name<>OLD.target_name OR NEW.job_id<>OLD.job_id OR NEW.scope_sha256<>OLD.scope_sha256 OR NEW.scope_json<>OLD.scope_json OR NEW.created_at_ms<>OLD.created_at_ms OR NEW.business_deleted<OLD.business_deleted OR (OLD.superseded_by IS NOT NULL AND NEW.superseded_by IS NOT OLD.superseded_by)
+BEGIN SELECT RAISE(ABORT,'purge authorization is immutable'); END;
+
+CREATE TRIGGER workspace_purge_retained BEFORE DELETE ON workspace_purge BEGIN SELECT RAISE(ABORT,'retain permanent deletion audit'); END;
 
 COMMIT;

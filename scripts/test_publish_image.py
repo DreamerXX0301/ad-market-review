@@ -35,12 +35,12 @@ def matching_block(needle):
     return matches[0]
 
 
-def test_publication_is_manual_main_only_and_permissions_are_minimal():
+def test_publication_is_manual_master_only_and_permissions_are_minimal():
     workflow=WORKFLOW.read_text()
     triggers=workflow.split('\npermissions:',1)[0]
     assert 'workflow_dispatch:' in triggers and 'push:' not in triggers and 'pull_request:' not in triggers
     assert 'default: false' in triggers and 'inputs.confirm' in workflow
-    assert "github.ref == 'refs/heads/main'" in workflow
+    assert workflow.count("github.ref == 'refs/heads/master'") == 2
     assert 'uses: ./.github/workflows/ci.yml' in workflow and 'needs: checks' in workflow
     assert 'needs: [checks, build]' in workflow
     assert workflow.count('packages: write')==2

@@ -1,23 +1,37 @@
 /** Non-sensitive chart display defaults only; no securities, accounts or keys. */
-export const CHART_PREFERENCES_KEY = "shixu-chart-preferences-v1";
+import type { WaveMode } from "./wavePresentation";
+
+export const CHART_PREFERENCES_KEY = "shixu-chart-preferences-v3";
+export const PREVIOUS_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v2";
+export const LEGACY_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v1";
 export const MA_WINDOWS = [5, 10, 20, 30, 60, 250] as const;
 export type ChartPreferences = {
-  version: 1;
-  mas: number[];
+  version: 3;
+  stockMas: number[];
+  indexMas: number[];
   stockPriceBasis: "none" | "forward";
   showLimits: boolean;
   showEventBaseline: boolean;
+  stockShowWaves: boolean;
+  indexShowWaves: boolean;
+  stockWaveMode: WaveMode;
+  indexWaveMode: WaveMode;
 };
 export type PreferenceStorage = {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
 };
 const defaults = (): ChartPreferences => ({
-  version: 1,
-  mas: [5, 10, 20, 30, 60],
+  version: 3,
+  stockMas: [5, 10, 20, 30],
+  indexMas: [5, 10, 20, 30, 60, 250],
   stockPriceBasis: "none",
   showLimits: true,
   showEventBaseline: true,
+  stockShowWaves: true,
+  indexShowWaves: true,
+  stockWaveMode: "turning",
+  indexWaveMode: "latest",
 });
 
 /** Validate the version and every field, and whitelist serialized properties. */
@@ -25,27 +39,77 @@ export function normalizeChartPreferences(value: unknown): ChartPreferences {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return defaults();
   const input = value as Record<string, unknown>;
-  if (input.version !== 1) return defaults();
-  const validMas =
-    Array.isArray(input.mas) &&
-    input.mas.length <= MA_WINDOWS.length &&
-    input.mas.every(
+  if (![1, 2, 3].includes(input.version as number)) return defaults();
+  const waveMode = (value: unknown, fallback: WaveMode): WaveMode =>
+    typeof value === "string" &&
+    ["latest", "up", "down", "turning"].includes(value)
+      ? (value as WaveMode)
+      : fallback;
+  const mas = (value: unknown, fallback: number[]) =>
+    Array.isArray(value) &&
+    value.length <= MA_WINDOWS.length &&
+    value.every(
       (value) =>
         typeof value === "number" &&
         MA_WINDOWS.includes(value as (typeof MA_WINDOWS)[number]),
-    );
+    )
+      ? MA_WINDOWS.filter((window) => value.includes(window))
+      : fallback;
   return {
-    version: 1,
-    mas: validMas
-      ? MA_WINDOWS.filter((value) => (input.mas as number[]).includes(value))
-      : defaults().mas,
+    version: 3,
+    stockMas:
+      input.version === 1
+        ? defaults().stockMas
+        : mas(input.stockMas, defaults().stockMas),
+    indexMas: mas(
+      input.version === 1 ? input.mas : input.indexMas,
+      defaults().indexMas,
+    ),
     stockPriceBasis: input.stockPriceBasis === "forward" ? "forward" : "none",
     showLimits: typeof input.showLimits === "boolean" ? input.showLimits : true,
     showEventBaseline:
       typeof input.showEventBaseline === "boolean"
         ? input.showEventBaseline
         : true,
+    stockShowWaves:
+      input.version === 3 && typeof input.stockShowWaves === "boolean"
+        ? input.stockShowWaves
+        : true,
+    indexShowWaves:
+      input.version === 3 && typeof input.indexShowWaves === "boolean"
+        ? input.indexShowWaves
+        : true,
+    stockWaveMode:
+      input.version === 3
+        ? waveMode(input.stockWaveMode, "turning")
+        : "turning",
+    indexWaveMode:
+      input.version === 3 ? waveMode(input.indexWaveMode, "latest") : "latest",
   };
+}
+
+/** Stock and index display choices never update each other's moving averages. */
+export function effectiveChartMas(
+  preferences: ChartPreferences,
+  isIndex: boolean,
+) {
+  return [...(isIndex ? preferences.indexMas : preferences.stockMas)];
+}
+
+/** Wave visibility and range belong to the chart kind, never a selected date. */
+export function effectiveChartWaves(
+  preferences: ChartPreferences,
+  isIndex: boolean,
+) {
+  return isIndex
+    ? {
+        showWaves: preferences.indexShowWaves,
+        waveMode: preferences.indexWaveMode,
+      }
+    : {
+        showWaves: preferences.stockShowWaves,
+        waveMode: preferences.stockWaveMode,
+      };
 }
 
 export function parseChartPreferences(raw: string | null): ChartPreferences {
@@ -69,7 +133,10 @@ export function createChartPreferenceStore(storage?: PreferenceStorage | null) {
     persistent = !!storage;
   try {
     initial = parseChartPreferences(
-      storage?.getItem(CHART_PREFERENCES_KEY) ?? null,
+      storage?.getItem(CHART_PREFERENCES_KEY) ??
+        storage?.getItem(PREVIOUS_CHART_PREFERENCES_KEY) ??
+        storage?.getItem(LEGACY_CHART_PREFERENCES_KEY) ??
+        null,
     );
   } catch {
     persistent = false;
@@ -97,7 +164,7 @@ export function createChartPreferenceStore(storage?: PreferenceStorage | null) {
       const preferences = normalizeChartPreferences({
         ...snapshot.preferences,
         ...patch,
-        version: 1,
+        version: 3,
       });
       let saved = false;
       try {

@@ -12,6 +12,9 @@ import {
 } from "../../components/UI";
 import { createStockNavigation } from "../../components/stockNavigation";
 import type { StockNavigation } from "../../components/stockNavigation";
+import WatchlistButton from "../watchlist/WatchlistButton";
+import "./MemberDialog.css";
+import DatePicker from "../../components/DatePicker";
 import {
   memberQuoteDate,
   sectorMemberNavigationRows,
@@ -99,21 +102,26 @@ export default function SectorMembersDialog({
             </button>
           </div>
         )}
-        <div className="sector-members-context">
+        <div className="sector-members-context member-dialog-context">
           <Badge>
             {scope === "latest" ? "当前成员快照" : "指定日历史成员"}
           </Badge>
-          <span>
-            成员采集日 <strong>{data?.membership_as_of || "未知"}</strong>
+          <span className="member-context-item">
+            <small>成员采集日</small>
+            <strong>{data?.membership_as_of || "未知"}</strong>
           </span>
-          <span>
-            行情日 <strong>{quoteDate || "未知"}</strong>
+          <span className="member-context-item">
+            <small>行情日</small>
+            <strong>{quoteDate || "未知"}</strong>
           </span>
-          <span>已知成员 {data?.total ?? list(data).length}</span>
+          <span className="member-context-item">
+            <small>已知成员</small>
+            <strong>{data?.total ?? list(data).length} 只</strong>
+          </span>
         </div>
-        <div className="filter-bar">
-          <label>
-            成员口径
+        <div className="filter-bar member-dialog-toolbar member-dialog-fields">
+          <label className="member-dialog-field">
+            <span>成员口径</span>
             <select
               value={scope}
               onChange={(e) => {
@@ -125,17 +133,20 @@ export default function SectorMembersDialog({
               <option value="historical">观察日历史成分</option>
             </select>
           </label>
-          <label>
-            行情观察日
-            <input
-              type="date"
+          <label className="member-dialog-field">
+            <span>行情观察日</span>
+            <DatePicker
+              ariaLabel="成分股行情观察日"
+              title="成分股行情观察日"
+              help="选择日期后读取该日已有历史档案，缺档不会使用当前成员回填。"
+              max={businessDate || date}
               disabled={scope === "latest"}
               value={asOf}
-              onChange={(e) => setAsOf(e.target.value)}
+              onChange={setAsOf}
             />
           </label>
-          <label>
-            搜索成分股
+          <label className="member-dialog-field member-dialog-field-search">
+            <span>搜索成分股</span>
             <input
               placeholder="股票名称 / 代码"
               value={query}
@@ -279,12 +290,35 @@ export default function SectorMembersDialog({
                 ),
               },
               { key: "topics", title: "题材" },
+              {
+                key: "actions",
+                title: "自选",
+                sortable: false,
+                render: (_, row) => (
+                  <WatchlistButton
+                    instrumentId={row.instrument_id}
+                    sourceKind="sector"
+                    sourceId={identity.topic_code || identity.topic_id}
+                    sourceName={identity.name}
+                    observedDate={quoteDate || undefined}
+                    compact
+                  />
+                ),
+              },
             ]}
           />
         )}{" "}
         {!quoteDate && data && (
           <p className="muted">行情日尚未核验，暂不能打开该日期的股票K线。</p>
         )}
+      </div>
+      <div className="modal-footer">
+        <span className="muted">
+          {rows.length} 只匹配成员 · 点击股票可连续查看K线，星标加入我的自选
+        </span>
+        <button className="btn" onClick={onClose}>
+          关闭
+        </button>
       </div>
     </Modal>
   );

@@ -4,12 +4,30 @@ import fs from "node:fs/promises";
 import ts from "typescript";
 async function moduleAt(path) {
   const source = await fs.readFile(new URL(path, import.meta.url), "utf8");
-  const compiled = ts.transpileModule(source, {
+  let compiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ES2022,
       target: ts.ScriptTarget.ES2022,
     },
   }).outputText;
+  if (/indicatorVisibility/.test(compiled)) {
+    const visibility = await fs.readFile(
+      new URL("../lib/indicatorVisibility.ts", import.meta.url),
+      "utf8",
+    );
+    const helper = ts.transpileModule(visibility, {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022,
+      },
+    }).outputText;
+    const url =
+      "data:text/javascript;base64," + Buffer.from(helper).toString("base64");
+    compiled = compiled.replace(
+      /(["'])\.{1,2}\/[^"']*indicatorVisibility\1/g,
+      JSON.stringify(url),
+    );
+  }
   return import(
     "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
   );
@@ -24,10 +42,14 @@ const { defaultChartWindow, projectEventBaseline } =
   await moduleAt("./chartDisplay.ts");
 const {
   CHART_PREFERENCES_KEY,
+  PREVIOUS_CHART_PREFERENCES_KEY,
+  LEGACY_CHART_PREFERENCES_KEY,
+  effectiveChartMas,
   normalizeChartPreferences,
   parseChartPreferences,
   createChartPreferenceStore,
   effectiveChartPriceBasis,
+  effectiveChartWaves,
 } = await moduleAt("./chartPreferences.ts");
 const { amount, compactQuantity, percent } = await moduleAt("../lib/format.ts");
 const { trackingTopicMatch, matchesTrackingText, trackingProgress } =
@@ -113,6 +135,18 @@ assert.match(
 );
 assert.equal(chartIndicatorLabel("macd_hist"), "MACD柱");
 assert.equal(chartIndicatorLabel("ma250"), "MA250");
+assert.equal(chartIndicatorLabel("kdj_j"), "");
+for (const period of ["D", "W", "M"]) {
+  assert.deepEqual(
+    chartIndicatorAvailability(
+      { kdj_k: 0, kdj_d: 0, kdj_j: null },
+      ["kdj_k", "kdj_d", "kdj_j"],
+      period,
+    ).missing,
+    [],
+    "a hidden indicator cannot create a visible warmup warning",
+  );
+}
 
 const rows = [
   { id: "up", pct: 10 },
@@ -300,6 +334,53 @@ assert.equal(
 
 const defaultPreferences = normalizeChartPreferences(null);
 assert.equal(defaultPreferences.showEventBaseline, true);
+assert.deepEqual(defaultPreferences.stockMas, [5, 10, 20, 30]);
+assert.deepEqual(defaultPreferences.indexMas, [5, 10, 20, 30, 60, 250]);
+const legacyStorage = new Map([
+  [
+    LEGACY_CHART_PREFERENCES_KEY,
+    JSON.stringify({ version: 1, mas: [60, 250], stockPriceBasis: "forward" }),
+  ],
+]);
+const migratedStore = createChartPreferenceStore({
+  getItem: (key) => legacyStorage.get(key) ?? null,
+  setItem: (key, value) => legacyStorage.set(key, value),
+});
+assert.deepEqual(migratedStore.getSnapshot().preferences.indexMas, [60, 250]);
+assert.deepEqual(
+  migratedStore.getSnapshot().preferences.stockMas,
+  [5, 10, 20, 30],
+);
+migratedStore.update({ stockMas: [5, 30, 60] });
+assert.deepEqual(
+  effectiveChartMas(migratedStore.getSnapshot().preferences, true),
+  [60, 250],
+);
+migratedStore.update({ indexMas: [250] });
+assert.deepEqual(
+  effectiveChartMas(migratedStore.getSnapshot().preferences, false),
+  [5, 30, 60],
+);
+const independentReload = createChartPreferenceStore({
+  getItem: (key) => legacyStorage.get(key) ?? null,
+  setItem() {},
+});
+assert.deepEqual(
+  independentReload.getSnapshot().preferences,
+  migratedStore.getSnapshot().preferences,
+);
+assert.match(
+  legacyStorage.get(LEGACY_CHART_PREFERENCES_KEY),
+  /"mas":\[60,250\]/,
+  "legacy key is retained and old tabs cannot overwrite the new key",
+);
+const isolatedCopy = effectiveChartMas(
+  migratedStore.getSnapshot().preferences,
+  false,
+);
+isolatedCopy.push(250);
+assert.deepEqual(migratedStore.getSnapshot().preferences.stockMas, [5, 30, 60]);
+
 assert.deepEqual(defaultChartWindow("D", 50), { start: 0, end: 100 });
 const dailyWindow = defaultChartWindow("D", 726);
 assert.ok(Math.abs((1 - dailyWindow.start / 100) * 725 + 1 - 100) < 1e-9);
@@ -475,24 +556,34 @@ assert.deepEqual(
     showLimits: false,
   }),
   {
-    version: 1,
-    mas: [5, 250],
+    version: 3,
+    stockMas: [5, 10, 20, 30],
+    indexMas: [5, 250],
     stockPriceBasis: "forward",
     showLimits: false,
     showEventBaseline: true,
+    stockShowWaves: true,
+    indexShowWaves: true,
+    stockWaveMode: "turning",
+    indexWaveMode: "latest",
   },
 );
-assert.deepEqual(normalizeChartPreferences({ version: 1, mas: [] }).mas, []);
 assert.deepEqual(
-  normalizeChartPreferences({ version: 1, mas: [999] }).mas,
-  defaultPreferences.mas,
+  normalizeChartPreferences({ version: 1, mas: [] }).indexMas,
+  [],
+);
+assert.deepEqual(
+  normalizeChartPreferences({ version: 1, mas: [999] }).indexMas,
+  defaultPreferences.indexMas,
 );
 let rawPreferences = null,
   writes = 0;
 const storage = {
   getItem(key) {
-    assert.equal(key, CHART_PREFERENCES_KEY);
-    return rawPreferences;
+    assert.ok(
+      [CHART_PREFERENCES_KEY, PREVIOUS_CHART_PREFERENCES_KEY, LEGACY_CHART_PREFERENCES_KEY].includes(key),
+    );
+    return key === CHART_PREFERENCES_KEY ? rawPreferences : null;
   },
   setItem(key, value) {
     assert.equal(key, CHART_PREFERENCES_KEY);
@@ -506,7 +597,7 @@ let chartA = 0,
 const unsubscribe = chartStore.subscribe(() => chartA++);
 chartStore.subscribe(() => chartB++);
 chartStore.update({
-  mas: [250],
+  indexMas: [250],
   stockPriceBasis: "forward",
   showLimits: false,
   showEventBaseline: false,
@@ -542,12 +633,12 @@ assert.equal(
   beforeStorageEvent,
   "storage events must not write back or loop",
 );
-assert.deepEqual(chartStore.getSnapshot().preferences.mas, [10, 30]);
+assert.deepEqual(chartStore.getSnapshot().preferences.indexMas, [10, 30]);
 assert.equal(chartA, 1);
 assert.equal(chartB, 2);
 chartStore.receiveStorage(null);
 assert.deepEqual(chartStore.getSnapshot().preferences, defaultPreferences);
-chartStore.update({ mas: [] });
+chartStore.update({ indexMas: [] });
 chartStore.reset();
 assert.deepEqual(chartStore.getSnapshot().preferences, defaultPreferences);
 const deniedStore = createChartPreferenceStore({
@@ -560,13 +651,71 @@ const deniedStore = createChartPreferenceStore({
 });
 assert.equal(deniedStore.getSnapshot().persistent, false);
 assert.doesNotThrow(() =>
-  deniedStore.update({ mas: [250], stockPriceBasis: "forward" }),
+  deniedStore.update({ indexMas: [250], stockPriceBasis: "forward" }),
 );
-assert.deepEqual(deniedStore.getSnapshot().preferences.mas, [250]);
+assert.deepEqual(deniedStore.getSnapshot().preferences.indexMas, [250]);
 assert.equal(deniedStore.getSnapshot().persistent, false);
 const memoryStore = createChartPreferenceStore(null);
 assert.doesNotThrow(() => memoryStore.update({ showLimits: false }));
 assert.equal(memoryStore.getSnapshot().preferences.showLimits, false);
+
+// Wave defaults migrate existing display choices, then stay independent by kind.
+const v2Raw = JSON.stringify({
+  version: 2,
+  stockMas: [30, 60],
+  indexMas: [250],
+  stockPriceBasis: "forward",
+  showLimits: false,
+  showEventBaseline: false,
+});
+const waveStorage = new Map([[PREVIOUS_CHART_PREFERENCES_KEY, v2Raw]]);
+const waveStorageAdapter = {
+  getItem: (key) => waveStorage.get(key) ?? null,
+  setItem: (key, value) => waveStorage.set(key, value),
+};
+const waveStore = createChartPreferenceStore(waveStorageAdapter);
+assert.deepEqual(waveStore.getSnapshot().preferences.stockMas, [30, 60]);
+assert.deepEqual(waveStore.getSnapshot().preferences.indexMas, [250]);
+assert.equal(waveStore.getSnapshot().preferences.stockPriceBasis, "forward");
+assert.equal(waveStore.getSnapshot().preferences.showLimits, false);
+assert.equal(waveStore.getSnapshot().preferences.showEventBaseline, false);
+assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, false), {
+  showWaves: true, waveMode: "turning",
+});
+assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, true), {
+  showWaves: true, waveMode: "latest",
+});
+waveStore.update({ stockShowWaves: false, stockWaveMode: "down" });
+waveStore.update({ indexWaveMode: "up" });
+let waveReload = createChartPreferenceStore(waveStorageAdapter);
+assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, false), {
+  showWaves: false, waveMode: "down",
+});
+assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, true), {
+  showWaves: true, waveMode: "up",
+});
+assert.equal(waveStorage.get(PREVIOUS_CHART_PREFERENCES_KEY), v2Raw);
+// An old tab may write its v2 key; it cannot replace saved v3 wave settings.
+waveStorage.set(PREVIOUS_CHART_PREFERENCES_KEY, JSON.stringify({ version: 2, stockMas: [] }));
+waveReload = createChartPreferenceStore(waveStorageAdapter);
+assert.equal(waveReload.getSnapshot().preferences.stockWaveMode, "down");
+assert.deepEqual(waveReload.getSnapshot().preferences.stockMas, [30, 60]);
+for (const mode of ["latest", "up", "down", "turning"]) {
+  waveStore.update({ stockWaveMode: mode });
+  assert.equal(createChartPreferenceStore(waveStorageAdapter).getSnapshot().preferences.stockWaveMode, mode);
+}
+for (const mode of ["unknown", null, {}, 1]) {
+  const sanitized = normalizeChartPreferences({ version: 3, stockWaveMode: mode, indexWaveMode: mode, stockShowWaves: "false" });
+  assert.deepEqual(effectiveChartWaves(sanitized, false), { showWaves: true, waveMode: "turning" });
+  assert.deepEqual(effectiveChartWaves(sanitized, true), { showWaves: true, waveMode: "latest" });
+}
+waveStore.receiveStorage(JSON.stringify({ version: 3, stockShowWaves: false, stockWaveMode: "up" }));
+assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "up" });
+waveStore.reset();
+assert.deepEqual(waveStore.getSnapshot().preferences, defaultPreferences);
+deniedStore.update({ stockShowWaves: false, stockWaveMode: "up" });
+assert.deepEqual(effectiveChartWaves(deniedStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "up" });
+assert.equal(deniedStore.getSnapshot().persistent, false);
 // Execute the actual App theme adapters in isolation: restricted localStorage
 // must not throw before the chart preference store can fall back to memory.
 const appSource = await fs.readFile(

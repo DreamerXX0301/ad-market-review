@@ -29,9 +29,11 @@ import {
   statusText,
 } from "../lib/format";
 import type { Row } from "../lib/api";
+import { isHiddenIndicatorField } from "../lib/indicatorVisibility";
 import { isSortValue, sortTableRows } from "./tableSort";
 import type { SortValue, TableSort } from "./tableSort";
 import { canRestoreModalFocus, createModalLayers } from "./modalLayers";
+import CopyStockCode from "./CopyStockCode";
 const modalLayers = createModalLayers();
 const ModalParentContext = createContext<string | null>(null);
 export const ToastContext = createContext<
@@ -256,9 +258,13 @@ export function Modal({
             ].find((node) => node.dataset.modalLayer === currentId) ?? null)
           : null;
         const opener = openerRef.current;
-        if (opener !== document.body && canRestoreModalFocus(opener, current)) {
+        const drawer = document.querySelector<HTMLElement>(".stock-drawer");
+        if (
+          opener !== document.body &&
+          canRestoreModalFocus(opener, current || drawer)
+        ) {
           opener?.focus({ preventScroll: true });
-        } else if (!current && !document.querySelector(".stock-drawer")) {
+        } else if (!current && !drawer) {
           const main = document.querySelector<HTMLElement>("main");
           if (!main) return;
           const prior = main.getAttribute("tabindex");
@@ -307,6 +313,11 @@ export function Modal({
     <ModalParentContext.Provider value={layerId}>
       <div
         className="modal-backdrop"
+        hidden={escapeUnderStock && stockDrawerOpen}
+        style={
+          // The backdrop's display:flex rule otherwise overrides the browser's hidden style.
+          escapeUnderStock && stockDrawerOpen ? { display: "none" } : undefined
+        }
         onMouseDown={(e) => {
           if (
             e.target === e.currentTarget &&
@@ -354,12 +365,14 @@ export function Modal({
 export type Column = {
   key: string;
   title?: ReactNode;
+  description?: string;
   render?: (value: any, row: Row, index: number) => ReactNode;
   align?: string;
   sortable?: boolean;
   sortValue?: (row: Row) => SortValue;
 };
 export function Cell({ field, value }: { field: string; value: any }) {
+  if (isHiddenIndicatorField(field)) return null;
   if (value == null) return <span className="muted">—</span>;
   if (field === "status" || field === "decision")
     return <Status value={value} />;
@@ -442,6 +455,8 @@ export function Table({
   /** external: the caller already sorts the full server-side result. */
   sorting?: "auto" | "local" | "external" | "none";
 }) {
+  rows = rows.filter((row) => !isHiddenIndicatorField(row.field));
+  columns = columns.filter((column) => !isHiddenIndicatorField(column.key));
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<TableSort | null>(null);
   const customHeadings = columns.some(
@@ -506,6 +521,7 @@ export function Table({
               {columns.map((c) => (
                 <th
                   key={c.key}
+                  title={c.description}
                   className={c.align === "right" ? "text-right" : ""}
                   aria-sort={
                     sortable(c)
@@ -538,7 +554,12 @@ export function Table({
                               color: "inherit",
                               whiteSpace: "nowrap",
                             }}
-                            title="按原始值排序全部已加载记录后分页；未知值始终排末"
+                            title={[
+                              c.description,
+                              "按原始值排序全部已加载记录后分页；未知值始终排末",
+                            ]
+                              .filter(Boolean)
+                              .join("\n")}
                             aria-label={
                               "按" +
                               String(caption) +
@@ -597,17 +618,29 @@ export function Table({
                       ) : c.key === "name" &&
                         (onStock || onStockNavigate) &&
                         r.instrument_id ? (
-                        <button
-                          className="stock-link"
-                          onClick={() =>
-                            onStockNavigate
-                              ? onStockNavigate(r.instrument_id, sorted, r)
-                              : onStock?.(r.instrument_id)
-                          }
-                        >
-                          <strong>{r.name || r.code}</strong>
-                          <small>{r.code || r.instrument_id}</small>
-                        </button>
+                        <div className="stock-identity-cell">
+                          <button
+                            className="stock-link"
+                            onClick={() =>
+                              onStockNavigate
+                                ? onStockNavigate(r.instrument_id, sorted, r)
+                                : onStock?.(r.instrument_id)
+                            }
+                          >
+                            <strong>{r.name || r.code}</strong>
+                          </button>
+                          <CopyStockCode
+                            code={r.code}
+                            instrumentId={r.instrument_id}
+                          />
+                        </div>
+                      ) : ["code", "instrument_id"].includes(c.key) &&
+                        r.instrument_id ? (
+                        <CopyStockCode
+                          code={r[c.key]}
+                          instrumentId={r.instrument_id}
+                          variant={c.key === "instrument_id" ? "full" : "short"}
+                        />
                       ) : (
                         <Cell field={c.key} value={r[c.key]} />
                       )}
@@ -669,6 +702,8 @@ export function inferColumns(rows: Row[], prefer: string[] = []): Column[] {
   const ordered = [
     ...prefer.filter((k) => keys.includes(k)),
     ...keys.filter((k) => !prefer.includes(k)),
-  ].slice(0, 13);
+  ]
+    .filter((key) => !isHiddenIndicatorField(key))
+    .slice(0, 13);
   return ordered.map((key) => ({ key }));
 }

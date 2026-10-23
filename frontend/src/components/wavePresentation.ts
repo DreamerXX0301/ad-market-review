@@ -220,7 +220,19 @@ export function wavePlotSeries(
         show: true,
         color,
         fontSize: 10,
-        formatter: (point: Row) => point.name,
+        formatter: (point: Row) => {
+          const price = point.value?.[1];
+          return (
+            point.name +
+            (typeof price === "number" && Number.isFinite(price)
+              ? "\n" +
+                price.toLocaleString("zh-CN", {
+                  maximumFractionDigits: 2,
+                  minimumFractionDigits: 2,
+                })
+              : "")
+          );
+        },
       },
       labelLayout: { hideOverlap: true },
       tooltip: { show: false },

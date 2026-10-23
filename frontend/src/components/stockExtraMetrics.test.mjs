@@ -33,6 +33,10 @@ assert.equal(stockSummaryEndpoint("600825.SH", "bad-date"), null);
 const row = {
   instrument_id: "600825.SH",
   data_date: "2026-10-20",
+  quote_available: true,
+  quote_date: "2026-10-20",
+  change_pct_date: "2026-10-20",
+  change_pct: 9.957924263674611,
   limit_up_ytd: 0,
   limit_up_ytd_observed: 0,
   limit_up_ytd_coverage: { complete: true },
@@ -59,6 +63,42 @@ assert.equal(exact.recent.qualifier, "最近一次");
 assert.equal(exact.ytd.value, "0.00%");
 assert.equal(exact.thirty.value, "-10.00%");
 assert.equal(exact.thirty.tone, "down");
+assert.equal(exact.daily.value, "+9.96%");
+assert.equal(exact.daily.tone, "up");
+assert.equal(exact.daily.note, "2026-10-20 · 较前日收盘");
+for (const [value, formatted, tone] of [
+  [0, "0.00%", "muted"],
+  [-2.5, "-2.50%", "down"],
+]) {
+  const daily = stockExtraMetrics(
+    { ...row, change_pct: value },
+    "600825.SH",
+  ).daily;
+  assert.equal(daily.value, formatted);
+  assert.equal(daily.tone, tone);
+}
+for (const overrides of [
+  { change_pct: null },
+  { change_pct: NaN },
+  { change_pct: Infinity },
+  { change_pct: "3.5" },
+  { quote_available: false },
+  { quote_date: "2026-10-19" },
+  { change_pct_date: "2026-10-21" },
+]) {
+  const daily = stockExtraMetrics({ ...row, ...overrides }, "600825.SH").daily;
+  assert.equal(
+    daily.known,
+    false,
+    "missing or mismatched daily quotes stay unknown",
+  );
+  assert.equal(daily.value, "待核验");
+}
+assert.equal(stockExtraMetrics(row, "600000.SH").daily.known, false);
+assert.equal(
+  stockExtraMetrics(row, "600825.SH", "2026-10-19").daily.known,
+  false,
+);
 const partial = stockExtraMetrics(
   {
     ...row,

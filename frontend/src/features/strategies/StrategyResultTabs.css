@@ -1,0 +1,108 @@
+.strategy-result-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--surface2) 80%, var(--bg));
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+.strategy-result-tabs > button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  min-height: 35px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+.strategy-result-tabs > button:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.strategy-result-tabs > button > b {
+  padding: 2px 6px;
+  min-width: 23px;
+  border-radius: 5px;
+  color: var(--subtle);
+  background: color-mix(in srgb, var(--subtle) 10%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.strategy-result-tabs > button.active {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 32%, var(--border));
+  background: var(--surface);
+  box-shadow: 0 2px 5px #00000010;
+}
+.strategy-result-tabs > button.matched.active {
+  color: var(--cyan);
+  border-color: color-mix(in srgb, var(--cyan) 30%, var(--border));
+  background: color-mix(in srgb, var(--cyan) 6%, var(--surface));
+}
+.strategy-result-tabs > button.unknown.active {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 32%, var(--border));
+  background: color-mix(in srgb, var(--amber) 5%, var(--surface));
+}
+.strategy-result-tabs > button.active > b {
+  color: inherit;
+  background: color-mix(in srgb, currentColor 13%, transparent);
+}
+.strategy-result-tabs > button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.result-toolbar:has(> .strategy-result-tabs) {
+  padding: 11px 15px;
+  gap: 12px;
+  min-height: 0;
+  flex-wrap: wrap;
+}
+.strategy-result-note {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 9px 16px;
+  color: var(--subtle);
+  font-size: 11px;
+  line-height: 1.6;
+  background: color-mix(in srgb, var(--blue) 4%, var(--surface));
+  border-bottom: 1px solid var(--border-soft);
+}
+.strategy-result-note > svg {
+  flex-shrink: 0;
+  color: var(--blue);
+}
+.strategy-result-note.stale {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 4%, var(--surface));
+}
+.strategy-result-note.stale > svg {
+  color: var(--amber);
+}
+@media (max-width: 680px) {
+  .strategy-result-tabs {
+    width: 100%;
+  }
+  .strategy-result-tabs > button {
+    flex: 1;
+    justify-content: center;
+    padding: 8px 7px;
+    gap: 5px;
+  }
+  .strategy-result-note {
+    padding: 8px 12px;
+  }
+}

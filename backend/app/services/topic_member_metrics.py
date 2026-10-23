@@ -38,7 +38,7 @@ def _cache_key(market, day, symbols, quotes, supplement):
         if Path(status.get('path','')).resolve()!=expected or not (expected/'manifest.json').is_file(): return None
         ordered=tuple(sorted(symbols))
         quote_inputs=tuple((symbol,str(quotes.get(symbol,{}).get('date',quotes.get(symbol,{}).get('trade_date',''))),_number(quotes.get(symbol,{}).get('close'))) for symbol in ordered)
-        return ('topic-member-metrics-v3-precompiled-evidence',str(root),snapshot,day,ordered,quote_inputs,digest(supplement))
+        return ('topic-member-metrics-v4-unified-positive-lower-bound',str(root),snapshot,day,ordered,quote_inputs,digest(supplement))
     except (ValueError,OSError,TypeError): return None
 
 
@@ -254,6 +254,62 @@ def _history_start(calendar, sources, baseline, thirty, month):
     return min(needed) if needed else calendar[-1]
 
 
+
+def _limit_values(symbol, daily, calendar, day, annual):
+    yearly=annual.get('instrument_coverage',{}).get(symbol,{'complete':False,'covered_days':0,'expected_days':sum(observed[:4]==day[:4] for observed in calendar),'observed_days':0,'state':'partial'})
+    positives=[observed for observed,state in daily[symbol].items() if state['state'] is True]
+    # A verified reference/public closing event is also a confirmed yearly
+    # observation. Deduplicate by date across sources, without claiming that
+    # those partial pools prove an exact annual total or negative absence.
+    observed_count=max(annual['counts'].get(symbol,0),sum(observed[:4]==day[:4] for observed in positives))
+    year_reason=None if yearly['complete'] else '年内来源池或本证券事件覆盖不足，仅保留已确认次数下界'
+    latest=max(positives) if positives else None
+    suffix=[observed for observed in calendar if latest and observed>=latest]
+    known=sum(daily[symbol].get(observed,{}).get('state') is not None for observed in suffix)
+    latest_complete=bool(latest and known==len(suffix))
+    known_history=sum(state['state'] is not None for state in daily[symbol].values())
+    latest_coverage={'complete':latest_complete,'state':'confirmed_latest' if latest_complete else 'latest_observed' if latest else 'no_confirmed_event','since':latest or calendar[0],'until':day,'covered_days':known if latest else known_history,'expected_days':len(suffix) if latest else len(calendar),'unknown_days':len(suffix)-known if latest else len(calendar)-known_history}
+    return {'limit_up_ytd':observed_count if yearly['complete'] else None,'limit_up_ytd_observed':observed_count,'limit_up_ytd_reason':year_reason,'limit_up_ytd_coverage':yearly,'last_limit_up_date':latest,'sessions_since_limit_up':calendar.index(day)-calendar.index(latest) if latest else None,'last_limit_up_complete':latest_complete,'last_limit_up_reason':None if latest_complete else '最新已确认事件之后仍有未知交易日，不能断言一定最近' if latest else '留存范围内尚无可核验涨停事件，不代表历史从未涨停','last_limit_up_coverage':latest_coverage}
+
+
+def limit_metrics(market, day, symbols, supplement, reference=None):
+    """Same dated source proof as member pages, without return calculations.
+
+    Rankings need all candidates before sorting, so use bounded batches rather
+    than fetching one stock summary per row. No source before the first retained
+    evidence date can prove a closing event; avoid materializing those prices.
+    """
+    symbols=sorted(set(symbols))
+    if not symbols:return {}
+    calendar=sorted({value for value in market.calendar() if _date(value) and value<=day})
+    if not calendar or day not in calendar:return {}
+    reference=reference if reference is not None else market.reference() if hasattr(market,'reference') else {}
+    sources=_sources(reference,supplement,calendar)
+    evidence_days=[observed for observed in calendar if sources[observed]['up'] or sources[observed]['down']]
+    first=evidence_days[0] if evidence_days else None
+    reader=getattr(market,'history_for_instruments',None)
+    result={}
+    for offset in range(0,len(symbols),BATCH_SIZE):
+        batch=symbols[offset:offset+BATCH_SIZE]
+        histories=reader(batch,start=first,end=day) if first is not None and callable(reader) else {}
+        daily={}
+        for symbol in batch:
+            closes={};duplicates=set()
+            for row in histories.get(symbol,[]):
+                observed=_date(row.get('date'));close=_number(row.get('close'))
+                if observed is None or observed not in sources:continue
+                if observed in closes:duplicates.add(observed)
+                closes[observed]=close if close is not None and close>0 else None
+            for observed in duplicates:closes[observed]=None
+            # Dates with no source can only be unknown, independently of the
+            # quote. Keep their count in the full calendar, not a large map
+            # repeated for every ranked stock.
+            daily[symbol]=_daily_states(symbol,closes,evidence_days,sources)
+        annual=_annual_verified(supplement,batch,daily,calendar,day)
+        for symbol in batch:result[symbol]=_limit_values(symbol,daily,calendar,day,annual)
+    return result
+
+
 def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, baseline, thirty, month, month_proof):
     histories=market.history_for_instruments(symbols,start=_history_start(calendar,sources,baseline,thirty,month),end=day)
     actions=market.actions_for_instruments(symbols) if callable(getattr(market,'actions_for_instruments',None)) else None
@@ -284,16 +340,7 @@ def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, 
         if month is None:
             mtd_reason='无法证明上月最后交易日；不使用本月首条报价或最近30个交易日替代本月基准'
             mtd_coverage['reason']=mtd_reason
-        yearly=annual.get('instrument_coverage',{}).get(symbol,{'complete':False,'covered_days':0,'expected_days':sum(observed[:4]==day[:4] for observed in calendar),'observed_days':0,'state':'partial'})
-        observed_count=annual['counts'].get(symbol,0)
-        year_reason=None if yearly['complete'] else '年内来源池或本证券事件覆盖不足，仅保留已确认次数下界'
-        positives=[observed for observed,state in daily[symbol].items() if state['state'] is True]
-        latest=max(positives) if positives else None
-        suffix=[observed for observed in calendar if latest and observed>=latest]
-        known=sum(daily[symbol][observed]['state'] is not None for observed in suffix)
-        latest_complete=bool(latest and known==len(suffix))
-        latest_coverage={'complete':latest_complete,'state':'confirmed_latest' if latest_complete else 'latest_observed' if latest else 'no_confirmed_event','since':latest or calendar[0],'until':day,'covered_days':known if latest else sum(state['state'] is not None for state in daily[symbol].values()),'expected_days':len(suffix) if latest else len(calendar),'unknown_days':len(suffix)-known if latest else sum(state['state'] is None for state in daily[symbol].values())}
-        result[symbol]={'return_ytd_pct':ytd,'return_ytd_reason':ytd_reason,'return_ytd_coverage':ytd_coverage,'change_30d_pct':change,'change_30d_reason':change_reason,'change_30d_coverage':change_coverage,'limit_up_ytd':observed_count if yearly['complete'] else None,'limit_up_ytd_observed':observed_count,'limit_up_ytd_reason':year_reason,'limit_up_ytd_coverage':yearly,'last_limit_up_date':latest,'sessions_since_limit_up':calendar.index(day)-calendar.index(latest) if latest else None,'last_limit_up_complete':latest_complete,'last_limit_up_reason':None if latest_complete else '最新已确认事件之后仍有未知交易日，不能断言一定最近' if latest else '留存范围内尚无可核验涨停事件，不代表历史从未涨停','last_limit_up_coverage':latest_coverage}
+        result[symbol]={'return_ytd_pct':ytd,'return_ytd_reason':ytd_reason,'return_ytd_coverage':ytd_coverage,'change_30d_pct':change,'change_30d_reason':change_reason,'change_30d_coverage':change_coverage,**_limit_values(symbol,daily,calendar,day,annual)}
         result[symbol].update(return_mtd_pct=mtd,return_mtd_reason=mtd_reason,return_mtd_coverage=mtd_coverage)
     return result
 

@@ -17,7 +17,7 @@ from app.services.tracking_quotes import tracking_quotes
 from app.services.strategy_periods import add_period_metrics
 
 
-def add_tracking(payload):
+def add_tracking(payload, *, automatic=False, transaction_guard=None, on_commit=None):
     rid=payload.get('run_id');ids=payload.get('instrument_ids',[])
     if not isinstance(ids,list) or not ids or len(ids)>500:fail('请选择1至500只已命中股票')
     # Resolve exact original daily highs before acquiring the write transaction.
@@ -35,7 +35,10 @@ def add_tracking(payload):
     added=[];skipped=[]
     with connect() as c:
         c.execute("BEGIN IMMEDIATE")
+        if transaction_guard: transaction_guard(c)
         day=current(c);run=one(c,'SELECT * FROM selection_run WHERE run_id=?',(rid,),'策略运行不存在')
+        from .workspace_deletion import require_strategy_present
+        require_strategy_present(c,run['strategy_id'])
         if run['business_date']!=day:fail('只能从当前业务日的运行结果入池，请重新运行策略。',409)
         strategy=strategy_view(c,run['strategy_id'])
         if strategy['version']!=run['strategy_version']:fail('策略已修改，请重新运行后加入跟踪。',409)
@@ -43,11 +46,13 @@ def add_tracking(payload):
         for ident in dict.fromkeys(str(x).upper() for x in ids):
             found=c.execute('SELECT * FROM selection_candidate WHERE run_id=? AND instrument_id=?',(rid,ident)).fetchone()
             if not found or found['decision']!='matched' or not found['close_price_e8']:
-                skipped.append({'instrument_id':ident,'reason':'未命中或没有可用入池价'});continue
+                skipped.append({'instrument_id':ident,'reason':'未命中或没有可用入池价','reason_code':'invalid_candidate'});continue
             if c.execute("SELECT 1 FROM tracking_round WHERE strategy_id=? AND instrument_id=? AND status='tracking'",(run['strategy_id'],ident)).fetchone():
-                skipped.append({'instrument_id':ident,'reason':'此策略已在跟踪，不重复入池'});continue
+                skipped.append({'instrument_id':ident,'reason':'此策略已在跟踪，不重复入池','reason_code':'already_tracking'});continue
             if c.execute('SELECT 1 FROM tracking_ignore WHERE strategy_id=? AND instrument_id=? AND active=1',(run['strategy_id'],ident)).fetchone():
-                skipped.append({'instrument_id':ident,'reason':'已手动忽略，再次入池前先解除忽略'});continue
+                skipped.append({'instrument_id':ident,'reason':'已手动忽略，再次入池前先解除忽略','reason_code':'ignored'});continue
+            if automatic and c.execute('SELECT 1 FROM tracking_round WHERE origin_run_id=? AND instrument_id=?',(rid,ident)).fetchone():
+                skipped.append({'instrument_id':ident,'reason':'本次运行已生成过跟踪轮次，保留原结束状态','reason_code':'already_recorded'});continue
             tid=new_id('tracking');basis={'comparison_basis_id':snapshot['snapshot_id']+':'+snapshot['price_basis']+':'+str(snapshot['adjustment_anchor']),'price_basis':snapshot['price_basis'],'adjustment_anchor':snapshot['adjustment_anchor'],'algorithm_version':snapshot['algorithm_version'],'entry_snapshot_id':snapshot['snapshot_id'],'source_lineage':obj(snapshot['lineage_json'],{}),'entry_topics':obj(found['topic_snapshot_json'],[]),'entry_checks':obj(found['checks_json'],{}),'entry_complete_topic_ids':obj(found['metrics_json'],{}).get('_complete_topic_ids',[]),'entry_price_date':day,'signal_date':obj(found['metrics_json'],{}).get('signal_date',day),'signal_price':obj(found['metrics_json'],{}).get('signal_close',money(found['close_price_e8'])),'signal_period':obj(found['metrics_json'],{}).get('indicator_period','D')}
             basis['entry_high']=entry_high_for({'entry_snapshot_id':snapshot['snapshot_id'],'instrument_id':ident,'entry_business_date':day,'entry_price_e8':found['close_price_e8']},entry_highs)
             basis['entry_low']=entry_low_for({'entry_snapshot_id':snapshot['snapshot_id'],'instrument_id':ident,'entry_business_date':day,'entry_price_e8':found['close_price_e8']},entry_lows)
@@ -55,7 +60,9 @@ def add_tracking(payload):
             insert(c,'tracking_event',dict(event_id=new_id('event'),event_key=tid+':'+day+':entry',round_id=tid,event_type='entry',business_date=day,data_snapshot_id=snapshot['snapshot_id'],data_state='ready',outcome='not_applicable',trading_age=0,evidence_json=js({'entry_price_e8':found['close_price_e8'],'policy_version':strategy['current_policy_version'],'basis':basis}),recorded_at_ms=now_ms()))
             for snapid in set(obj(run['input_snapshots_json'],{}).values()):pin(c,snapid,'tracking',tid)
             added.append({'round_id':tid,'instrument_id':ident,'status':'tracking','entry_business_date':day,'entry_price':money(found['close_price_e8'])})
-    return {'items':added,'added_count':len(added),'skipped':skipped}
+        result={'items':added,'added_count':len(added),'skipped':skipped}
+        if on_commit: on_commit(c,result)
+    return result
 
 def _policy_at(c,r,day):
     application=c.execute('SELECT policy_version FROM tracking_policy_application WHERE round_id=? AND effective_business_date<=? ORDER BY effective_business_date DESC,recorded_at_ms DESC,rowid DESC LIMIT 1',(r['round_id'],day)).fetchone()
@@ -109,6 +116,8 @@ def list_tracking(strategy_id=None,status='tracking',triggered_only=False):
     with connect() as c:
         day=current(c);calendar=get_market().calendar();master=identities(day);sql='SELECT r.*,s.name strategy_name FROM tracking_round r JOIN strategy s USING(strategy_id) WHERE 1=1';params=[]
         if strategy_id:sql+=' AND r.strategy_id=?';params.append(strategy_id)
+        status_counts=rows(c,'SELECT status,count(*) AS count FROM tracking_round'+(' WHERE strategy_id=?' if strategy_id else '')+' GROUP BY status',([strategy_id] if strategy_id else []))
+        counts={'active':sum(row['count'] for row in status_counts if row['status']=='tracking'),'history':sum(row['count'] for row in status_counts if row['status']!='tracking')}
         if status and status!='all':
             if status not in ('tracking','expired','condition_ended','manual_removed'):fail('不支持的跟踪状态')
             sql+=' AND r.status=?';params.append(status)
@@ -121,7 +130,7 @@ def list_tracking(strategy_id=None,status='tracking',triggered_only=False):
             valuation_date=r['end_business_date'] if r['status']!='tracking' else day
             item=_round_view(c,r,master,calendar,[],day,current_memberships=current_memberships,entry_high=entry_high_for(r,entry_highs),entry_low=entry_low_for(r,entry_lows),quote=quotes[(r['instrument_id'],valuation_date)],market=market)
             if not triggered_only or item['alerts']:items.append(item)
-    return {'items':items,'total':len(items),'business_date':day,'current_topics_scope':'当前业务日有效的本地来源成员与人工修改；不是历史归属，未完整分类的缺席不能判为不属于。'}
+    return {'items':items,'total':len(items),'counts':counts,'business_date':day,'current_topics_scope':'当前业务日有效的本地来源成员与人工修改；不是历史归属，未完整分类的缺席不能判为不属于。'}
 
 def get_tracking(tid):
     with connect() as c:
@@ -165,13 +174,23 @@ def release_ignore(sid,ident):
 
 def list_events(strategy_id=None,event_type=None,business_date=None,limit=100):
     with connect() as c:
-        sql='SELECT e.*,r.instrument_id,r.strategy_id,s.name strategy_name FROM tracking_event e JOIN tracking_round r USING(round_id) JOIN strategy s USING(strategy_id) WHERE 1=1';args=[]
+        sql='SELECT e.*,r.instrument_id,r.strategy_id,r.entry_business_date,r.entry_price_e8,r.entry_basis_json,s.name strategy_name FROM tracking_event e JOIN tracking_round r USING(round_id) JOIN strategy s USING(strategy_id) WHERE 1=1';args=[]
         for col,value in [('r.strategy_id',strategy_id),('e.event_type',event_type),('e.business_date',business_date)]:
             if value:sql+=' AND '+col+'=?';args.append(value)
         total=c.execute('SELECT count(*) FROM ('+sql+')',args).fetchone()[0]
-        sql+=' ORDER BY e.business_date DESC,e.recorded_at_ms DESC,e.event_id DESC LIMIT ?';args.append(min(max(limit,1),1000));master=identities(current(c))
-        data=[{**_event_view(r),**code_info(r['instrument_id'],master)} for r in rows(c,sql,args)]
-        return {'items':data,'total':total}
+        sql+=' ORDER BY e.business_date DESC,e.recorded_at_ms DESC,e.event_id DESC LIMIT ?';args.append(min(max(limit,1),1000));day=current(c);data=rows(c,sql,args)
+    market=get_market();calendar=market.calendar();master=identities(day)
+    # Events may span several business dates, including already ended rounds.
+    # Reuse the bounded immutable quote cache in one batch, valuing each event
+    # on its exact date rather than the latest price or the round's end date.
+    quote_rows=[{'instrument_id':row['instrument_id'],'status':'event','end_business_date':row['business_date']} for row in data]
+    quotes=tracking_quotes(market,quote_rows,calendar,day)
+    items=[]
+    for row in data:
+        event=_event_view({key:value for key,value in row.items() if key not in ('entry_price_e8','entry_basis_json')})
+        quote=quotes[(row['instrument_id'],row['business_date'])]
+        items.append({**event,**code_info(row['instrument_id'],master),'entry_price':money(row['entry_price_e8']),'entry_basis':obj(row['entry_basis_json'],{}),'valuation_date':row['business_date'],'observed_close':quote.get('close'),'today_change_pct':quote.get('change_pct')})
+    return {'items':items,'total':total,'business_date':day,'quote_scope':'逐条提醒业务日与其前一市场交易日的可比涨幅；不使用最新报价回填。'}
 
 def _historical_topics(c,round_row,day,current_day,current_topics):
     if day==current_day:return current_topics.get(round_row['instrument_id'],[])
@@ -205,6 +224,9 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
         history_trees=[node for policy in policies_for_history if policy['strategy_id']==original['strategy_id'] for node in obj(policy['alerts_json'],[])+obj(policy['exits_json'],[])]
         historical_start=history_retain_start(history_trees,calendar,original['entry_business_date'])
         history_context=HistoryContext(bars,calendar,day,generation,retain_start=historical_start) if original['strategy_id'] in history_strategies else None
+        if history_context:
+            from app.services.history_events import attach_limit_events
+            attach_limit_events(history_context,original['instrument_id'],history_trees,limit_evidence)
         limit_quotes=quote_index(bars)
         dates=[d for d in calendar if original['entry_business_date']<=d<=day]
         comparisons={observed:_entry_comparison(original,observed,finite(limit_quotes[observed].get('close')) if limit_quotes.get(observed) else None,market) for observed in dates}

@@ -118,7 +118,7 @@ assert.deepEqual(
 );
 
 const picker = await fs.readFile(
-  new URL("./MarketDatePicker.tsx", import.meta.url),
+  new URL("./DatePicker.tsx", import.meta.url),
   "utf8",
 );
 const shell = await fs.readFile(
@@ -144,12 +144,17 @@ assert.match(picker, /event.key === "Escape"/);
 assert.match(picker, /document.addEventListener\("pointerdown", dismiss\)/);
 assert.match(
   picker,
-  /disabled=\{!cell.inMonth \|\| !allowed.has\(cell.date\)\}/,
+  /!cell.inMonth \|\|[\s\S]*?!datePickerSelectable\(cell.date, model\)/,
 );
 assert.match(picker, /if \(selected !== value\) onChange\(selected\)/);
 assert.equal(picker.includes("location.hash"), false);
+const marketPicker = await fs.readFile(
+  new URL("./MarketDatePicker.tsx", import.meta.url),
+  "utf8",
+);
+assert.match(marketPicker, /<DatePicker[\s\S]*allowedDates=\{retained\}/);
 assert.equal(
-  picker.includes("new Date()"),
+  marketPicker.includes("new Date()"),
   false,
   "opening must not jump to computer's current date",
 );

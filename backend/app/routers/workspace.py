@@ -1,8 +1,9 @@
 """HTTP adapters for independent research. Domain rules never depend on market view date."""
 from fastapi import APIRouter,Body,Query
 from app.services import topics,strategies,tracking,topic_members as membership_service
-from app.services import sector_strategies,sector_tracking
+from app.services import sector_strategies,sector_tracking,strategy_batches
 from app.domain.conditions import specs
+from app.services import workspace_deletion, workspace_purge
 
 router=APIRouter(prefix='/api/v1',tags=['workspace'])
 
@@ -36,7 +37,13 @@ def topic_members(topic_id:str,payload:dict=Body(...)):return topics.add_member(
 def topic_history(topic_id:str):return topics.topic_history(topic_id)
 
 @router.get('/strategies')
-def strategy_list():return strategies.list_strategies()
+def strategy_list(deleted:bool=False,limit:int|None=Query(None,ge=1,le=100),offset:int=Query(0,ge=0)):return strategies.list_strategies(deleted,limit,offset)
+@router.post('/strategy-batches')
+def strategy_batch_create(payload:dict=Body(...)):return strategy_batches.create_batch(payload)
+@router.get('/strategy-batches')
+def strategy_batch_list(target_type:str='stock',limit:int=Query(10,ge=1,le=20)):return strategy_batches.list_batches(target_type,limit)
+@router.get('/strategy-batches/{batch_id}')
+def strategy_batch_get(batch_id:str):return strategy_batches.get_batch(batch_id)
 @router.post('/strategies')
 def strategy_create(payload:dict=Body(...)):return strategies.create_strategy(payload)
 @router.post('/strategies/bootstrap')
@@ -45,6 +52,10 @@ def strategy_bootstrap():return strategies.seed_workspace()
 def strategy_get(strategy_id:str):return strategies.get_strategy(strategy_id)
 @router.patch('/strategies/{strategy_id}')
 def strategy_update(strategy_id:str,payload:dict=Body(...)):return strategies.update_strategy(strategy_id,payload)
+@router.delete('/strategies/{strategy_id}')
+def strategy_delete(strategy_id:str):return workspace_deletion.delete_strategy(strategy_id)
+@router.post('/strategies/{strategy_id}/restore')
+def strategy_restore(strategy_id:str):return workspace_deletion.restore_strategy(strategy_id)
 @router.post('/strategies/{strategy_id}/runs')
 def strategy_run(strategy_id:str,payload:dict=Body(default={})):return strategies.run_strategy(strategy_id,payload)
 @router.get('/strategy-runs')
@@ -106,3 +117,15 @@ def sector_tracking_members(round_id:str,as_of:str|None=None,membership_scope:st
 def sector_members(topic_code:str,as_of:str|None=None,membership_scope:str='latest'):return sector_tracking.sector_members(topic_code,as_of,membership_scope)
 @router.get('/sector-tracking-events')
 def sector_tracking_events(strategy_id:str|None=None,event_type:str|None=None,business_date:str|None=None,limit:int=Query(100,ge=1,le=1000)):return sector_tracking.list_events(strategy_id,event_type,business_date,limit)
+
+
+@router.get('/strategies/{strategy_id}/purge-preview')
+def strategy_purge_preview(strategy_id:str):return workspace_purge.preview('strategy',strategy_id)
+@router.post('/strategies/{strategy_id}/purge')
+def strategy_purge(strategy_id:str,payload:dict=Body(...)):return workspace_purge.submit('strategy',strategy_id,payload)
+@router.get('/workspace-purges')
+def purge_list(limit:int=Query(20,ge=1,le=100),offset:int=Query(0,ge=0),status:str|None=None,target_kind:str|None=None):return workspace_purge.list_purges(limit,offset,status,target_kind)
+@router.get('/workspace-purges/{purge_id}')
+def purge_get(purge_id:str):return workspace_purge.get_purge(purge_id)
+@router.post('/workspace-purges/{purge_id}/retry')
+def purge_retry(purge_id:str):return workspace_purge.retry(purge_id)

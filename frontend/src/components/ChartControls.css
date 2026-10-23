@@ -1,0 +1,180 @@
+.chart-choice {
+  display: inline-flex;
+  min-width: 0;
+}
+.chart-choice-button {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 33px;
+  max-width: 100%;
+  padding: 7px 10px;
+  background: var(--surface);
+  color: var(--subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chart-choice-button svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.chart-choice-button:hover,
+.chart-choice-button.open {
+  border-color: color-mix(in srgb, var(--blue) 50%, var(--border));
+  background: color-mix(in srgb, var(--blue) 5%, var(--surface));
+  color: var(--text);
+}
+.chart-choice-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.chart-choice-button:focus-visible,
+.chart-option-toggle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.chart-choice-menu {
+  position: fixed;
+  z-index: 1250;
+  padding: 5px;
+  max-height: min(300px, calc(100dvh - 24px));
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 12px 36px #00000035;
+  outline: none;
+}
+.chart-choice-caption {
+  padding: 6px 9px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.chart-choice-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  margin-top: 2px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.chart-choice-option > div {
+  flex: 1;
+  min-width: 0;
+}
+.chart-choice-option strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+}
+.chart-choice-option small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.chart-choice-option.focused {
+  background: var(--surface2);
+}
+.chart-choice-option[aria-selected="true"] {
+  background: color-mix(in srgb, var(--blue) 11%, var(--surface));
+  color: var(--blue);
+}
+.chart-choice-option[aria-disabled="true"] {
+  opacity: 0.42;
+  cursor: default;
+}
+.chart-option-toggle {
+  --chart-toggle-color: var(--blue);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 31px;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chart-option-toggle.selected {
+  border-color: color-mix(
+    in srgb,
+    var(--chart-toggle-color) 24%,
+    var(--border-soft)
+  );
+  background: color-mix(in srgb, var(--chart-toggle-color) 7%, var(--surface));
+  color: var(--chart-toggle-color);
+}
+.chart-option-toggle:hover {
+  background: var(--surface2);
+}
+.chart-toggle-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+}
+.chart-option-toggle.selected .chart-toggle-dot {
+  opacity: 1;
+}
+.candle-chart .chart-toolbar {
+  gap: 8px;
+  padding: 12px 0 10px;
+}
+.candle-chart .chart-toolbar .segmented {
+  min-height: 33px;
+  border-color: var(--border-soft);
+  border-radius: 8px;
+}
+.candle-chart .chart-toolbar .segmented > button {
+  padding: 5px 12px;
+  font-size: 10px;
+}
+.candle-chart .chart-toolbar .ma-controls {
+  gap: 3px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border-soft);
+}
+.candle-chart .chart-toolbar .ma-controls .chart-option-toggle {
+  padding-inline: 7px;
+}
+.candle-chart .chart-toolbar .btn.small {
+  min-height: 33px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+.candle-chart .chart-wave-selectors {
+  gap: 8px 12px;
+  padding: 7px 0;
+}
+@media (max-width: 700px) {
+  .candle-chart .chart-toolbar {
+    gap: 6px;
+  }
+  .candle-chart .chart-toolbar .ma-controls {
+    border-left: 0;
+    padding-left: 0;
+  }
+  .candle-chart .chart-wave-selectors > label {
+    max-width: 100%;
+  }
+  .chart-choice-button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

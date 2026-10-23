@@ -2,7 +2,12 @@ import { ArrowDownRight, ArrowUpRight, FlaskConical } from "lucide-react";
 import type { Row } from "../../lib/api";
 import { fieldLabel, ruleOperator, ruleValue } from "./Conditions";
 import RuleTreeEditor from "./RuleTreeEditor";
-import { historyRuleSummary } from "./historicalRules";
+import {
+  historyRuleSummary,
+  HIDDEN_CONDITION_TEXT,
+  isHiddenConditionField,
+  isHiddenConditionRule,
+} from "./historicalRules";
 import "./TradeRules.css";
 
 export type TradeRulesValue = { entry: Row | null; exit: Row | null };
@@ -26,6 +31,7 @@ export const emptyTradeRules = (): TradeRulesValue => ({
 
 export function tradeRuleText(node: Row | null | undefined): string {
   if (!node) return "未设置";
+  if (isHiddenConditionRule(node)) return HIDDEN_CONDITION_TEXT;
   if (node.history_event) return historyRuleSummary(node, fieldLabel);
   const children = node.all || node.any || node.conditions;
   if (Array.isArray(children)) {
@@ -138,7 +144,10 @@ export default function TradeRulesEditor({
   period: string;
 }) {
   const allowed = fields.filter(
-    (field) => !unavailable.has(field.field) && !field.tracking_only,
+    (field) =>
+      !isHiddenConditionField(field.field) &&
+      !unavailable.has(field.field) &&
+      !field.tracking_only,
   );
   return (
     <section className="trade-rules-editor">

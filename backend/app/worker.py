@@ -109,34 +109,40 @@ def _queue_followup_once(job,completed_result=None):
                 previous=connection.execute('SELECT status FROM job WHERE job_id=?',(parameters.get('previous_chain_job_id'),)).fetchone()
                 if not previous or previous[0] not in ('succeeded','partial','no_change'):return None
     target=_chain_target(job,completed_result)
+    # Recovery can be the first code to freeze a no-change parent's date. Queue
+    # its short children here too, before creating a long sector child.
+    _queue_local_sync_checks(job)
+    from app.adapters.public_fund_budget import validate_fund_budget_version
+    fund_version=validate_fund_budget_version(parameters.get('fund_request_budget_version'))
+    fund_policy={'fund_request_budget_version':fund_version} if fund_version is not None else {}
     if job['kind']=='initialise':
         extra={'data_chain_version':'sector-charts-v1'} if parameters.get('data_chain_version')=='sector-charts-v1' else {}
-        child=tasks.create_task('topic_refresh',{'source_id':'fuyao','scope':'current-full-catalog','initialization_chain':True,'parent_sync_job_id':job['job_id'],**extra},target_date=target,request_key='topics-after-initialise:'+job['job_id'])
+        child=tasks.create_task('topic_refresh',{'source_id':'fuyao','scope':'current-full-catalog','initialization_chain':True,'parent_sync_job_id':job['job_id'],**extra,**fund_policy},target_date=target,request_key='topics-after-initialise:'+job['job_id'])
         message='历史行情已发布，完整题材库已排队；新初始化将接续板块历史K线，再补充年内统计、目标日封板与资金' if extra else '历史行情已发布，完整题材库已排队；题材完成后一次回补年内统计，并补充目标日封板与资金'
     elif job['kind']=='increment' and parameters.get('data_chain_version')=='sector-charts-increment-v1':
         from app.core import get_market
         from app.services.sector_chart_batch_jobs import create_batch_job
         child=create_batch_job(get_market(),target,request_key='sector-charts-after-sync:'+job['job_id'],mode='increment',
             chain_parameters={'increment_chain':True,'parent_sync_job_id':job['job_id'],
-                              'data_chain_version':'sector-charts-increment-v1'})
+                              'data_chain_version':'sector-charts-increment-v1',**fund_policy})
         message='主行情已发布，板块K线尾部增量已排队；只追加缺少交易日，再接续目标日盘面补充'
     elif job['kind']=='increment':
-        child=_supplement_child({'operation':'market_supplement','year_history':False,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':job['job_id']},target,'supplement-after-sync:'+job['job_id'])
+        child=_supplement_child({'operation':'market_supplement','year_history':False,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':job['job_id'],**fund_policy},target,'supplement-after-sync:'+job['job_id'])
         message='本次手动同步的封板、资金及板块日行情补充已排队；失败保留缺口，不阻止行情查询'
     elif job['kind'] in ('topic_init','topic_refresh') and parameters.get('data_chain_version')=='sector-charts-v1':
         from app.core import get_market
         from app.services.sector_chart_batch_jobs import create_batch_job
         child=create_batch_job(get_market(),target,request_key='sector-charts-after-initialise:'+parent,
             chain_parameters={'initialization_chain':True,'parent_sync_job_id':parent,
-                              'previous_chain_job_id':job['job_id'],'data_chain_version':'sector-charts-v1'})
+                              'previous_chain_job_id':job['job_id'],'data_chain_version':'sector-charts-v1',**fund_policy})
         message='完整题材已发布，行业概念历史K线全库补齐已排队；逐板块缓存后接续盘面补充'
     elif _increment_chart_chain(parameters):
         child=_supplement_child({'operation':'market_supplement','year_history':False,'sector_history':True,
-            'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent},target,'supplement-after-sync:'+parent)
+            'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,**fund_policy},target,'supplement-after-sync:'+parent)
         message='板块K线尾部增量已核验，目标日封板、资金及板块日行情补充已排队；历史缺口继续保留'
     else:
         request_key='full-supplement-after-initialise:'+parent
-        parameters={'operation':'market_supplement','year_history':True,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,'previous_chain_job_id':job['job_id']}
+        parameters={'operation':'market_supplement','year_history':True,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,'previous_chain_job_id':job['job_id'],**fund_policy}
         child=_supplement_child(parameters,target,request_key)
         message='完整题材已发布，年内涨跌停统计一次回补、目标日封板、资金及板块日行情补充已排队；日后增量会自动补当日，失败可单独补缺'
     with connect() as connection:
@@ -188,10 +194,39 @@ def recover_followups(limit=20):
     return result
 
 
+def _queue_local_sync_checks(job, completed_result=None):
+    """Queue short local checks before the sector chain, without changing FIFO."""
+    if job['kind'] not in ('initialise','increment'):return
+    from app.services import line_alerts,listing_status
+    parameters=_parameters(job)
+    if not (parameters.get('line_alert_check_version')==line_alerts.VERSION
+            or parameters.get('listing_status_check_version')==listing_status.VERSION):return
+    # A no-change request may not have a target. Freeze its own completed date
+    # before either child is created; never borrow a later global head on repair.
+    try:_chain_target(job,completed_result)
+    except Exception:
+        logger.warning('本地核验未排队 %s：同步日期未能冻结',job['job_id'])
+        return
+    for name,callback in (('line_alerts',line_alerts.after_sync),('listing_status',listing_status.after_sync)):
+        try:callback(job)
+        except Exception as error:
+            # An isolated local check must not suppress the other child or the
+            # already authorized data chain. Its existing recovery is idempotent.
+            logger.warning('本地核验排队稍后重试 %s %s %s',job['job_id'],name,type(error).__name__)
+            with connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                stage='local_check_queue_error:'+name
+                if not connection.execute('SELECT 1 FROM job_event WHERE job_id=? AND stage=?',(job['job_id'],stage)).fetchone():
+                    tasks.append_event(connection,job['job_id'],stage,'本地核验暂未排队；重启时按原授权补漏，不影响后续数据链','warning',
+                        {'check':name,'reason_code':type(error).__name__})
+
+
 def dispatch(job):
     with connect() as connection:state=connection.execute('SELECT status FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
     if not state or state[0] in tasks.TERMINAL:
-        if state and state[0] in ('succeeded','partial','no_change'):_queue_followup(job)
+        if state and state[0] in ('succeeded','partial','no_change'):
+            _queue_local_sync_checks(job)
+            _queue_followup(job)
         return
     if state[0]=='paused':raise tasks.TaskPaused()
     _authorize_chain(job)
@@ -203,9 +238,18 @@ def dispatch(job):
         result=execute_sync(identifier,callback)
         status='no_change' if result.get('no_change') or result.get('status')=='no_change' else 'partial' if result.get('quality')=='partial' else 'succeeded'
         tasks.finish(identifier,status,result.get('message','行情数据已校验并发布'))
+        _queue_local_sync_checks(job,result)
         from app.services.workspace_automation import run_after_sync
+        started=time.monotonic()
         run_after_sync(identifier)
+        with connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            tasks.append_event(connection,identifier,'workspace_followup_timing','主行情已可用，本地策略与跟踪核对已结束；轻量核验已先排队',
+                details={'elapsed_ms':round((time.monotonic()-started)*1000),'queue_order':'local-checks-before-sector-chain-v1'})
         _queue_followup(job,result)
+    elif kind=='cleanup' and _parameters(job).get('operation')=='workspace_purge':
+        from app.services.workspace_purge import execute
+        execute(job)
     elif kind=='backtest':
         from app.analytics.backtest_store import execute_backtest
         execute_backtest(identifier,callback)
@@ -219,6 +263,19 @@ def dispatch(job):
         result=execute_topic_collection(identifier,callback)
         tasks.finish(identifier,'partial','真实当前题材库已发布')
         _queue_followup(job,result)
+    elif kind=='source_check' and _parameters(job).get('operation')=='local_coverage_check':
+        from app.services.local_coverage_check import execute_check
+        result=execute_check(identifier,callback)
+        tasks.finish(identifier,'partial' if result.get('quality')!='complete' else 'succeeded',result['message'])
+    elif kind=='source_check' and _parameters(job).get('operation')=='line_alert_check':
+        from app.services.line_alerts import execute_check
+        execute_check(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='listing_status_check':
+        from app.services.listing_status import execute_check
+        execute_check(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='quote_gap_source_check':
+        from app.services.quote_gap_source_check import execute_check
+        execute_check(job)
     elif kind=='source_check' and json.loads(job.get('parameters_json','{}')).get('operation')=='market_supplement':
         from app.services.market_supplement import execute_supplement
         result=execute_supplement(identifier,callback)
@@ -232,6 +289,15 @@ def dispatch(job):
         result=execute_batch_job(identifier,callback)
         tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',result.get('message','全量板块历史K线已核验并缓存'))
         _queue_followup(job,result)
+    elif kind=='selection' and _parameters(job).get('operation')=='strategy_batch_item':
+        from app.services.strategy_batches import execute_item
+        execute_item(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='strategy_batch_tracking':
+        from app.services.strategy_batches import execute_tracking
+        execute_tracking(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='strategy_batch':
+        from app.services.strategy_batches import finish_batch
+        finish_batch(job)
     else:raise ValueError('该任务类型尚未实现工作进程执行，请通过对应模块手动运行')
 
 
@@ -253,16 +319,22 @@ def run(once=False):
                     logger.warning('个股研究缓存清理稍后重试')
                 next_research_cleanup=time.monotonic()+3600
             set_setting('worker_heartbeat',{'owner':owner,'at_ms':now_ms()})
+            from app.services.line_alerts import recover_sync_followups
+            from app.services.listing_status import recover_sync_followups as recover_listing_followups
+            for name,recover in (('line_alerts',recover_sync_followups),('listing_status',recover_listing_followups)):
+                try:recover()
+                except Exception as error:
+                    logger.warning('本地核验补漏稍后重试 %s %s',name,type(error).__name__)
             recover_followups()
             job=tasks.claim_next(owner)
             if not job:
                 if once:return
                 stop.wait(1.5);continue
             heartbeat_stop=threading.Event()
-            def heartbeat(identifier=job['job_id'],stop_event=heartbeat_stop):
+            def heartbeat(identifier=job['job_id'],stop_event=heartbeat_stop,lease_owner=job['lease_owner']):
                 while not stop_event.wait(15):
                     with connect() as c:
-                        c.execute("UPDATE job SET lease_expires_at_ms=? WHERE job_id=? AND status='running' AND lease_owner=?",(now_ms()+60_000,identifier,owner))
+                        c.execute("UPDATE job SET lease_expires_at_ms=? WHERE job_id=? AND status='running' AND lease_owner=?",(now_ms()+60_000,identifier,lease_owner))
                     set_setting('worker_heartbeat',{'owner':owner,'at_ms':now_ms(),'task_id':identifier})
             thread=threading.Thread(target=heartbeat,daemon=True);thread.start()
             try:
@@ -274,7 +346,7 @@ def run(once=False):
                 # Never log URLs, signed downloads, request headers or arbitrary remote bodies.
                 message=str(error) if isinstance(error,(ProviderError,ValueError)) else '任务未完成：'+type(error).__name__
                 logger.error('%s %s',job['job_id'],message)
-                tasks.finish(job['job_id'],'failed',message,message)
+                tasks.finish(job['job_id'],'failed',message,message,lease_owner=job['lease_owner'])
             finally:
                 heartbeat_stop.set();thread.join(timeout=2)
             if once:return

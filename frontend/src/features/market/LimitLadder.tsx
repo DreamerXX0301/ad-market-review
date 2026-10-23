@@ -20,7 +20,9 @@ import {
 } from "../../components/UI";
 import MarketDataCoverage from "./MarketDataCoverage";
 import TopicMembersDialog from "./TopicMembersDialog";
+import DailyMainlines from "./DailyMainlines";
 import { CurrencyCell } from "./MarketTable";
+import CopyStockCode from "../../components/CopyStockCode";
 import { sortMarketRows } from "./marketPresentation";
 import type { MarketSort } from "./marketPresentation";
 import {
@@ -33,7 +35,7 @@ import {
 import type { LadderTopic } from "./ladderPresentation";
 import {
   buildLadderDisplayGroups,
-  isStructuralLadderTopic,
+  ladderCardAttribution,
   ladderStockKey,
   ladderThemeIndex,
 } from "./ladderBoardPresentation";
@@ -74,7 +76,6 @@ function LadderStockCard({
   selectedTopic,
   failed = false,
   showHeight = false,
-  hideTopics = false,
   displayTopic,
 }: {
   row: Row;
@@ -84,16 +85,17 @@ function LadderStockCard({
   selectedTopic: LadderTopic | null;
   failed?: boolean;
   showHeight?: boolean;
-  hideTopics?: boolean;
   displayTopic?: LadderTopic;
 }) {
-  const topics = hideTopics ? [] : ladderTopics(row);
-  const primaryTopic =
-    displayTopic ||
-    topics.find(
-      (topic) => topic.kind === "concept" && !isStructuralLadderTopic(topic),
-    );
-  const otherTopics = topics.filter((topic) => topic.key !== primaryTopic?.key);
+  const attribution = ladderCardAttribution(row, displayTopic);
+  const primaryConcept = attribution.conceptTopics[0];
+  const otherTopics = [
+    ...attribution.conceptTopics.slice(1),
+    ...attribution.otherTopics,
+  ];
+  const sourceIndustryIsTopic = attribution.industryTopics.some(
+    (topic) => topic.name === attribution.sourceIndustry,
+  );
   const topicChip = (topic: LadderTopic) => {
     const theme = themeIndex.get(topic.key);
     return (
@@ -101,7 +103,10 @@ function LadderStockCard({
         key={topic.key}
         className={`ladder-stock-theme ${selectedTopic?.key === topic.key ? "selected" : ""}`}
         onClick={() => onTopic(topic)}
-        title={theme?.reason || "已留存当日题材关联；点击筛选本页样本"}
+        title={
+          theme?.reason ||
+          "已留存当日分类关联，不代表涨停驱动；点击筛选本页样本"
+        }
       >
         <span>{topic.name}</span>
         {theme && <small>{themeCountText(theme)}</small>}
@@ -118,16 +123,18 @@ function LadderStockCard({
   return (
     <article className="ladder-stock-card">
       <div className="ladder-stock-primary">
-        <button
-          className="ladder-stock-identity"
-          onClick={() => onStock(row.instrument_id)}
-          disabled={!row.instrument_id}
-        >
-          <strong>
-            {row.name || row.code || row.instrument_id || "名称待核验"}
-          </strong>
-          <code>{row.code || row.instrument_id}</code>
-        </button>
+        <div className="ladder-stock-identity-wrap">
+          <button
+            className="ladder-stock-identity"
+            onClick={() => onStock(row.instrument_id)}
+            disabled={!row.instrument_id}
+          >
+            <strong>
+              {row.name || row.code || row.instrument_id || "名称待核验"}
+            </strong>
+          </button>
+          <CopyStockCode code={row.code} instrumentId={row.instrument_id} />
+        </div>
         <div className="ladder-stock-status">
           {showHeight && positiveCount(board) && (
             <span className="ladder-stock-height">
@@ -148,29 +155,51 @@ function LadderStockCard({
           </span>
         </div>
       </div>
-      {!hideTopics && (
-        <div className="ladder-stock-topics">
-          {primaryTopic ? (
-            topicChip(primaryTopic)
-          ) : typeof row.source_industry === "string" &&
-            row.source_industry.trim() ? (
-            <span className="ladder-source-industry">
-              来源行业 · {row.source_industry}
-            </span>
-          ) : (
-            <span className="ladder-no-topic">其他题材</span>
-          )}
-          {otherTopics.length > 0 && (
-            <details className="ladder-more-topics">
-              <summary>
-                其余题材 {otherTopics.length}
-                <ChevronDown size={10} />
-              </summary>
-              <div>{otherTopics.map(topicChip)}</div>
-            </details>
-          )}
+      <div className="ladder-stock-topics">
+        <div className="ladder-attribution-row">
+          <span className="ladder-attribution-label">行业</span>
+          <div className="ladder-attribution-values">
+            {attribution.sourceIndustry && !sourceIndustryIsTopic && (
+              <span className="ladder-source-industry">
+                {attribution.sourceIndustry}
+              </span>
+            )}
+            {attribution.industryTopics.map(topicChip)}
+            {!attribution.sourceIndustry &&
+              !attribution.industryTopics.length && (
+                <span className="ladder-no-topic">待核验</span>
+              )}
+          </div>
         </div>
-      )}
+        <div className="ladder-attribution-row">
+          <span className="ladder-attribution-label">概念关联</span>
+          <div className="ladder-attribution-values">
+            {primaryConcept ? (
+              topicChip(primaryConcept)
+            ) : (
+              <span className="ladder-no-topic">未留存明确概念</span>
+            )}
+            {otherTopics.length > 0 && (
+              <details className="ladder-more-topics">
+                <summary>
+                  其余关联 {otherTopics.length}
+                  <ChevronDown size={10} />
+                </summary>
+                <div>{otherTopics.map(topicChip)}</div>
+              </details>
+            )}
+          </div>
+        </div>
+        <div
+          className="ladder-attribution-row"
+          title="来源记录的原因说明，不代表已验证的涨停驱动"
+        >
+          <span className="ladder-attribution-label">来源原因</span>
+          <span className="ladder-source-reason">
+            {attribution.sourceReason || "待核验"}
+          </span>
+        </div>
+      </div>
       <dl className="ladder-stock-timing">
         {failed ? (
           <>
@@ -339,9 +368,8 @@ export default function LimitLadder({
   const [query, setQuery] = useState("");
   const [selectedTopic, setSelectedTopic] = useState<LadderTopic | null>(null);
   const [memberTopic, setMemberTopic] = useState<Row | null>(null);
-  const [view, setView] = useState<"height" | "theme">("height");
+  const [view, setView] = useState<"height" | "theme" | "mainlines">("height");
   const [rawTopicsOpen, setRawTopicsOpen] = useState(false);
-  const [classification, setClassification] = useState<string | null>(null);
   const [sort, setSort] = useState<MarketSort>({
     key: "first_limit_time",
     order: "asc",
@@ -350,7 +378,6 @@ export default function LimitLadder({
     setQuery("");
     setSelectedTopic(null);
     setMemberTopic(null);
-    setClassification(null);
   }, [date]);
   const main = rowsAt(data?.items),
     rebound = rowsAt(data?.rebound_items),
@@ -389,7 +416,6 @@ export default function LimitLadder({
     {
       key: "rebound",
       title: "反包板 · 事件候选",
-      short: "反包",
       description: "T涨停 / T-1确认非涨停 / T-2涨停，非K线实体包络判断",
       rows: rebound,
       accent: "violet",
@@ -397,7 +423,6 @@ export default function LimitLadder({
     {
       key: "failed",
       title: "晋级失败",
-      short: "晋级失败",
       description: "昨日来源涨停、今日确认未收盘涨停，不等于跌停",
       rows: failed,
       accent: "cool",
@@ -406,18 +431,12 @@ export default function LimitLadder({
     {
       key: "twenty_cm",
       title: "20cm · 制度已核验",
-      short: "20cm",
       description: "来源收盘涨停与当日20%制度联合核验",
       rows: twenty,
       accent: "amber",
     },
   ];
-  const stockCards = (
-    items: Row[],
-    wide = false,
-    showHeight = false,
-    hideTopics = false,
-  ) => (
+  const stockCards = (items: Row[], wide = false, showHeight = false) => (
     <div className={`ladder-stock-grid ${wide ? "is-wide" : ""}`}>
       {sortMarketRows(items, sort).map((row, index) => (
         <LadderStockCard
@@ -428,7 +447,6 @@ export default function LimitLadder({
           onTopic={onTopic}
           selectedTopic={selectedTopic}
           showHeight={showHeight}
-          hideTopics={hideTopics}
           displayTopic={displayPlan.topicsByInstrument.get(ladderStockKey(row))}
         />
       ))}
@@ -439,7 +457,7 @@ export default function LimitLadder({
       <div className="ladder-intro">
         <div className="ladder-compact-caption">
           <Layers3 size={14} />
-          <strong>连板高度与题材分布</strong>
+          <strong>连板高度与归属分布</strong>
           <span>全部样本展开</span>
         </div>
         <div className="button-group">
@@ -486,49 +504,55 @@ export default function LimitLadder({
         <Loading />
       ) : (
         <>
-          <div className="ladder-overview">
-            <div>
-              <span>已确认涨停样本</span>
-              <strong>
-                {main.length ? integer(main.length) : "—"}
-                <small>只</small>
-              </strong>
+          {view !== "mainlines" && (
+            <div className="ladder-overview">
+              <div>
+                <span>已确认涨停样本</span>
+                <strong>
+                  {main.length ? integer(main.length) : "—"}
+                  <small>只</small>
+                </strong>
+              </div>
+              <div>
+                <span>最高连板</span>
+                <strong>
+                  {highest ? integer(highest) : "—"}
+                  <small>板</small>
+                </strong>
+              </div>
+              <div>
+                <span>展示分组</span>
+                <strong>
+                  {displayPlan.groups.length
+                    ? integer(displayPlan.groups.length)
+                    : "—"}
+                  <small>组</small>
+                </strong>
+              </div>
+              <p>
+                同一盘面日 · 同一来源口径
+                <br />
+                展示分组不代表涨停主因，原始关联按需查看。
+              </p>
             </div>
-            <div>
-              <span>最高连板</span>
-              <strong>
-                {highest ? integer(highest) : "—"}
-                <small>板</small>
-              </strong>
-            </div>
-            <div>
-              <span>展示分组</span>
-              <strong>
-                {displayPlan.groups.length
-                  ? integer(displayPlan.groups.length)
-                  : "—"}
-                <small>组</small>
-              </strong>
-            </div>
-            <p>
-              同一盘面日 · 同一来源口径
-              <br />
-              展示分组不代表涨停主因，原始关联按需查看。
-            </p>
-          </div>
+          )}
           <div className="ladder-controls">
             <div className="ladder-view-switch" aria-label="切换涨停看板视图">
               {(
                 [
                   ["height", "连板梯队"],
-                  ["theme", "题材归类"],
+                  ["theme", "概念关联"],
+                  ["mainlines", "当日主线"],
                 ] as const
               ).map(([key, text]) => (
                 <button
                   key={key}
                   aria-pressed={view === key}
                   className={view === key ? "active" : ""}
-                  onClick={() => setView(key)}
+                  onClick={() => {
+                    setView(key);
+                    if (key === "mainlines") setSelectedTopic(null);
+                  }}
                 >
                   {text}
                 </button>
@@ -538,53 +562,59 @@ export default function LimitLadder({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索股票、代码或题材…"
+                placeholder={
+                  view === "mainlines"
+                    ? "搜索股票、代码或主线…"
+                    : "搜索股票、代码或题材…"
+                }
                 aria-label="搜索涨停梯队股票或题材"
               />
             </label>
-            <div className="ladder-sort-controls">
-              <label>
-                组内排序
-                <select
-                  aria-label="涨停看板组内排序字段"
-                  value={sort.key}
-                  onChange={(event) =>
+            {view !== "mainlines" && (
+              <div className="ladder-sort-controls">
+                <label>
+                  组内排序
+                  <select
+                    aria-label="涨停看板组内排序字段"
+                    value={sort.key}
+                    onChange={(event) =>
+                      setSort({
+                        key: event.target.value,
+                        order: [
+                          "first_limit_time",
+                          "last_limit_time",
+                          "name",
+                          "code",
+                        ].includes(event.target.value)
+                          ? "asc"
+                          : "desc",
+                      })
+                    }
+                  >
+                    {sortChoices.map(([key, caption]) => (
+                      <option key={key} value={key}>
+                        {caption}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  className="btn small"
+                  onClick={() =>
                     setSort({
-                      key: event.target.value,
-                      order: [
-                        "first_limit_time",
-                        "last_limit_time",
-                        "name",
-                        "code",
-                      ].includes(event.target.value)
-                        ? "asc"
-                        : "desc",
+                      ...sort,
+                      order: sort.order === "asc" ? "desc" : "asc",
                     })
                   }
+                  aria-label={`切换为${sort.order === "asc" ? "降序" : "升序"}`}
                 >
-                  {sortChoices.map(([key, caption]) => (
-                    <option key={key} value={key}>
-                      {caption}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="btn small"
-                onClick={() =>
-                  setSort({
-                    ...sort,
-                    order: sort.order === "asc" ? "desc" : "asc",
-                  })
-                }
-                aria-label={`切换为${sort.order === "asc" ? "降序" : "升序"}`}
-              >
-                <ArrowDownUp size={12} />
-                {sort.order === "asc" ? "升序" : "降序"}
-              </button>
-            </div>
+                  <ArrowDownUp size={12} />
+                  {sort.order === "asc" ? "升序" : "降序"}
+                </button>
+              </div>
+            )}
           </div>
-          {searching && (
+          {searching && view !== "mainlines" && (
             <div className="ladder-filter-state">
               <span>
                 {selectedTopic ? `题材：${selectedTopic.name}` : ""}
@@ -603,7 +633,7 @@ export default function LimitLadder({
             </div>
           )}
           <div className="ladder-board-layout" id={baseId + "-main"}>
-            {view !== "theme" && (
+            {view === "height" && (
               <section className="ladder-main">
                 <header className="ladder-main-heading">
                   <div>
@@ -662,11 +692,11 @@ export default function LimitLadder({
                 )}
               </section>
             )}
-            {view !== "height" && (
+            {view === "theme" && (
               <section className="ladder-theme-board">
                 <header className="ladder-main-heading">
                   <div>
-                    <h2>题材展示分组</h2>
+                    <h2>概念关联分组</h2>
                     <p>每只股票仅出现一次 · 最多6组与其他题材</p>
                   </div>
                   <span>本组家数与全部关联家数分开</span>
@@ -709,13 +739,13 @@ export default function LimitLadder({
                               </button>
                             )}
                         </header>
-                        {stockCards(group.items, false, true, true)}
+                        {stockCards(group.items, false, true)}
                       </section>
                     ))}
                   </div>
                 ) : (
                   <Empty
-                    title="当前范围暂无题材分组"
+                    title="当前范围暂无概念关联分组"
                     description={
                       data?.theme_coverage?.notice ||
                       data?.theme_coverage?.reason ||
@@ -725,34 +755,21 @@ export default function LimitLadder({
                 )}
               </section>
             )}
+            {view === "mainlines" && (
+              <DailyMainlines
+                key={date}
+                date={date}
+                rows={main}
+                query={query}
+                onStock={onStock}
+              />
+            )}
           </div>
-          <div className="ladder-anchor-nav" aria-label="补充事件分类">
-            <span className="ladder-class-tabs-caption">补充分类</span>
+          <div
+            className="ladder-supplemental-sections"
+            aria-label="补充事件分类"
+          >
             {sections.map((section) => (
-              <button
-                key={section.key}
-                aria-pressed={classification === section.key}
-                onClick={() =>
-                  setClassification((current) =>
-                    current === section.key ? null : section.key,
-                  )
-                }
-              >
-                {section.short}
-                <span>
-                  {integer(
-                    ladderClassificationCount(
-                      section.rows,
-                      coverage[section.key],
-                    ),
-                  )}
-                </span>
-              </button>
-            ))}
-          </div>
-          {sections
-            .filter((section) => section.key === classification)
-            .map((section) => (
               <ClassificationSection
                 key={section.key}
                 id={baseId + "-" + section.key}
@@ -771,6 +788,7 @@ export default function LimitLadder({
                 sort={sort}
               />
             ))}
+          </div>
           <details className="ladder-evidence">
             <summary>
               数据与归属详情
@@ -784,7 +802,7 @@ export default function LimitLadder({
             </summary>
             <div>
               <p>
-                未做人工核心地位评级，连板高度不等同于龙头。封板时间不等于全天封单稳定性；缺失字段以“—”显示，不补0。
+                连板高度不等同于龙头，当日主线中的角色仅为用户候选标记，不改变来源评级。封板时间不等于全天封单稳定性；缺失字段以“—”显示，不补0。
               </p>
               <p>
                 题材家数来自该盘面日已留存成员，多个分类可重叠。确认下界不当作完整数量；卡片没有家数时仅表示归属，不推算题材总数。

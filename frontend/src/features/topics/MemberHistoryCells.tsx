@@ -74,12 +74,12 @@ export function YearLimitCountCell({ row }: { row: Row }) {
         <Badge tone="warn">
           {observed
             ? `已确认≥${integer(row.limit_up_ytd_observed)}次`
-            : "覆盖不足"}
+            : "待核验"}
         </Badge>
       )}
       {!exact && (
         <small>
-          {observed ? "覆盖不足" : "未确认次数"}
+          {observed ? "覆盖不足" : "暂无已确认记录"}
           {count(coverage.covered_days) && count(coverage.expected_days)
             ? ` · ${coverage.covered_days}/${coverage.expected_days}日`
             : ""}

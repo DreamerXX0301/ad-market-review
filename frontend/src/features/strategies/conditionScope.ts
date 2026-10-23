@@ -73,6 +73,7 @@ export function conditionFieldGroups(
           "更多跨场景条件",
         ];
   for (const field of fields) {
+    if (field.field === "kdj_j") continue;
     let group = conditionFieldGroup(field, scope);
     if (group === "更多跨场景条件" && !showMore) {
       if (!saved.includes(field.field)) continue;

@@ -7,6 +7,7 @@ import pytest
 
 from app.services import stock_summary as summary
 from test_topic_member_metrics import MetricMarket, complete_year, source_pool, A, B, C, D, E
+from app.domain.conditions import metrics_for
 
 
 @pytest.fixture
@@ -38,9 +39,55 @@ def test_common_summary_preserves_exact_count_latest_and_asof_without_future(loc
     assert result['return_ytd_pct'] is not None
     assert result['return_30d_pct'] == result['change_30d_pct']
     assert result['return_30d_coverage']['start'] == market.days[market.days.index(market.day)-30]
+    assert result['change_pct'] == metrics_for(market.data[A], market.day, market.days)['change_pct']
+    assert result['change_pct_reason'] is None
+    assert result['change_pct_date'] == market.day
+    assert result['change_pct_previous_date'] == market.days[market.days.index(market.day)-1]
     assert market.calls['panel'] == 0 and market.calls['actions'] == 0
     assert market.calls['history_for_instruments'] == 2
     assert all(request['symbols'] == {A} and request['end'] == market.day for request in market.history_requests)
+    assert market.history_requests[0]['start'] == result['change_pct_previous_date']
+
+
+@pytest.mark.parametrize('case', ['previous_missing', 'previous_duplicate', 'current_duplicate',
+    'current_invalid', 'previous_invalid', 'current_action', 'missing_actions', 'malformed_actions'])
+def test_daily_change_never_falls_back_to_older_or_incomparable_quotes(local, monkeypatch, case):
+    from test_topic_member_metrics import action
+    market, _ = local
+    previous = market.days[market.days.index(market.day)-1]
+    current = next(row for row in market.data[A] if row['date'] == market.day)
+    old = next(row for row in market.data[A] if row['date'] == previous)
+    if case == 'previous_missing': market.data[A].remove(old)
+    if case == 'previous_duplicate': market.data[A].append(deepcopy(old))
+    if case == 'current_duplicate': market.data[A].append(deepcopy(current))
+    if case == 'current_invalid': current['close'] = float('nan')
+    if case == 'previous_invalid': old['close'] = 0
+    if case == 'current_action': market.events[A] = [action(market.day)]
+    if case == 'missing_actions': monkeypatch.setattr(market, 'actions_for_instruments', lambda symbols: None)
+    if case == 'malformed_actions': market.events[A] = [{'date': None}]
+    result = summary.get_summary(A, market.day)
+    assert result['change_pct'] is None and result['change_pct_reason']
+    assert result['change_pct_date'] == market.day and result['change_pct_previous_date'] == previous
+    assert market.calls['history_for_instruments'] == 2
+
+
+def test_daily_change_is_dated_and_does_not_use_future_quotes_or_returns(local):
+    market, _ = local
+    day = market.days[-7]
+    expected = metrics_for(market.data[A], day, market.days)['change_pct']
+    next(row for row in market.data[A] if row['date'] > day)['close'] = 999
+    result = summary.get_summary(A, day)
+    assert result['change_pct'] == expected
+    assert result['change_pct_date'] == result['quote_date'] == day
+    assert result['change_pct_previous_date'] == market.days[market.days.index(day)-1]
+    assert all(request['end'] == day for request in market.history_requests)
+
+
+def test_daily_change_first_retained_market_day_has_no_previous_reference(local):
+    market, _ = local
+    result = summary.get_summary(A, market.days[0])
+    assert result['change_pct'] is None and result['change_pct_reason']
+    assert result['change_pct_previous_date'] is None
 
 
 def test_historical_summary_excludes_later_positive_even_when_source_retains_it(local):

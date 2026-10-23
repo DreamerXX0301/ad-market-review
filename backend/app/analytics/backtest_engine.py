@@ -14,7 +14,7 @@ from .monthly import aggregate_monthly,enrich_monthly_bars
 from .period_dates import latest_closed_date,completed_indicator_bars
 from app.services.strategy_periods import periods_for,dependencies_for_period
 
-VERSION='restricted-next-open-v3-history-events'
+VERSION='restricted-next-open-v5-event-percent-cross-cycle'
 DEFAULTS={'initial_capital':100000,'max_positions':5,'position_pct':20,'hold_days':10,'stop_loss_pct':8,'take_profit_pct':20,'commission_bps':3,'min_commission':5,'sell_tax_bps':5,'slippage_bps':5,'exit_ma':0}
 WARNINGS=['受限研究样本：当前证券名单、区间内完整报价且无公司行动；存在幸存者与事后样本选择偏差，不是严格无偏的全市场历史回测。','撮合市场范围：仅主板、创业板的当前非 ST 研究样本；科创板、北交所和当前 ST 不参与撮合，不能据此评估策略在这些股票上的表现。','仅未复权原始价格，不模拟未经完整验收的分红送股；历史ST及退市身份覆盖不足，ST 筛选按当前名称识别，不能冒充历史逐日身份。','日收盘产生信号，下一市场交易日开盘尝试成交；止盈止损也按收盘判断，不能推断盘中成交。','费用、滑点为可配置研究参数，非现行法定费率声明；期末持仓估值且不强制平仓。']
 UNSUPPORTED={'topic_ids':'缺少历史题材成员版本','limit_up':'缺少完整历史限价身份与涨停证据','prev_limit_up':'昨日涨停条件尚未接入回测的完整历史限价证据，不能按上一条报价或未来来源补算','limit_up_count_1y':'截至昨日近一年涨停次数尚未接入回测的完整滚动历史来源证据，不能用年内次数或未来来源补算','limit_up_1y':'缺少完整一年历史涨停证据','turnover_ratio_pct':'换手率数据未覆盖','trading_age':'跟踪字段不是选股历史特征','tracking_change_pct':'跟踪字段不是选股历史特征','close_below_entry':'选股时尚无事件日价格'}
@@ -80,7 +80,11 @@ def universe_availability(ast):
 
 def availability(market,strategy,exit_ma=0):
     ast,rules,dependencies=strategy_predicates(strategy);fields=names(dependencies);cal=market.calendar();period=strategy.get('period','D')
-    reason='；'.join(UNSUPPORTED[f] for f in sorted(fields & UNSUPPORTED.keys()))
+    blocked=fields & UNSUPPORTED.keys()
+    # Historical event-day closing pools have their own exact-date adapter.
+    # Current-day limit predicates retain their existing backtest restriction.
+    if 'limit_up' not in current_names(dependencies):blocked.discard('limit_up')
+    reason='；'.join(UNSUPPORTED[f] for f in sorted(blocked))
     universe=universe_availability({'all':[ast,rules['entry']]} if rules['entry'] is not None else ast)
     reason='；'.join(value for value in (reason,universe['reason']) if value)
     warnings=list(WARNINGS)
@@ -133,6 +137,11 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
     excluded=defaultdict(int);signals=defaultdict(list);quotes=defaultdict(dict);signal_rows=[];eligible=[];unknown=0;evaluated=0
     ast,rules,dependencies=strategy_predicates(strategy)
     needs_history=bool(history_nodes(dependencies))
+    needs_history_limits=any('limit_up' in names(event['where']) for event in history_nodes(dependencies))
+    if needs_history_limits:
+        from app.services.strategy_limits import LimitConditionEvidence
+        from app.services.history_events import attach_limit_events
+        limit_evidence=LimitConditionEvidence(market)
     buy_ast={'all':[ast,rules['entry']]} if rules['entry'] is not None else ast
     exit_unknown=0
     total=market.status().get('symbols',0)
@@ -156,6 +165,7 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
         if prev:quotes['_previous'][symbol]=prev
         daily_indicators=enrich_bars(rows,cal)
         history_context=HistoryContext(rows,cal,end,market.status().get('snapshot_id'),retain_start=history_retain_start([dependencies],cal,start)) if needs_history else None
+        if needs_history_limits:attach_limit_events(history_context,symbol,[dependencies],limit_evidence)
         default_period=strategy.get('period','D')
         required_periods=periods_for(dependencies,default_period)|{default_period}
         daily_breakout={row['date']:row for row in daily_indicators} if default_period in ('W','M') and names(dependencies)&{'close_breakout_high','intraday_high_change_pct'} else {}

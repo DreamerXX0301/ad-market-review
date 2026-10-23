@@ -159,6 +159,25 @@ class LimitConditionEvidence:
         state = self._state(symbol, day, quote) if symbol[:6] in prepared['special'] else prepared['default']
         return state['state'], state['status']
 
+    def historical_metrics(self, symbol, day, quote):
+        """One exact event day; source codes/absence are compiled once per day.
+
+        Generic source absence is reusable only after this security's unique
+        raw traded quote is verified. Special source rows still verify their
+        own identity and closing price, including opposite-direction conflicts.
+        """
+        if not quote or quote.get('date', quote.get('trade_date')) != day or not _valid(quote.get('close')) or not _valid(quote.get('volume')):
+            state = self._state(symbol, day, quote)
+        else:
+            prepared = self._count_day(day)
+            state = self._state(symbol, day, quote) if symbol[:6] in prepared['special'] else prepared['default']
+        return {'limit_up': state['state'], 'limit_up_date': day,
+                'limit_up_status': state['status'], 'limit_up_reason': state['reason'],
+                'limit_up_evidence': {'basis': '同日原始收盘与有效成交量核验的来源收盘池',
+                                      'snapshot_id': self.snapshot_id,
+                                      'supplement_job_id': self.supplement.get('job_id'),
+                                      'source_proofs': state['evidence']}}
+
     def count_series(self, symbol, observations, calendar, quotes):
         """Verify each source day once per stock; answer rolling windows by prefix sums."""
         observations = sorted(set(observations))

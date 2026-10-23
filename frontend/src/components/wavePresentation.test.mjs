@@ -215,6 +215,18 @@ assert(
 );
 const turningSeries = wavePlotSeries(patterns, turns, "turning", palette);
 assert.equal(turningSeries.length, 1);
+assert.equal(
+  turningSeries[0].label.formatter({
+    name: "高点",
+    value: ["2026-10-09", 12.88],
+  }),
+  "高点\n12.88",
+  "turning labels expose their own chart-basis price without changing evidence",
+);
+assert.equal(
+  turningSeries[0].label.formatter({ name: "低点", value: ["2026-10-09", 0] }),
+  "低点\n0.00",
+);
 const segmentedTurns = turns.map((point, index) => ({
   ...point,
   segment_id: index < 4 ? "before-gap" : "after-gap",

@@ -495,17 +495,17 @@ def list_runs(sid=None, limit=50):
     return {'items': data, 'total': len(data), 'target_type': 'sector'}
 
 
-def run_strategy(sid, payload=None):
+def run_strategy(sid, payload=None, *, queued_job=None):
     payload = payload or {}
     if not isinstance(payload, dict) or set(payload)-{'request_key', 'date', 'business_date'}: fail('选板只接受请求标识和当前业务日')
     request_key = payload.get('request_key') or new_id('sector-selection-request')
     if not isinstance(request_key, str) or not 1 <= len(request_key) <= 200: fail('请求标识需要1至200字符')
-    owner = api_lease_owner(); job_id = new_id('job'); rid = new_id('sector-run')
+    owner = queued_job['lease_owner'] if queued_job else api_lease_owner(); job_id = queued_job['job_id'] if queued_job else new_id('job'); rid = new_id('sector-run')
     market = get_market(); state = market.status()
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
         old_job = connection.execute('SELECT * FROM job WHERE request_key=?', (request_key,)).fetchone()
-        if old_job:
+        if old_job and not queued_job:
             old = connection.execute('SELECT run_id,strategy_id FROM sector_selection_run WHERE job_id=?', (old_job['job_id'],)).fetchone()
             if old and old['strategy_id'] == sid: return get_run(old['run_id'])
             fail('请求标识已使用或选板仍在运行，请查看原任务', 409)
@@ -517,15 +517,26 @@ def run_strategy(sid, payload=None):
         if any(payload.get(key, day) != day for key in ('date', 'business_date')): fail('选板只按当前业务日运行，盘面历史日期不影响策略', 409)
         if not state.get('ready') or state.get('data_end') != day: fail('板块策略需要当前业务日已发布主行情', 409)
         deps, primary = freeze_inputs(connection)
-        try:
-            insert(connection, 'job', {'job_id': job_id, 'request_key': request_key, 'logical_key': new_id('sector-selection'),
-                'kind': 'selection', 'target_date': day, 'parameters_json': js({'target_type': 'sector', 'strategy_id': sid, 'version': st['version']}),
-                'parameters_hash': digest([sid, st['version'], day, deps]), 'status': 'running', 'phase': 'evaluating',
-                'lease_owner': owner, 'lease_expires_at_ms': now_ms()+120000, 'created_at_ms': now_ms()})
-        except sqlite3.IntegrityError:
-            fail('已有任务正在运行，请完成或暂停原任务后再选板', 409)
+        if queued_job:
+            from .strategy_batches import validate_item
+            validate_item(connection, queued_job, st, day, deps, primary)
+        else:
+            try:
+                insert(connection, 'job', {'job_id': job_id, 'request_key': request_key, 'logical_key': new_id('sector-selection'),
+                    'kind': 'selection', 'target_date': day, 'parameters_json': js({'target_type': 'sector', 'strategy_id': sid, 'version': st['version']}),
+                    'parameters_hash': digest([sid, st['version'], day, deps]), 'status': 'running', 'phase': 'evaluating',
+                    'lease_owner': owner, 'lease_expires_at_ms': now_ms()+120000, 'created_at_ms': now_ms()})
+            except sqlite3.IntegrityError:
+                tasks.active_task_conflict(connection)
         log(connection, job_id, 'info', 'evaluating', '正在核验本地板块K线并计算选板条件')
-    stop_lease = start_api_heartbeat(job_id, owner)
+    stop_lease = (lambda: None) if queued_job else start_api_heartbeat(job_id, owner)
+    def check_task(connection=None):
+        if queued_job:
+            from .strategy_batches import check_item_lease
+            if connection is not None: check_item_lease(queued_job, connection)
+            else:
+                with connect() as checked: check_item_lease(queued_job, checked)
+        else: check_api_task(job_id, connection)
     try:
         catalog, failures, _, _ = _catalog(market.reference())
         selected = {code: item for code, item in catalog.items() if st['sector_kind'] == 'all' or item['kind'] == st['sector_kind']}
@@ -533,7 +544,7 @@ def run_strategy(sid, payload=None):
         catalog_signature = digest(selected); candidates = []; refs = {}
         periods = periods_for(st['definition'], st['period'])
         for index, (code, item) in enumerate(sorted(selected.items()), 1):
-            check_api_task(job_id)
+            check_task()
             prepared = metrics_for_sector(market, code, day, periods)
             check = evaluate(st['definition'], prepared['metrics_by_period'], st['period'])
             decision = 'matched' if check['result'] is True else 'unmatched' if check['result'] is False else 'unknown'
@@ -545,10 +556,10 @@ def run_strategy(sid, payload=None):
             if index == 1 or index % 10 == 0 or index == len(selected):
                 tasks.progress(job_id, '核验板块条件', min(99, round(index/len(selected)*99)),
                     f'已核验 {index}/{len(selected)} 个板块', {'completed_count': index, 'total_count': len(selected),
-                    'actual_completed_batches': index, 'actual_total_batches': len(selected)})
+                    'actual_completed_batches': index, 'actual_total_batches': len(selected)}, lease_owner=owner if queued_job else None)
         final_market_snapshot = get_market().status().get('snapshot_id')
         with connect() as connection:
-            connection.execute('BEGIN IMMEDIATE'); check_api_task(job_id, connection)
+            connection.execute('BEGIN IMMEDIATE'); check_task(connection)
             if current(connection) != day or freeze_inputs(connection) != (deps, primary) or final_market_snapshot != state.get('snapshot_id'):
                 fail('主行情业务日或代际已变化，本次未保存混合输入结果，请重新运行', 409)
             insert(connection, 'sector_selection_run', {'run_id': rid, 'job_id': job_id, 'strategy_id': sid,
@@ -565,7 +576,7 @@ def run_strategy(sid, payload=None):
     except Exception as error:
         message = str(getattr(error, 'detail', error))[:500]
         with connect() as connection:
-            connection.execute("UPDATE job SET status='failed',phase='failed',finished_at_ms=?,error_summary=? WHERE job_id=? AND status='running'", (now_ms(), message, job_id))
+            connection.execute("UPDATE job SET status='failed',phase='failed',finished_at_ms=?,error_summary=? WHERE job_id=? AND status='running' AND lease_owner=?", (now_ms(), message, job_id, owner))
             if connection.execute('SELECT status FROM job WHERE job_id=?', (job_id,)).fetchone()[0] == 'failed':
                 log(connection, job_id, 'error', 'failed', '板块策略运行失败', {'reason': message})
         if isinstance(error, (tasks.TaskCancelled, tasks.TaskPaused)):

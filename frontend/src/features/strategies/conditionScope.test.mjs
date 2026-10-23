@@ -72,6 +72,19 @@ assert.deepEqual(
   new Set(allFields(conditionFieldGroups(fields, "selection", [], false))),
   new Set(fields.map((field) => field.field)),
 );
+for (const scope of ["selection", "alert", "exit", "trade-entry", "trade-exit"])
+  for (const showMore of [false, true])
+    assert(
+      !allFields(
+        conditionFieldGroups(
+          [...fields, { field: "kdj_j", type: "number" }],
+          scope,
+          ["kdj_j"],
+          showMore,
+        ),
+      ).includes("kdj_j"),
+      "saved or expanded fields do not reintroduce hidden indicators",
+    );
 
 // Check the actual TSX evidence formatter without loading React or mounting UI.
 const conditionsSource = await fs.readFile(
