@@ -288,6 +288,7 @@ assert.match(
   flowHtml,
   /research-financial-comparison research-change increase/,
 );
+assert.ok(flowHtml.includes("较同期 +30.00元"));
 assert.ok(
   !flowHtml.includes("亏损") &&
     !flowHtml.includes("恶化") &&

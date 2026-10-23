@@ -50,7 +50,7 @@ export function ResearchFinancialValue({
             (change.percent > 0 ? "+" : "") +
             num(change.percent) +
             "%"
-          : (delta > 0 ? "+" : "") + format(delta);
+          : "较同期 " + (delta > 0 ? "+" : "") + format(delta);
   return (
     <span className="research-financial-value">
       <span
