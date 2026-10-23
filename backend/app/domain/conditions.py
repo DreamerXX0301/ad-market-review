@@ -249,6 +249,38 @@ def normalized_bar(row):
     out['_boll_action_coverage_known']=r.get('_boll_action_coverage_known',r.get('corporate_action_coverage_known') is True and isinstance(r.get('corporate_action'),bool)) is True
     return out
 
+
+class _PreparedMetricBars(list):
+    """Batch-local raw quotes with one lazy, untouched normalized seed.
+
+    Raw iteration stays compatible with historical-event and entry-price
+    readers. Each indicator period receives fresh normalized dictionaries,
+    so its missing-volume adaptation cannot alter another period's input.
+    No prepared histories are retained by the derived-summary caches.
+    """
+    def __init__(self, bars):
+        super().__init__(dict(row) for row in bars)
+        self._normalized = None
+
+    def normalized(self):
+        if self._normalized is None:
+            self._normalized = tuple(sorted((normalized_bar(row) for row in self),key=lambda row:row['date'] or ''))
+        return self._normalized
+
+
+def prepare_metric_bars(bars):
+    """Wrap only one bounded batch's histories, without changing raw rows."""
+    return bars if isinstance(bars,_PreparedMetricBars) else _PreparedMetricBars(bars)
+
+
+def normalized_metric_rows(bars,as_of):
+    """Return private period rows; never normalize a prepared row twice."""
+    if isinstance(bars,_PreparedMetricBars):
+        return [dict(row) for row in bars.normalized() if row['date'] and row['date']<=as_of]
+    rows=sorted((normalized_bar(row) for row in bars),key=lambda row:row['date'] or '')
+    return [row for row in rows if row['date'] and row['date']<=as_of]
+
+
 def metrics_from_enriched(row,previous=None,topics=None):
     """Condition-only adapter over the one shared chart/backtest indicator implementation."""
     m={field:None for field in FIELDS}
@@ -310,8 +342,7 @@ def metrics_from_enriched(row,previous=None,topics=None):
 
 def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,include_higher_lows=False,boll_configs=None)->dict:
     from app.analytics.indicators import enrich_bars,aggregate_weekly,intraday_high_change
-    rows=sorted((normalized_bar(b) for b in bars),key=lambda r:r['date'] or '')
-    rows=[r for r in rows if r['date'] and r['date']<=as_of]
+    rows=normalized_metric_rows(bars,as_of)
     daily_rows=rows
     empty={field:None for field in FIELDS};empty['topic_ids']=topics
     structure={}

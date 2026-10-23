@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from threading import RLock
 
 from app.core import data_dir
-from app.domain.conditions import DAILY_ONLY_FIELDS, metrics_for, names
+from app.domain.conditions import DAILY_ONLY_FIELDS, metrics_for, names, normalized_metric_rows
 
 MAX_SUMMARIES = 16384
 # Ordinary summaries carry many indicator fields; structural proofs are small
@@ -183,9 +183,7 @@ def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None
         # Normalize exactly as metrics_for does, before its legacy missing-
         # volume adaptation. A new structure must keep missing/duplicate/action
         # blockers even when an ordinary indicator summary is already cached.
-        from app.domain.conditions import normalized_bar
-        rows=sorted((normalized_bar(bar) for bar in bars),key=lambda row:row['date'] or '')
-        rows=[row for row in rows if row['date'] and row['date']<=day]
+        rows=normalized_metric_rows(bars,day)
         if need_higher:higher=higher_lows_latest(rows,calendar,day,period)
         if missing_configs:bands.update(latest_states(rows,calendar,day,period,missing_configs))
     with _lock:

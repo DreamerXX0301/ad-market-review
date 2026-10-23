@@ -4,7 +4,7 @@ import hashlib,json,sqlite3
 from decimal import Decimal,ROUND_HALF_UP
 from fastapi import HTTPException
 from app.core import connect,get_market,now_ms,new_id
-from app.domain.conditions import validate,evaluate,metrics_for,metrics_from_enriched,names,specs,topic_dependencies,past_limit_up_metrics
+from app.domain.conditions import validate,evaluate,metrics_for,metrics_from_enriched,names,specs,topic_dependencies,past_limit_up_metrics,prepare_metric_bars
 from app.domain.universe import identity_flags
 from app.domain.tracking import trading_age
 from app.services.workspace_common import *
@@ -260,6 +260,7 @@ def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=
     needs_daily=include_default and plan.default in ('W','M')
     missing=[symbol for symbol in symbols if require_history or any(value is None for value in ready[symbol].values()) or needs_daily and not callable(daily_method)]
     histories=selection_history_batch(market,missing,day) if missing else {}
+    histories={symbol:prepare_metric_bars(values) for symbol,values in histories.items()}
     daily={symbol:values for symbol,values in histories.items()}
     daily_only=[symbol for symbol in symbols if symbol not in histories] if needs_daily else []
     if daily_only:daily.update(daily_method(daily_only,start=day,end=day))
