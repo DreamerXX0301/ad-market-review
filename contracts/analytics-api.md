@@ -39,6 +39,7 @@
 | --- | --- |
 | `GET /bootstrap` | 应用、当前业务日和已发布数据元信息 |
 | `GET /overview?date=` 或 `/market/overview?date=` | 四指数、广度、总成交额、成交额排行、封板观察等 |
+| `GET /market/indices?date=` | 指数页轻量读取，只含 `date/snapshot_id/indices/data_coverage/quality`；四指数报价与总览一致，不构建全市场股票面板、30日榜或年内涨停证明，不展开盘面补充历史 |
 | `GET /instruments?query=&limit=` | 原股票/指数检索；研究选择器继续使用此接口 |
 | `GET /search?query=&limit=` | 股票、指数、行业、概念统一检索；空白返回空，limit 为 1–100 |
 | `GET /instruments/{id}?as_of=` | 标的身份、所选日行情、可用题材/风险标签及缺口 |
@@ -46,6 +47,8 @@
 统一检索按名称/代码匹配，不推断拼音。去空格后 query 最多 100 字，原始最多 512 字；先精确匹配，再按类型平衡截取。返回 `items/total/matched_by_kind/scope/current_catalog/historical_membership`。股票/指数有 `instrument_id/kind/target_type`；板块另有 `topic_code/topic_id/sector_kind`，`target_type=sector`。当前目录只说明身份，不证明历史目录或成员。
 
 总览指数的自身涨跌幅与 `amount_change` 分开：金额差按 T 与前一精确市场交易日金额（元）相减；缺前期或非法金额为 null。沪深总成交额不能将四个指数相加得到。
+
+指数轻接口沿用总览的报价、指标预热、金额比较与行情覆盖口径；`date` 校验相同，缺指数数据保持原有未知，不取数或补造。完整总览接口和其他盘面日期作用域不变。
 
 ## 盘面页面
 
@@ -67,6 +70,8 @@
 `GET /market/mainlines?date=&known_at_ms?` 与 `GET /market/mainlines/history?date=&instrument_id=&limit=&offset=` 读取独立的逐日手工主线审计；不改变 `ladder` 的行业、概念和原始来源原因。它们只读SQLite，date是合法ISO审计日期，即使当前行情目录已滚动也可读旧记录；无记录为空，不由当前概念补全。列表total是有修订的证券数，含撤销，不是涨停家数；前端仅与当前确认池按完整ID关联后去重展示，池外记录单列。写入、更正、撤销、来源转述/用户判断/待核验/冲突以及真实记录时间契约见[Workspace API：当日主线](workspace-api.md#当日主线归因手工证据-v01)。
 
 `gainers` 的检索/排序对完整候选集合执行后再分页，null 升降序都最后；年内次数下界不参与精确次数排序。`flow` 的近若干日是跨日趋势，不是全天盘中资金时序，也不推断机构真实决策。
+
+完整总览的 `top_30d` 仍先按全量证券的精确端点收益排名，再补齐前五行的涨停证据；为保持原始覆盖字段一致，只核验这些行所属的原始256证券批次。此小样结果与完整涨幅榜分开缓存，不能供完整榜检索、排序或分页复用；缓存按行情根/代际、观察日、实际补充文档指纹和完整/前五范围隔离，最多保留4个范围。来源事件的收盘核验每批最多256证券，只读取所需日期与收盘，保留重复日期、缺值和原有未知语义，不将全量OHLC或当前归属加入历史事件证明。
 
 `gainers` 同时返回 `last_limit_up_date/last_limit_up_complete/last_limit_up_coverage/sessions_since_limit_up`，含义与成分股、个股统计一致；支持按 `last_limit_up_date` 对全部榜内候选排序后分页。它使用观察日之前的逐日来源涨停池与该证券当日唯一原始收盘批量核验，每批最多256只、仅从最早留存事件源日读取，不逐股调用详情或据涨幅推算涨停。不完整年内统计只在已确认次数大于0时展示下界；已确认0且仍有缺口展示待核验，完整核验的0仍显示0次。没有可核验封板分钟时此列只展示日期。
 

@@ -256,7 +256,9 @@ def _history_start(calendar, sources, baseline, thirty, month):
 
 
 def _limit_values(symbol, daily, calendar, day, annual):
-    yearly=annual.get('instrument_coverage',{}).get(symbol,{'complete':False,'covered_days':0,'expected_days':sum(observed[:4]==day[:4] for observed in calendar),'observed_days':0,'state':'partial'})
+    yearly=annual.get('instrument_coverage',{}).get(symbol)
+    if yearly is None:
+        yearly={'complete':False,'covered_days':0,'expected_days':sum(observed[:4]==day[:4] for observed in calendar),'observed_days':0,'state':'partial'}
     positives=[observed for observed,state in daily[symbol].items() if state['state'] is True]
     # A verified reference/public closing event is also a confirmed yearly
     # observation. Deduplicate by date across sources, without claiming that
@@ -287,7 +289,8 @@ def limit_metrics(market, day, symbols, supplement, reference=None):
     sources=_sources(reference,supplement,calendar)
     evidence_days=[observed for observed in calendar if sources[observed]['up'] or sources[observed]['down']]
     first=evidence_days[0] if evidence_days else None
-    reader=getattr(market,'history_for_instruments',None)
+    reader=getattr(market,'closing_prices_for_instruments',None)
+    if not callable(reader):reader=getattr(market,'history_for_instruments',None)
     result={}
     for offset in range(0,len(symbols),BATCH_SIZE):
         batch=symbols[offset:offset+BATCH_SIZE]

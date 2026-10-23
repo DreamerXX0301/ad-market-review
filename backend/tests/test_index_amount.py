@@ -118,3 +118,34 @@ def test_market_overview_uses_real_index_quotes_contract(market, monkeypatch):
     assert len(result['indices']) == 4
     assert result['indices'][0]['amount_change'] == 1e8
     assert result['total_amount'] == 0, 'overlapping index turnover is never used as the market total'
+
+
+@pytest.mark.parametrize('day', DAYS)
+def test_index_page_projection_matches_overview_without_any_stock_or_supplement_read(market, monkeypatch, day):
+    monkeypatch.setattr(market_service, 'get_market', lambda: market)
+    monkeypatch.setattr(market_service, 'panel', lambda *_: pytest.fail('index page cannot build a stock panel'))
+    monkeypatch.setattr(market_service, 'cached_gainers', lambda *_: pytest.fail('index page cannot rank stocks'))
+    monkeypatch.setattr(market_service, 'load_supplement', lambda *_: pytest.fail('index page cannot expand source histories'))
+    monkeypatch.setattr(market_service, 'load_supplement_with_fingerprint', lambda *_: pytest.fail('index page cannot inspect supplement identities'))
+    expected = market.index_quotes(day)
+    result = market_service.index_overview(day)
+    assert result['indices'] == expected
+    assert result['date'] == day and result['snapshot_id'] == 'fixture'
+    assert result['data_coverage'] == market_service.data_coverage('overview', market.status(), day, market.reference(), DAYS)
+    assert set(result) == {'date', 'snapshot_id', 'indices', 'data_coverage', 'quality'}
+    assert market_service.index_overview()['date'] == DAYS[-1]
+
+
+def test_explicit_indices_route_precedes_market_catchall_and_rejects_invalid_dates(market, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    monkeypatch.setattr(market_service, 'get_market', lambda: market)
+    monkeypatch.setattr(market_service, 'market_page', lambda *_a, **_kw: pytest.fail('literal index route fell through'))
+    client = TestClient(app)
+    response = client.get('/api/v1/market/indices', params={'date': DAYS[1]})
+    assert response.status_code == 200
+    assert response.json() == market_service.index_overview(DAYS[1])
+    for day in ('2026-10-18', '2026-10-21', '2025-10-19', 'not-a-date'):
+        assert client.get('/api/v1/market/indices', params={'date': day}).status_code == 422
+    monkeypatch.setattr(market, 'status', lambda: {'ready': False})
+    assert client.get('/api/v1/market/indices').status_code == 409

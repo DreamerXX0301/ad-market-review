@@ -45,6 +45,10 @@ def sector_chart_create(payload:dict=Body(...)):
     market,_,day=market_service.context(payload.get('date'))
     return json_clean(create_chart_job(market,payload.get('topic_code'),day,payload.get('request_key')))
 
+@router.get('/market/indices')
+def index_overview(date:str|None=None):
+    return market_service.index_overview(date)
+
 @router.get('/market/{kind}')
 def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000)):
     return market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n)

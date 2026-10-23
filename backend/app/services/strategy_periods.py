@@ -1,14 +1,57 @@
 """Bounded immutable-generation summaries for optional stock D/W/M clauses."""
 from collections import OrderedDict
 from copy import deepcopy
+from dataclasses import dataclass
 from threading import RLock
 
 from app.core import data_dir
 from app.domain.conditions import DAILY_ONLY_FIELDS, metrics_for, names
 
 MAX_SUMMARIES = 16384
+# Ordinary summaries carry many indicator fields; structural proofs are small
+# and are bounded separately so changing a rule does not evict the same D/W
+# calculations from another rule. No histories or user policies are retained.
+MAX_STRUCTURE_SUMMARIES = 16384
 _cache = OrderedDict()
+_higher_lows_cache = OrderedDict()
+_boll_cache = OrderedDict()
 _lock = RLock()
+
+
+@dataclass(frozen=True)
+class MetricRequest:
+    include_higher_lows: bool
+    boll_configs: tuple
+    boll_keys: tuple
+
+
+@dataclass(frozen=True)
+class MetricPlan:
+    default: str
+    periods: tuple
+    requests: dict
+
+
+def metric_request(include_higher_lows=False,boll_configs=None):
+    from app.analytics.boll_conditions import config_key,validate_config
+    configs={config_key(config):validate_config(config) for config in boll_configs or []}
+    return MetricRequest(include_higher_lows,tuple(configs.values()),tuple(configs))
+
+
+def compile_metric_plan(trees,default='D'):
+    """Resolve the immutable rule requirements once, before visiting stocks."""
+    from app.analytics.boll_conditions import configs_for
+    required=set().union(*(names(tree) for tree in trees)) if isinstance(trees,list) else names(trees)
+    periods=tuple(sorted(periods_for(trees,default)|{default}))
+    configs=configs_for(trees,default)
+    # Preserve the established full matched-result contract, including the
+    # extra period's structure proof when any clause requests higher lows.
+    return MetricPlan(default,periods,{period:metric_request('higher_lows' in required,configs.get(period)) for period in periods})
+
+
+def clear_metric_cache():
+    with _lock:
+        for cache in (_cache,_higher_lows_cache,_boll_cache):cache.clear()
 
 
 def periods_for(node, default='D'):
@@ -51,39 +94,102 @@ def dependencies_for_period(node,period,default='D'):
     return {'all':children} if children else None
 
 
-def add_period_metrics(base,bars,day,calendar,trees,default='D',*,instrument_id=None,generation=None,boll_states_by_period=None):
-    requested=periods_for(trees,default)
+def add_period_metrics(base,bars,day,calendar,trees,default='D',*,instrument_id=None,generation=None,boll_states_by_period=None,plan=None,ready=None):
+    plan=plan or compile_metric_plan(trees,default)
+    requested=set(plan.periods)
     # Old definitions without scoped clauses keep their original metrics and
     # compact result contract; no new work is added to their fast path.
     if not any(period!=default for period in requested):return base
     by_period={default:{key:value for key,value in base.items() if key!='_period_metrics'}}
-    structured=any('higher_lows' in names(tree) for tree in trees) if isinstance(trees,list) else 'higher_lows' in names(trees)
-    from app.analytics.boll_conditions import configs_for
-    boll_by_period=configs_for(trees,default)
     for period in sorted(requested-{default}):
-        by_period[period]=cached_metrics(bars,day,calendar,period,instrument_id=instrument_id,generation=generation,include_higher_lows=structured,boll_configs=boll_by_period.get(period) if boll_states_by_period is None else None)
+        request=plan.requests[period]
+        if boll_states_by_period is not None:request=metric_request(request.include_higher_lows)
+        by_period[period]=(ready or {}).get(period)
+        if by_period[period] is None:
+            by_period[period]=cached_metrics(bars,day,calendar,period,instrument_id=instrument_id,generation=generation,request=request)
         if boll_states_by_period is not None and period in boll_states_by_period:
             by_period[period]['boll_states']=boll_states_by_period[period]
     return {**base,'_period_metrics':by_period}
 
 
-def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None,topics=None,include_higher_lows=False,boll_configs=None):
-    """Cache summaries of an immutable market generation, never user policies."""
-    from app.analytics.boll_conditions import config_key
-    # Parameters are part of the immutable summary identity: two BOLL clauses
-    # or policies must never borrow each other's bands or warmup result.
-    boll_keys=tuple(sorted({config_key(config) for config in boll_configs or []}))
-    key=(str(data_dir()),generation,instrument_id,day,period,include_higher_lows,boll_keys)
-    usable=bool(generation and instrument_id)
+def _summary_key(day,period,instrument_id,generation):
+    from app.analytics.indicators import INDICATOR_VERSION
+    return (str(data_dir()),generation,instrument_id,day,period,INDICATOR_VERSION,'volume-comparison-v1')
+
+
+def _get(cache,key):
+    value=cache.get(key)
+    if value is not None:cache.move_to_end(key)
+    return value
+
+
+def _put(cache,key,value,capacity):
+    cache[key]=deepcopy(value);cache.move_to_end(key)
+    while len(cache)>capacity:cache.popitem(last=False)
+
+
+def _saved_parts(key,request):
+    from app.analytics.higher_lows import VERSION as higher_lows_version
+    from app.analytics.boll_conditions import VERSION as boll_version
     with _lock:
-        saved=_cache.get(key) if usable else None
-        if saved is not None:_cache.move_to_end(key)
-    if saved is None:
-        saved=metrics_for(bars,day,calendar,period,include_higher_lows=include_higher_lows,**({'boll_configs':boll_configs} if boll_configs else {}))
-        if usable:
-            with _lock:
-                _cache[key]=deepcopy(saved);_cache.move_to_end(key)
-                while len(_cache)>MAX_SUMMARIES:_cache.popitem(last=False)
-    result=deepcopy(saved)
+        ordinary=_get(_cache,key)
+        higher=_get(_higher_lows_cache,key+(higher_lows_version,)) if request.include_higher_lows else None
+        bands={config:_get(_boll_cache,key+(boll_version,config)) for config in request.boll_keys}
+    return ordinary,higher,bands
+
+
+def _compose(ordinary,higher,bands,request,topics):
+    result=deepcopy(ordinary)
+    if request.include_higher_lows:result['higher_lows_state']=deepcopy(higher)
+    if request.boll_keys:result['boll_states']=deepcopy(bands)
     if topics is not None:result['topic_ids']=topics
     return result
+
+
+def cached_metrics_if_ready(day,period,*,instrument_id=None,generation=None,topics=None,request=None):
+    """Probe small proofs before materializing a security's full EMA seed."""
+    if not generation or not instrument_id:return None
+    request=request or metric_request()
+    ordinary,higher,bands=_saved_parts(_summary_key(day,period,instrument_id,generation),request)
+    if ordinary is None or request.include_higher_lows and higher is None or any(value is None for value in bands.values()):return None
+    return _compose(ordinary,higher,bands,request,topics)
+
+
+def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None,topics=None,include_higher_lows=False,boll_configs=None,request=None):
+    """Compose independently cached indicator/structure/configuration proofs.
+
+    The fixed generation binds prices, calendar and action coverage. Unknown
+    proofs belong to that same identity; caller identity/topic mutations are
+    made only on a deep copy. Full original seeds remain required on misses.
+    """
+    from app.analytics.higher_lows import VERSION as higher_lows_version,latest as higher_lows_latest
+    from app.analytics.boll_conditions import VERSION as boll_version,latest_states
+    request=request or metric_request(include_higher_lows,boll_configs)
+    usable=bool(generation and instrument_id)
+    if not usable:
+        return metrics_for(bars,day,calendar,period,topics=topics,include_higher_lows=request.include_higher_lows,boll_configs=request.boll_configs)
+    key=_summary_key(day,period,instrument_id,generation)
+    ordinary,higher,bands=_saved_parts(key,request)
+    need_ordinary=ordinary is None
+    missing_keys={config_id for config_id,value in bands.items() if value is None}
+    missing_configs=[config for config,config_id in zip(request.boll_configs,request.boll_keys) if config_id in missing_keys]
+    need_higher=request.include_higher_lows and higher is None
+    if ordinary is None:
+        computed=metrics_for(bars,day,calendar,period,include_higher_lows=need_higher,boll_configs=missing_configs)
+        ordinary={field:value for field,value in computed.items() if field not in ('higher_lows_state','boll_states')}
+        if need_higher:higher=computed['higher_lows_state']
+        bands.update(computed.get('boll_states',{}))
+    elif need_higher or missing_configs:
+        # Normalize exactly as metrics_for does, before its legacy missing-
+        # volume adaptation. A new structure must keep missing/duplicate/action
+        # blockers even when an ordinary indicator summary is already cached.
+        from app.domain.conditions import normalized_bar
+        rows=sorted((normalized_bar(bar) for bar in bars),key=lambda row:row['date'] or '')
+        rows=[row for row in rows if row['date'] and row['date']<=day]
+        if need_higher:higher=higher_lows_latest(rows,calendar,day,period)
+        if missing_configs:bands.update(latest_states(rows,calendar,day,period,missing_configs))
+    with _lock:
+        if need_ordinary:_put(_cache,key,ordinary,MAX_SUMMARIES)
+        if need_higher:_put(_higher_lows_cache,key+(higher_lows_version,),higher,MAX_STRUCTURE_SUMMARIES)
+        for config_id in missing_keys:_put(_boll_cache,key+(boll_version,config_id),bands[config_id],MAX_STRUCTURE_SUMMARIES)
+    return _compose(ordinary,higher,bands,request,topics)

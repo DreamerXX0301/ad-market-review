@@ -198,3 +198,105 @@ def test_cached_raw_null_inference_is_preserved_across_internal_batches(retained
     market._daily_frame();actual=market.history_for_instruments(symbols,start=days[0],end=days[0])
     assert actual==expected
     market.close()
+
+
+@pytest.mark.parametrize('start,end',[(None,None),('2026-01-05','2026-01-05'),('2026-01-06','2026-01-06'),('2026-01-04','2026-01-06'),('2026-01-06',None),(None,'2026-01-06'),('2026-01-07','2026-01-05')])
+def test_close_evidence_projection_preserves_duplicates_nulls_bounds_and_order(retained_market,monkeypatch,start,end):
+    from app.core import json_clean
+    root,days,symbols=retained_market;path=root/'published'/'fixture'/'daily.parquet'
+    frame=pd.read_parquet(path)
+    duplicate=frame.iloc[:1].copy();duplicate['close']=None
+    null=frame.iloc[:1].copy();null['instrument_id']=symbols[1];null['date']=None
+    pd.concat([frame,duplicate,null]).to_parquet(path,index=False)
+    market=MarketData(root);requested=[symbols[1],symbols[0],symbols[1],'999999.SH']
+    raw=market.history_for_instruments(requested,start=start,end=end)
+    expected={symbol:[{key:row[key] for key in ('date','close')} for row in rows] for symbol,rows in raw.items()}
+    with monkeypatch.context() as patch:
+        patch.setattr(market,'_daily_frame',lambda:pytest.fail('a close proof cannot initialize the full market frame'))
+        cold=market.closing_prices_for_instruments(requested,start=start,end=end)
+    assert json_clean(cold)==json_clean(expected) and list(cold)==list(expected)
+    market._daily_frame()
+    with monkeypatch.context() as patch:
+        patch.setattr(duckdb,'connect',lambda *_a,**_kw:pytest.fail('warm close evidence must reuse its verified frame'))
+        native=pd.DataFrame.to_dict
+        def projected(frame,*args,**kwargs):
+            assert set(frame.columns)=={'instrument_id','date','close'},'unrelated history columns were materialized'
+            return native(frame,*args,**kwargs)
+        patch.setattr(pd.DataFrame,'to_dict',projected)
+        warm=market.closing_prices_for_instruments(requested,start=start,end=end)
+    assert json_clean(warm)==json_clean(expected) and list(warm)==list(expected)
+    assert all(set(row)=={'date','close'} for rows in warm.values() for row in rows)
+    market.close()
+
+
+def test_close_evidence_bounds_batch_and_invalidates_changed_source(retained_market):
+    root,days,symbols=retained_market;market=MarketData(root);market._daily_frame()
+    with pytest.raises(ValueError,match='256'):
+        market.closing_prices_for_instruments([f'{600000+i:06}.SH' for i in range(257)])
+    assert market.closing_prices_for_instruments([])=={}
+    path=root/'published'/'fixture'/'daily.parquet';frame=pd.read_parquet(path)
+    frame['close']+=.25;frame.to_parquet(path,index=False)
+    rows=market.closing_prices_for_instruments([symbols[0]],start=days[-1],end=days[-1])
+    assert rows[symbols[0]]==[{'date':days[-1],'close':12.25}]
+    assert market._frame is None and market._frame_source_stamp is None
+    rows[symbols[0]][0]['close']=-1
+    assert market.closing_prices_for_instruments([symbols[0]],start=days[-1],end=days[-1])[symbols[0]][0]['close']==12.25
+    market.close()
+
+
+def declared_condition_market(retained_market,partitioned=False):
+    from app.analytics.market import hash_file
+    from app.analytics.market_storage import write_partitions
+    root,days,symbols=retained_market;folder=root/'published'/'fixture';files=[]
+    if partitioned:
+        con=duckdb.connect(':memory:')
+        try:
+            con.read_parquet(str(folder/'daily.parquet')).create_view('quotes')
+            files,_=write_partitions(con,'quotes','daily.parquet',root/'published',folder,'fixture')
+        finally:con.close()
+        (folder/'daily.parquet').unlink()
+    for name in (('corporate-actions.parquet','reference.json') if partitioned else ('daily.parquet','corporate-actions.parquet','reference.json')):
+        path=folder/name
+        files.append({'role':name,'path':str(path.relative_to(root)),'bytes':path.stat().st_size,'sha256':hash_file(path)})
+    head={'snapshot_id':'fixture','data_begin':days[0],'data_end':days[-1],'files':files}
+    (folder/'manifest.json').write_text(json.dumps({'summary':head}))
+    (root/'published/market-head.json').write_text(json.dumps(head))
+    return MarketData(root),files
+
+
+@pytest.mark.parametrize('role',['daily.parquet','corporate-actions.parquet','reference.json'])
+def test_condition_source_token_never_hides_warm_corruption_or_missing_evidence(retained_market,role):
+    market,files=declared_condition_market(retained_market)
+    first=market.verify_condition_sources();assert first and hash(first)
+    assert market._frame is None and market.verify_condition_sources()==first
+    record=next(row for row in files if row['role']==role);path=market.data_dir/record['path'];original=path.read_bytes()
+    path.write_bytes(bytes([original[0]^1])+original[1:])
+    with pytest.raises(ValueError,match='SHA'):market.verify_condition_sources()
+    path.write_bytes(original)
+    assert market.verify_condition_sources()!=first
+    path.unlink()
+    with pytest.raises((ValueError,OSError)):market.verify_condition_sources()
+    market.close()
+
+
+@pytest.mark.parametrize('partitioned',[False,True])
+def test_condition_source_token_is_lightweight_checks_partitions_and_observes_replacement(retained_market,monkeypatch,partitioned):
+    market,files=declared_condition_market(retained_market,partitioned)
+    with monkeypatch.context() as patch:
+        patch.setattr(duckdb,'connect',lambda *_a,**_kw:pytest.fail('source validation cannot open DuckDB'))
+        patch.setattr(market,'_daily_frame',lambda:pytest.fail('source validation cannot materialize quotes'))
+        first=market.verify_condition_sources()
+        record=next(row for row in files if row['role'].startswith('daily-partition/')) if partitioned else next(row for row in files if row['role']=='daily.parquet')
+        path=market.data_dir/record['path'];original=path.read_bytes();temporary=path.with_suffix('.replacement')
+        temporary.write_bytes(original);temporary.replace(path)
+        assert market.verify_condition_sources()!=first, 'same-generation replacement must invalidate a derived cache key'
+        path.write_bytes(bytes([original[0]^1])+original[1:])
+        with pytest.raises(ValueError,match='SHA'):market.verify_condition_sources()
+    market.close()
+
+
+def test_undeclared_legacy_condition_source_cannot_authorize_cache_probe(retained_market,monkeypatch):
+    root,_,_=retained_market;market=MarketData(root)
+    monkeypatch.setattr(market,'_daily_source',lambda *_:pytest.fail('legacy fallback should not issue a cache token'))
+    assert market.verify_condition_sources() is None
+    market.close()
