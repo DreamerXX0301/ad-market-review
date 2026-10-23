@@ -1,8 +1,5 @@
 import { useSyncExternalStore } from "react";
-import {
-  CHART_PREFERENCES_KEY,
-  createChartPreferenceStore,
-} from "./chartPreferences";
+import { createChartPreferenceStore } from "./chartPreferences";
 
 let storage: Storage | null = null;
 try {
@@ -13,12 +10,7 @@ try {
 const store = createChartPreferenceStore(storage);
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
-    if (
-      (event.key === CHART_PREFERENCES_KEY || event.key === null) &&
-      (!event.storageArea || event.storageArea === storage)
-    ) {
-      store.receiveStorage(event.key === null ? null : event.newValue);
-    }
+    store.receiveStorageEvent(event);
   });
 }
 

@@ -42,6 +42,7 @@ import {
   textValue,
 } from "../lib/format";
 import { candleChange } from "./candleChange";
+import { chartBoll } from "./chartBoll";
 import { chartSinceReturn } from "./chartSinceReturn";
 import {
   curveAxisAmount,
@@ -91,11 +92,14 @@ import {
 } from "./stockNavigation";
 import type { StockNavigation } from "./stockNavigation";
 import {
+  effectiveChartBoll,
   effectiveChartMas,
+  effectiveChartPanels,
   effectiveChartPriceBasis,
   effectiveChartWaves,
   MA_WINDOWS,
 } from "./chartPreferences";
+import type { ChartPanel } from "./chartPreferences";
 import { useChartPreferences } from "./useChartPreferences";
 import { defaultChartWindow, projectEventBaseline } from "./chartDisplay";
 import { candleChartEndpoint } from "./chartEndpoint";
@@ -239,7 +243,6 @@ export function CandleChart({
     } | null>(null),
     [activeDate, setActiveDate] = useState<string | null>(null),
     [wavePatternKey, setWavePatternKey] = useState("latest"),
-    [panels, setPanels] = useState(["volume", "macd", "kdj", "breadth"]),
     [themeTick, setThemeTick] = useState(0);
   const [showHistoricalEvents, setShowHistoricalEvents] = useState(true);
   const isIndex =
@@ -249,6 +252,10 @@ export function CandleChart({
   const priceBasis = effectiveChartPriceBasis(preferences, isIndex);
   const cycleLabel = period === "D" ? "日" : period === "W" ? "周" : "月";
   const mas = effectiveChartMas(preferences, isIndex);
+  const panels = effectiveChartPanels(preferences, isIndex);
+  const showBoll = effectiveChartBoll(preferences, isIndex);
+  const setShowBoll = (value: boolean) =>
+    update(isIndex ? { indexShowBoll: value } : { stockShowBoll: value });
   const { showWaves, waveMode } = effectiveChartWaves(preferences, isIndex);
   const setShowWaves = (value: boolean) =>
     update(isIndex ? { indexShowWaves: value } : { stockShowWaves: value });
@@ -350,12 +357,16 @@ export function CandleChart({
         ? mas.filter((x) => x !== n)
         : [...mas, n],
     });
-  const togglePanel = (key: string) =>
-    setPanels((v) =>
-      v.includes(key) ? v.filter((x) => x !== key) : [...v, key],
-    );
+  const togglePanel = (key: ChartPanel) =>
+    update({
+      [isIndex ? "indexPanels" : "stockPanels"]: panels.includes(key)
+        ? panels.filter((value) => value !== key)
+        : [...panels, key],
+    });
+  const boll = useMemo(() => chartBoll(data), [data]);
   const last = bars.at(-1);
   const activeBar = bars.find((b) => b.date === activeDate) || last;
+  const activeBoll = boll.find((point) => point.date === activeBar?.date);
   const activeChange = candleChange(activeBar, period);
   const activeSinceReturn = chartSinceReturn(activeBar, data);
   const activeMAState = chartIndicatorAvailability(
@@ -367,7 +378,7 @@ export function CandleChart({
     activeBar?.[field] ?? activeBar?.indicators?.[field] ?? null;
   const broad = bars.some((x) => x.advancers != null || x.up_count != null);
   const chosen = ["volume", "macd", "kdj", "breadth"].filter(
-    (x) => panels.includes(x) && (x !== "breadth" || broad),
+    (x) => panels.includes(x as ChartPanel) && (x !== "breadth" || broad),
   );
   const actualHeight = compact ? Math.max(480, height) : height;
   const plotHeight = actualHeight - 75;
@@ -660,6 +671,32 @@ export function CandleChart({
         itemStyle: { color: maColors[[5, 10, 20, 30, 60, 250].indexOf(n)] },
       });
     });
+    if (showBoll) {
+      (
+        [
+          ["upper", "BOLL 上轨", "#82b5e9"],
+          ["middle", "BOLL 中轨", "#d6b96d"],
+          ["lower", "BOLL 下轨", "#b59be3"],
+        ] as const
+      ).forEach(([field, name, color]) => {
+        series.push({
+          name,
+          type: "line",
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          data: boll.map((point) => point[field]),
+          symbol: "none",
+          connectNulls: false,
+          lineStyle: {
+            color,
+            width: field === "middle" ? 1 : 1.25,
+            opacity: 0.85,
+          },
+          itemStyle: { color },
+          z: 3,
+        });
+      });
+    }
     if (showWaves)
       series.push(
         ...wavePlotSeries(selectedPatterns, turns, waveMode, {
@@ -756,6 +793,24 @@ export function CandleChart({
           if (!b) return "";
           const change = candleChange(b, period);
           const since = chartSinceReturn(b, data);
+          // Axis filtering may reindex individual series after zooming. Use
+          // the selected date's source values for every price overlay.
+          const point = boll.find((point) => point.date === b.date);
+          const priceIndicators = [
+            ...mas.map((window) => ({
+              name: "MA" + window,
+              value: b["ma" + window] ?? b.indicators?.["ma" + window] ?? null,
+              color:
+                maColors[MA_WINDOWS.findIndex((value) => value === window)],
+            })),
+            ...(showBoll
+              ? [
+                  { name: "BOLL 上轨", value: point?.upper, color: "#82b5e9" },
+                  { name: "BOLL 中轨", value: point?.middle, color: "#d6b96d" },
+                  { name: "BOLL 下轨", value: point?.lower, color: "#b59be3" },
+                ]
+              : []),
+          ];
           const color =
             change.value == null
               ? pal.text
@@ -783,13 +838,15 @@ export function CandleChart({
               ? `<div style="max-width:260px;white-space:normal;font-size:10px">${escape(change.reason)}</div>`
               : "") +
             `<div title="${escape(since.reason)}">至${since.end || "观察日"}涨跌幅　<span style="color:${since.value == null || since.value === 0 ? pal.text : since.value > 0 ? pal.up : pal.down}">${percent(since.value)}</span></div>` +
-            entries
+            priceIndicators
               .filter(
-                (p: any) => /^MA\d+$/.test(p.seriesName) && p.value != null,
+                (indicator) =>
+                  typeof indicator.value === "number" &&
+                  Number.isFinite(indicator.value),
               )
               .map(
-                (p: any) =>
-                  `<div>${p.marker}${p.seriesName}　${num(p.value)}</div>`,
+                (indicator) =>
+                  `<div><span style="display:inline-block;margin-right:4px;border-radius:50%;width:8px;height:8px;background-color:${indicator.color}"></span>${indicator.name}　${num(indicator.value)}</div>`,
               )
               .join("") +
             (supportsLimits ? limitTooltipHtml(b, period, pal) : "")
@@ -831,6 +888,8 @@ export function CandleChart({
   }, [
     bars,
     mas.join(","),
+    boll,
+    showBoll,
     chosen.join(","),
     actualHeight,
     themeTick,
@@ -904,7 +963,7 @@ export function CandleChart({
           <ChartSelect
             label="图表指标连续口径"
             value={indicatorContinuity}
-            title="仅切换图表MA/MACD/KDJ；不填停牌或缺失K线，策略与回测仍按严格市场交易日"
+            title="仅切换图表MA/MACD/KDJ/BOLL；不填停牌或缺失K线，策略与回测仍按严格市场交易日"
             onChange={(value) =>
               setIndicatorContinuity(value as "quotes" | "market_sessions")
             }
@@ -1145,6 +1204,20 @@ export function CandleChart({
           {supportsLimits && <LimitStatus bar={activeBar} period={period} />}
         </div>
       )}
+      {showBoll && activeBoll && (
+        <div className="chart-boll-values" aria-label="BOLL布林带当前值">
+          <strong>BOLL 20 · 2</strong>
+          <span style={{ color: "#82b5e9" }}>上轨 {num(activeBoll.upper)}</span>
+          <span style={{ color: "#d6b96d" }}>
+            中轨 {num(activeBoll.middle)}
+          </span>
+          <span style={{ color: "#b59be3" }}>下轨 {num(activeBoll.lower)}</span>
+          {activeBoll.middle == null && (
+            <span className="muted">{activeBoll.reason}</span>
+          )}
+          <time>{activeBoll.date}</time>
+        </div>
+      )}
       {data?.indicator_continuity_notice && (
         <div className="source-line chart-continuity-note">
           {data.indicator_continuity_notice}
@@ -1298,6 +1371,13 @@ export function CandleChart({
       )}
       <div className="chart-bottom">
         <div className="indicator-controls">
+          <ChartToggle
+            label="BOLL"
+            title="主图布林带 · 20周期 · 2倍标准差"
+            checked={showBoll}
+            onChange={setShowBoll}
+            color="#82b5e9"
+          />
           {[
             ["volume", "成交量"],
             ["macd", "MACD"],
@@ -1307,8 +1387,8 @@ export function CandleChart({
             <ChartToggle
               key={key}
               label={name}
-              checked={panels.includes(key)}
-              onChange={() => togglePanel(key)}
+              checked={panels.includes(key as ChartPanel)}
+              onChange={() => togglePanel(key as ChartPanel)}
             />
           ))}
         </div>
@@ -1582,7 +1662,7 @@ export function CandleChart({
         >
           <div className="modal-body chart-preferences-form">
             <p className="muted">
-              均线、波浪结构开关及显示范围按指数和个股分别保存，同类型图表同步。修改
+              均线、指标显隐、波浪结构及显示范围按指数和个股分别保存，同类型图表同步。修改
               {isIndex ? "指数" : "个股"}的上述设置不会影响
               {isIndex ? "个股" : "指数"}
               ；切换、重开和刷新沿用。日 / 周 /
@@ -1601,6 +1681,37 @@ export function CandleChart({
                   />
                 ))}
               </div>
+            </fieldset>
+            <fieldset>
+              <legend>{isIndex ? "指数" : "个股"}默认指标</legend>
+              <div className="chart-preferences-mas">
+                <ChartToggle
+                  label="BOLL 布林带"
+                  checked={showBoll}
+                  onChange={setShowBoll}
+                  color="#82b5e9"
+                />
+                {(
+                  [
+                    ["volume", "成交量"],
+                    ["macd", "MACD"],
+                    ["kdj", "KDJ"],
+                    ...(isIndex ? [["breadth", "上涨家数"]] : []),
+                  ] as [ChartPanel, string][]
+                ).map(([key, name]) => (
+                  <ChartToggle
+                    key={key}
+                    label={name}
+                    checked={panels.includes(key)}
+                    onChange={() => togglePanel(key)}
+                  />
+                ))}
+              </div>
+              <p className="muted">
+                BOLL 叠加在主图，按当前周期收盘价计算，参数 20 ·
+                2；成交量、MACD、KDJ
+                各占一张副图。图下开关与这里同步，也可关闭全部副图。
+              </p>
             </fieldset>
             <fieldset>
               <legend>{isIndex ? "指数" : "个股"}默认波浪结构</legend>

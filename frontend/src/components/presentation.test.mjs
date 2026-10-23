@@ -43,6 +43,7 @@ const { defaultChartWindow, projectEventBaseline } =
 const {
   CHART_PREFERENCES_KEY,
   PREVIOUS_CHART_PREFERENCES_KEY,
+  EARLIER_CHART_PREFERENCES_KEY,
   LEGACY_CHART_PREFERENCES_KEY,
   effectiveChartMas,
   normalizeChartPreferences,
@@ -556,7 +557,7 @@ assert.deepEqual(
     showLimits: false,
   }),
   {
-    version: 3,
+    version: 4,
     stockMas: [5, 10, 20, 30],
     indexMas: [5, 250],
     stockPriceBasis: "forward",
@@ -566,6 +567,10 @@ assert.deepEqual(
     indexShowWaves: true,
     stockWaveMode: "turning",
     indexWaveMode: "latest",
+    stockPanels: ["volume", "macd", "kdj"],
+    indexPanels: ["volume", "macd", "kdj", "breadth"],
+    stockShowBoll: false,
+    indexShowBoll: false,
   },
 );
 assert.deepEqual(
@@ -581,7 +586,7 @@ let rawPreferences = null,
 const storage = {
   getItem(key) {
     assert.ok(
-      [CHART_PREFERENCES_KEY, PREVIOUS_CHART_PREFERENCES_KEY, LEGACY_CHART_PREFERENCES_KEY].includes(key),
+      [CHART_PREFERENCES_KEY, PREVIOUS_CHART_PREFERENCES_KEY, EARLIER_CHART_PREFERENCES_KEY, LEGACY_CHART_PREFERENCES_KEY].includes(key),
     );
     return key === CHART_PREFERENCES_KEY ? rawPreferences : null;
   },
@@ -668,7 +673,7 @@ const v2Raw = JSON.stringify({
   showLimits: false,
   showEventBaseline: false,
 });
-const waveStorage = new Map([[PREVIOUS_CHART_PREFERENCES_KEY, v2Raw]]);
+const waveStorage = new Map([[EARLIER_CHART_PREFERENCES_KEY, v2Raw]]);
 const waveStorageAdapter = {
   getItem: (key) => waveStorage.get(key) ?? null,
   setItem: (key, value) => waveStorage.set(key, value),
@@ -694,9 +699,9 @@ assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, false
 assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, true), {
   showWaves: true, waveMode: "up",
 });
-assert.equal(waveStorage.get(PREVIOUS_CHART_PREFERENCES_KEY), v2Raw);
-// An old tab may write its v2 key; it cannot replace saved v3 wave settings.
-waveStorage.set(PREVIOUS_CHART_PREFERENCES_KEY, JSON.stringify({ version: 2, stockMas: [] }));
+assert.equal(waveStorage.get(EARLIER_CHART_PREFERENCES_KEY), v2Raw);
+// An old tab may write its v2 key; it cannot replace saved v4 wave settings.
+waveStorage.set(EARLIER_CHART_PREFERENCES_KEY, JSON.stringify({ version: 2, stockMas: [] }));
 waveReload = createChartPreferenceStore(waveStorageAdapter);
 assert.equal(waveReload.getSnapshot().preferences.stockWaveMode, "down");
 assert.deepEqual(waveReload.getSnapshot().preferences.stockMas, [30, 60]);

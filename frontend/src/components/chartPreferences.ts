@@ -1,12 +1,16 @@
 /** Non-sensitive chart display defaults only; no securities, accounts or keys. */
 import type { WaveMode } from "./wavePresentation";
 
-export const CHART_PREFERENCES_KEY = "shixu-chart-preferences-v3";
-export const PREVIOUS_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v2";
+export const CHART_PREFERENCES_KEY = "shixu-chart-preferences-v4";
+export const PREVIOUS_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v3";
+export const EARLIER_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v2";
 export const LEGACY_CHART_PREFERENCES_KEY = "shixu-chart-preferences-v1";
 export const MA_WINDOWS = [5, 10, 20, 30, 60, 250] as const;
+export const STOCK_CHART_PANELS = ["volume", "macd", "kdj"] as const;
+export const INDEX_CHART_PANELS = [...STOCK_CHART_PANELS, "breadth"] as const;
+export type ChartPanel = (typeof INDEX_CHART_PANELS)[number];
 export type ChartPreferences = {
-  version: 3;
+  version: 4;
   stockMas: number[];
   indexMas: number[];
   stockPriceBasis: "none" | "forward";
@@ -16,13 +20,17 @@ export type ChartPreferences = {
   indexShowWaves: boolean;
   stockWaveMode: WaveMode;
   indexWaveMode: WaveMode;
+  stockPanels: ChartPanel[];
+  indexPanels: ChartPanel[];
+  stockShowBoll: boolean;
+  indexShowBoll: boolean;
 };
 export type PreferenceStorage = {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
 };
 const defaults = (): ChartPreferences => ({
-  version: 3,
+  version: 4,
   stockMas: [5, 10, 20, 30],
   indexMas: [5, 10, 20, 30, 60, 250],
   stockPriceBasis: "none",
@@ -32,6 +40,10 @@ const defaults = (): ChartPreferences => ({
   indexShowWaves: true,
   stockWaveMode: "turning",
   indexWaveMode: "latest",
+  stockPanels: [...STOCK_CHART_PANELS],
+  indexPanels: [...INDEX_CHART_PANELS],
+  stockShowBoll: false,
+  indexShowBoll: false,
 });
 
 /** Validate the version and every field, and whitelist serialized properties. */
@@ -39,7 +51,7 @@ export function normalizeChartPreferences(value: unknown): ChartPreferences {
   if (!value || typeof value !== "object" || Array.isArray(value))
     return defaults();
   const input = value as Record<string, unknown>;
-  if (![1, 2, 3].includes(input.version as number)) return defaults();
+  if (![1, 2, 3, 4].includes(input.version as number)) return defaults();
   const waveMode = (value: unknown, fallback: WaveMode): WaveMode =>
     typeof value === "string" &&
     ["latest", "up", "down", "turning"].includes(value)
@@ -55,8 +67,14 @@ export function normalizeChartPreferences(value: unknown): ChartPreferences {
     )
       ? MA_WINDOWS.filter((window) => value.includes(window))
       : fallback;
+  const panels = (value: unknown, allowed: readonly ChartPanel[]) =>
+    Array.isArray(value) &&
+    value.length <= allowed.length &&
+    value.every((panel) => allowed.includes(panel))
+      ? allowed.filter((panel) => value.includes(panel))
+      : [...allowed];
   return {
-    version: 3,
+    version: 4,
     stockMas:
       input.version === 1
         ? defaults().stockMas
@@ -72,19 +90,33 @@ export function normalizeChartPreferences(value: unknown): ChartPreferences {
         ? input.showEventBaseline
         : true,
     stockShowWaves:
-      input.version === 3 && typeof input.stockShowWaves === "boolean"
+      (input.version === 3 || input.version === 4) &&
+      typeof input.stockShowWaves === "boolean"
         ? input.stockShowWaves
         : true,
     indexShowWaves:
-      input.version === 3 && typeof input.indexShowWaves === "boolean"
+      (input.version === 3 || input.version === 4) &&
+      typeof input.indexShowWaves === "boolean"
         ? input.indexShowWaves
         : true,
     stockWaveMode:
-      input.version === 3
+      input.version === 3 || input.version === 4
         ? waveMode(input.stockWaveMode, "turning")
         : "turning",
     indexWaveMode:
-      input.version === 3 ? waveMode(input.indexWaveMode, "latest") : "latest",
+      input.version === 3 || input.version === 4
+        ? waveMode(input.indexWaveMode, "latest")
+        : "latest",
+    stockPanels: panels(
+      input.version === 4 ? input.stockPanels : undefined,
+      STOCK_CHART_PANELS,
+    ),
+    indexPanels: panels(
+      input.version === 4 ? input.indexPanels : undefined,
+      INDEX_CHART_PANELS,
+    ),
+    stockShowBoll: input.version === 4 && input.stockShowBoll === true,
+    indexShowBoll: input.version === 4 && input.indexShowBoll === true,
   };
 }
 
@@ -112,6 +144,22 @@ export function effectiveChartWaves(
       };
 }
 
+/** Empty selection is intentional; never add a panel from the other chart kind. */
+export function effectiveChartPanels(
+  preferences: ChartPreferences,
+  isIndex: boolean,
+): ChartPanel[] {
+  return [...(isIndex ? preferences.indexPanels : preferences.stockPanels)];
+}
+
+/** BOLL is a main-chart overlay, separate from the selected lower panels. */
+export function effectiveChartBoll(
+  preferences: ChartPreferences,
+  isIndex: boolean,
+): boolean {
+  return isIndex ? preferences.indexShowBoll : preferences.stockShowBoll;
+}
+
 export function parseChartPreferences(raw: string | null): ChartPreferences {
   try {
     return normalizeChartPreferences(raw ? JSON.parse(raw) : null);
@@ -135,6 +183,7 @@ export function createChartPreferenceStore(storage?: PreferenceStorage | null) {
     initial = parseChartPreferences(
       storage?.getItem(CHART_PREFERENCES_KEY) ??
         storage?.getItem(PREVIOUS_CHART_PREFERENCES_KEY) ??
+        storage?.getItem(EARLIER_CHART_PREFERENCES_KEY) ??
         storage?.getItem(LEGACY_CHART_PREFERENCES_KEY) ??
         null,
     );
@@ -164,7 +213,7 @@ export function createChartPreferenceStore(storage?: PreferenceStorage | null) {
       const preferences = normalizeChartPreferences({
         ...snapshot.preferences,
         ...patch,
-        version: 3,
+        version: 4,
       });
       let saved = false;
       try {
@@ -192,5 +241,19 @@ export function createChartPreferenceStore(storage?: PreferenceStorage | null) {
     },
     receiveStorage: (raw: string | null) =>
       publish(parseChartPreferences(raw), !!storage),
+    receiveStorageEvent: (event: {
+      key: string | null;
+      newValue: string | null;
+      storageArea?: PreferenceStorage | null;
+    }) => {
+      if (
+        (event.key === CHART_PREFERENCES_KEY || event.key === null) &&
+        (!event.storageArea || event.storageArea === storage)
+      )
+        publish(
+          parseChartPreferences(event.key === null ? null : event.newValue),
+          !!storage,
+        );
+    },
   };
 }
