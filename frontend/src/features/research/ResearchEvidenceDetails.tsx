@@ -14,6 +14,10 @@ import { Badge, Panel, Table } from "../../components/UI";
 import { CandleChart } from "../../components/Charts";
 import CopyStockCode from "../../components/CopyStockCode";
 import {
+  ResearchFinancialColorGuide,
+  ResearchFinancialValue,
+} from "./ResearchFinancialValue";
+import {
   researchClaim,
   groupResearchQuestions,
   researchEvidenceKind,
@@ -399,31 +403,39 @@ export default function ResearchEvidenceDetails({
         >
           <div className="research-metrics research-metrics--four">
             {[
-              [
-                "营业收入",
-                finite(income.operating_income)
-                  ? amount(income.operating_income)
-                  : "—",
-                income.report_period || "报告期待核验",
-              ],
-              [
-                "归母净利润",
-                finite(income.parent_holder_net_profit)
-                  ? amount(income.parent_holder_net_profit)
-                  : "—",
-                income.report_period || "报告期待核验",
-              ],
-              [
-                "市盈率 PE / TTM",
-                valueText(report.valuation?.pe_ttm),
-                "来源当前快照",
-              ],
-              [
-                "市净率 PB",
-                valueText(report.valuation?.pb_mrq),
-                "负值保留原值",
-              ],
-            ].map(([label, value, note]) => (
+              {
+                label: "营业收入",
+                value: (
+                  <ResearchFinancialValue
+                    rows={researchRows(statements.income)}
+                    row={income}
+                    field="operating_income"
+                  />
+                ),
+                note: income.report_period || "报告期待核验",
+              },
+              {
+                label: "归母净利润",
+                value: (
+                  <ResearchFinancialValue
+                    rows={researchRows(statements.income)}
+                    row={income}
+                    field="parent_holder_net_profit"
+                  />
+                ),
+                note: income.report_period || "报告期待核验",
+              },
+              {
+                label: "市盈率 PE / TTM",
+                value: valueText(report.valuation?.pe_ttm),
+                note: "来源当前快照",
+              },
+              {
+                label: "市净率 PB",
+                value: valueText(report.valuation?.pb_mrq),
+                note: "负值保留原值",
+              },
+            ].map(({ label, value, note }) => (
               <div className="research-metric" key={label}>
                 <span>{label}</span>
                 <strong>{value}</strong>
@@ -431,6 +443,7 @@ export default function ResearchEvidenceDetails({
               </div>
             ))}
           </div>
+          <ResearchFinancialColorGuide />
           <div className="research-evidence-heading">
             <h3>机构预测、评级与目标价</h3>
             <Badge>{researchState(institutions.state)}</Badge>

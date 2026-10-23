@@ -15,6 +15,10 @@ import { fieldLabel } from "../strategies/Conditions";
 import CopyStockCode from "../../components/CopyStockCode";
 import "./Research.css";
 import ResearchEvidenceDetails from "./ResearchEvidenceDetails";
+import {
+  ResearchFinancialColorGuide,
+  ResearchFinancialValue,
+} from "./ResearchFinancialValue";
 
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -388,49 +392,64 @@ function LegacyResearchDetails({
           <div className="research-metrics research-metrics--four">
             <Metric
               label="营业收入"
-              value={researchAmount(latestIncome.operating_income)}
+              value={
+                <ResearchFinancialValue
+                  rows={income}
+                  row={latestIncome}
+                  field="operating_income"
+                />
+              }
               note={latestIncome.report_period || "报告期待核验"}
             />
             <Metric
               label="归母净利润"
-              value={researchAmount(latestIncome.parent_holder_net_profit)}
+              value={
+                <ResearchFinancialValue
+                  rows={income}
+                  row={latestIncome}
+                  field="parent_holder_net_profit"
+                />
+              }
               note="归属于母公司股东"
               accent="violet"
             />
             <Metric
               label="基本每股收益"
               value={
-                finite(latestIncome.basic_eps)
-                  ? num(latestIncome.basic_eps) + " 元/股"
-                  : "—"
+                <ResearchFinancialValue
+                  rows={income}
+                  row={latestIncome}
+                  field="basic_eps"
+                />
               }
               note="沿用已披露报表"
               accent="teal"
             />
             <Metric
               label="经营净现金流"
-              value={researchAmount(
-                (statements.cashflow || []).find(
-                  (row: Row) =>
-                    row.report_period === latestIncome.report_period,
-                )?.act_cash_flow_net,
-              )}
+              value={
+                <ResearchFinancialValue
+                  rows={statements.cashflow || []}
+                  row={
+                    (statements.cashflow || []).find(
+                      (row: Row) =>
+                        row.report_period === latestIncome.report_period,
+                    ) || {}
+                  }
+                  field="act_cash_flow_net"
+                />
+              }
               note="与上述财报期末一致"
               accent="amber"
             />
           </div>
+          <ResearchFinancialColorGuide />
           {!!metrics.length && (
             <div className="research-financial-ratios">
               {metrics.map((row: Row) => (
                 <div key={String(row.field || row.name)}>
                   <span>{row.name}</span>
-                  <strong
-                    className={
-                      row.field?.includes("yoy")
-                        ? "research-change " + direction(row.value)
-                        : ""
-                    }
-                  >
+                  <strong>
                     {finite(row.value)
                       ? row.field?.includes("yoy")
                         ? signed(row.value)
@@ -442,6 +461,8 @@ function LegacyResearchDetails({
                     {row.report_period
                       ? reportPeriod(row.report_period)
                       : "待核验"}
+                    {row.field?.includes("yoy") &&
+                      " · 来源同比，未核对基数，保持中性"}
                   </small>
                 </div>
               ))}
@@ -464,19 +485,46 @@ function LegacyResearchDetails({
               {
                 key: "operating_income",
                 title: "营业收入",
-                render: researchAmount,
+                render: (_value, row) => (
+                  <ResearchFinancialValue
+                    rows={income}
+                    row={row}
+                    field="operating_income"
+                  />
+                ),
               },
               {
                 key: "parent_holder_net_profit",
                 title: "归母净利润",
-                render: researchAmount,
+                render: (_value, row) => (
+                  <ResearchFinancialValue
+                    rows={income}
+                    row={row}
+                    field="parent_holder_net_profit"
+                  />
+                ),
               },
-              { key: "net_profit", title: "净利润", render: researchAmount },
+              {
+                key: "net_profit",
+                title: "净利润",
+                render: (_value, row) => (
+                  <ResearchFinancialValue
+                    rows={income}
+                    row={row}
+                    field="net_profit"
+                  />
+                ),
+              },
               {
                 key: "basic_eps",
                 title: "基本每股收益",
-                render: (value) =>
-                  finite(value) ? num(value) + " 元/股" : "—",
+                render: (_value, row) => (
+                  <ResearchFinancialValue
+                    rows={income}
+                    row={row}
+                    field="basic_eps"
+                  />
+                ),
               },
             ]}
             emptyTitle="尚未取得可核验的利润表"
@@ -495,17 +543,35 @@ function LegacyResearchDetails({
                   {
                     key: "assets_total",
                     title: "总资产",
-                    render: researchAmount,
+                    render: (_value, row) => (
+                      <ResearchFinancialValue
+                        rows={statements.balance || []}
+                        row={row}
+                        field="assets_total"
+                      />
+                    ),
                   },
                   {
                     key: "total_debt",
                     title: "总负债",
-                    render: researchAmount,
+                    render: (_value, row) => (
+                      <ResearchFinancialValue
+                        rows={statements.balance || []}
+                        row={row}
+                        field="total_debt"
+                      />
+                    ),
                   },
                   {
                     key: "holder_equity_total",
                     title: "股东权益",
-                    render: researchAmount,
+                    render: (_value, row) => (
+                      <ResearchFinancialValue
+                        rows={statements.balance || []}
+                        row={row}
+                        field="holder_equity_total"
+                      />
+                    ),
                   },
                 ]}
                 emptyTitle="尚未取得可核验的资产负债表"
@@ -524,17 +590,35 @@ function LegacyResearchDetails({
                   {
                     key: "act_cash_flow_net",
                     title: "经营净现金流",
-                    render: researchAmount,
+                    render: (_value, row) => (
+                      <ResearchFinancialValue
+                        rows={statements.cashflow || []}
+                        row={row}
+                        field="act_cash_flow_net"
+                      />
+                    ),
                   },
                   {
                     key: "invest_cash_flow_net",
                     title: "投资净现金流",
-                    render: researchAmount,
+                    render: (_value, row) => (
+                      <ResearchFinancialValue
+                        rows={statements.cashflow || []}
+                        row={row}
+                        field="invest_cash_flow_net"
+                      />
+                    ),
                   },
                   {
                     key: "financing_cash_flow_net",
                     title: "筹资净现金流",
-                    render: researchAmount,
+                    render: (_value, row) => (
+                      <ResearchFinancialValue
+                        rows={statements.cashflow || []}
+                        row={row}
+                        field="financing_cash_flow_net"
+                      />
+                    ),
                   },
                 ]}
                 emptyTitle="尚未取得可核验的现金流表"
