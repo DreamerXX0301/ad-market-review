@@ -49,8 +49,6 @@ assert.deepEqual(effectiveChartPanels(defaults, true), [
 ]);
 assert.equal(effectiveChartBoll(defaults, false), false);
 assert.equal(effectiveChartBoll(defaults, true), false);
-assert.equal(defaults.indexShowPriceProfile, false);
-assert.equal(defaults.indexPriceProfileLookback, 60);
 
 function browserStorage(entries = []) {
   const values = new Map(entries);
@@ -85,8 +83,6 @@ for (const [version, key] of [
     indexShowWaves: false,
     stockWaveMode: "down",
     indexWaveMode: "up",
-    indexShowPriceProfile: true,
-    indexPriceProfileLookback: 120,
   });
   const disk = browserStorage([[key, raw]]);
   const store = createChartPreferenceStore(disk.storage);
@@ -106,8 +102,6 @@ for (const [version, key] of [
   assert.deepEqual(migrated.indexPanels, defaults.indexPanels);
   assert.equal(migrated.stockShowBoll, false);
   assert.equal(migrated.indexShowBoll, false);
-  assert.equal(migrated.indexShowPriceProfile, false);
-  assert.equal(migrated.indexPriceProfileLookback, 60);
   store.update({ stockPanels: [], stockShowBoll: true });
   assert.deepEqual(disk.writes, [CHART_PREFERENCES_KEY]);
   assert.equal(disk.values.get(key), raw, "migration retains the original key");
@@ -155,24 +149,6 @@ assert.equal(effectiveChartBoll(stock.getSnapshot().preferences, false), true);
 stock.update({ stockShowBoll: false });
 assert.equal(effectiveChartBoll(stock.getSnapshot().preferences, false), false);
 assert.equal(effectiveChartBoll(stock.getSnapshot().preferences, true), true);
-const stockBeforeProfile = stock.getSnapshot().preferences;
-stock.update({ indexShowPriceProfile: true, indexPriceProfileLookback: 120 });
-assert.equal(stock.getSnapshot().preferences.indexShowPriceProfile, true);
-assert.equal(stock.getSnapshot().preferences.indexPriceProfileLookback, 120);
-for (const field of Object.keys(stockBeforeProfile).filter((key) =>
-  key.startsWith("stock"),
-))
-  assert.deepEqual(
-    stock.getSnapshot().preferences[field],
-    stockBeforeProfile[field],
-    "index price profile choices never change stock preferences",
-  );
-assert.equal(
-  createChartPreferenceStore(disk.storage).getSnapshot().preferences
-    .indexPriceProfileLookback,
-  120,
-  "the profile range survives reload without a preferences version change",
-);
 const saved = stock.getSnapshot().preferences;
 const panelCopy = effectiveChartPanels(saved, false);
 panelCopy.push("macd");
@@ -212,8 +188,6 @@ otherTab.update({
   stockShowBoll: true,
   indexPanels: ["breadth"],
   indexShowBoll: false,
-  indexShowPriceProfile: false,
-  indexPriceProfileLookback: 20,
 });
 const raw = disk.values.get(CHART_PREFERENCES_KEY);
 const writesBefore = disk.writes.length;
@@ -243,8 +217,6 @@ assert.equal(
 );
 assert.deepEqual(stock.getSnapshot().preferences.stockPanels, []);
 assert.deepEqual(stock.getSnapshot().preferences.indexPanels, ["breadth"]);
-assert.equal(stock.getSnapshot().preferences.indexShowPriceProfile, false);
-assert.equal(stock.getSnapshot().preferences.indexPriceProfileLookback, 20);
 stock.receiveStorageEvent({
   key: CHART_PREFERENCES_KEY,
   newValue: null,
@@ -291,29 +263,10 @@ for (const invalid of ["true", "false", 1, {}, null]) {
     version: 4,
     stockShowBoll: invalid,
     indexShowBoll: invalid,
-    indexShowPriceProfile: invalid,
   });
   assert.equal(preferences.stockShowBoll, false);
   assert.equal(preferences.indexShowBoll, false);
-  assert.equal(preferences.indexShowPriceProfile, false);
 }
-for (const range of [20, 60, 120])
-  assert.equal(
-    normalizeChartPreferences({
-      version: 4,
-      indexPriceProfileLookback: range,
-    }).indexPriceProfileLookback,
-    range,
-  );
-for (const invalid of [undefined, null, "20", 0, -60, 30, 60.5, 121, Infinity])
-  assert.equal(
-    normalizeChartPreferences({
-      version: 4,
-      indexPriceProfileLookback: invalid,
-    }).indexPriceProfileLookback,
-    60,
-    "unsupported profile ranges reset to the bounded 60-session default",
-  );
 
 // Quota/privacy failures retain choices for all chart subscribers in this window.
 const unavailable = createChartPreferenceStore({
@@ -423,5 +376,5 @@ try {
   else delete globalThis.window;
 }
 console.log(
-  "chart preferences v4: v1/v2/v3 migration, preserved false and wave modes, independent panels/BOLL and index price profile, bounded profile ranges, empty selection, subscriptions, reload, old-key events and restricted storage passed",
+  "chart preferences v4: v1/v2/v3 migration, preserved false and wave modes, independent panels/BOLL, empty selection, subscriptions, reload, old-key events and restricted storage passed",
 );
