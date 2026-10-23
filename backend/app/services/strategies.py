@@ -26,6 +26,7 @@ def stored_period(period):
 
 def evaluator_for(definition,period,trade_rules=None,hot_filter=None):
     trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
+    if any(names(tree)&{'volume_expand','volume_shrink'} for tree in trees):return 'workspace-v16-volume-comparison-v1'
     if any('boll_signal' in names(tree) for tree in trees):return 'workspace-v15-boll-signal-v1'
     if hot_filter is not None:return 'workspace-v14-current-hot-universe'
     if any('higher_lows' in names(tree) for tree in trees):return 'workspace-v13-higher-lows-v1'

@@ -282,8 +282,17 @@ def metrics_from_enriched(row,previous=None,topics=None):
             ready = ready and old_volume is not None and old_volume > 0
         m[field] = row[field] if ready and isinstance(row.get(field), bool) else None
         m[field + '_reason'] = None if m[field] is not None else row.get('indicator_reset_reason') or row.get('indicator_warmup_reason') or '死叉需至少36根连续可比报价、前后两期有效成交及指标；停牌零量保留未知，不以金叉未触发替代'
-    m['volume_expand']=row['volume_ratio']>1 if row.get('volume_ratio') is not None else None
-    m['volume_shrink']=row['volume_ratio']<1 if row.get('volume_ratio') is not None else None
+    # Numeric display ratios retain their legacy zero-volume value. A boolean
+    # trading condition additionally needs actual traded volume on both sides;
+    # a suspended session is neither a proven contraction nor its negation.
+    ratio=finite(row.get('volume_ratio'));volume=finite(row.get('volume'))
+    old_volume=finite(previous.get('volume')) if previous is not None else None
+    volume_ready=(ratio is not None and ratio>0 and volume is not None and volume>0
+                  and (previous is None or old_volume is not None and old_volume>0))
+    m['volume_expand']=ratio>1 if volume_ready else None
+    m['volume_shrink']=ratio<1 if volume_ready else None
+    for field in ('volume_expand','volume_shrink'):
+        m[field+'_reason']=None if volume_ready else '当前或前一可比周期缺少有效正成交量、存在零量停牌或量能倍数不可核验，放量/缩量保持未知'
     alignment = [finite(row.get(f'ma{window}')) for window in (5,10,20,30,60)]
     ready = all(value is not None and value>0 for value in alignment)
     m['bullish_ma_alignment'] = all(a>b for a,b in zip(alignment,alignment[1:])) if ready else None

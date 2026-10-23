@@ -32,7 +32,7 @@ def fixture_market(tmp_path, rows, calendar, actions=True):
     return MarketData(tmp_path,'history-matrix')
 
 
-@pytest.mark.parametrize('field',['volume_ratio','macd_cross','macd_dead_cross','kd_cross','kd_dead_cross','macd_dif','kdj_j','ma60','bullish_ma_alignment','cross_above_ma20','intraday_high_change_pct'])
+@pytest.mark.parametrize('field',['volume_ratio','volume_expand','volume_shrink','macd_cross','macd_dead_cross','kd_cross','kd_dead_cross','macd_dif','kdj_j','ma60','bullish_ma_alignment','cross_above_ma20','intraday_high_change_pct'])
 def test_compact_daily_fields_match_original_seed_and_scalar_unknowns(tmp_path,field):
     calendar=days(430);rows=quotes(calendar)
     for i,row in enumerate(rows):
@@ -41,8 +41,8 @@ def test_compact_daily_fields_match_original_seed_and_scalar_unknowns(tmp_path,f
     rows[210]['corporate_action']=True
     rows[360]['volume']=0
     rows.pop(370)
-    node=event(1,30,where={'field':field,'op':'==' if field.endswith(('cross','alignment')) or field.startswith('cross_') else '>',
-                          'value':True if field.endswith(('cross','alignment')) or field.startswith('cross_') else 0})
+    boolean=field.endswith(('cross','alignment','expand','shrink')) or field.startswith('cross_')
+    node=event(1,30,where={'field':field,'op':'==' if boolean else '>', 'value':True if boolean else 0})
     market=fixture_market(tmp_path,rows,calendar)
     shared=prepare_shared(market,['600001.SH'],[node],calendar,calendar[-1])
     compact=contexts_for_batch(market,['600001.SH'],[node],calendar,calendar[-1],shared=shared)['600001.SH']
