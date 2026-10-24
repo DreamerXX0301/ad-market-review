@@ -45,7 +45,7 @@ export function summarizeLadderFeedback(rows: FeedbackRow[]) {
     groups.set(height, group);
   }
   const heights = [...groups]
-    .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a - b))
+    .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : b - a))
     .map(([height, group]) => ({ height, ...summarize(group) }));
   return { ...summarize(rows), heights };
 }

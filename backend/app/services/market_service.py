@@ -86,7 +86,9 @@ def prior_ladder_feedback(market,reference,day,indexed):
         row.update(topics=[tag for tag in tags if tag.get('kind')!='industry'],
             industries=[tag for tag in tags if tag.get('kind')=='industry'],topics_state=state,
             topics_observed_date=day,topics_scope=scope)
-    return sorted(found.values(),key=lambda r:r.get('change_pct') if number(r.get('change_pct')) else 1e6)
+    from app.services.stock_board_presentation import decorate_board_collections
+    decorated=decorate_board_collections(market,status,day,reference,{'feedback':list(found.values())})['feedback']
+    return sorted(decorated,key=lambda r:(-(r.get('previous_board_count') if number(r.get('previous_board_count')) else 0),r.get('instrument_id','')))
 
 
 def stock(row, reference=None):
@@ -174,6 +176,9 @@ def overview(day=None):
         for event in sorted(events['limitup'], key=lambda r: r.get("seal_money") or 0, reverse=True)[:5]:
             symbol = event.get("thscode")
             largest.append({**indexed.get(symbol, {"instrument_id": symbol, "code": event.get("ticker"), "name": event.get("name")}), "seal_money": event.get("seal_money"), "reason": event.get("limit_up_reason"), "limit_time": event.get("limit_up_time"), "board_count": event.get("continue_day_cnt"), "source":event.get("source","fuyao"), "date":day, "scope":"收盘池单次封单资金，不代表稳定性", "topics":indexed.get(symbol,{}).get("topics") or ([{"name":event["source_industry"],"kind":"source_industry"}] if event.get("source_industry") else [])})
+    from app.services.stock_board_presentation import decorate_board_collections
+    displayed=decorate_board_collections(market,status,day,reference,{'divergence':divergence,'seals':largest})
+    divergence,largest=displayed['divergence'],displayed['seals']
     ranking,_=cached_gainers(market,status,reference,day,rows,5)
     from app.services.market_top_amount import decorate_top_amount
     top_amount, top_amount_activity = decorate_top_amount(market,status,day,rows,reference)

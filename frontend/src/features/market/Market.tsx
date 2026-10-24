@@ -33,10 +33,12 @@ import { AmountActivityCell, AmountActivitySummary } from "./AmountActivity";
 import { SectorActivityCell, SectorActivityCoverage } from "./SectorActivity";
 import FundTrend from "./FundTrend";
 import LadderFeedback from "./LadderFeedback";
+import BoardTags from "./BoardTags";
 import { flowDisplayState } from "./marketFlowAvailability";
 import MarketDataCoverage from "./MarketDataCoverage";
 import EmotionStage from "./EmotionStage";
 import EmotionDashboard from "./EmotionDashboard";
+import EmotionPageNavigation from "./EmotionPageNavigation";
 import MarketOutlook from "./MarketOutlook";
 import { outlookStocks } from "./marketOutlookPresentation";
 import LimitLadder from "./LimitLadder";
@@ -437,6 +439,19 @@ export function MarketOverview({
                   { key: "name" },
                   { key: "change_pct", align: "right" },
                   { key: "topics" },
+                  {
+                    key: "board_presentation",
+                    title: "板标签",
+                    sortable: false,
+                    render: (_value, row) => (
+                      <BoardTags
+                        row={row}
+                        date={date}
+                        snapshotId={data?.snapshot_id}
+                        emptyLabel="待核验"
+                      />
+                    ),
+                  },
                   { key: "open_times", title: "开板次数" },
                   { key: "amount", align: "right" },
                 ]}
@@ -479,7 +494,19 @@ export function MarketOverview({
                       <CurrencyCell value={value} field="seal_money" />
                     ),
                   },
-                  { key: "board_count" },
+                  {
+                    key: "board_presentation",
+                    title: "板标签",
+                    sortable: false,
+                    render: (_value, row) => (
+                      <BoardTags
+                        row={row}
+                        date={date}
+                        snapshotId={data?.snapshot_id}
+                        emptyLabel="待核验"
+                      />
+                    ),
+                  },
                 ]}
                 onStock={onStock}
                 onStockNavigate={(id, orderedRows) =>
@@ -812,139 +839,146 @@ export function MarketPage({
             </button>
           </div>
         </div>
-        {result.error && (
-          <ErrorBox message={result.error} retry={result.reload} />
-        )}
-        {result.loading && !data && (
-          <Panel title="正在核对情绪样本">
-            <Loading />
-          </Panel>
-        )}
-        {data?.sentiment ? (
-          <>
-            <MarketOutlook
-              data={data.market_outlook}
-              date={date}
-              snapshotId={data.snapshot_id}
-              onStock={(id) =>
-                onStock(
-                  id,
-                  createStockNavigation(
-                    outlookStocks(
-                      [
-                        ...(data.market_outlook?.watchlist?.stocks || []),
-                        ...(
-                          data.market_outlook?.watchlist?.topics || []
-                        ).flatMap((topic: Row) => topic.stocks || []),
-                      ],
-                      date,
+        <EmotionPageNavigation
+          date={date}
+          outlook={!!data?.market_outlook}
+          statistics={!!data?.sentiment}
+          history={data?.history?.length > 0}
+        >
+          {result.error && (
+            <ErrorBox message={result.error} retry={result.reload} />
+          )}
+          {result.loading && !data && (
+            <Panel title="正在核对情绪样本">
+              <Loading />
+            </Panel>
+          )}
+          {data?.sentiment ? (
+            <>
+              <MarketOutlook
+                data={data.market_outlook}
+                date={date}
+                snapshotId={data.snapshot_id}
+                onStock={(id) =>
+                  onStock(
+                    id,
+                    createStockNavigation(
+                      outlookStocks(
+                        [
+                          ...(data.market_outlook?.watchlist?.stocks || []),
+                          ...(
+                            data.market_outlook?.watchlist?.topics || []
+                          ).flatMap((topic: Row) => topic.stocks || []),
+                        ],
+                        date,
+                      ),
+                      {
+                        source: "market",
+                        scopeKey: `emotion-plan:${date}:${data.snapshot_id}`,
+                        label: "情绪计划观察名单",
+                        asOf: date,
+                      },
                     ),
-                    {
-                      source: "market",
-                      scopeKey: `emotion-plan:${date}:${data.snapshot_id}`,
-                      label: "情绪计划观察名单",
-                      asOf: date,
-                    },
-                  ),
-                )
-              }
-            />
-            <details className="market-emotion-details">
-              <summary>展开完整统计、指数明细与情绪证据留存</summary>
-              <EmotionDashboard
-                sentiment={data.sentiment}
-                coverage={data.data_coverage}
-                warnings={data.warnings}
-                observation={
-                  <>
-                    {data.emotion && <EmotionStage emotion={data.emotion} />}
-                    {data.breadth && <Breadth data={data} />}
-                  </>
+                  )
                 }
               />
-            </details>
-          </>
-        ) : data ? (
-          <>
-            <MarketDataCoverage
-              coverage={data.data_coverage}
-              loading={result.loading}
-            />
-            {data.emotion && (
-              <EmotionStage emotion={data.emotion} warnings={data.warnings} />
-            )}
-            {data.breadth && <Breadth data={data} />}
-          </>
-        ) : (
-          !result.loading && (
-            <Panel title="市场情绪">
-              <Empty
-                title="暂无可核验的情绪读数"
-                description="选择已留存的盘面日期后，按实际行情和来源证据读取。"
+              <details className="market-emotion-details">
+                <summary>展开完整统计、指数明细与情绪证据留存</summary>
+                <EmotionDashboard
+                  sentiment={data.sentiment}
+                  coverage={data.data_coverage}
+                  warnings={data.warnings}
+                  observation={
+                    <>
+                      {data.emotion && <EmotionStage emotion={data.emotion} />}
+                      {data.breadth && <Breadth data={data} />}
+                    </>
+                  }
+                />
+              </details>
+            </>
+          ) : data ? (
+            <>
+              <MarketDataCoverage
+                coverage={data.data_coverage}
+                loading={result.loading}
               />
-            </Panel>
-          )
-        )}
-        {data?.history?.length > 0 && (
-          <details className="market-emotion-details">
-            <summary>展开沪深市场广度历史走势</summary>
-            <Panel
-              title="沪深市场广度走势"
-              subtitle="已留存沪深可比样本，不含北交所 · 上涨 / 下跌家数 · 参考线 500 / 3,000"
-            >
-              <EChart
-                height={310}
-                option={{
-                  animation: false,
-                  tooltip: { trigger: "axis", confine: true },
-                  legend: {
-                    data: ["上涨家数", "下跌家数"],
-                    textStyle: { color: "#8191a8" },
-                    top: 14,
-                  },
-                  grid: { left: 62, right: 24, top: 52, bottom: 40 },
-                  xAxis: {
-                    type: "category",
-                    data: (data?.history || []).map((r: Row) => r.date),
-                    axisLabel: { color: "#8191a8", fontSize: 9 },
-                    axisLine: { lineStyle: { color: "#29364a" } },
-                  },
-                  yAxis: {
-                    type: "value",
-                    axisLabel: { color: "#8191a8", fontSize: 10 },
-                    splitLine: {
-                      lineStyle: { color: "#29364a", type: "dashed" },
+              {data.emotion && (
+                <EmotionStage emotion={data.emotion} warnings={data.warnings} />
+              )}
+              {data.breadth && <Breadth data={data} />}
+            </>
+          ) : (
+            !result.loading && (
+              <Panel title="市场情绪">
+                <Empty
+                  title="暂无可核验的情绪读数"
+                  description="选择已留存的盘面日期后，按实际行情和来源证据读取。"
+                />
+              </Panel>
+            )
+          )}
+          {data?.history?.length > 0 && (
+            <details className="market-emotion-details" id="emotion-history">
+              <summary>展开沪深市场广度历史走势</summary>
+              <Panel
+                title="沪深市场广度走势"
+                subtitle="已留存沪深可比样本，不含北交所 · 上涨 / 下跌家数 · 参考线 500 / 3,000"
+              >
+                <EChart
+                  height={310}
+                  option={{
+                    animation: false,
+                    tooltip: { trigger: "axis", confine: true },
+                    legend: {
+                      data: ["上涨家数", "下跌家数"],
+                      textStyle: { color: "#8191a8" },
+                      top: 14,
                     },
-                  },
-                  dataZoom: [{ type: "inside", start: 55, end: 100 }],
-                  series: [
-                    {
-                      name: "上涨家数",
-                      type: "line",
-                      showSymbol: false,
-                      data: (data?.history || []).map((r: Row) => r.up),
-                      lineStyle: { color: "#ed6865", width: 1.5 },
-                      markLine: {
-                        symbol: "none",
-                        silent: true,
-                        data: [{ yAxis: 500 }, { yAxis: 3000 }],
-                        label: { fontSize: 9, color: "#8191a8" },
-                        lineStyle: { color: "#728095", type: "dashed" },
+                    grid: { left: 62, right: 24, top: 52, bottom: 40 },
+                    xAxis: {
+                      type: "category",
+                      data: (data?.history || []).map((r: Row) => r.date),
+                      axisLabel: { color: "#8191a8", fontSize: 9 },
+                      axisLine: { lineStyle: { color: "#29364a" } },
+                    },
+                    yAxis: {
+                      type: "value",
+                      axisLabel: { color: "#8191a8", fontSize: 10 },
+                      splitLine: {
+                        lineStyle: { color: "#29364a", type: "dashed" },
                       },
                     },
-                    {
-                      name: "下跌家数",
-                      type: "line",
-                      showSymbol: false,
-                      data: (data?.history || []).map((r: Row) => r.down),
-                      lineStyle: { color: "#39bc9b", width: 1.2 },
-                    },
-                  ],
-                }}
-              />
-            </Panel>
-          </details>
-        )}
+                    dataZoom: [{ type: "inside", start: 55, end: 100 }],
+                    series: [
+                      {
+                        name: "上涨家数",
+                        type: "line",
+                        showSymbol: false,
+                        data: (data?.history || []).map((r: Row) => r.up),
+                        lineStyle: { color: "#ed6865", width: 1.5 },
+                        markLine: {
+                          symbol: "none",
+                          silent: true,
+                          data: [{ yAxis: 500 }, { yAxis: 3000 }],
+                          label: { fontSize: 9, color: "#8191a8" },
+                          lineStyle: { color: "#728095", type: "dashed" },
+                        },
+                      },
+                      {
+                        name: "下跌家数",
+                        type: "line",
+                        showSymbol: false,
+                        data: (data?.history || []).map((r: Row) => r.down),
+                        lineStyle: { color: "#39bc9b", width: 1.2 },
+                      },
+                    ],
+                  }}
+                />
+              </Panel>
+            </details>
+          )}
+        </EmotionPageNavigation>
       </div>
     );
   return (
@@ -1540,6 +1574,7 @@ export function MarketPage({
         <>
           {hasFundTrend ? <FundTrend data={data!} /> : null}
           <LadderFeedback
+            snapshotId={data?.snapshot_id}
             key={date}
             rows={data?.feedback || []}
             date={date}

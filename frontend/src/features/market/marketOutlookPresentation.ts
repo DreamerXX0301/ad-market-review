@@ -48,7 +48,7 @@ export function outlookAction(value: Row) {
     ["blocked", "avoid", "wait", "conditional"].includes(value.status) &&
     value.trigger_state === "unobserved";
   return {
-    status: valid ? value.status : "wait",
+    status: valid ? value.status : "unknown",
     label: valid ? value.status_label || "等待确认" : "待核验",
   };
 }

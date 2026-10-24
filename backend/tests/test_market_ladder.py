@@ -298,7 +298,7 @@ def test_outlook_can_skip_card_pattern_display_work_without_changing_ladder_fact
     monkeypatch.setattr(ladder, 'attach_chart_patterns', forbidden)
     result = ladder.build_ladder(market, market.status(), TODAY, market.ref, market.rows(), {}, include_patterns=False)
     for key in ('items', 'rebound_items', 'failed_items', 'twenty_cm_items'):
-        without_patterns = lambda rows: [{name: value for name, value in item.items() if not name.startswith('pattern_')} for item in rows]
+        without_patterns = lambda rows: [{name: value for name, value in item.items() if not name.startswith('pattern_') and name != 'board_presentation'} for item in rows]
         assert without_patterns(result[key]) == without_patterns(expected[key])
     assert result['theme_counts'] == expected['theme_counts']
     assert result['main_coverage'] == expected['main_coverage']

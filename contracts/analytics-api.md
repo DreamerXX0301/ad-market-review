@@ -86,6 +86,8 @@
 - `index_environment.indices[]` 按四个指数分别返回 `instrument_id/name/date/state/state_label/scope`、`sample_count/observed_count/unknown_count/coverage_pct`、窗口边界、缺失/重复日期、`window_fingerprint` 与同形 `metrics[]`。指标键是 `index_daily_return_pct/index_20d_return_pct/index_ma20_distance_pct/index_20d_volatility_pct`。后3项必须有T及T−20之间21个严格市场交易日唯一有效收盘，不能用最近21根替代；MA20按最后20个收盘，波动为20个日对数收益的样本标准差×100、ddof=1、未年化。当前日缺失不退回更早报价；来源冲突、无效日历或预热不足保留null。收益和相对MA可为负，波动不按0—100比例封顶。
 - `short_term.metrics` 增加 `positive_ratio_pct`，分母为收益有效队列，不称完整队列正反馈率。`short_term.groups[]` 按P日有据身份冻结，含 `id/label/state/state_label/scope`、同形指标、`sample_count/observed_count/unknown_count/coverage_pct`、`candidate_count/confirmed_count/unverified_count`、`unallocated_candidate_count`、`cohort_source_complete/identity_complete/current_identity_unknown_count`、`promoted_count/failed_count/promotion_unknown_count`、`cohort_fingerprint`、`promotion_bounds_pct/positive_ratio_bounds_pct/median_bounds_pct` 和 `promotion_bounds_reason`。
 - 分组ID为 `ordinary_10/twenty_20/thirty_30/st/listing/unknown`，默认 `default_group_id=ordinary_10`。普通组必须有P日明确非ST证据及上市阶段排除，不能从当前名称或涨幅猜测。T日身份不明或已变制度时，组内T日收益/晋级保留未知；全体队列的独立价格观察仍保留。ST单列但不假定统一涨跌幅；上市前五个留存市场日作保守隔离，不声称各市场新股例外完全相同。存在P日未分组候选时，不能证明普通组完整分母。
+- `short_term.groups[].cohort_price_feedback` 将昨日冻结分组的今日价格反馈与严格同制度接力分开，版本 `previous-group-price-feedback-v1`。含 `group_id/date/cohort_date/scope/price_basis/sample_count/observed_count/unknown_count/coverage_pct/state/state_label/cohort_source_complete/identity_complete/current_identity_unknown_count/metrics/notice`。内部核验成员保留独立 `price_return_pct`，不公开展开成员；今日制度身份未知或改变不单独剔除有效价格，缺价、停牌或公司行动不可比仍为null。均幅、中位数和价格正反馈按此独立样本计算，不能把今日继续涨停者的均幅称作昨日全队列均幅。
+- 原组 `metrics` 保留严格同制度子样本语义；新价格对象不能替代晋级区间或被离线草案用作晋级证据。价格覆盖100%仅指P日已确认分组成员，不代表来源全集或分组完整。规则版本为 `descriptive-context-v2`，相应输入及队列指纹更新；历史手动留存记录原样保留，新保存按新指纹核验。界面以新对象展示价格反馈，严格接力与缺口按需展开；旧快照缺新对象时明确标为可比子样本观察。
 - `promotion_bounds_pct={lower,upper}` 的单位是百分数，仅昨日全集和该组分母可证明时返回 `[A/N,(A+U)/N]×100`；未知不能取中点。U=0才有精确 `promotion_rate_pct`。缺完整分母返回null并解释。正反馈区间把收益未知分别按全负/全正计，中位数区间把未知放在排序两端；中位数某端无界时为null，不能当0。各组仅分配已确认P日成员，未确认候选另列 `unallocated_candidate_count`，不能把分组相加当原始来源全集。
 - `provenance` 返回 `model/rule_version/trade_date/mode/label/input_snapshot_ids/input_fingerprint/computed_at`、`source_records[]`、`market_collected_at/first_known_at/known_time_complete/notice`。每个来源记录含交易日、池、来源路径、原有 `fetched_at/source_published_at/first_known_at/source_sha256` 及规范化内容指纹。原始SHA缺失时不拿派生指纹冒充原始SHA；抓取时间不重命名为首次可知。当前mode固定 `retained_retrospective`，缺逐日首知档案不声称历史当时可用。`computed_at`是本次真实计算时间，重复请求可不同；其余指纹只依赖对应日期留存输入。
 
@@ -108,6 +110,17 @@
 - `provenance`保留新规则、输入指纹、实际计算时间、行情代际及 `mode=retained_retrospective`；当前留存材料回看不等于T日当时可知或已经发布盘前计划。指纹包括实际阶段输入、事件核验、三轴和候选；不覆盖原sentiment指纹。新预案仅读发布数据，不联网、不写业务表、不创建任务。已有手动情绪快照仅保存原三轴证据，不声称已留存此顶层预案。
 
 涨停梯队各股票行另外增加 `snapshot_id/pattern_events/pattern_status/pattern_date/pattern_as_of/pattern_coverage`，形态使用同一 `verified-source-close-pool-and-raw-ohlc-v1` 判定，沿用一次有限三日批量报价和小日历，不逐股展开全历史。前端必须同时匹配观察日、行及事件代际和原价basis。主涨停类显示地天板、一字涨停；失败组缺独立同日跌停状态时保持未知，不推测一字跌停。连板/概念/当日主线/反包/20cm卡片共用同一标记，不改高度、分类、原事件或策略。使用说明见[市场温度与下一交易日计划](../docs/市场温度与下一交易日计划.md)。
+
+### 连板高度、板型与反馈展示
+
+总览炸板前五及封单收盘快照、梯队股票行、资金轮动的连板反馈和市场情绪候选增加 `board_presentation`，版本 `dated-stock-board-presentation-v1`。对象绑定 `instrument_id/date/snapshot_id`；不得跨证券、日期或行情代际复用。原始字段及旧 `pattern_*` 保持原义。
+
+- `height/previous_height={value,label,state,source_date,reason}`：当日/严格前一交易日确认涨停与同日来源正整数连板高度。未知不补首板；前日高度必须明确标为“昨”。
+- `types[]={code,label,state,source_date,reason}`：独立核验的 `earth_to_sky/one_price_limit_up/one_price_limit_down/limit_down/non_one_price_limit_up/open_count/repeated_break/pullback_reclaim/broken_pool_source`。涨跌停使用原始收盘、正成交量与同日来源；炸板来源样本另核验身份、日期和价格。开板次数缺失不补0，反复开板为来源次数≥3的项目展示阈值，不是标准烂板评级。非一字成交价差不证明充分换手；回踩收回仅指日线最低价低于前收且收盘不低于前收。
+- `volume={state,label,ratio,previous_date,reason}`：严格相邻交易日正成交量比较，`expanded/contracted/flat/unknown` 分别为放量/缩量/平量/未知。原始OHLCV须与当前代际panel相符且公司行动、价格连续性可比，比例不使用成交额替代。
+- `feedback={code,label,state,source_date,cohort_date,reason}`：前日确认涨停样本的当日观察，优先跌停、晋级，然后可比收盘收益≤−5%的大幅回落、回落、正反馈或平盘。未知不当作晋级失败；正反馈不等于资金承接或可成交收益。`limitations[]` 保留各维度的证据限制。
+
+连板反馈默认按昨日高度降序、代码升序；仅改变展示顺序，不改变样本和既有收益。总览两组前五共用一次最多10只P/T批量原始报价，反馈共用一次返回队列的P/T批量，梯队复用原有有限三日报价及已读补充来源，不逐股展开历史或发起采集。具体定义与公开资料见[连板高度板型与反馈](../docs/连板高度板型与反馈.md)。
 
 ### 手动留存复盘上下文
 

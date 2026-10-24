@@ -668,6 +668,7 @@ def _stock(row, day):
     height = height if height and height >= 1 else None
     source = list(dict.fromkeys(item.get('source') for item in positives if item.get('source')))
     return {'instrument_id': symbol, 'name': row.get('name') or symbol, 'code': symbol[:6], 'role': '观察候选',
+            **({'board_presentation': row['board_presentation']} if isinstance(row.get('board_presentation'), dict) else {}),
             'close': row['close'], 'change_pct': _number(row.get('change_pct')), 'board_count': height,
             'evidence_date': day, 'reason': '观察日原始收盘和正成交量已核验来源涨停；来源连板数仅作排序，不自动认定龙头。',
             'trigger': f"先观察{row['close']:g}（{day}原始收盘参照）的承接，再核对同方向样本同步转强及真实可成交。",
@@ -760,7 +761,7 @@ def build_market_outlook(market, status, day, reference, rows, breadth, emotion,
         if temperature['calendar_valid'] and callable(getattr(market, 'history_for_instruments', None)):
             from app.services.market_ladder import build_ladder
             from app.services.market_service import dated_events
-            ladder = build_ladder(market, status, day, reference, rows, dated_events(reference, day), include_patterns=False)
+            ladder = build_ladder(market, status, day, reference, rows, dated_events(reference, day), include_patterns=True)
         else:
             ladder = {}
     watchlist = _watchlist(ladder, day)

@@ -11,9 +11,10 @@ import math
 import re
 
 from app.services.market_history import resolve_reference
-from app.services.strategy_limits import LimitConditionEvidence, quote_index
+from app.services.strategy_limits import quote_index
 from app.services.ladder_age import BASIS as AGE_BASIS, quote_age_evidence
 from app.services.chart_patterns import attach_chart_patterns
+from app.services.stock_board_presentation import build_board_presentation, down_state, pattern_fields, retained_proof
 
 REGIME_SOURCES = [
     {'board': 'chinext', 'effective_since': '2020-08-24', 'url': 'https://www.szse.cn/aboutus/trends/news/t20200821_580924.html'},
@@ -116,10 +117,8 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
     for symbol in master:
         code = symbol[:6]
         by_code[code] = symbol if code not in by_code else None
-    proof = LimitConditionEvidence(market)
+    proof = retained_proof(reference, status.get('snapshot_id'))
     # panel() already read the exact generation and supplement. Reuse both.
-    proof.reference = reference
-    proof.supplement = reference.get('_supplement', {})
     event_days = {target: _events(proof, target, by_code) for target in (day, previous, before) if target}
     event_days.setdefault(day, {})
     for event in current_events.get('limitup', []):
@@ -148,6 +147,7 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
     states = {}
     for symbol in candidates:
         states[symbol] = {target: proof._state(symbol, target, quotes.get(symbol, {}).get(target)) for target in (day, previous, before) if target}
+    downs = {symbol: down_state(proof, symbol, day, quotes.get(symbol, {}).get(day), states[symbol][day]) for symbol in candidates}
     age_candidates=[symbol for symbol in event_days[day]
                     if states.get(symbol,{}).get(day,{}).get('state') is True
                     and master.get(symbol,{}).get('list_date') in (None,'')
@@ -159,6 +159,9 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
     # full-history read is needed for a card badge. A generation change keeps
     # these additive display facts unknown rather than mixing publications.
     patterns = {}
+    presentation_snapshot = status.get('snapshot_id')
+    if proof.snapshot_id != presentation_snapshot or market.status().get('snapshot_id') != presentation_snapshot:
+        presentation_snapshot = None
     if include_patterns:
         pattern_snapshot = status.get('snapshot_id')
         if proof.snapshot_id != pattern_snapshot or market.status().get('snapshot_id') != pattern_snapshot:
@@ -209,7 +212,7 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
         identity = master.get(symbol, {})
         first = _time(event.get('first_limit_time'))
         last = _time(event.get('last_limit_time') or event.get('limit_up_time'))
-        return {**current, **patterns.get(symbol, {}), 'snapshot_id': status.get('snapshot_id'),
+        row = {**current, **patterns.get(symbol, {}), 'snapshot_id': status.get('snapshot_id'),
                 'instrument_id': symbol, 'code': symbol[:6], 'name': current.get('name') or event.get('name') or identity.get('name') or symbol,
                 'date': day, 'board_count': event.get('continue_day_cnt', event.get('board_count', event.get('board_num'))),
                 'limit_time': last, 'first_limit_time': first, 'last_limit_time': last,
@@ -221,6 +224,21 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
                 'core_role': '未评级', 'core_role_reason': '连板数不自动等同于板块龙头；尚未添加人工评级',
                 'limit_up_state': state(symbol, day)['state'], 'limit_up_evidence': state(symbol, day),
                 'previous_limit_up_state': state(symbol, previous)['state'], 'before_previous_limit_up_state': state(symbol, before)['state']}
+        own = quotes.get(symbol, {})
+        presentation_patterns = patterns.get(symbol, {})
+        # The legacy pattern_* fields intentionally retain their original
+        # up-only proof input. A new down shape belongs only to the additive
+        # display object, evaluated from this same already-read raw batch.
+        if include_patterns and downs[symbol].get('state') is True:
+            presentation_patterns = pattern_fields(symbol, identity, day, presentation_snapshot,
+                                                   calendar, own, current, state(symbol, day), downs[symbol])
+        row['board_presentation'] = build_board_presentation(
+            row, symbol=symbol, day=day, snapshot_id=presentation_snapshot, calendar=calendar,
+            quotes=own, events=[event] if event else [],
+            previous_events=[event_days[previous][symbol]] if symbol in event_days.get(previous, {}) else [],
+            up=state(symbol, day), previous_up=state(symbol, previous),
+            down=downs[symbol], patterns=presentation_patterns)
+        return row
 
     items = []; unverified = []; rebounds = []; failed = []; twenties = []
     rebound_states = []; failed_states = []; twenty_states = []

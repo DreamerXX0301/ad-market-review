@@ -23,13 +23,13 @@ import TopicMembersDialog from "./TopicMembersDialog";
 import DailyMainlines from "./DailyMainlines";
 import { CurrencyCell } from "./MarketTable";
 import CopyStockCode from "../../components/CopyStockCode";
+import BoardTags from "./BoardTags";
 import { sortMarketRows } from "./marketPresentation";
 import type { MarketSort } from "./marketPresentation";
 import {
   filterLadderRows,
   groupLadderRows,
   ladderClassificationCount,
-  ladderPatternTags,
   ladderTopics,
   themeCountText,
 } from "./ladderPresentation";
@@ -92,7 +92,6 @@ function LadderStockCard({
   observationDate: string;
   snapshotId: unknown;
 }) {
-  const patterns = ladderPatternTags(row, observationDate, snapshotId);
   const attribution = ladderCardAttribution(row, displayTopic);
   const primaryConcept = attribution.conceptTopics[0];
   const otherTopics = [
@@ -119,7 +118,6 @@ function LadderStockCard({
       </button>
     );
   };
-  const board = failed ? row.previous_board_count : row.board_count;
   const breakCount =
     typeof row.break_count === "number" &&
     Number.isInteger(row.break_count) &&
@@ -139,24 +137,16 @@ function LadderStockCard({
               {row.name || row.code || row.instrument_id || "名称待核验"}
             </strong>
           </button>
-          {patterns.map((pattern) => (
-            <span
-              key={pattern.kind}
-              className={`ladder-pattern-tag ${pattern.kind}`}
-              title={pattern.detail}
-            >
-              {pattern.label}
-            </span>
-          ))}
+          <BoardTags
+            row={row}
+            date={observationDate}
+            snapshotId={snapshotId}
+            height={showHeight && !failed}
+            previousHeight={showHeight && failed}
+          />
           <CopyStockCode code={row.code} instrumentId={row.instrument_id} />
         </div>
         <div className="ladder-stock-status">
-          {showHeight && positiveCount(board) && (
-            <span className="ladder-stock-height">
-              {failed ? "昨" : ""}
-              {board}板
-            </span>
-          )}
           {row.twenty_cm_state === true && (
             <span className="ladder-twenty-tag">20cm</span>
           )}

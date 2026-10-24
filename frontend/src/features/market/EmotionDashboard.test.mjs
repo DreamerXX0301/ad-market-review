@@ -19,6 +19,13 @@ const helper = ts.transpileModule(
     },
   },
 ).outputText;
+const cohortHelper = ts.transpileModule(
+  await fs.readFile(
+    new URL("./sentimentCohortPresentation.ts", import.meta.url),
+    "utf8",
+  ),
+  { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } },
+).outputText;
 let code = ts.transpileModule(
   await fs.readFile(new URL("./EmotionDashboard.tsx", import.meta.url), "utf8"),
   {
@@ -46,11 +53,12 @@ const modules = {
     "export default function Snapshots(){return null;}",
   ),
   "./sentimentPresentation": encode(helper),
+  "./sentimentCohortPresentation": encode(cohortHelper),
 };
 for (const [name, url] of Object.entries(modules))
   code = code.replaceAll('from "' + name + '"', "from " + JSON.stringify(url));
 code = code.replace(/^import ["'][^"']+\.css["'];?$/gm, "");
-const { default: Dashboard } = await import(encode(code));
+const { default: Dashboard, ShortTermFeedback } = await import(encode(code));
 const metric = (key, value, label = key) => ({ key, label, value, unit: "%" });
 const sentiment = {
   date: "2026-10-21",
@@ -152,6 +160,58 @@ const missing = renderToStaticMarkup(
 assert.ok(missing.includes("尚无可核验的指数窗口"));
 assert.ok(missing.includes("历史首次可知"));
 assert.ok(!missing.includes("NaN"));
+const partialGroup = {
+  id: "ordinary_10",
+  previous_date: "2026-10-22",
+  sample_count: 11,
+  observed_count: 30,
+  unknown_count: 19,
+  coverage_pct: 36.666,
+  promotion_bounds_pct: { lower: 36.666, upper: 100 },
+  metrics: [metric("previous_limit_up_avg_return_pct", 10.02, "旧子样本均幅")],
+  cohort_price_feedback: {
+    version: "previous-group-price-feedback-v1",
+    group_id: "ordinary_10",
+    date: "2026-10-23",
+    cohort_date: "2026-10-22",
+    sample_count: 30,
+    observed_count: 30,
+    unknown_count: 0,
+    coverage_pct: 100,
+    price_basis: "none",
+    state: "weak",
+    current_identity_unknown_count: 19,
+    metrics: [metric("previous_limit_up_avg_return_pct", -1.25, "冻结队列今均幅"), metric("positive_ratio_pct", 0, "正反馈比例")],
+  },
+};
+const groupBefore = structuredClone(partialGroup);
+const groupMarkup = renderToStaticMarkup(createElement(ShortTermFeedback, { current: partialGroup, date: "2026-10-23" }));
+const primary = groupMarkup.split('<details class="sentiment-strict-feedback">')[0];
+assert.ok(primary.includes("-1.25"), "show frozen group price feedback as the primary observation");
+assert.ok(!primary.includes("10.02"), "current-regime survivor mean must stay out of the primary group card");
+assert.ok(groupMarkup.includes("+10.02"));
+assert.match(groupMarkup, /<details class="sentiment-strict-feedback"><summary>同制度接力核验/);
+assert.ok(groupMarkup.includes("可比子样本今均涨幅"));
+assert.ok(primary.includes("19只今日制度身份待核验"));
+assert.ok(primary.includes("0.00"), "a verified zero is data and must remain visible");
+for (const update of [
+  { version: "future-version" },
+  { date: "2026-10-22" },
+  { cohort_date: "2026-10-21" },
+  { group_id: "twenty_20" },
+  { price_basis: "forward" },
+  { sample_count: 31 },
+]) {
+  const invalid = { ...partialGroup, cohort_price_feedback: { ...partialGroup.cohort_price_feedback, ...update } };
+  const result = renderToStaticMarkup(createElement(ShortTermFeedback, { current: invalid, date: "2026-10-23" }));
+  assert.ok(!result.split('<details class="sentiment-strict-feedback">')[0].includes("-1.25"), "mismatched dated feedback cannot render as the selected group");
+  assert.ok(result.includes("该版本未提供"));
+}
+const unavailable = renderToStaticMarkup(createElement(ShortTermFeedback, { current: { id: "all", metrics: [metric("positive_ratio_pct", null, "不可用比例"), metric("promotion_rate_pct", 101, "非法比例")] } }));
+assert.ok(unavailable.includes("2项指标待核验"));
+assert.match(unavailable, /<details class="sentiment-missing-metrics">/);
+assert.ok(!unavailable.includes('class="sentiment-metric"'), "unknown metrics do not occupy empty large-number tiles");
+assert.deepEqual(partialGroup, groupBefore);
 console.log(
-  "emotion dashboard: separate E/B/S, default all-queue price observation, identity gaps and non-backfilled provenance passed",
+  "emotion dashboard: dated frozen-group price feedback, strict survivor disclosure, unknown metric compaction, E/B/S and provenance passed",
 );

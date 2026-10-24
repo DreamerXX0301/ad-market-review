@@ -58,7 +58,7 @@ async function moduleUrl(path) {
     const target =
       replacements[name] ||
       (name.startsWith(".")
-        ? await moduleUrl(new URL(name + ".ts", path))
+        ? await moduleUrl(await fs.access(new URL(name + ".ts", path)).then(() => new URL(name + ".ts", path)).catch(() => new URL(name + ".tsx", path)))
         : import.meta.resolve(name));
     source = source.replace(match[0], "from " + JSON.stringify(target));
   }
@@ -337,9 +337,9 @@ const shapeMarkup = renderToStaticMarkup(createElement(LimitLadder, {
   ...props,
   data: { snapshot_id: "synthetic-generation", items: shapes, rebound_items: [shapes[0]] },
 }));
-assert.equal((shapeMarkup.match(/class="ladder-pattern-tag earth_to_sky"/g) || []).length, 2, "height cards and rebound cards share the same dated shape badge");
-assert.equal((shapeMarkup.match(/class="ladder-pattern-tag one_price_limit_up"/g) || []).length, 1);
-assert.match(shapeMarkup, /地天合成样本<\/strong><\/button><span class="ladder-pattern-tag earth_to_sky"/);
+assert.equal((shapeMarkup.match(/data-board-tag="type:earth_to_sky"/g) || []).length, 2, "height cards and rebound cards share the same dated shape badge");
+assert.equal((shapeMarkup.match(/data-board-tag="type:one_price_limit_up"/g) || []).length, 1);
+assert.match(shapeMarkup, /地天合成样本<\/strong><\/button><div class="board-tags"/);
 assert.match(shapeMarkup, /一字涨停<\/span>/);
 assert.match(shapeMarkup, /不还原首次触板或开板回封路径/);
 assert.match(shapeMarkup, /synthetic-source/);
@@ -347,12 +347,12 @@ const nextDayMarkup = renderToStaticMarkup(createElement(LimitLadder, {
   ...props, date: "2026-10-22",
   data: { snapshot_id: "synthetic-generation", items: shapes },
 }));
-assert.doesNotMatch(nextDayMarkup, /class="ladder-pattern-tag/);
+assert.doesNotMatch(nextDayMarkup, /data-board-tag="type:/);
 const otherGenerationMarkup = renderToStaticMarkup(createElement(LimitLadder, {
   ...props,
   data: { snapshot_id: "another-generation", items: shapes },
 }));
-assert.doesNotMatch(otherGenerationMarkup, /class="ladder-pattern-tag/);
+assert.doesNotMatch(otherGenerationMarkup, /data-board-tag="type:/);
 console.log(
   "limit ladder: all supplemental sections visible, counts/uncertainty/sorting/navigation retained; industry-first cards, separate concepts and literal source reasons passed",
 );

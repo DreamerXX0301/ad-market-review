@@ -44,13 +44,13 @@ assert.deepEqual(
 );
 assert.deepEqual(
   summary.heights.map((group) => group.height),
-  [2, 3, 4, null],
+  [4, 3, 2, null],
 );
-assert.equal(summary.heights[0].average, -2.5);
+assert.equal(summary.heights[2].average, -2.5);
 assert.equal(summary.heights[1].average, 8);
 assert.equal(summary.heights[1].unknown, 1);
-assert.equal(summary.heights[2].average, null);
-assert.equal(summary.heights[2].median, null);
+assert.equal(summary.heights[0].average, null);
+assert.equal(summary.heights[0].median, null);
 assert.equal(summary.heights[3].average, -1);
 assert.deepEqual(
   rows.map((row) => row.change_pct),

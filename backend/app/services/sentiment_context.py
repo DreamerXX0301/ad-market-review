@@ -13,7 +13,7 @@ import math
 from statistics import mean, median, stdev
 
 CONTEXT_VERSION = 'dated-three-axis-context-v1'
-RULE_VERSION = 'descriptive-context-v1'
+RULE_VERSION = 'descriptive-context-v2'
 INDEX_NAMES = {'000001.SH': '上证指数', '399001.SZ': '深证成指',
                '399006.SZ': '创业板指', '000688.SH': '科创50'}
 GROUP_LABELS = {'ordinary_10': '普通10%已核验组', 'twenty_20': '20%已核验组',

@@ -1,7 +1,16 @@
 .market-outlook {
+  --outlook-blocked: var(--red);
+  --outlook-conditional: var(--green);
+  --outlook-wait: var(--amber);
   display: grid;
   gap: 18px;
   min-width: 0;
+}
+.market-outlook section[id] {
+  scroll-margin-top: 100px;
+}
+.outlook-hero.outlook-stage-unknown {
+  --outlook-color: var(--muted);
 }
 .outlook-hero,
 .outlook-plan,
@@ -217,6 +226,30 @@
   border-radius: 8px;
   flex-shrink: 0;
 }
+.outlook-stance.blocked {
+  color: var(--outlook-blocked);
+  border-color: color-mix(in srgb, var(--outlook-blocked) 50%, var(--border));
+  background: color-mix(in srgb, var(--outlook-blocked) 9%, var(--surface));
+}
+.outlook-stance.conditional {
+  color: var(--outlook-conditional);
+  border-color: color-mix(
+    in srgb,
+    var(--outlook-conditional) 50%,
+    var(--border)
+  );
+  background: color-mix(in srgb, var(--outlook-conditional) 9%, var(--surface));
+}
+.outlook-stance.wait {
+  color: var(--outlook-wait);
+  border-color: color-mix(in srgb, var(--outlook-wait) 50%, var(--border));
+  background: color-mix(in srgb, var(--outlook-wait) 9%, var(--surface));
+}
+.outlook-stance.unknown {
+  color: var(--muted);
+  border-color: var(--border);
+  background: var(--surface2);
+}
 .outlook-plan-summary {
   font-size: 13px;
   color: var(--subtle);
@@ -230,7 +263,7 @@
   padding: 0 25px 22px;
 }
 .outlook-action {
-  --action-color: #e5b85f;
+  --action-color: var(--outlook-wait);
   background: var(--surface2);
   border: 1px solid var(--border);
   border-top: 3px solid var(--action-color);
@@ -239,10 +272,13 @@
   min-width: 0;
 }
 .outlook-action.avoid {
-  --action-color: #9ba9bf;
+  --action-color: var(--outlook-blocked);
 }
 .outlook-action.blocked {
-  --action-color: #e88e82;
+  --action-color: var(--outlook-blocked);
+}
+.outlook-action.unknown {
+  --action-color: var(--muted);
 }
 .outlook-context-grid {
   display: grid;
@@ -267,10 +303,23 @@
   color: var(--text);
 }
 .outlook-gate.blocked {
-  border-color: color-mix(in srgb, #e88e82 55%, var(--border));
+  border-color: color-mix(in srgb, var(--outlook-blocked) 55%, var(--border));
 }
 .outlook-gate.blocked h3 {
-  color: #e88e82;
+  color: var(--outlook-blocked);
+}
+.outlook-gate.conditional {
+  border-color: color-mix(
+    in srgb,
+    var(--outlook-conditional) 55%,
+    var(--border)
+  );
+}
+.outlook-gate.conditional h3 {
+  color: var(--outlook-conditional);
+}
+.outlook-gate.wait h3 {
+  color: var(--outlook-wait);
 }
 .outlook-context-grid p,
 .outlook-context-grid li {
@@ -307,7 +356,7 @@
   font-size: 16px;
 }
 .outlook-action.conditional {
-  --action-color: #75a8ed;
+  --action-color: var(--outlook-conditional);
 }
 .outlook-action > header {
   display: flex;

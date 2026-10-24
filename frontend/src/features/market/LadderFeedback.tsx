@@ -7,6 +7,7 @@ import {
 import { Badge, Panel } from "../../components/UI";
 import { SortableMarketTable } from "./MarketTable";
 import { summarizeLadderFeedback } from "./ladderFeedbackSummary";
+import BoardTags from "./BoardTags";
 import "./LadderFeedback.css";
 
 function TopicTags({ value, row }: { value: unknown; row: Row }) {
@@ -37,10 +38,12 @@ export default function LadderFeedback({
   rows,
   date,
   onStock,
+  snapshotId,
 }: {
   rows: Row[];
   date: string;
   onStock: (id: string, navigation?: StockNavigation) => void;
+  snapshotId: unknown;
 }) {
   const summary = summarizeLadderFeedback(rows);
   const distribution = [
@@ -58,6 +61,7 @@ export default function LadderFeedback({
       >
         <SortableMarketTable
           sortScope="当前返回的上一交易日已留存连板样本"
+          defaultSort={{ key: "previous_board_count", order: "desc" }}
           rows={rows}
           columns={[
             { key: "name" },
@@ -80,10 +84,54 @@ export default function LadderFeedback({
                   <span className="muted">待核验</span>
                 ),
             },
-            { key: "previous_board_count", title: "前日连板" },
+            {
+              key: "previous_board_count",
+              title: "昨日高度",
+              render: (_value, row) => (
+                <BoardTags
+                  row={row}
+                  date={date}
+                  snapshotId={snapshotId}
+                  height={false}
+                  previousHeight
+                  types={false}
+                  volume={false}
+                  emptyLabel="待核验"
+                />
+              ),
+            },
             { key: "previous_board_date", title: "样本日" },
             { key: "change_pct" },
-            { key: "feedback", title: "当日反馈" },
+            {
+              key: "board_presentation",
+              title: "今日板型与量能",
+              sortable: false,
+              render: (_value, row) => (
+                <BoardTags
+                  row={row}
+                  date={date}
+                  snapshotId={snapshotId}
+                  height={false}
+                  emptyLabel="待核验"
+                />
+              ),
+            },
+            {
+              key: "feedback",
+              title: "当日反馈",
+              render: (_value, row) => (
+                <BoardTags
+                  row={row}
+                  date={date}
+                  snapshotId={snapshotId}
+                  height={false}
+                  types={false}
+                  volume={false}
+                  feedback
+                  emptyLabel="待核验"
+                />
+              ),
+            },
           ]}
           onStock={onStock}
           onStockNavigate={(id, orderedRows) =>

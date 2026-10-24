@@ -79,6 +79,27 @@ def test_input_change_is_409_before_sqlite_transaction_or_append(snapshots, monk
     assert response.json()['detail']['current_input_fingerprint'] == 'b'*64
 
 
+def test_price_feedback_rule_v2_appends_without_rewriting_retained_v1(snapshots, monkeypatch):
+    _, client, context = snapshots
+    context['provenance']['rule_version'] = 'descriptive-context-v1'
+    old = post(client, context)
+    previous_payload = deepcopy(old['payload'])
+    # Even the same retained-input fingerprint is versioned separately. The
+    # real new computation also fingerprints its added per-member price field.
+    context['provenance']['rule_version'] = 'descriptive-context-v2'
+    context['short_term'] = {'groups': [{'id': 'ordinary_10', 'cohort_price_feedback': {
+        'version': 'previous-group-price-feedback-v1', 'date': context['date'],
+        'cohort_date': None, 'sample_count': 0, 'metrics': []}}]}
+    new = post(client, context)
+    assert new['created'] is True and new['snapshot_id'] != old['snapshot_id']
+    assert post(client, context)['snapshot_id'] == new['snapshot_id']
+    monkeypatch.setattr(service, 'compute_context', lambda _: pytest.fail('retained GET must not recompute'))
+    retained = client.get('/api/v1/market/sentiment-snapshots/'+old['snapshot_id']).json()
+    assert retained['payload'] == previous_payload
+    assert retained['rule_version'] == 'descriptive-context-v1'
+    assert 'short_term' not in retained['payload']
+
+
 def test_server_context_is_computed_before_short_write_transaction(snapshots, monkeypatch):
     _, client, context = snapshots
     calls = []
