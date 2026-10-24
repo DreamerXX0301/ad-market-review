@@ -23,7 +23,7 @@
 | -------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | 在同一观察日查看指数、市场广度、行业题材和涨停梯队 | 个股与板块分别配置日 / 周 / 月规则，组合历史事件与今日条件 | 把候选加入跟踪或自选，复查触发事件、加入基准和后续涨幅 |
 
-> **版本说明**：本页图文介绍[0.1.2 的已实现功能](CHANGELOG.md#v012)，当前处于发行准备。下方 **v0.1.2** 安装命令仅在配套源码标签与镜像发行成功后可用；最终可用性、完整提交和镜像摘要以对应发行回执为准。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
+> **版本说明**：本页介绍[0.1.2 的已实现功能](CHANGELOG.md#v012)，发行源码固定为 [47520dd30afdb1695d0a8de6d52873045da6540e](https://github.com/DreamerXX0301/ad-market-review/commit/47520dd30afdb1695d0a8de6d52873045da6540e)。下方 **v0.1.2** 安装命令的实际可用性和镜像摘要以[发行操作记录](https://github.com/DreamerXX0301/ad-market-review/actions/runs/40079019088)、[发布记录](https://github.com/DreamerXX0301/ad-market-review/releases)及对应回执为准。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
 
 ## 界面预览
 
@@ -137,7 +137,7 @@ flowchart LR
 
 ## Docker 安装
 
-需要 Docker Engine / Docker Desktop、Compose 和 curl。以下流程面向发行成功后的 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，只下载配套部署文件并拉取镜像，无需在本机构建；当前文档不代表镜像已可用。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+需要 Docker Engine / Docker Desktop、Compose 和 curl。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
 
 ```bash
 mkdir ad-market-review
