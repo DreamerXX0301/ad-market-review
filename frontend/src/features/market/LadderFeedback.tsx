@@ -8,6 +8,7 @@ import { Badge, Panel } from "../../components/UI";
 import { SortableMarketTable } from "./MarketTable";
 import { summarizeLadderFeedback } from "./ladderFeedbackSummary";
 import BoardTags from "./BoardTags";
+import { previousBoardHeight } from "./boardPresentation";
 import "./LadderFeedback.css";
 
 function TopicTags({ value, row }: { value: unknown; row: Row }) {
@@ -45,7 +46,11 @@ export default function LadderFeedback({
   onStock: (id: string, navigation?: StockNavigation) => void;
   snapshotId: unknown;
 }) {
-  const summary = summarizeLadderFeedback(rows);
+  const summary = summarizeLadderFeedback(rows, date, snapshotId);
+  const tableRows = rows.map((row) => ({
+    ...row,
+    feedback_height: previousBoardHeight(row, date, snapshotId),
+  }));
   const distribution = [
     { key: "up", label: "上涨", count: summary.up },
     { key: "down", label: "下跌", count: summary.down },
@@ -61,8 +66,8 @@ export default function LadderFeedback({
       >
         <SortableMarketTable
           sortScope="当前返回的上一交易日已留存连板样本"
-          defaultSort={{ key: "previous_board_count", order: "desc" }}
-          rows={rows}
+          defaultSort={{ key: "feedback_height", order: "desc" }}
+          rows={tableRows}
           columns={[
             { key: "name" },
             {
@@ -85,7 +90,7 @@ export default function LadderFeedback({
                 ),
             },
             {
-              key: "previous_board_count",
+              key: "feedback_height",
               title: "昨日高度",
               render: (_value, row) => (
                 <BoardTags

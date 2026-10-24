@@ -181,3 +181,24 @@ def test_overview_decorates_only_two_top5_collections_in_one_small_batch(market,
     assert len(market.history_calls) == 1 and len(market.history_calls[0][0]) <= 10
     assert result['seal_funds_top5'] == result['largest_seals']
     assert all(row['board_presentation']['version'] == VERSION for row in result['largest_seals']+result['divergence'])
+
+
+@pytest.mark.parametrize('mode', ['raw_disagreement', 'one_unknown', 'both_unknown'])
+def test_feedback_sort_uses_confirmed_height_and_unknown_last_without_changing_raw(market, monkeypatch, mode):
+    from app.services import stock_memberships
+    market.ref['ladder'] = {'item': [{'date': DAYS[-2], 'boards': {'source': [
+        {'thscode': B, 'board_num': 99.5}, {'thscode': OTHER, 'board_num': -7}]}}]}
+    previous = market.ref['_supplement']['annual_pools'][DAYS[-2]]['items']
+    previous[0]['continue_day_cnt'] = 2; previous[-1]['continue_day_cnt'] = 3
+    if mode in ('one_unknown', 'both_unknown'): previous[0]['last_price'] = 99
+    if mode == 'both_unknown': previous[-1]['last_price'] = 99
+    monkeypatch.setattr(stock_memberships, 'current_memberships', lambda _market, symbols, **_: {
+        'memberships': {symbol: [] for symbol in symbols}, 'scope': 'synthetic fixture'})
+    result = market_service.prior_ladder_feedback(market, market.ref, TODAY,
+                                                 {row['instrument_id']: row for row in market.rows()})
+    assert [row['instrument_id'] for row in result] == [OTHER, B]
+    assert [row['previous_board_count'] for row in result] == [-7, 99.5]
+    states = [row['board_presentation']['previous_height']['state'] for row in result]
+    assert states == (['confirmed', 'confirmed'] if mode == 'raw_disagreement' else
+                      ['confirmed', 'unknown'] if mode == 'one_unknown' else ['unknown', 'unknown'])
+    assert len(market.history_calls) == 1 and market.history_calls[0][1:] == (DAYS[-2], TODAY)

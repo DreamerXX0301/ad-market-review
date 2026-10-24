@@ -56,6 +56,54 @@ const text = (value: unknown): value is string =>
 const owns = (object: Record<string, string>, key: unknown): key is string =>
   typeof key === "string" && Object.prototype.hasOwnProperty.call(object, key);
 
+function boundBoardFacts(
+  row: Row,
+  date: string,
+  snapshotId: unknown,
+): Row | null {
+  const facts = row.board_presentation;
+  if (
+    !/^\d{6}\.(SH|SZ|BJ)$/.test(String(row.instrument_id || "")) ||
+    !isoDay(date) ||
+    typeof snapshotId !== "string" ||
+    !snapshotId ||
+    !facts ||
+    typeof facts !== "object" ||
+    Array.isArray(facts) ||
+    facts.version !== version ||
+    facts.date !== date ||
+    facts.snapshot_id !== snapshotId ||
+    facts.instrument_id !== row.instrument_id ||
+    (row.date != null && row.date !== date) ||
+    (row.evidence_date != null && row.evidence_date !== date) ||
+    (row.snapshot_id != null && row.snapshot_id !== snapshotId)
+  )
+    return null;
+  return facts;
+}
+
+/** The table and height summary use the same dated fact that the tag displays. */
+export function previousBoardHeight(
+  row: Row,
+  date: string,
+  snapshotId: unknown,
+): number | null {
+  if (!Object.prototype.hasOwnProperty.call(row, "board_presentation")) {
+    const raw = row.previous_board_count;
+    return positive(raw) && Number.isInteger(raw) ? raw : null;
+  }
+  const value = boundBoardFacts(row, date, snapshotId)?.previous_height;
+  return value?.state === "confirmed" &&
+    positive(value.value) &&
+    Number.isInteger(value.value) &&
+    text(value.label) &&
+    isoDay(value.source_date) &&
+    value.source_date < date &&
+    value.source_date === row.previous_board_date
+    ? value.value
+    : null;
+}
+
 /** Height, day type, next-day feedback and volume remain independent dated facts. */
 export function boardTags(
   row: Row,
@@ -75,11 +123,11 @@ export function boardTags(
   const facts = row.board_presentation;
   // Older payloads may retain the chart's already verified three shape events.
   // A present but invalid new object never falls back across a generation/date.
-  if (facts == null)
-    return flags.types
+  if (!Object.prototype.hasOwnProperty.call(row, "board_presentation")) {
+    const tags: BoardTag[] = flags.types
       ? ladderPatternTags(row, date, snapshotId).map((tag) => ({
           key: "type:" + tag.kind,
-          dimension: "type",
+          dimension: "type" as const,
           label: tag.label,
           tone: tag.kind.includes("down")
             ? "down"
@@ -89,22 +137,18 @@ export function boardTags(
           detail: tag.detail,
         }))
       : [];
-  if (
-    !isoDay(date) ||
-    typeof snapshotId !== "string" ||
-    !snapshotId ||
-    !facts ||
-    typeof facts !== "object" ||
-    Array.isArray(facts) ||
-    facts.version !== version ||
-    facts.date !== date ||
-    facts.snapshot_id !== snapshotId ||
-    facts.instrument_id !== row.instrument_id ||
-    (row.date != null && row.date !== date) ||
-    (row.evidence_date != null && row.evidence_date !== date) ||
-    (row.snapshot_id != null && row.snapshot_id !== snapshotId)
-  )
-    return [];
+    const previous = previousBoardHeight(row, date, snapshotId);
+    if (flags.previousHeight && previous !== null)
+      tags.unshift({
+        key: "previous_height",
+        dimension: "height",
+        tone: "height",
+        label: `昨${previous}板`,
+        detail: "旧版载荷留存的前日连板高度",
+      });
+    return tags;
+  }
+  if (!boundBoardFacts(row, date, snapshotId)) return [];
   const tags: BoardTag[] = [];
   for (const [key, enabled] of [
     ["height", flags.height],
@@ -120,7 +164,7 @@ export function boardTags(
       !isoDay(value.source_date) ||
       (key === "height"
         ? value.source_date !== date
-        : value.source_date >= date)
+        : previousBoardHeight(row, date, snapshotId) === null)
     )
       continue;
     tags.push({

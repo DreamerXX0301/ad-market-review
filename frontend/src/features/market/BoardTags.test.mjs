@@ -10,7 +10,7 @@ const compile = async (path) => ts.transpileModule(await fs.readFile(new URL(pat
 }).outputText;
 const ladder = encode(await compile("./ladderPresentation.ts"));
 const helperUrl = encode((await compile("./boardPresentation.ts")).replaceAll('from "./ladderPresentation"', "from " + JSON.stringify(ladder)));
-const { boardTags } = await import(helperUrl);
+const { boardTags, previousBoardHeight } = await import(helperUrl);
 const component = encode((await compile("./BoardTags.tsx")).replaceAll('from "react/jsx-runtime"', "from " + JSON.stringify(import.meta.resolve("react/jsx-runtime"))).replaceAll('from "./boardPresentation"', "from " + JSON.stringify(helperUrl)).replace(/^import ["'][^"']+\.css["'];?$/gm, ""));
 const { default: BoardTags } = await import(component);
 const day = "2026-01-05", previous = "2026-01-02", snapshot = "synthetic-generation";
@@ -29,6 +29,13 @@ const row = {
 const before = structuredClone(row);
 assert.deepEqual(boardTags(row, day, snapshot).map((tag) => [tag.dimension, tag.label]), [["height", "首板"], ["type", "地天板"], ["volume", "缩量"]]);
 assert.deepEqual(boardTags(row, day, snapshot, { height: false, previousHeight: true, types: false, volume: false }).map((tag) => tag.label), ["昨二板"]);
+assert.equal(previousBoardHeight({ ...row, previous_board_count: 99 }, day, snapshot), 2);
+for (const update of [{ value: 2.5 }, { state: "unknown" }, { source_date: "2025-12-31" }, { source_date: day }]) {
+  const invalid = structuredClone(row); Object.assign(invalid.board_presentation.previous_height, update); invalid.previous_board_count = 99;
+  assert.equal(previousBoardHeight(invalid, day, snapshot), null);
+  assert.deepEqual(boardTags(invalid, day, snapshot, { height: false, previousHeight: true, types: false, volume: false }), [], "a displayed unknown height cannot remain a large table-sort height");
+}
+assert.deepEqual(boardTags({ instrument_id: row.instrument_id, previous_board_count: 3 }, day, snapshot, { height: false, previousHeight: true, types: false, volume: false }).map((tag) => tag.label), ["昨3板"]);
 assert.deepEqual(boardTags(row, day, snapshot, { height: false, types: false, volume: false, feedback: true }).map((tag) => tag.label), ["晋级"]);
 for (const mutate of [
   (value) => { value.board_presentation.date = previous; },

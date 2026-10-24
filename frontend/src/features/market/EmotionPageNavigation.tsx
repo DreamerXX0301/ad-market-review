@@ -3,8 +3,10 @@ import type { ReactNode } from "react";
 import {
   activeEmotionSection,
   emotionSections,
+  keepEmotionSelection,
   revealEmotionSection,
 } from "./emotionNavigation";
+import type { EmotionScrollPosition } from "./emotionNavigation";
 import "./EmotionPageNavigation.css";
 
 export default function EmotionPageNavigation({
@@ -25,7 +27,11 @@ export default function EmotionPageNavigation({
     [outlook, statistics, history],
   );
   const root = useRef<HTMLDivElement>(null);
-  const selected = useRef<{ id: string; until: number } | null>(null);
+  const selected = useRef<{
+    id: string;
+    anchor: EmotionScrollPosition | null;
+    manualAnchor: EmotionScrollPosition | null;
+  } | null>(null);
   const [active, setActive] = useState(sections[0]?.id || "");
   const [available, setAvailable] = useState(sections.map(({ id }) => id));
 
@@ -36,6 +42,48 @@ export default function EmotionPageNavigation({
 
   useEffect(() => {
     let frame = 0;
+    let settling = 0;
+    const scrollPosition = (boundary: HTMLElement): EmotionScrollPosition => {
+      const scrolling = document.scrollingElement || document.documentElement;
+      const positions = [
+        {
+          offset: window.scrollY,
+          limit: Math.max(0, scrolling.scrollHeight - window.innerHeight),
+        },
+      ];
+      let parent = boundary.parentElement;
+      while (parent && parent !== document.body && parent !== scrolling) {
+        positions.push({
+          offset: parent.scrollTop,
+          limit: Math.max(0, parent.scrollHeight - parent.clientHeight),
+        });
+        parent = parent.parentElement;
+      }
+      return positions;
+    };
+    const visible = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      return (
+        element.getClientRects().length > 0 &&
+        rect.bottom > 100 &&
+        rect.top < window.innerHeight
+      );
+    };
+    const finishScroll = () => {
+      window.clearTimeout(settling);
+      settling = 0;
+      const clicked = selected.current;
+      const boundary = root.current;
+      if (!clicked || clicked.anchor || !boundary) return;
+      const element = document.getElementById(clicked.id);
+      if (element && boundary.contains(element) && visible(element)) {
+        clicked.anchor = scrollPosition(boundary);
+        setActive(clicked.id);
+      } else {
+        selected.current = null;
+        schedule();
+      }
+    };
     const update = () => {
       frame = 0;
       const boundary = root.current;
@@ -50,9 +98,33 @@ export default function EmotionPageNavigation({
         const next = targets.map(({ id }) => id);
         return previous.join("|") === next.join("|") ? previous : next;
       });
-      if (selected.current && selected.current.until > performance.now())
-        return;
-      selected.current = null;
+      const clicked = selected.current;
+      if (clicked) {
+        const element = targets.find(({ id }) => id === clicked.id)?.element;
+        if (element && clicked.anchor === null) {
+          // This timer only detects the end of a smooth scroll. It never expires
+          // an already anchored selection after a child control re-renders.
+          window.clearTimeout(settling);
+          settling = window.setTimeout(finishScroll, 140);
+          return;
+        }
+        const position = scrollPosition(boundary);
+        if (
+          element &&
+          clicked.anchor &&
+          (!clicked.manualAnchor ||
+            keepEmotionSelection(
+              clicked.manualAnchor,
+              position,
+              true,
+              false,
+            )) &&
+          keepEmotionSelection(clicked.anchor, position, visible(element))
+        ) {
+          return;
+        }
+        selected.current = null;
+      }
       const id = activeEmotionSection(
         targets.map(({ id, element }) => ({
           id,
@@ -66,15 +138,63 @@ export default function EmotionPageNavigation({
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
     };
+    const interruptScroll = () => {
+      const clicked = selected.current;
+      if (clicked?.anchor === null) {
+        selected.current = null;
+        schedule();
+      } else if (clicked && root.current) {
+        // A gesture at an already clamped edge does not count as movement.
+        // Once it moves, do not mistake a new endpoint for layout reflow.
+        clicked.manualAnchor ||= scrollPosition(root.current);
+        schedule();
+      }
+    };
+    const interruptKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+      )
+        return;
+      if (
+        [
+          "PageUp",
+          "PageDown",
+          "Home",
+          "End",
+          "ArrowUp",
+          "ArrowDown",
+          " ",
+        ].includes(event.key)
+      )
+        interruptScroll();
+    };
     // Capture nested scrolling containers as well as the document viewport.
     document.addEventListener("scroll", schedule, true);
     document.addEventListener("toggle", schedule, true);
+    document.addEventListener("scrollend", finishScroll, true);
+    document.addEventListener("wheel", interruptScroll, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("touchmove", interruptScroll, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("keydown", interruptKey, true);
     window.addEventListener("resize", schedule);
     schedule();
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(settling);
       document.removeEventListener("scroll", schedule, true);
       document.removeEventListener("toggle", schedule, true);
+      document.removeEventListener("scrollend", finishScroll, true);
+      document.removeEventListener("wheel", interruptScroll, true);
+      document.removeEventListener("touchmove", interruptScroll, true);
+      document.removeEventListener("keydown", interruptKey, true);
       window.removeEventListener("resize", schedule);
     };
   }, [date, sections, children]);
@@ -85,7 +205,7 @@ export default function EmotionPageNavigation({
     if (!element || !boundary || !revealEmotionSection(element, boundary))
       return;
     setActive(id);
-    selected.current = { id, until: performance.now() + 900 };
+    selected.current = { id, anchor: null, manualAnchor: null };
     requestAnimationFrame(() => {
       if (!boundary.contains(element)) return;
       element.setAttribute("tabindex", "-1");

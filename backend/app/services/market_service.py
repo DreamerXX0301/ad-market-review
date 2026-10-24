@@ -88,7 +88,13 @@ def prior_ladder_feedback(market,reference,day,indexed):
             topics_observed_date=day,topics_scope=scope)
     from app.services.stock_board_presentation import decorate_board_collections
     decorated=decorate_board_collections(market,status,day,reference,{'feedback':list(found.values())})['feedback']
-    return sorted(decorated,key=lambda r:(-(r.get('previous_board_count') if number(r.get('previous_board_count')) else 0),r.get('instrument_id','')))
+    def feedback_order(row):
+        height=row.get('board_presentation',{}).get('previous_height',{})
+        value=height.get('value')
+        known=(height.get('state')=='confirmed' and number(value) and not isinstance(value,bool)
+               and value>=1 and value==int(value))
+        return (not known,-value if known else 0,row.get('instrument_id',''))
+    return sorted(decorated,key=feedback_order)
 
 
 def stock(row, reference=None):

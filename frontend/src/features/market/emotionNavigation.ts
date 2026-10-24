@@ -1,4 +1,29 @@
 export type EmotionSection = { id: string; label: string };
+export type EmotionScrollPosition = Array<{ offset: number; limit: number }>;
+
+/** A clicked, visible section stays selected at its actual (possibly clamped) destination. */
+export function keepEmotionSelection(
+  anchor: EmotionScrollPosition,
+  current: EmotionScrollPosition,
+  visible: boolean,
+  allowClampedReflow = true,
+) {
+  const valid = ({ offset, limit }: { offset: number; limit: number }) =>
+    Number.isFinite(offset) && Number.isFinite(limit) && limit >= 0;
+  if (!visible || !anchor.length || anchor.length !== current.length)
+    return false;
+  return anchor.every((previous, index) => {
+    const next = current[index];
+    return (
+      valid(previous) &&
+      valid(next) &&
+      (Math.abs(previous.offset - next.offset) <= 2 ||
+        (allowClampedReflow &&
+          Math.abs(previous.offset - previous.limit) <= 2 &&
+          Math.abs(next.offset - next.limit) <= 2))
+    );
+  });
+}
 
 /** These are page anchors, never routes or a second market-date scope. */
 export function emotionSections(options: {
