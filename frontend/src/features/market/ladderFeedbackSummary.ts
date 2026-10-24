@@ -1,13 +1,11 @@
-type FeedbackRow = {
-  change_pct?: unknown;
-  previous_board_count?: unknown;
-};
+import type { Row } from "../../lib/api";
+import { previousBoardHeight } from "./boardPresentation";
 
 function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function summarize(rows: FeedbackRow[]) {
+function summarize(rows: Row[]) {
   const changes = rows
     .map((row) => row.change_pct)
     .filter(finite)
@@ -34,18 +32,20 @@ function summarize(rows: FeedbackRow[]) {
 }
 
 /** Summarize the complete returned sample before table sorting or pagination. */
-export function summarizeLadderFeedback(rows: FeedbackRow[]) {
-  const groups = new Map<number | null, FeedbackRow[]>();
+export function summarizeLadderFeedback(
+  rows: Row[],
+  date = "",
+  snapshotId?: unknown,
+) {
+  const groups = new Map<number | null, Row[]>();
   for (const row of rows) {
-    const raw = row.previous_board_count;
-    const height =
-      finite(raw) && Number.isInteger(raw) && raw >= 2 ? raw : null;
+    const height = previousBoardHeight(row, date, snapshotId);
     const group = groups.get(height) || [];
     group.push(row);
     groups.set(height, group);
   }
   const heights = [...groups]
-    .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a - b))
+    .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : b - a))
     .map(([height, group]) => ({ height, ...summarize(group) }));
   return { ...summarize(rows), heights };
 }

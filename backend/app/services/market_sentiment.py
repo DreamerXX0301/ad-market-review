@@ -4,6 +4,7 @@ These are price sample statistics, never a measure of actual account profits or
 an exchange-endorsed sentiment score. Missing evidence is not a losing trade.
 """
 from collections import Counter
+from decimal import Decimal
 import math
 import re
 from statistics import mean, median
@@ -13,6 +14,7 @@ from app.services.sentiment_context import (CONTEXT_VERSION, GROUP_LABELS, cohor
     dated_regime, dated_st_state, fingerprint, index_environment, provenance)
 
 MODEL = 'dated-return-cohort-v1'
+COHORT_PRICE_FEEDBACK_VERSION = 'previous-group-price-feedback-v1'
 REFERENCES = [
     {'title': '上交所研究：证券市场投资者情绪指数构建研究',
      'url': 'https://www.sse.com.cn/aboutus/research/report/c/10056610/files/2a3cc9eb887144759849e4287455e54b.pdf',
@@ -113,6 +115,40 @@ def _complete_cohort_source(proof, day):
     return witness
 
 
+def cohort_price_feedback(group_id, members, day, previous, *, source_complete, identity_complete):
+    """Price feedback follows the P-day frozen group, not T-day winners.
+
+    A dated regime is necessary to assign a member to yesterday's group. Its
+    raw P-to-T return instead needs verified P membership and comparable prices;
+    a missing/changed T regime must not select the return sample. Same-regime
+    promotion remains a separate, stricter observation in ``cohort_group``.
+    """
+    gains = [row['price_return_pct'] for row in members if finite(row.get('price_return_pct')) is not None]
+    total = len(members)
+    coverage = len(gains)/total*100 if total else None
+    middle = median(gains) if gains else None
+    state = ('insufficient' if not source_complete or not identity_complete or not gains or coverage < 80
+             else 'strong' if middle > 0 else 'weak' if middle < 0 else 'mixed')
+    labels = {'insufficient': '价格样本有限', 'strong': '前日队列价格偏强',
+              'weak': '前日队列价格偏弱', 'mixed': '前日队列价格分化'}
+    reason = None if gains else '前日确认队列缺少今日可比原始收盘收益；缺价、停牌或公司行动不可比均保留未知'
+    return {'version': COHORT_PRICE_FEEDBACK_VERSION, 'group_id': group_id,
+            'date': day, 'cohort_date': previous,
+            'scope': '按前一市场交易日有据制度身份冻结的已确认涨停队列；今日原价可比反馈不要求今日仍属同一制度，非买入可成交收益',
+            'price_basis': 'none', 'sample_count': len(gains), 'observed_count': total,
+            'unknown_count': total-len(gains), 'coverage_pct': coverage,
+            'state': state, 'state_label': labels[state],
+            'cohort_source_complete': source_complete, 'identity_complete': identity_complete,
+            'current_identity_unknown_count': sum(not row.get('current_identity_known') for row in members),
+            'metrics': [metric('previous_limit_up_avg_return_pct', '前日队列今均涨幅', mean(gains) if gains else None, '%',
+                               '前日冻结制度组中今日原价可比P→T收盘收益的等权均值；今日制度身份未知或改变不单独剔除', reason),
+                        metric('previous_limit_up_median_return_pct', '前日队列今中位数', middle, '%',
+                               '上述原价可比冻结队列收盘收益的中位数；不只保留今日涨停者', reason),
+                        metric('positive_ratio_pct', '价格正反馈比例', sum(value > 0 for value in gains)/len(gains)*100 if gains else None, '%',
+                               '冻结队列原价可比收益>0家数÷原价可比收益有效家数；缺失不补零', reason)],
+            'notice': '价格反馈与今日同制度接力核验分开。可比价格覆盖率的分母仅为前日已确认分组成员；前日源全集或制度分组未齐时不能称完整制度组，未知不补零。'}
+
+
 def short_term_cohort(market, reference, rows, day, *, proof=None):
     calendar_method = getattr(market, 'calendar', None)
     calendar = sorted(set(value for value in calendar_method() if value <= day)) if callable(calendar_method) else []
@@ -162,6 +198,11 @@ def short_term_cohort(market, reference, rows, day, *, proof=None):
         current_group, current_reason = dated_regime(symbol, day, identity, calendar,
                                     dated_st_state(proof, symbol, day, current, identity))
         stable = group != 'unknown' and current_group == group
+        # Preserve legacy strict-return arithmetic while making the new price
+        # feedback reproducible from the quoted decimal raw closes. In
+        # particular, an exactly balanced +10/-10 sample must not gain a
+        # positive state through binary floating-point noise around zero.
+        price_change = float((Decimal(str(current['close']))/Decimal(str(prior['close']))-1)*100) if change is not None else None
         members.append({'instrument_id': symbol, 'group': group, 'identity_reason': reason,
                         'current_identity_reason': current_reason, 'current_identity_known': stable,
                         'listing_date': identity.get('list_date'),
@@ -169,6 +210,7 @@ def short_term_cohort(market, reference, rows, day, *, proof=None):
                         'prior_volume': prior.get('volume') if prior else None,
                         'current_close': current.get('close') if current else None,
                         'current_change_pct': present.get('change_pct') if present else None,
+                        'price_return_pct': price_change,
                         'return_pct': change if stable else None, 'promotion': state if stable else None})
     absence = proof._count_day(previous)['default']['state'] is False if previous else False
     source_complete = bool(previous and absence and _complete_cohort_source(proof, previous) and unverified == 0 and not ambiguous)
@@ -194,6 +236,9 @@ def short_term_cohort(market, reference, rows, day, *, proof=None):
                              identity_complete=identity_complete and group_id != 'unknown')
         group.update(previous_date=previous, unallocated_candidate_count=unverified+len(ambiguous),
                      cohort_fingerprint=fingerprint({'date': previous, 'group': group_id, 'members': group_members}))
+        group['cohort_price_feedback'] = cohort_price_feedback(
+            group_id, group_members, day, previous, source_complete=source_complete,
+            identity_complete=identity_complete and group_id != 'unknown')
         groups.append(group)
     return {'label': '短线情绪', 'state': state, 'state_label': names[state],
             'scope': '前一市场交易日已确认收盘涨停队列，按当日收盘观察；非买入可成交收益',

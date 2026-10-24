@@ -18,6 +18,9 @@ const compile = async (path) =>
     },
   ).outputText;
 const helpers = encode(await compile("./dailyMainlinePresentation.ts"));
+const ladder = encode(await compile("./ladderPresentation.ts"));
+const board = encode((await compile("./boardPresentation.ts")).replaceAll('from "./ladderPresentation"', "from " + JSON.stringify(ladder)));
+const boardComponent = encode((await compile("./BoardTags.tsx")).replaceAll('from "react/jsx-runtime"', "from " + JSON.stringify(runtime)).replaceAll('from "./boardPresentation"', "from " + JSON.stringify(board)).replace(/^import ["'][^"']+\.css["'];?$/gm, ""));
 const ui = encode(`import {jsx} from ${JSON.stringify(runtime)};
 export const Modal=({title,children})=>jsx('section',{children:[jsx('h2',{children:title},'title'),jsx('div',{children},'body')]});
 export const Empty=({title,description})=>jsx('div',{children:[title,description]});
@@ -37,6 +40,7 @@ for (const [name, replacement] of Object.entries({
   "../../components/UI": ui,
   "./dailyMainlinePresentation": helpers,
   "./ladderPresentation": encode(await compile("./ladderPresentation.ts")),
+  "./BoardTags": boardComponent,
   "../../components/CopyStockCode": encode(
     `import {jsx} from ${JSON.stringify(runtime)};export default ()=>jsx('span',{children:'复制代码'});`,
   ),
@@ -90,9 +94,9 @@ const shapeStock = {
 };
 const shapeProps = { date: "2026-01-05", rows: [shapeStock], snapshotId: "synthetic-generation", onStock: () => {} };
 html = renderToStaticMarkup(createElement(DailyMainlines, shapeProps));
-assert.match(html, /class="ladder-pattern-tag earth_to_sky"/);
+assert.match(html, /data-board-tag="type:earth_to_sky"/);
 html = renderToStaticMarkup(createElement(DailyMainlines, { ...shapeProps, snapshotId: "another-generation" }));
-assert.doesNotMatch(html, /class="ladder-pattern-tag/);
+assert.doesNotMatch(html, /data-board-tag="type:/);
 const item = {
   ...emptyMainlineAttribution(),
   mainline_name: "测试归属",

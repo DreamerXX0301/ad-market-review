@@ -17,6 +17,7 @@ import {
   outlookStocks,
 } from "./marketOutlookPresentation";
 import "./MarketOutlook.css";
+import BoardTags from "./BoardTags";
 
 function Lines({
   items,
@@ -38,9 +39,13 @@ function Lines({
 function Candidate({
   stock,
   onStock,
+  date,
+  snapshotId,
 }: {
   stock: Row;
   onStock: (id: string) => void;
+  date: string;
+  snapshotId: unknown;
 }) {
   return (
     <article className="outlook-stock">
@@ -62,10 +67,8 @@ function Candidate({
         <span>
           {stock.evidence_date} 收盘 {num(outlookNumber(stock.close))}
         </span>
-        {Number.isInteger(stock.board_count) && stock.board_count > 0 && (
-          <span>{stock.board_count}板样本</span>
-        )}
       </div>
+      <BoardTags row={stock} date={date} snapshotId={snapshotId} />
       <details>
         <summary>
           跟踪条件 <ChevronDown size={12} />
@@ -125,6 +128,7 @@ export default function MarketOutlook({
   return (
     <div className="market-outlook" aria-label="市场温度与下一交易日计划">
       <section
+        id="emotion-reading"
         className={`outlook-hero outlook-stage-${stage.code || "unknown"}`}
       >
         <div className="outlook-hero-main">
@@ -210,7 +214,11 @@ export default function MarketOutlook({
         )}
       </section>
 
-      <section className="outlook-plan" aria-label="下一交易日执行计划">
+      <section
+        id="emotion-plan"
+        className="outlook-plan"
+        aria-label="下一交易日执行计划"
+      >
         <header className="outlook-section-head">
           <div>
             <span className="outlook-eyebrow">
@@ -226,7 +234,9 @@ export default function MarketOutlook({
               {!current.next_session?.date ? "，具体日期待日历确认" : ""}
             </p>
           </div>
-          <span className="outlook-stance">{plan.label || "等待依据确认"}</span>
+          <span className={`outlook-stance ${gate.status || "unknown"}`}>
+            {plan.label || "等待依据确认"}
+          </span>
         </header>
         <p className="outlook-plan-summary">
           {plan.summary || "明日条件尚未发生，先核对当前盘面资料。"}
@@ -287,12 +297,11 @@ export default function MarketOutlook({
       </section>
 
       <section
+        id="emotion-entry"
         className="outlook-context-grid"
         aria-label="开仓限制与放量修复核验"
       >
-        <article
-          className={`outlook-gate ${gate.status === "blocked" ? "blocked" : ""}`}
-        >
+        <article className={`outlook-gate ${gate.status || "unknown"}`}>
           <span>开仓闸门</span>
           <h3>{gate.label || "等待核验"}</h3>
           <Lines items={gate.reasons} />
@@ -361,6 +370,7 @@ export default function MarketOutlook({
       </section>
 
       <section
+        id="emotion-watchlist"
         className="outlook-watchlist"
         aria-label="核心题材与个股观察名单"
       >
@@ -396,6 +406,8 @@ export default function MarketOutlook({
                         key={stock.instrument_id}
                         stock={stock}
                         onStock={onStock}
+                        date={date}
+                        snapshotId={snapshotId}
                       />
                     ))}
                 </div>
@@ -420,6 +432,8 @@ export default function MarketOutlook({
                   key={stock.instrument_id}
                   stock={stock}
                   onStock={onStock}
+                  date={date}
+                  snapshotId={snapshotId}
                 />
               ))}
             </div>

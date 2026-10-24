@@ -6,7 +6,7 @@ import type { Row } from "../../lib/api";
 import { dateTime, percent, tone } from "../../lib/format";
 import { Empty, ErrorBox, Loading, Modal } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
-import { ladderPatternTags } from "./ladderPresentation";
+import BoardTags from "./BoardTags";
 import {
   buildDailyMainlineGroups,
   editableAttribution,
@@ -608,17 +608,11 @@ export default function DailyMainlines({
                           <button onClick={() => onStock(stock.instrument_id)}>
                             <strong>{stock.name || stock.instrument_id}</strong>
                           </button>
-                          {ladderPatternTags(stock, date, snapshotId).map(
-                            (pattern) => (
-                              <span
-                                key={pattern.kind}
-                                className={`ladder-pattern-tag ${pattern.kind}`}
-                                title={pattern.detail}
-                              >
-                                {pattern.label}
-                              </span>
-                            ),
-                          )}
+                          <BoardTags
+                            row={stock}
+                            date={date}
+                            snapshotId={snapshotId}
+                          />
                           <CopyStockCode
                             code={stock.code}
                             instrumentId={stock.instrument_id}

@@ -55,6 +55,7 @@ playwright-report/
 !/docs/日期切换与选股性能.md
 !/docs/个股成交形态标记.md
 !/docs/市场温度与下一交易日计划.md
+!/docs/连板高度板型与反馈.md
 !/docs/research/
 /docs/research/*
 !/docs/research/BOLL收口突破离线研究.md
