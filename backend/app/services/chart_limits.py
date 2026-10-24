@@ -6,11 +6,13 @@ only aggregate exact daily events and never label an entire period limit-up/down
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 import math
 import re
+from zoneinfo import ZoneInfo
 
 from app.services.market_supplement import load_supplement
+from app.services.chart_patterns import attach_chart_patterns
 
 KINDS = {'up': ('limitup', 'limit_up', '收盘涨停'), 'down': ('limitdown', 'limit_down', '收盘跌停')}
 SCOPE = '已核验来源收盘池；false仅指该完整来源池明确未入池，不是交易所全A涨跌停历史全集'
@@ -46,8 +48,38 @@ def _quarantined(record, symbol):
     return False
 
 
+def _pattern_identity_matches(row, symbol):
+    for key in ('instrument_id', 'thscode'):
+        if key in row and (not isinstance(row[key], str) or row[key].upper() != symbol):
+            return False
+    for key in ('ticker', 'code'):
+        if key in row and row[key] != symbol[:6]:
+            return False
+    return True
+
+
+def _pattern_dates_match(row, day):
+    for key in ('date', 'trade_date'):
+        if key in row and row[key] != day:
+            return False
+    for key in ('date_ms', 'trade_date_ms'):
+        if key not in row:
+            continue
+        value = _number(row[key])
+        if value is None:
+            return False
+        try:
+            actual = datetime.fromtimestamp(value / 1000, ZoneInfo('Asia/Shanghai')).date().isoformat()
+        except (ValueError, OverflowError, OSError):
+            return False
+        if actual != day:
+            return False
+    return True
+
+
 def _evidence(record, symbol, day, raw_close, *, source, path, kind, allow_absence=True, granular=False):
     base = {'source': source, 'path': path, 'scope': record.get('scope') or SCOPE}
+    base.update({key: record[key] for key in ('raw_artifact', 'raw_sha256', 'fetched_at', 'validated_at', 'normalization_version', 'validation_version', 'validation_context_id') if key in record})
     if raw_close is None: return {**base, 'state': None, 'status': 'unknown', 'reason': '该日原始收盘缺失，无法核验收盘涨跌停'}
     if record.get('date') is not None and _day(record.get('date')) != day:
         return {**base, 'state': None, 'status': 'unknown', 'reason': '来源池日期与该交易日不符'}
@@ -59,6 +91,9 @@ def _evidence(record, symbol, day, raw_close, *, source, path, kind, allow_absen
     if not items: return {**base, 'state': None, 'status': 'unknown', 'reason': '来源池为空，无法区分不支持该日与真实零事件'}
     matched = [(row, _matches(row, symbol)) for row in items if isinstance(row, dict) and _matches(row, symbol)]
     if matched:
+        observed_prices = []
+        pattern_identity_valid = True
+        pattern_dates_valid = _pattern_dates_match(record, day)
         for row, identity in matched:
             if identity != 'exact':
                 return {**base, 'state': None, 'status': 'conflict', 'reason': '来源证券标识冲突，未按名称或涨幅猜测'}
@@ -69,7 +104,12 @@ def _evidence(record, symbol, day, raw_close, *, source, path, kind, allow_absen
                 return {**base, 'state': None, 'status': 'unknown', 'reason': '收盘事件缺少可核验原始价格'}
             if any(abs(price - raw_close) > .011 for price in prices):
                 return {**base, 'state': None, 'status': 'conflict', 'reason': '来源事件价格与该日未复权收盘冲突'}
-        return {**base, 'state': True, 'status': 'confirmed', 'reason': None}
+            observed_prices.extend(prices)
+            pattern_identity_valid = pattern_identity_valid and _pattern_identity_matches(row, symbol)
+            pattern_dates_valid = pattern_dates_valid and _pattern_dates_match(row, day)
+        return {**base, 'state': True, 'status': 'confirmed', 'reason': None, 'observed_prices': observed_prices,
+                'pattern_validation': {'instrument_id': symbol, 'trade_date': day,
+                                       'source_identity_valid': pattern_identity_valid, 'source_dates_valid': pattern_dates_valid}}
     if _quarantined(record, symbol):
         return {**base, 'state': None, 'status': 'unknown', 'reason': '该证券事件被隔离，不能当作未入池'}
     if allow_absence:
@@ -98,7 +138,7 @@ def _week(day):
     return date.fromisoformat(day).isocalendar()[:2]
 
 
-def enrich_chart_limits(market, chart, supplement=None):
+def enrich_chart_limits(market, chart, supplement=None, *, focus_day=None):
     result = dict(chart); result['bars'] = [dict(bar) for bar in chart.get('bars', [])]
     instrument = chart.get('instrument', {}); symbol = str(instrument.get('instrument_id') or instrument.get('thscode') or '').upper()
     bars = result['bars']; until = _day(chart.get('as_of')) or (bars[-1]['date'] if bars else None)
@@ -106,10 +146,10 @@ def enrich_chart_limits(market, chart, supplement=None):
     if instrument.get('kind') == 'index':
         for bar in bars: bar.update(limit_up_state=None, limit_down_state=None, limit_events=[], limit_event_status={'up': 'not_applicable', 'down': 'not_applicable'})
         result.update(limit_events=[], limit_event_coverage={'applicable': False, 'since': since, 'until': until, 'reason': '指数不标记个股收盘涨跌停', 'scope': SCOPE, 'notice': '指数不适用个股收盘涨跌停事件标记。'})
-        return result
+        return attach_chart_patterns(result)
     if not bars or not symbol or not until:
         result.update(limit_events=[], limit_event_coverage={'applicable': True, 'since': since, 'until': until, 'reason': '没有可核验日线', 'scope': SCOPE})
-        return result
+        return attach_chart_patterns(result)
     raw = market.bars(symbol, as_of=until)
     raw_prices = {}; duplicate_dates = set()
     for row in raw:
@@ -122,6 +162,7 @@ def enrich_chart_limits(market, chart, supplement=None):
     for day in duplicate_dates: raw_prices[day] = None
     start = min(raw_prices) if raw_prices else since
     calendar = sorted({day for day in market.calendar() if start <= day <= until})
+    pattern_calendar = calendar
     if not calendar: calendar = sorted(raw_prices)
     reference = market.reference()
     supplement_warning = None
@@ -133,6 +174,12 @@ def enrich_chart_limits(market, chart, supplement=None):
         supplement_warning = '收盘事件补充不可用：' + str(supplement['failure_reason']) + '；仅使用基础已发布来源'
     if supplement.get('snapshot_id') and chart.get('snapshot_id') and supplement['snapshot_id'] != chart['snapshot_id']:
         supplement = {}; supplement_warning = '收盘事件补充属于其他行情代际，未混入当前图表'
+    # The legacy close overlay permits a quotation-date fallback. A shape must
+    # never treat that fallback as proof of strict market-session adjacency.
+    full_calendar = pattern_calendar
+    evaluation_dates = None if focus_day is None else [focus_day]
+    if focus_day is not None:
+        calendar = [day for day in calendar if day == focus_day]
     daily = {}; events = []
     for day in calendar:
         states = {}
@@ -194,4 +241,8 @@ def enrich_chart_limits(market, chart, supplement=None):
         coverage[kind] = stats
     result.update(limit_events=[dict(event) for event in events if event['bar_date'] is not None], limit_event_coverage=coverage)
     if supplement_warning: result['warnings'] = list(result.get('warnings', [])) + [supplement_warning]
-    return result
+    pattern_raw = raw
+    if hasattr(market, 'status') and market.status().get('snapshot_id') != chart.get('snapshot_id'):
+        pattern_raw = []
+        result['warnings'] = list(result.get('warnings', [])) + ['形态读取期间行情代际变化，形态保持未知，请刷新']
+    return attach_chart_patterns(result, raw_rows=pattern_raw, calendar=full_calendar, closing_states=daily, evaluation_dates=evaluation_dates)

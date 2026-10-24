@@ -122,6 +122,14 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 
 收盘涨跌停通过 `limit_events` 与逐方向 `limit_event_coverage` 返回；日 bar 的状态和证据区分 confirmed/source_absent/unknown/conflict。正事件必须通过来源身份、日期及原始收盘核验，不按涨幅 9.9% 猜，不用炸板触价当收盘涨停。空池、隔离、错价不能证明 false。周/月只汇总确切日事件，不称整周/整月涨停；指数不适用个股标记。显式前复权只改变图上锚点，不改变原始事件日期和核验价格。
 
+个股成交日形态另外使用 `pattern_events/pattern_coverage`，日 bar 带 `pattern_events/pattern_status`，与收盘池状态分开；不会将地天板同时记为收盘跌停，也不新增选股、提醒或回测信号。kind为 `earth_to_sky/one_price_limit_up/one_price_limit_down`，basis固定 `verified-source-close-pool-and-raw-ohlc-v1`。事件包含具体 `date/bar_date/snapshot_id/raw_ohlc/raw_low/raw_close/raw_volume/raw_price_basis:"none"/chart_price/sources/evidence`。状态分别为 confirmed、not_matched、unknown，指数为not_applicable；来源不足、身份或价格矛盾时不补猜。
+
+- 一字涨停/跌停：当日有效成交量为正，未复权开高低收按人民币分精度全等，且同日同证券对应收盘池的所有正证据精确匹配原始收盘价。仅证明全天已成交价格相同，不能称全天封单未打开。
+- 地天板：上述同日收盘涨停已确认，且有效最低成交触及派生跌停价。派生须有严格前一市场日的有效原始报价、已核验上市日期及至少5个先前上市后市场日、当日公司行动覆盖已知且无行动；用已确认涨停价唯一匹配5/10/20/30%对称档，按分四舍五入并应用最小一档价差，再计算跌停价。不按当前ST名称或证券代码推断历史涨幅档。无法唯一匹配、OHLC越界或前日缺数均unknown。`evidence.limit_band`明确标为派生参考价，并保存档位、前收、前交易日、上市日期、取整和公司行动依据，不冒充交易所直接提供的限价字段。
+- 旧收盘事件证据只增加 `observed_prices/pattern_validation` 及可用的原始来源SHA元数据，原 `limit_*` 状态与数值不变。形态比旧收盘池核验的容差更严格，不接受一分钱差异。
+- 周/月bar增加 `pattern_summary`（各类count/unknown_days及逐日统计范围），事件保留具体日；不画“整周一字板”。前复权仅改变图上位置，原始判定和日期保持不变。旧冻结研究图缺少这些字段时不推测、不请求当前行情回填。
+- `GET /instruments/{id}` 的 `pattern_as_of/pattern_date/pattern_events/pattern_status/pattern_coverage`仅核验观察日，与日K一致；无当日报价时pattern_date为空且不沿用最近报价日。头部不受悬停及日周月切换影响。图上沿用涨跌停标记开关，头部仍显示所选日期已确认形态。使用与规则详见[成交形态标记](../docs/个股成交形态标记.md)。
+
 ## 统一个股统计
 
 个股及已留存大盘指数图表支持独立的个人水平线：`GET/POST /instruments/{id}/annotations`，`PATCH/DELETE /instruments/{id}/annotations/{annotation_id}`。价格、名称与颜色写入业务库，不修改来源K线、指标、策略或跟踪状态。每个标的最多64条；未复权水平线跨日/周/月共用，前复权水平线固定记录锚定日。切换价格口径时隐藏不相符的线；切换前复权锚时仅按上述同代际、有界覆盖证据换算展示，其余在管理列表保留隐藏原因，不能直接把原价水平线画到复权价格轴上。指数仅使用原始点位，`alert_modes=[]/auto_watchlist=false`；服务层和SQLite约束共同禁止其进入个股提醒，规则消费显式排除指数。板块图不使用此个股/大盘入口。

@@ -199,6 +199,26 @@
   font-size: 9px;
   font-weight: 400;
 }
+.candle-pattern-status {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 10px;
+}
+.candle-pattern-status > span {
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  font-weight: 600;
+  line-height: 1.6;
+}
+.candle-pattern-status > .muted {
+  border-color: var(--border);
+  background: transparent;
+  font-weight: 400;
+}
 .chart-limit-legend {
   display: flex;
   align-items: baseline;

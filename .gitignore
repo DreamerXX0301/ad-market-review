@@ -53,6 +53,7 @@ playwright-report/
 !/docs/补充数据对象复用.md
 !/docs/BOLL选股条件.md
 !/docs/日期切换与选股性能.md
+!/docs/个股成交形态标记.md
 !/docs/research/
 /docs/research/*
 !/docs/research/BOLL收口突破离线研究.md
