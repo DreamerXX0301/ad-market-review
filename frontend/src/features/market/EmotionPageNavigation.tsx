@@ -43,6 +43,7 @@ export default function EmotionPageNavigation({
   useEffect(() => {
     let frame = 0;
     let settling = 0;
+    let gesture = 0;
     const scrollPosition = (boundary: HTMLElement): EmotionScrollPosition => {
       const scrolling = document.scrollingElement || document.documentElement;
       const positions = [
@@ -112,15 +113,14 @@ export default function EmotionPageNavigation({
         if (
           element &&
           clicked.anchor &&
+          visible(element) &&
           (!clicked.manualAnchor ||
-            keepEmotionSelection(
-              clicked.manualAnchor,
-              position,
-              true,
-              false,
-            )) &&
-          keepEmotionSelection(clicked.anchor, position, visible(element))
+            keepEmotionSelection(clicked.manualAnchor, position, true, false))
         ) {
+          // Child controls can change page height or scroll their own focus
+          // into view. Keep the visible clicked section until a scroll gesture
+          // actually moves it, or it leaves the viewport (including bar drags).
+          clicked.anchor = position;
           return;
         }
         selected.current = null;
@@ -147,6 +147,10 @@ export default function EmotionPageNavigation({
         // A gesture at an already clamped edge does not count as movement.
         // Once it moves, do not mistake a new endpoint for layout reflow.
         clicked.manualAnchor ||= scrollPosition(root.current);
+        window.clearTimeout(gesture);
+        gesture = window.setTimeout(() => {
+          if (selected.current === clicked) clicked.manualAnchor = null;
+        }, 200);
         schedule();
       }
     };
@@ -189,6 +193,7 @@ export default function EmotionPageNavigation({
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(settling);
+      window.clearTimeout(gesture);
       document.removeEventListener("scroll", schedule, true);
       document.removeEventListener("toggle", schedule, true);
       document.removeEventListener("scrollend", finishScroll, true);
