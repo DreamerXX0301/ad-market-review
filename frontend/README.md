@@ -4,7 +4,7 @@ React、TypeScript、Vite 与 ECharts 实现盘面研究、个股/板块策略�
 
 产品入口和首次配置见[项目 README](../README.md)，部署与更新见[版本升级与回滚](../docs/版本升级与回滚.md)。
 
-本轮前后端同步准备0.1.2发行，已实现范围见[版本记录](../CHANGELOG.md#v012)。构建成功不代表镜像已发布，最终可用性与实际提交、镜像摘要以对应发行回执为准。
+0.1.2发行源码固定为 [47520dd30afdb1695d0a8de6d52873045da6540e](https://github.com/DreamerXX0301/ad-market-review/commit/47520dd30afdb1695d0a8de6d52873045da6540e)，已实现范围见[版本记录](../CHANGELOG.md#v012)。构建成功不证明镜像已可用，实际镜像可用性与摘要以[发行操作记录](https://github.com/DreamerXX0301/ad-market-review/actions/runs/40079019088)、[发布记录](https://github.com/DreamerXX0301/ad-market-review/releases)及对应回执为准。
 
 ## 本地开发
 

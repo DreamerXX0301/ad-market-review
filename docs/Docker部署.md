@@ -1,8 +1,8 @@
 # Docker部署
 
-冒险的梦想家提供独立拉镜像入口，本次发行准备目标为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，计划提供 Linux amd64、arm64。本文描述安装和发行流程；镜像实际可用性、摘要及平台检查结果以对应 GitHub Actions 发行回执为准。无需在安装机器构建前后端。
+本文是冒险的梦想家0.1.2发行说明，发行源码固定为 [47520dd30afdb1695d0a8de6d52873045da6540e](https://github.com/DreamerXX0301/ad-market-review/commit/47520dd30afdb1695d0a8de6d52873045da6540e)，镜像为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，目标平台为 Linux amd64、arm64。镜像实际可用性、摘要及平台检查结果以[发行操作记录](https://github.com/DreamerXX0301/ad-market-review/actions/runs/40079019088)、[发布记录](https://github.com/DreamerXX0301/ad-market-review/releases)及对应发行回执为准。无需在安装机器构建前后端。
 
-[0.1.2](../CHANGELOG.md#v012)冻结v0.1.1以来全部已实现功能，包括市场温度、下一交易日计划、连板高度与板型反馈和当日主线卡片修正。当前处于发行准备，下列安装命令仅在配套源码标签和镜像发行成功后可用。合入或推送 `master` 不会更新既有 `v0.1.1` 镜像，也不能覆盖该旧标签；已有安装按[版本升级与回滚](版本升级与回滚.md)使用独立恢复副本验收后切换。
+[0.1.2](../CHANGELOG.md#v012)冻结v0.1.1以来全部已实现功能，包括市场温度、下一交易日计划、连板高度与板型反馈和当日主线卡片修正。使用下列安装命令前，先核对配套源码标签、真实镜像摘要和发行结果。合入或推送 `master` 不会更新既有 `v0.1.1` 镜像，也不能覆盖该旧标签；已有安装按[版本升级与回滚](版本升级与回滚.md)使用独立恢复副本验收后切换。
 
 ## 全新安装
 
