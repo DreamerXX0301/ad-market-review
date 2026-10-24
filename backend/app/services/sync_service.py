@@ -165,11 +165,16 @@ def merge_daily(incoming,previous,output,start,end,calendar,master,*,unchanged_r
         con.table('merged_all').filter(f'date_ms>={midnight_ms(start)} AND date_ms<={midnight_ms(end)+86400000-1}').create_view('merged')
         count,actual_start,actual_end=con.execute('SELECT count(*),min(date_ms),max(date_ms) FROM merged').fetchone()
         if not count or date_ms(actual_start)!=start or date_ms(actual_end)!=end:raise ValueError('行情包尚未覆盖所需起止日，保留旧发布数据')
-        actual_dates={date_ms(r[0]) for r in con.execute('SELECT distinct date_ms FROM merged').fetchall()}
+        # Convert each distinct timestamp once, rather than formatting the same
+        # market day for every security in the full-history coverage join.
+        # Keep the original timezone expression: daily sources need not encode
+        # local midnight, and rounding/range shortcuts would change day identity.
+        con.execute("CREATE TEMP TABLE merged_dates AS SELECT date_ms,strftime(to_timestamp(date_ms/1000.0) AT TIME ZONE 'Asia/Shanghai','%Y-%m-%d') AS date FROM (SELECT DISTINCT date_ms FROM merged)")
+        actual_dates={date_ms(r[0]) for r in con.execute('SELECT date_ms FROM merged_dates').fetchall()}
         if not set(calendar).issubset(actual_dates):raise ValueError('全市场行情缺少完整市场交易日，不能发布')
         con.register('master_rows',pd.DataFrame([{'thscode':r['thscode'],'list_date':r.get('list_date'),'end_date':r.get('end_date')} for r in master]))
         con.register('calendar_rows',pd.DataFrame({'date':calendar}))
-        missing=con.execute("SELECT count(*) FROM master_rows m CROSS JOIN calendar_rows c LEFT JOIN merged b ON b.thscode=m.thscode AND strftime(to_timestamp(b.date_ms/1000.0) AT TIME ZONE 'Asia/Shanghai','%Y-%m-%d')=c.date WHERE m.list_date IS NOT NULL AND CAST(m.list_date AS VARCHAR)<=c.date AND (m.end_date IS NULL OR CAST(m.end_date AS VARCHAR)>=c.date) AND b.thscode IS NULL").fetchone()[0]
+        missing=con.execute("SELECT count(*) FROM master_rows m CROSS JOIN calendar_rows c LEFT JOIN (SELECT b.thscode,d.date FROM merged b JOIN merged_dates d USING(date_ms)) b ON b.thscode=m.thscode AND b.date=c.date WHERE m.list_date IS NOT NULL AND CAST(m.list_date AS VARCHAR)<=c.date AND (m.end_date IS NULL OR CAST(m.end_date AS VARCHAR)>=c.date) AND b.thscode IS NULL").fetchone()[0]
         output.parent.mkdir(parents=True,exist_ok=True)
         write_output = not (unchanged_rows is not None and previous and changed == 0 and count == unchanged_rows)
         if write_output:con.execute('COPY (SELECT * FROM merged ORDER BY thscode,date_ms) TO ? (FORMAT PARQUET,COMPRESSION ZSTD)',[str(output)])

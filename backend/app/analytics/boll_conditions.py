@@ -248,22 +248,24 @@ def _empty_state(config, period, day=None, *, required_periods=None):
         'evidence': {'period': period, 'price_basis': 'none', 'last_blocker': None}}
 
 
-def _states(period_rows, period, config):
+def _states(period_rows, period, config, *, latest_only=False):
     required_periods = warmup_for(config)
     bands = _RollingBands(config['band_period'])
     width_history = deque(); ordered = []
     recent = deque(maxlen=config['recent_squeeze_periods'])
     middles = deque(maxlen=config['slope_periods']+1)
     previous = None; covered = 0; blocker = None
-    for row in period_rows:
-        state = _empty_state(config, period, row['date'], required_periods=required_periods)
+    for position, row in enumerate(period_rows):
+        emit = not latest_only or position+1 == len(period_rows)
+        state = _empty_state(config, period, row['date'], required_periods=required_periods) if emit else None
         if not row['valid']:
             bands = _RollingBands(config['band_period'])
             width_history.clear(); ordered.clear(); recent.clear(); middles.clear()
             previous = None; covered = 0; blocker = row['blocker']
-            state['reason'] = blocker['reason']
-            state['evidence']['last_blocker'] = blocker
-            yield row['date'], state
+            if emit:
+                state['reason'] = blocker['reason']
+                state['evidence']['last_blocker'] = blocker
+                yield row['date'], state
             continue
         covered += 1
         current = bands.add(row['close'], config['deviations'])
@@ -274,9 +276,26 @@ def _states(period_rows, period, config):
             bands = _RollingBands(config['band_period'])
             width_history.clear(); ordered.clear(); recent.clear(); middles.clear()
             previous = None; covered = 0
-            state['reason'] = blocker['reason']
-            state['evidence']['last_blocker'] = blocker
-            yield row['date'], state
+            if emit:
+                state['reason'] = blocker['reason']
+                state['evidence']['last_blocker'] = blocker
+                yield row['date'], state
+            continue
+        if not emit:
+            # Latest-only selection still advances every original band/rank
+            # recurrence. Historical proof dictionaries are the only omitted
+            # work; the last state's counts, blockers and floating values are
+            # identical to the full dated history used by backtests.
+            if current is not None:
+                squeeze = None
+                if len(ordered) == config['rank_window']:
+                    squeeze = not _greater(current['bandwidth'], _quantile(ordered, config['squeeze_percentile']))
+                middles.append(current['middle'])
+                recent.append({'date': row['date'], 'squeeze': squeeze})
+                width_history.append(current['bandwidth']); insort(ordered, current['bandwidth'])
+                if len(width_history) > config['rank_window']:
+                    old = width_history.popleft(); ordered.pop(bisect_left(ordered, old))
+                previous = {**current, 'close': row['close']}
             continue
         state['covered_periods'] = covered
         proof = {'period': period, 'price_basis': 'none', 'last_blocker': blocker,
@@ -371,7 +390,7 @@ def latest_states(daily_rows, calendar, as_of, period='D', configs=None):
     for source in configs or []:
         config = validate_config(source); key = config_key(config)
         state = _empty_state(config, period)
-        for _, state in _states(rows, period, config):
+        for _, state in _states(rows, period, config, latest_only=True):
             pass
         result[key] = state
     return result

@@ -324,7 +324,7 @@ def _indicators(record, calendar, day, include_higher_lows=False, boll_configs_b
              for row in record['bars'] if row['date'] <= day]
     valid = [row for row in daily if _traded(row)]
     # Missing/zero-volume days are not backfilled with an older observation.
-    computed = enrich_bars([{**row, 'amount': row['amount'] if row['amount'] is not None else float('nan')} for row in valid], calendar)
+    computed = enrich_bars([{**row, 'amount': row['amount'] if row['amount'] is not None else float('nan')} for row in valid], calendar, tail=2)
     current = computed[-1] if computed and computed[-1]['date'] == day else None
     result = {'D': _raw_metrics(current, computed[-2] if current and len(computed)>1 else None,
                                reason=None if current else '观察日缺少唯一有效成交日K，不能回退其它日期')}
@@ -349,7 +349,7 @@ def _indicators(record, calendar, day, include_higher_lows=False, boll_configs_b
             continue
         if pending: row = {**row, 'weekly_continuity_reset_reason': pending}
         eligible.append(row); pending = None
-    weekly = enrich_bars(eligible)
+    weekly = enrich_bars(eligible, tail=2)
     ended_weeks = []
     for position, session in enumerate(calendar):
         if session > day: break

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.1.5
+
+本版交付选股、板块指标预热与主行情增量合并的本地计算优化。源码以不可变 [v0.1.5 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.5)和[对应发行记录](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.5)为准；完整Git SHA、实际镜像摘要及双平台检查以本版 `release-image.json` 为准，不沿用0.1.4回执。迁移终点仍为023，无新增迁移或依赖变更；已有实例按[升级与回滚](docs/版本升级与回滚.md)独立恢复验收后维护切换。
+
+- 选股和板块预热的最新日/完整周指标保留全部历史递推，只构造末两期完整输出；BOLL最新状态只生成末期证明，历史查询和候选依据保持原值。月线继续使用原完整计算，避免改变完整周期判断。
+- 主行情增量覆盖核验物化去重时间键的上海日期映射，减少全历史重复转换；保留原始校验、覆盖字段、写出字节和来源限速，不据本地阶段收益推定在线全链提速。
+
 ## v0.1.4
 
 本版交付已验收的个股与高频接口性能优化、监管页信息精简。源码以不可变 [v0.1.4 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.4)和[对应发行记录](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.4)为准；完整Git SHA、真实镜像摘要及双平台检查以本版 `release-image.json` 为准，不沿用0.1.3回执。数据库迁移终点仍为023，无新增迁移。已有实例按[升级与回滚](docs/版本升级与回滚.md)在独立恢复副本验收后维护切换，保留旧版源码、镜像与完整回滚集。

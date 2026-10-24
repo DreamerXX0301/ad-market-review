@@ -378,8 +378,8 @@ def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,
         empty.update(daily_breakout)
     if period in ('W','M'):
         from app.analytics.period_dates import completed_indicator_bars
-        enriched=completed_indicator_bars(rows,calendar,as_of,period)
-    else:enriched=enrich_bars(rows,calendar)
+        enriched=completed_indicator_bars(rows,calendar,as_of,period,tail=2)
+    else:enriched=enrich_bars(rows,calendar,tail=2)
     if not enriched:return empty
     current=enriched[-1];previous=enriched[-2] if len(enriched)>1 else None
     if period in ('W','M'):

@@ -47,7 +47,18 @@ def crossed_down(previous_fast, previous_slow, fast, slow):
     return previous_fast >= previous_slow and fast < slow
 
 
-def enrich_bars(rows, calendar=None):
+def enrich_bars(rows, calendar=None, *, tail=None):
+    """Keep the original recurrence; optionally materialize only its last rows.
+
+    Selection needs the current and preceding indicators, while charts and
+    historical events need every dated proof. A tail never truncates the seed:
+    all prices, resets and arithmetic updates still run in their original order.
+    """
+    if tail is not None:
+        if not isinstance(tail, int) or isinstance(tail, bool) or tail < 1:
+            raise ValueError('指标末期数量必须为正整数')
+        rows = list(rows)
+    emit_from = max(0, len(rows)-tail) if tail is not None else 0
     positions = {d: i for i, d in enumerate(calendar or [])}
     out = []
     windows = {n: deque() for n in WINDOWS}
@@ -60,7 +71,8 @@ def enrich_bars(rows, calendar=None):
     prev = None
     warmup_reason = '初始预热：MACD/KDJ需要35根可比报价'
     high_state = RollingHighState(calendar)
-    for source in rows:
+    for position, source in enumerate(rows):
+        emit = position >= emit_from
         row = dict(source)
         daily_gap = prev is not None and row['date'] in positions and prev['date'] in positions and positions[row['date']] - positions[prev['date']] != 1
         weekly_reason = row.get('weekly_continuity_reset_reason')
@@ -76,45 +88,51 @@ def enrich_bars(rows, calendar=None):
         for n in WINDOWS:
             windows[n].append(close); totals[n] += close
             if len(windows[n]) > n: totals[n] -= windows[n].popleft()
-            row[f'ma{n}'] = totals[n] / n if len(windows[n]) == n else None
-        row['change_pct'] = (close / prev['close'] - 1) * 100 if prev and prev['close'] and not reset else None
-        row['pct_change'] = row['change_pct']
-        row['intraday_high_change_pct'], row['intraday_high_change_pct_reason'] = intraday_high_change(row, prev, positions)
-        row['volume_ratio'] = row['volume'] / prev['volume'] if prev and prev['volume'] and not reset else None
-        row['volume_multiple_prev'] = row['volume_ratio']
+            if emit: row[f'ma{n}'] = totals[n] / n if len(windows[n]) == n else None
+        if emit:
+            row['change_pct'] = (close / prev['close'] - 1) * 100 if prev and prev['close'] and not reset else None
+            row['pct_change'] = row['change_pct']
+            row['intraday_high_change_pct'], row['intraday_high_change_pct_reason'] = intraday_high_change(row, prev, positions)
+            row['volume_ratio'] = row['volume'] / prev['volume'] if prev and prev['volume'] and not reset else None
+            row['volume_multiple_prev'] = row['volume_ratio']
         closes.append(close)
-        row['return_30d'] = (close / closes[0] - 1) * 100 if len(closes) == 31 and closes[0] else None
-        row['macd_cross'] = row['kd_cross'] = None
-        row['macd_dead_cross'] = row['kd_dead_cross'] = None
+        if emit:
+            row['return_30d'] = (close / closes[0] - 1) * 100 if len(closes) == 31 and closes[0] else None
+            row['macd_cross'] = row['kd_cross'] = None
+            row['macd_dead_cross'] = row['kd_dead_cross'] = None
         old_dif, old_dea = (e12 - e26, dea) if e12 is not None else (None, None)
         if e12 is None: e12 = e26 = close; dea = 0.0
         else: e12 = close * 2 / 13 + e12 * 11 / 13; e26 = close * 2 / 27 + e26 * 25 / 27
         dif = e12 - e26; dea = .2 * dif + .8 * dea
-        row['macd_dif'] = dif if count >= 35 else None
-        row['macd_dea'] = dea if count >= 35 else None
-        row['macd_hist'] = 2 * (dif - dea) if count >= 35 else None
-        if count >= 36: row['macd_cross'] = old_dif <= old_dea and dif > dea
-        traded_pair = prev is not None and all(isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value > 0 for value in (row.get('volume'), prev.get('volume')))
-        if count >= 36 and traded_pair: row['macd_dead_cross'] = crossed_down(old_dif, old_dea, dif, dea)
+        if emit:
+            row['macd_dif'] = dif if count >= 35 else None
+            row['macd_dea'] = dea if count >= 35 else None
+            row['macd_hist'] = 2 * (dif - dea) if count >= 35 else None
+            if count >= 36: row['macd_cross'] = old_dif <= old_dea and dif > dea
+            traded_pair = prev is not None and all(isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value > 0 for value in (row.get('volume'), prev.get('volume')))
+            if count >= 36 and traded_pair: row['macd_dead_cross'] = crossed_down(old_dif, old_dea, dif, dea)
         last9.append(row)
         old_k, old_d = k, d
         if len(last9) == 9:
             low = min(r['low'] for r in last9); high = max(r['high'] for r in last9)
             rsv = (close - low) / (high - low) * 100 if high > low else 50
             k = 2*k/3 + rsv/3; d = 2*d/3 + k/3
-        row['kdj_k'] = k if count >= 35 else None
-        row['kdj_d'] = d if count >= 35 else None
-        row['kdj_j'] = 3*k-2*d if count >= 35 else None
-        if count >= 36: row['kd_cross'] = old_k <= old_d and k > d
-        if count >= 36 and traded_pair: row['kd_dead_cross'] = crossed_down(old_k, old_d, k, d)
-        row['price_continuity'] = not reset
-        row['indicator_warmup_bars'] = count
-        row['indicator_reset_reason'] = reset_reason
-        row['indicator_warmup_reason'] = warmup_reason if count<35 else None
-        row['missing_market_sessions_before'] = missing
-        row.update(high_state.observe(row,reset=bool(reset)))
-        row.setdefault('turnover_ratio_pct', None)
-        out.append(row); prev = row
+        breakout = high_state.observe(row,reset=bool(reset))
+        if emit:
+            row['kdj_k'] = k if count >= 35 else None
+            row['kdj_d'] = d if count >= 35 else None
+            row['kdj_j'] = 3*k-2*d if count >= 35 else None
+            if count >= 36: row['kd_cross'] = old_k <= old_d and k > d
+            if count >= 36 and traded_pair: row['kd_dead_cross'] = crossed_down(old_k, old_d, k, d)
+            row['price_continuity'] = not reset
+            row['indicator_warmup_bars'] = count
+            row['indicator_reset_reason'] = reset_reason
+            row['indicator_warmup_reason'] = warmup_reason if count<35 else None
+            row['missing_market_sessions_before'] = missing
+            row.update(breakout)
+            row.setdefault('turnover_ratio_pct', None)
+            out.append(row)
+        prev = row
     return out
 
 
