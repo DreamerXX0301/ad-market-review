@@ -91,6 +91,24 @@
 
 六阶段研究纯函数见 `app.services.sentiment_stage_research`，未接入HTTP情绪阶段、策略筛选或自动任务。`observation_from_group`只适配已有证据；`evaluate_stage_candidate`输出草案版本、参数指纹、逐谓词真/假/未知、候选与未知候选、历史分位上下界；`advance_stage_state/replay_stage_candidates`处理严格相邻确认、滞回和缺日中断。默认普通10%队列至少10只、收益可比率至少80%，缺证据不补值；晋级30%—50%跨过40%时高热谓词未知。阶段仅为 `offline_research_only`、`validated=false` 的待验草案，来源集中补采只能按当前留存回看。`as_known`模式要求每个交易日自己的带时区截止时间及完整首次可知证明，晚到材料不能进入早期时点。首次确认日在第2个满足日，结果不回填第1日；未知时只保留有日期的历史确认，不把旧阶段延续成当前。
 
+### 市场温度与下一交易日条件预案
+
+`GET /market/emotion?date=` 另增顶层 `market_outlook`，版本 `dated-market-outlook-v1`。原 `emotion/summary/sentiment`、留存快照模型及指纹保持原义；新字段是独立公开阈值的单日盘面观察，不是将上述离线六阶段草案转正。首屏显示新读数与条件预案，完整三轴指标、来源和留存功能按需展开。
+
+- `date/snapshot_id`绑定本次观察日和不可变行情代际。`temperature`含 `value/previous_value/delta/previous_date/scope/coverage_pct/calendar_valid/comparable_count/universe_expected_known/evidence_consistent`；温度固定同口径沪深上涨/(上涨+下跌+平盘)×100，不混入沪深京个股比例或队列反馈。当前可比率不足80%不判阶段，前日须为严格相邻同范围、有唯一广度记录且可比率达标的市场日；跨输入日期、范围或涨跌平数字冲突时待核验，缺档不跨日确认修复或退潮。
+- `temperature`另含 `universe_upper_bound/coverage_basis/observed_coverage_pct/universe_bound_known`。真实应有范围已知时使用该范围；否则只允许使用已取得的沪深主表数量作保守上界，分母取既有分母与上界的较大值，basis为 `retained_master_upper_bound`，不声称历史应有范围完整。应有范围未知且无有据上界时，basis为 `unbounded_observed_sample`、`coverage_pct=null`，保留观察温度和 `observed_coverage_pct`，阶段待核验且禁止开仓；前日与5日冰点历史同样约束，防止极少样本被误算为100%覆盖。
+- `stage={code,label,status,summary,reasons,conflicts,limitations}`。code为 `unknown/ice/repair/ebb/climax/broad_rise/mixed/divergence`，分别为待核验、冰点、修复、退潮、高潮、普涨、混沌、分化。阶段仅 `observation` 或 `unknown`，不声称完整周期已验证。混沌只用于已知方向矛盾，缺数据不默认混沌。冰点、修复、退潮、普涨沿用公开广度阈值；高潮额外要求沪深当日来源候选逐股原收盘及正成交量核验，完整来源涨停≥80且跌停≤5；来源缺档、冲突和空池不强算。`rules[]`返回版本化阈值。
+- `axes[]`并列指数环境、个股广度和短线价格反馈的 `id/label/state/state_label/evidence/scope`。四指数分别使用严格21日窗口，环境方向不合成价格收益；短线另含 `ordinary_group_ready`。普通10%同制度证据不足时，不能把全部昨日涨停队列价格反馈或混合制度晋级率当作该组精确接力结论。
+- `turnover={amount,previous_date,previous_amount,change_pct,expansion_threshold_pct,expanded,state,scope,reason,comparison_complete}` 与盘面总览使用同一沪深京股票成交额元值及严格相邻比较。显著放量阈值为20%，恰好达到也满足；缺失、重复或范围不可比时 `expanded=null`，不能当作不放量或允许开仓。
+- `bottom_watch` 含 `status:candidate|unconfirmed|unknown/confirmed:false/label/candidate_date/index_references/confirmation_conditions/invalidations/lookback_sessions/observations/history_complete/prior_ice_streak/recent_ice_count`。近5日观察只读T之前严格交易日，缺档中断连续计数。符合冰点后放量修复且指数低点有据时仅列候选；后续确认条件固定待观察，不能用未来价格确认T日底部。
+- `entry_gate={status:blocked|conditional|wait,label,reasons,release_conditions,blocked_conditions}`。冰点、退潮、关键数据不足或成交额比较未知时禁止开仓。冰点修复解禁要求显著放量及当日指数、广度核验；普通趋势日不一律要求20%放量，但成交额比较必须真实可比。任何放行仍为下一交易日条件清单。
+- `next_session={date,label,calendar_reason}`，date仅从已留存市场日历取严格相邻后一交易日；没有未来日历时为空并显示下一交易日，不用自然日T+1或工作日猜测。历史回看可显示已留存下一交易日的日期，但不得读取其价格来制定T日预案。
+- `plan={stance,label,summary,actions,scenarios,trigger_state,verification_mode,notice}`。actions固定 `open/add/bottom`，对应开仓、加仓、抄底；每项有 `status:blocked|avoid|wait|conditional/status_label/reason/triggers/invalidations/trigger_state`。scenarios为转强、分歧、转弱，各列观察、应对与失效。所有触发状态固定 `unobserved`，模式为 `manual_next_session`；没有盘中数据时不能标已满足。加仓须另核验已有持仓的原定失效条件，不读取或假造账户成本和仓位，不输出自动交易或承诺可成交。一字封板不代表下一日可买。
+- `watchlist={topics,stocks,coverage,empty_reason,topics_empty_reason}`：最多3个方向、每方向3只股、独立个股列表5只，角色为观察候选。股票须有T日唯一正原始收盘、正成交量和精确匹配的同日来源涨停证据；含 `instrument_id/name/code/close/change_pct/board_count/evidence_date/role/reason/trigger/invalidations/source/price_basis/event_basis/source_fingerprint`。排序依来源连板数、当日成交额、代码；题材按指定日成员下已确认涨停下界排序，重叠分别计，不自动声称真实上涨原因或龙头。缺历史成员仅保留有据个股，不借当前成员回填历史。
+- `provenance`保留新规则、输入指纹、实际计算时间、行情代际及 `mode=retained_retrospective`；当前留存材料回看不等于T日当时可知或已经发布盘前计划。指纹包括实际阶段输入、事件核验、三轴和候选；不覆盖原sentiment指纹。新预案仅读发布数据，不联网、不写业务表、不创建任务。已有手动情绪快照仅保存原三轴证据，不声称已留存此顶层预案。
+
+涨停梯队各股票行另外增加 `snapshot_id/pattern_events/pattern_status/pattern_date/pattern_as_of/pattern_coverage`，形态使用同一 `verified-source-close-pool-and-raw-ohlc-v1` 判定，沿用一次有限三日批量报价和小日历，不逐股展开全历史。前端必须同时匹配观察日、行及事件代际和原价basis。主涨停类显示地天板、一字涨停；失败组缺独立同日跌停状态时保持未知，不推测一字跌停。连板/概念/当日主线/反包/20cm卡片共用同一标记，不改高度、分类、原事件或策略。使用说明见[市场温度与下一交易日计划](../docs/市场温度与下一交易日计划.md)。
+
 ### 手动留存复盘上下文
 
 - `POST /market/sentiment-snapshots` 仅接受 `{date,expected_input_fingerprint}`；指纹必须与页面当前64位小写十六进制值一致，拒绝客户端payload、模型、时间和其他字段。服务器在SQLite写事务外从当前不可变发布源重算上下文，输入已变化时409且 `detail.current_input_fingerprint` 返回当前指纹，不能静默保存另一份证据。仅手动调用，不随GET浏览、日期切换、任务或定时自动创建。

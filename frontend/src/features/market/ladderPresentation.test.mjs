@@ -18,6 +18,7 @@ const {
   filterLadderRows,
   ladderClassificationCount,
   themeCountText,
+  ladderPatternTags,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
@@ -162,4 +163,59 @@ assert.equal(
   "数量待核验",
 );
 assert.equal(themeCountText({}), "数量待核验");
+const observed = "2026-10-21";
+const pattern = {
+  kind: "earth_to_sky",
+  date: observed,
+  bar_date: observed,
+  basis: "verified-source-close-pool-and-raw-ohlc-v1",
+  snapshot_id: "synthetic-generation",
+  raw_price_basis: "none",
+  raw_volume: 100,
+  raw_ohlc: { open: 10, high: 11, low: 9, close: 11 },
+  source: "synthetic-source",
+};
+const marked = {
+  date: observed,
+  pattern_date: observed,
+  pattern_as_of: observed,
+  snapshot_id: "synthetic-generation",
+  pattern_events: [pattern, structuredClone(pattern)],
+  pattern_status: { earth_to_sky: { state: true, status: "confirmed" } },
+};
+assert.deepEqual(
+  ladderPatternTags(marked, observed, "synthetic-generation").map((item) => item.label),
+  ["地天板"],
+  "only backend-confirmed same-day shape is rendered and duplicates collapse",
+);
+for (const [key, value] of [
+  ["date", "2026-10-20"],
+  ["pattern_date", "2026-10-20"],
+  ["pattern_as_of", "2026-10-22"],
+  ["snapshot_id", "older-generation"],
+  ["pattern_status", {}],
+  ["pattern_events", null],
+]) {
+  assert.deepEqual(ladderPatternTags({ ...marked, [key]: value }, observed, "synthetic-generation"), []);
+}
+for (const [key, value] of [
+  ["kind", "constructor"],
+  ["basis", "price-change-cutoff"],
+  ["date", "2026-10-20"],
+  ["bar_date", "2026-10-22"],
+  ["snapshot_id", "older-generation"],
+  ["raw_volume", 0],
+  ["raw_price_basis", "forward"],
+  ["raw_ohlc", { open: 10, high: 11, low: null, close: 11 }],
+]) {
+  assert.deepEqual(ladderPatternTags({ ...marked, pattern_events: [{ ...pattern, [key]: value }] }, observed, "synthetic-generation"), []);
+}
+assert.deepEqual(ladderPatternTags(marked, "2026-10-22", "synthetic-generation"), []);
+assert.deepEqual(ladderPatternTags(marked, observed, null), []);
+assert.deepEqual(ladderPatternTags({ ...marked, pattern_events: [] }, observed, "synthetic-generation"), []);
+assert.deepEqual(ladderPatternTags({ date: observed, change_pct: 10, open: 11, close: 11 }, observed, "synthetic-generation"), [], "display OHLC/10% return never invents a badge");
+for (const kind of ["one_price_limit_up", "one_price_limit_down"]) {
+  const row = { ...marked, pattern_events: [{ ...pattern, kind }], pattern_status: { [kind]: { state: true, status: "confirmed" } } };
+  assert.equal(ladderPatternTags(row, observed, "synthetic-generation")[0].label, kind === "one_price_limit_up" ? "一字涨停" : "一字跌停");
+}
 console.log("ladder presentation cases passed");

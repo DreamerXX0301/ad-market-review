@@ -29,6 +29,7 @@ import {
   filterLadderRows,
   groupLadderRows,
   ladderClassificationCount,
+  ladderPatternTags,
   ladderTopics,
   themeCountText,
 } from "./ladderPresentation";
@@ -77,6 +78,8 @@ function LadderStockCard({
   failed = false,
   showHeight = false,
   displayTopic,
+  observationDate,
+  snapshotId,
 }: {
   row: Row;
   themeIndex: Map<string, Row>;
@@ -86,7 +89,10 @@ function LadderStockCard({
   failed?: boolean;
   showHeight?: boolean;
   displayTopic?: LadderTopic;
+  observationDate: string;
+  snapshotId: unknown;
 }) {
+  const patterns = ladderPatternTags(row, observationDate, snapshotId);
   const attribution = ladderCardAttribution(row, displayTopic);
   const primaryConcept = attribution.conceptTopics[0];
   const otherTopics = [
@@ -133,6 +139,15 @@ function LadderStockCard({
               {row.name || row.code || row.instrument_id || "名称待核验"}
             </strong>
           </button>
+          {patterns.map((pattern) => (
+            <span
+              key={pattern.kind}
+              className={`ladder-pattern-tag ${pattern.kind}`}
+              title={pattern.detail}
+            >
+              {pattern.label}
+            </span>
+          ))}
           <CopyStockCode code={row.code} instrumentId={row.instrument_id} />
         </div>
         <div className="ladder-stock-status">
@@ -275,6 +290,8 @@ function ClassificationSection({
   failed = false,
   themeIndex,
   sort,
+  observationDate,
+  snapshotId,
 }: {
   id: string;
   title: string;
@@ -290,6 +307,8 @@ function ClassificationSection({
   failed?: boolean;
   themeIndex: Map<string, Row>;
   sort: MarketSort;
+  observationDate: string;
+  snapshotId: unknown;
 }) {
   const count = ladderClassificationCount(allRows, coverage);
   return (
@@ -319,6 +338,8 @@ function ClassificationSection({
               selectedTopic={selectedTopic}
               failed={failed}
               showHeight
+              observationDate={observationDate}
+              snapshotId={snapshotId}
             />
           ))}
         </div>
@@ -448,6 +469,8 @@ export default function LimitLadder({
           selectedTopic={selectedTopic}
           showHeight={showHeight}
           displayTopic={displayPlan.topicsByInstrument.get(ladderStockKey(row))}
+          observationDate={date}
+          snapshotId={data?.snapshot_id}
         />
       ))}
     </div>
@@ -762,6 +785,7 @@ export default function LimitLadder({
                 rows={main}
                 query={query}
                 onStock={onStock}
+                snapshotId={data?.snapshot_id}
               />
             )}
           </div>
@@ -786,6 +810,8 @@ export default function LimitLadder({
                 failed={section.failed}
                 themeIndex={themeIndex}
                 sort={sort}
+                observationDate={date}
+                snapshotId={data?.snapshot_id}
               />
             ))}
           </div>

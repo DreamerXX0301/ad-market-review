@@ -36,6 +36,7 @@ for (const [name, replacement] of Object.entries({
   ),
   "../../components/UI": ui,
   "./dailyMainlinePresentation": helpers,
+  "./ladderPresentation": encode(await compile("./ladderPresentation.ts")),
   "../../components/CopyStockCode": encode(
     `import {jsx} from ${JSON.stringify(runtime)};export default ()=>jsx('span',{children:'复制代码'});`,
   ),
@@ -73,6 +74,25 @@ assert.doesNotMatch(
   /热门概念/,
   "a concept is not silently converted into a daily group",
 );
+const shapeStock = {
+  ...stock,
+  date: "2026-01-05",
+  snapshot_id: "synthetic-generation",
+  pattern_date: "2026-01-05",
+  pattern_as_of: "2026-01-05",
+  pattern_status: { earth_to_sky: { state: true, status: "confirmed" } },
+  pattern_events: [{
+    kind: "earth_to_sky", date: "2026-01-05", bar_date: "2026-01-05",
+    snapshot_id: "synthetic-generation", basis: "verified-source-close-pool-and-raw-ohlc-v1",
+    raw_price_basis: "none", raw_volume: 100,
+    raw_ohlc: { open: 9, high: 11, low: 9, close: 11 }, source: "synthetic-source",
+  }],
+};
+const shapeProps = { date: "2026-01-05", rows: [shapeStock], snapshotId: "synthetic-generation", onStock: () => {} };
+html = renderToStaticMarkup(createElement(DailyMainlines, shapeProps));
+assert.match(html, /class="ladder-pattern-tag earth_to_sky"/);
+html = renderToStaticMarkup(createElement(DailyMainlines, { ...shapeProps, snapshotId: "another-generation" }));
+assert.doesNotMatch(html, /class="ladder-pattern-tag/);
 const item = {
   ...emptyMainlineAttribution(),
   mainline_name: "测试归属",

@@ -13,6 +13,7 @@ import re
 from app.services.market_history import resolve_reference
 from app.services.strategy_limits import LimitConditionEvidence, quote_index
 from app.services.ladder_age import BASIS as AGE_BASIS, quote_age_evidence
+from app.services.chart_patterns import attach_chart_patterns
 
 REGIME_SOURCES = [
     {'board': 'chinext', 'effective_since': '2020-08-24', 'url': 'https://www.szse.cn/aboutus/trends/news/t20200821_580924.html'},
@@ -105,7 +106,7 @@ def _coverage(day, previous, before, states, reason):
             'complete': counts['unknown'] == 0, 'reason': reason}
 
 
-def build_ladder(market, status, day, reference, rows, current_events):
+def build_ladder(market, status, day, reference, rows, current_events, *, include_patterns=True):
     calendar = sorted(set(value for value in market.calendar() if value <= day))
     position = calendar.index(day)
     previous = calendar[position - 1] if position else None
@@ -153,6 +154,44 @@ def build_ladder(market, status, day, reference, rows, current_events):
                     and ((symbol.endswith('.SZ') and symbol.startswith(('300','301')))
                          or (symbol.endswith('.SH') and symbol.startswith(('688','689'))))]
     ages=quote_age_evidence(market,status,age_candidates,calendar,day)
+    # Reuse the chart's pure pattern evaluator, but only for this observation
+    # day and the already-batched three-day raw quotes. No per-stock chart or
+    # full-history read is needed for a card badge. A generation change keeps
+    # these additive display facts unknown rather than mixing publications.
+    patterns = {}
+    if include_patterns:
+        pattern_snapshot = status.get('snapshot_id')
+        if proof.snapshot_id != pattern_snapshot or market.status().get('snapshot_id') != pattern_snapshot:
+            pattern_snapshot = None
+        for symbol in candidates:
+            pattern_rows = [dict(value) for value in quotes.get(symbol, {}).values() if value is not None]
+            quote = next((value for value in pattern_rows if value.get('date') == day), {})
+            current = current_rows.get(symbol) or {}
+            symbol_snapshot = pattern_snapshot
+            if current.get('snapshot_id') is not None and current['snapshot_id'] != pattern_snapshot:
+                symbol_snapshot = None
+            # history_for_instruments intentionally returns raw Parquet columns
+            # without joined action flags. The selected-day panel already has
+            # those fixed-generation flags; copy only this metadata after all
+            # source OHLCV values and the exact snapshot/date agree. Never use
+            # the panel to replace an absent/duplicate historical quote.
+            if (quote and current.get('snapshot_id') == pattern_snapshot
+                    and current.get('date') == day
+                    and all(current.get(key) == quote.get(key) for key in ('open', 'high', 'low', 'close', 'volume'))):
+                for key in ('corporate_action', 'corporate_action_coverage_known'):
+                    if key not in quote:
+                        quote[key] = current.get(key)
+                    elif key in current and quote[key] != current[key]:
+                        quote['corporate_action_coverage_known'] = False
+            chart = {'instrument': master.get(symbol, {}), 'snapshot_id': symbol_snapshot,
+                     'as_of': day, 'period': 'D',
+                     'bars': [{'date': day, 'low': quote.get('low'), 'close': quote.get('close')}]}
+            evaluated = attach_chart_patterns(chart, raw_rows=pattern_rows,
+                                             calendar=calendar, closing_states={day: {'up': states[symbol][day]}},
+                                             evaluation_dates=[day])
+            patterns[symbol] = {key: evaluated['bars'][0][key] for key in ('pattern_events', 'pattern_status')}
+            patterns[symbol].update(pattern_date=day, pattern_as_of=day,
+                                    pattern_coverage=evaluated['pattern_coverage'])
     local, membership_coverage = resolve_reference('sectors', day, status, reference)
     topics = local.get('topics', []) if membership_coverage.get('selected_date_available') else []
     by_member = {}
@@ -170,7 +209,8 @@ def build_ladder(market, status, day, reference, rows, current_events):
         identity = master.get(symbol, {})
         first = _time(event.get('first_limit_time'))
         last = _time(event.get('last_limit_time') or event.get('limit_up_time'))
-        return {**current, 'instrument_id': symbol, 'code': symbol[:6], 'name': current.get('name') or event.get('name') or identity.get('name') or symbol,
+        return {**current, **patterns.get(symbol, {}), 'snapshot_id': status.get('snapshot_id'),
+                'instrument_id': symbol, 'code': symbol[:6], 'name': current.get('name') or event.get('name') or identity.get('name') or symbol,
                 'date': day, 'board_count': event.get('continue_day_cnt', event.get('board_count', event.get('board_num'))),
                 'limit_time': last, 'first_limit_time': first, 'last_limit_time': last,
                 'reason': event.get('limit_up_reason'), 'seal_money': event.get('seal_money'),
