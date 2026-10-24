@@ -7,6 +7,7 @@ import { dateTime, percent, tone } from "../../lib/format";
 import { Empty, ErrorBox, Loading, Modal } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
 import BoardTags from "./BoardTags";
+import { ladderCardAttribution } from "./ladderBoardPresentation";
 import {
   buildDailyMainlineGroups,
   editableAttribution,
@@ -541,6 +542,14 @@ export default function DailyMainlines({
       .join(" ")
       .toLocaleLowerCase()
       .includes(search);
+  const visibleGroups = plan.groups
+    .map((group) => ({
+      ...group,
+      visible: group.items.filter(({ stock, record }) =>
+        matches(stock, record),
+      ),
+    }))
+    .filter((group) => group.visible.length > 0);
   return (
     <section className="daily-mainlines">
       <header className="daily-mainline-heading">
@@ -583,44 +592,51 @@ export default function DailyMainlines({
               description="主线记录不补造涨停事件；池外记录在下方单独保留。"
             />
           )}
+          {result.data && plan.total > 0 && !visibleGroups.length && (
+            <Empty
+              title="没有匹配的当日主线样本"
+              description="请调整股票名称、代码或主线关键词；上方总数仍为当日完整样本。"
+            />
+          )}
           {result.data &&
-            plan.groups.map((group) => {
-              const visible = group.items.filter(({ stock, record }) =>
-                matches(stock, record),
-              );
-              if (!visible.length) return null;
+            visibleGroups.map((group) => {
               return (
                 <section className="daily-mainline-group" key={group.key}>
                   <header>
                     <h3>{group.name}</h3>
                     <span>
-                      本组 {visible.length}
+                      本组 {group.visible.length}
                       {search ? ` / ${group.items.length}` : ""} 只
                     </span>
                   </header>
                   <div className="daily-mainline-grid">
-                    {visible.map(({ stock, record }) => (
+                    {group.visible.map(({ stock, record }) => (
                       <article
                         className="daily-mainline-card"
                         key={stock.instrument_id}
                       >
                         <div className="daily-mainline-card-title">
-                          <button onClick={() => onStock(stock.instrument_id)}>
+                          <button
+                            className="daily-mainline-stock-name"
+                            onClick={() => onStock(stock.instrument_id)}
+                          >
                             <strong>{stock.name || stock.instrument_id}</strong>
                           </button>
-                          <BoardTags
-                            row={stock}
-                            date={date}
-                            snapshotId={snapshotId}
-                          />
                           <CopyStockCode
                             code={stock.code}
                             instrumentId={stock.instrument_id}
                           />
-                          <span className={tone(stock.change_pct)}>
+                          <span
+                            className={`daily-mainline-change ${tone(stock.change_pct)}`}
+                          >
                             {percent(stock.change_pct)}
                           </span>
                         </div>
+                        <BoardTags
+                          row={stock}
+                          date={date}
+                          snapshotId={snapshotId}
+                        />
                         <div className="daily-mainline-tags">
                           <span>
                             {
@@ -634,7 +650,9 @@ export default function DailyMainlines({
                           ))}
                         </div>
                         <p className="daily-mainline-muted">
-                          来源原因：{stock.reason || "待核验"}
+                          来源原因：
+                          {ladderCardAttribution(stock).sourceReason ||
+                            "待核验"}
                           （池中原文，与手工主线分开）
                         </p>
                         {record?.attributions.length ? (
@@ -652,7 +670,9 @@ export default function DailyMainlines({
                           </details>
                         ) : (
                           <p className="daily-mainline-muted">
-                            尚无当日主线证据，行业和概念不会代填。
+                            {record?.action === "revoke"
+                              ? "当前当日主线归属已撤销；历史证据与修订可在下方审计中查阅。"
+                              : "尚无当日主线证据，行业和概念不会代填。"}
                           </p>
                         )}
                         <button
