@@ -310,6 +310,49 @@ assert.deepEqual(
   attributionBefore,
   "rendering industry, concepts and source reason preserves source facts",
 );
+const markedRow = (code, name, kind, eventDay = props.date) => stock(code, name, "09:40:00", {
+  date: props.date,
+  snapshot_id: "synthetic-generation",
+  pattern_date: props.date,
+  pattern_as_of: props.date,
+  pattern_status: { [kind]: { state: true, status: "confirmed" } },
+  pattern_events: [{
+    kind,
+    date: eventDay,
+    bar_date: eventDay,
+    basis: "verified-source-close-pool-and-raw-ohlc-v1",
+    snapshot_id: "synthetic-generation",
+    raw_price_basis: "none",
+    raw_volume: 100,
+    raw_ohlc: { open: 10, high: 11, low: 9, close: 11 },
+    source: "synthetic-source",
+  }],
+});
+const shapes = [
+  markedRow("600101", "地天合成样本", "earth_to_sky"),
+  markedRow("600102", "一字合成样本", "one_price_limit_up"),
+  markedRow("600103", "旧日不标样本", "earth_to_sky", "2026-10-20"),
+];
+const shapeMarkup = renderToStaticMarkup(createElement(LimitLadder, {
+  ...props,
+  data: { snapshot_id: "synthetic-generation", items: shapes, rebound_items: [shapes[0]] },
+}));
+assert.equal((shapeMarkup.match(/class="ladder-pattern-tag earth_to_sky"/g) || []).length, 2, "height cards and rebound cards share the same dated shape badge");
+assert.equal((shapeMarkup.match(/class="ladder-pattern-tag one_price_limit_up"/g) || []).length, 1);
+assert.match(shapeMarkup, /地天合成样本<\/strong><\/button><span class="ladder-pattern-tag earth_to_sky"/);
+assert.match(shapeMarkup, /一字涨停<\/span>/);
+assert.match(shapeMarkup, /不还原首次触板或开板回封路径/);
+assert.match(shapeMarkup, /synthetic-source/);
+const nextDayMarkup = renderToStaticMarkup(createElement(LimitLadder, {
+  ...props, date: "2026-10-22",
+  data: { snapshot_id: "synthetic-generation", items: shapes },
+}));
+assert.doesNotMatch(nextDayMarkup, /class="ladder-pattern-tag/);
+const otherGenerationMarkup = renderToStaticMarkup(createElement(LimitLadder, {
+  ...props,
+  data: { snapshot_id: "another-generation", items: shapes },
+}));
+assert.doesNotMatch(otherGenerationMarkup, /class="ladder-pattern-tag/);
 console.log(
   "limit ladder: all supplemental sections visible, counts/uncertainty/sorting/navigation retained; industry-first cards, separate concepts and literal source reasons passed",
 );

@@ -306,6 +306,27 @@
   gap: 5px;
   font-size: 10px;
 }
+.ladder-pattern-tag {
+  border: 1px solid color-mix(in srgb, var(--red) 35%, var(--border));
+  background: color-mix(in srgb, var(--red) 9%, var(--surface));
+  color: var(--red);
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.ladder-pattern-tag.earth_to_sky {
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--border));
+  background: color-mix(in srgb, var(--amber) 10%, var(--surface));
+  color: var(--amber);
+}
+.ladder-pattern-tag.one_price_limit_down {
+  border-color: color-mix(in srgb, var(--green) 35%, var(--border));
+  background: color-mix(in srgb, var(--green) 9%, var(--surface));
+  color: var(--green);
+}
 .ladder-stock-change {
   font-weight: 500;
   font-variant-numeric: tabular-nums;

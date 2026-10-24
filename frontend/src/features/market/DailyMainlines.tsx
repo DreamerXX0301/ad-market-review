@@ -6,6 +6,7 @@ import type { Row } from "../../lib/api";
 import { dateTime, percent, tone } from "../../lib/format";
 import { Empty, ErrorBox, Loading, Modal } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
+import { ladderPatternTags } from "./ladderPresentation";
 import {
   buildDailyMainlineGroups,
   editableAttribution,
@@ -507,11 +508,13 @@ export default function DailyMainlines({
   rows,
   query = "",
   onStock,
+  snapshotId,
 }: {
   date: string;
   rows: Row[];
   query?: string;
   onStock: (id: string) => void;
+  snapshotId?: unknown;
 }) {
   const result = useApi<MainlineList>(
     date ? `/market/mainlines?date=${encodeURIComponent(date)}` : null,
@@ -605,6 +608,17 @@ export default function DailyMainlines({
                           <button onClick={() => onStock(stock.instrument_id)}>
                             <strong>{stock.name || stock.instrument_id}</strong>
                           </button>
+                          {ladderPatternTags(stock, date, snapshotId).map(
+                            (pattern) => (
+                              <span
+                                key={pattern.kind}
+                                className={`ladder-pattern-tag ${pattern.kind}`}
+                                title={pattern.detail}
+                              >
+                                {pattern.label}
+                              </span>
+                            ),
+                          )}
                           <CopyStockCode
                             code={stock.code}
                             instrumentId={stock.instrument_id}

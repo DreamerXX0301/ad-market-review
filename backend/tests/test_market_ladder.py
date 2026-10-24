@@ -221,3 +221,84 @@ def test_legacy_complete_pool_still_requires_every_candidate_to_resolve(market):
     result = build(market)
     assert result['main_coverage']['source_pool_complete'] is False
     assert {row['instrument_id'] for row in result['items']} == {A, C, OTHER}
+
+
+def _shape_quote(market, *, one_price=False):
+    market.history[A][-2].update(open=10, high=10, low=10, close=10, price_basis='none')
+    market.history[A][-1].update(open=11 if one_price else 9.5, high=11, low=11 if one_price else 9,
+                               close=11, price_basis='none', corporate_action=False,
+                               corporate_action_coverage_known=True)
+    market.ref['_supplement']['annual_pools'][TODAY]['items'][0]['last_price'] = 11
+
+
+@pytest.mark.parametrize('one_price,kind', [(False, 'earth_to_sky'), (True, 'one_price_limit_up')])
+def test_ladder_patterns_reuse_exact_chart_evaluator_and_existing_batch(market, one_price, kind):
+    from app.services.chart_patterns import attach_chart_patterns
+    _shape_quote(market, one_price=one_price)
+    result = build(market)
+    row = next(item for item in result['items'] if item['instrument_id'] == A)
+    assert row['pattern_date'] == row['pattern_as_of'] == TODAY
+    assert row['snapshot_id'] == 'fixture'
+    assert [item['kind'] for item in row['pattern_events']] == [kind]
+    assert row['pattern_status'][kind]['state'] is True
+    chart = attach_chart_patterns({'instrument': market.master[0], 'snapshot_id': 'fixture',
+                                  'as_of': TODAY, 'period': 'D', 'bars': [dict(market.history[A][-1])]},
+                                 raw_rows=market.history[A][-3:], calendar=DAYS,
+                                 closing_states={TODAY: {'up': row['limit_up_evidence']}}, evaluation_dates=[TODAY])
+    assert row['pattern_events'] == chart['bars'][0]['pattern_events']
+    assert len(market.history_calls) == 1
+    assert market.history_calls[0][1:] == (DAYS[-3], TODAY)
+    rebound = next(item for item in result['rebound_items'] if item['instrument_id'] == A)
+    assert rebound['pattern_events'] == row['pattern_events']
+
+
+@pytest.mark.parametrize('mode', ['previous_missing', 'listing_missing', 'ipo', 'action', 'action_unknown', 'one_cent_source', 'outside_band', 'snapshot_changed'])
+def test_ladder_earth_shape_does_not_relax_chart_guards(market, mode, monkeypatch):
+    _shape_quote(market)
+    if mode == 'previous_missing': market.history[A] = [item for item in market.history[A] if item['date'] != DAYS[-2]]
+    elif mode == 'listing_missing': market.master[0]['list_date'] = None
+    elif mode == 'ipo': market.master[0]['list_date'] = DAYS[-4]
+    elif mode == 'action': market.history[A][-1]['corporate_action'] = True
+    elif mode == 'action_unknown': market.history[A][-1]['corporate_action_coverage_known'] = False
+    elif mode == 'one_cent_source': market.ref['_supplement']['annual_pools'][TODAY]['items'][0]['last_price'] = 10.99
+    elif mode == 'outside_band': market.history[A][-1]['low'] = 8.99
+    elif mode == 'snapshot_changed': monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': 'newer', 'data_end': TODAY})
+    initial_status = {'snapshot_id': 'fixture', 'data_end': TODAY}
+    result = ladder.build_ladder(market, initial_status, TODAY, market.ref, market.rows(), {})
+    row = next(item for item in result['items'] if item['instrument_id'] == A)
+    assert not row['pattern_events']
+    assert row['pattern_status']['earth_to_sky']['state'] is None
+
+
+def test_ladder_action_metadata_comes_only_from_matching_fixed_generation_panel(market):
+    _shape_quote(market)
+    market.history[A][-1].pop('corporate_action')
+    market.history[A][-1].pop('corporate_action_coverage_known')
+    rows = market.rows()
+    current = next(item for item in rows if item['instrument_id'] == A)
+    current.update(snapshot_id='fixture', corporate_action=False, corporate_action_coverage_known=True)
+    result = ladder.build_ladder(market, market.status(), TODAY, market.ref, rows, {})
+    row = next(item for item in result['items'] if item['instrument_id'] == A)
+    assert row['pattern_status']['earth_to_sky']['state'] is True
+    assert 'corporate_action' not in market.history[A][-1], 'display metadata must not modify retained source rows'
+    current['snapshot_id'] = 'unrelated-generation'
+    result = ladder.build_ladder(market, market.status(), TODAY, market.ref, rows, {})
+    row = next(item for item in result['items'] if item['instrument_id'] == A)
+    assert row['pattern_status']['earth_to_sky']['state'] is None
+    current.update(snapshot_id='fixture', low=8.99)
+    result = ladder.build_ladder(market, market.status(), TODAY, market.ref, rows, {})
+    row = next(item for item in result['items'] if item['instrument_id'] == A)
+    assert row['pattern_status']['earth_to_sky']['state'] is None
+
+
+def test_outlook_can_skip_card_pattern_display_work_without_changing_ladder_facts(market, monkeypatch):
+    _shape_quote(market)
+    expected = build(market)
+    def forbidden(*args, **kwargs): raise AssertionError('outlook requested no card pattern evaluation')
+    monkeypatch.setattr(ladder, 'attach_chart_patterns', forbidden)
+    result = ladder.build_ladder(market, market.status(), TODAY, market.ref, market.rows(), {}, include_patterns=False)
+    for key in ('items', 'rebound_items', 'failed_items', 'twenty_cm_items'):
+        without_patterns = lambda rows: [{name: value for name, value in item.items() if not name.startswith('pattern_')} for item in rows]
+        assert without_patterns(result[key]) == without_patterns(expected[key])
+    assert result['theme_counts'] == expected['theme_counts']
+    assert result['main_coverage'] == expected['main_coverage']

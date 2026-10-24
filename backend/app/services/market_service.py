@@ -228,11 +228,12 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         from app.services.emotion import describe_emotion
         history=market.breadth_history(day)
         current=next((item for item in history if item.get('date')==day),None)
-        previous=None;previous_day=None
+        previous=None;previous_day=None;universe_upper_bound=None
         if current:
             # One cached series supplies both dates with the same SH/SZ scope.
             # Do not compare it to the overview's SH/SZ/BJ aggregate.
             master=[item for item in market.instruments(limit=10000) if item.get('kind')=='stock' and item.get('instrument_id','').endswith(('.SH','.SZ'))]
+            universe_upper_bound=len(master) if master else None
             identities=[item for item in master if item.get('list_date') and item['list_date']<=day and (not item.get('end_date') or item['end_date']>=day)]
             expected=len(identities) if all(item.get('list_date') for item in master) else None
             observed=current.get('observed',sum(current.get(key,0) for key in ('up','down','flat','unknown')))
@@ -257,6 +258,10 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base['emotion']=emotion
         from app.services.market_sentiment import describe_sentiment
         base['sentiment']=describe_sentiment(market,reference,rows,day)
+        from app.services.market_outlook import build_market_outlook
+        base['market_outlook']=build_market_outlook(market,status,day,reference,rows,breadth,emotion,
+                                                     base['sentiment'],history,previous_breadth=previous,
+                                                     universe_upper_bound=universe_upper_bound)
         base["summary"] = {"temperature":emotion['temperature'],"cycle":emotion['phase'],'breadth_state':emotion['breadth_state'],'comparable_count':emotion['comparable_count'],'comparable_coverage_pct':emotion['comparable_coverage']*100,'temperature_delta':emotion['temperature_delta'],"model":emotion['model'],"formula":emotion['formula']}
         base["items"] = [{"name": "上涨家数", "value": breadth["up"], "reference": "普涨参考3000"}, {"name": "下跌家数", "value": breadth["down"], "reference": "已留存可比样本"}, {"name": "收盘涨停", "value": len(events["limitup"]) if "limitup" in events else None}, {"name": "收盘跌停", "value": len(events["limitdown"]) if "limitdown" in events else None}, {"name": "炸板池", "value": len(events["breakpool"]) if "breakpool" in events else None}]
         base["history"] = history
