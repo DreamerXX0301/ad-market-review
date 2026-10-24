@@ -1,4 +1,6 @@
-/** Read-only local API/React contract audit; never configures or verifies source credentials. */
+/** Local GET API/React audit for an isolated data copy. Reading a research report
+ * renews its cache TTL and retention pin; this is not a no-write business audit.
+ * Never configures or verifies source credentials or creates user tasks. */
 import fs from "node:fs/promises";
 const base = process.env.SHIXU_API_BASE || "http://127.0.0.1:8788/api/v1";
 const checks = [];
@@ -1157,7 +1159,7 @@ try {
 }
 const report = {
   scope:
-    "frontend local read-only API contract audit; no source authentication/configuration, no trade or sync creation",
+    "frontend local GET API contract audit for an isolated data copy; research report reads renew cache TTL and retention pins; no source authentication/configuration, no trade or sync creation",
   checked_at: new Date().toISOString(),
   pages: 15,
   passed: checks.filter((c) => c.passed).length,

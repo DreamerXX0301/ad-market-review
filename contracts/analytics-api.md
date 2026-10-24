@@ -81,11 +81,11 @@
 
 ### 情绪三轴上下文
 
-`sentiment.model=dated-three-axis-context-v1`，原全体昨日涨停队列口径保留在 `market/short_term`，并返回 `legacy_cohort_model`。新增指数环境、制度分组和证据摘要，不合成统一温度或正式六阶段。
+`sentiment.model=dated-three-axis-context-v1`，原全体昨日涨停队列口径保留在 `market/short_term`，并返回 `legacy_cohort_model`。新增指数环境、制度分组和证据摘要；三轴对象不合成统一温度，也不确认离线六阶段。独立的顶层 `market_outlook` 温度及单日阶段见下节。
 
 - `index_environment.indices[]` 按四个指数分别返回 `instrument_id/name/date/state/state_label/scope`、`sample_count/observed_count/unknown_count/coverage_pct`、窗口边界、缺失/重复日期、`window_fingerprint` 与同形 `metrics[]`。指标键是 `index_daily_return_pct/index_20d_return_pct/index_ma20_distance_pct/index_20d_volatility_pct`。后3项必须有T及T−20之间21个严格市场交易日唯一有效收盘，不能用最近21根替代；MA20按最后20个收盘，波动为20个日对数收益的样本标准差×100、ddof=1、未年化。当前日缺失不退回更早报价；来源冲突、无效日历或预热不足保留null。收益和相对MA可为负，波动不按0—100比例封顶。
 - `short_term.metrics` 增加 `positive_ratio_pct`，分母为收益有效队列，不称完整队列正反馈率。`short_term.groups[]` 按P日有据身份冻结，含 `id/label/state/state_label/scope`、同形指标、`sample_count/observed_count/unknown_count/coverage_pct`、`candidate_count/confirmed_count/unverified_count`、`unallocated_candidate_count`、`cohort_source_complete/identity_complete/current_identity_unknown_count`、`promoted_count/failed_count/promotion_unknown_count`、`cohort_fingerprint`、`promotion_bounds_pct/positive_ratio_bounds_pct/median_bounds_pct` 和 `promotion_bounds_reason`。
-- 分组ID为 `ordinary_10/twenty_20/thirty_30/st/listing/unknown`，默认 `default_group_id=ordinary_10`。普通组必须有P日明确非ST证据及上市阶段排除，不能从当前名称或涨幅猜测。T日身份不明或已变制度时，组内T日收益/晋级保留未知；全体队列的独立价格观察仍保留。ST单列但不假定统一涨跌幅；上市前五个留存市场日作保守隔离，不声称各市场新股例外完全相同。存在P日未分组候选时，不能证明普通组完整分母。
+- 分组ID为 `ordinary_10/twenty_20/thirty_30/st/listing/unknown`，返回 `default_group_id=ordinary_10` 供严格同制度分析使用，界面价格观察默认展示全部队列。普通组必须有P日明确非ST证据及上市阶段排除，不能从当前名称或涨幅猜测。T日身份不明或已变制度时，原组 `metrics` 中严格同制度子样本的T日收益/晋级保留未知；全体队列及下述 `cohort_price_feedback` 的独立价格观察仍保留有效价格。ST单列但不假定统一涨跌幅；上市前五个留存市场日作保守隔离，不声称各市场新股例外完全相同。存在P日未分组候选时，不能证明普通组完整分母。
 - `short_term.groups[].cohort_price_feedback` 将昨日冻结分组的今日价格反馈与严格同制度接力分开，版本 `previous-group-price-feedback-v1`。含 `group_id/date/cohort_date/scope/price_basis/sample_count/observed_count/unknown_count/coverage_pct/state/state_label/cohort_source_complete/identity_complete/current_identity_unknown_count/metrics/notice`。内部核验成员保留独立 `price_return_pct`，不公开展开成员；今日制度身份未知或改变不单独剔除有效价格，缺价、停牌或公司行动不可比仍为null。均幅、中位数和价格正反馈按此独立样本计算，不能把今日继续涨停者的均幅称作昨日全队列均幅。
 - 原组 `metrics` 保留严格同制度子样本语义；新价格对象不能替代晋级区间或被离线草案用作晋级证据。价格覆盖100%仅指P日已确认分组成员，不代表来源全集或分组完整。规则版本为 `descriptive-context-v2`，相应输入及队列指纹更新；历史手动留存记录原样保留，新保存按新指纹核验。界面以新对象展示价格反馈，严格接力与缺口按需展开；旧快照缺新对象时明确标为可比子样本观察。
 - `promotion_bounds_pct={lower,upper}` 的单位是百分数，仅昨日全集和该组分母可证明时返回 `[A/N,(A+U)/N]×100`；未知不能取中点。U=0才有精确 `promotion_rate_pct`。缺完整分母返回null并解释。正反馈区间把收益未知分别按全负/全正计，中位数区间把未知放在排序两端；中位数某端无界时为null，不能当0。各组仅分配已确认P日成员，未确认候选另列 `unallocated_candidate_count`，不能把分组相加当原始来源全集。
@@ -95,7 +95,7 @@
 
 ### 市场温度与下一交易日条件预案
 
-`GET /market/emotion?date=` 另增顶层 `market_outlook`，版本 `dated-market-outlook-v1`。原 `emotion/summary/sentiment`、留存快照模型及指纹保持原义；新字段是独立公开阈值的单日盘面观察，不是将上述离线六阶段草案转正。首屏显示新读数与条件预案，完整三轴指标、来源和留存功能按需展开。
+`GET /market/emotion?date=` 另增顶层 `market_outlook`，版本 `dated-market-outlook-v1`。顶层预案使用自己的规则及输入指纹，不覆盖 `sentiment` 指纹；本轮 `sentiment` 新计算使用上节的 `descriptive-context-v2`，相应价格对象和指纹按该版本更新，旧手动留存内容原样保留。新字段是独立公开阈值的单日盘面观察，不是将上述离线六阶段草案转正。首屏显示新读数与条件预案，完整三轴指标、来源和留存功能按需展开。
 
 - `date/snapshot_id`绑定本次观察日和不可变行情代际。`temperature`含 `value/previous_value/delta/previous_date/scope/coverage_pct/calendar_valid/comparable_count/universe_expected_known/evidence_consistent`；温度固定同口径沪深上涨/(上涨+下跌+平盘)×100，不混入沪深京个股比例或队列反馈。当前可比率不足80%不判阶段，前日须为严格相邻同范围、有唯一广度记录且可比率达标的市场日；跨输入日期、范围或涨跌平数字冲突时待核验，缺档不跨日确认修复或退潮。
 - `temperature`另含 `universe_upper_bound/coverage_basis/observed_coverage_pct/universe_bound_known`。真实应有范围已知时使用该范围；否则只允许使用已取得的沪深主表数量作保守上界，分母取既有分母与上界的较大值，basis为 `retained_master_upper_bound`，不声称历史应有范围完整。应有范围未知且无有据上界时，basis为 `unbounded_observed_sample`、`coverage_pct=null`，保留观察温度和 `observed_coverage_pct`，阶段待核验且禁止开仓；前日与5日冰点历史同样约束，防止极少样本被误算为100%覆盖。
