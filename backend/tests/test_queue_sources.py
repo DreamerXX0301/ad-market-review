@@ -22,6 +22,29 @@ def by_id(result, identifier):
     return next(row for row in result['items'] if row['source_id']==identifier)
 
 
+def test_bootstrap_reads_fresh_source_configuration_without_expanding_supplement(isolated, monkeypatch):
+    from app.services import source_service as service, platform_service
+    from app.core import connect, set_setting
+    calls = []
+    monkeypatch.setattr(service, 'supplement_status', lambda: calls.append('supplement') or {'quality': 'fixture'})
+    expected = service.list_sources()
+    assert calls == ['supplement']
+    calls.clear()
+    assert platform_service.bootstrap()['sources'] == expected['items']
+    assert calls == []
+    # This is a request projection, not a response cache: edits must appear
+    # immediately, while data/settings routes still include supplement status.
+    set_setting('active_source', 'tickflow-public')
+    with connect() as connection:
+        connection.execute("UPDATE provider_connection SET enabled=0 WHERE connection_id='fuyao'")
+    sources = platform_service.bootstrap()['sources']
+    assert by_id({'items': sources}, 'tickflow-public')['active'] is True
+    assert by_id({'items': sources}, 'fuyao')['enabled'] is False
+    assert calls == []
+    assert service.list_sources()['public_supplement'] == {'quality': 'fixture'}
+    assert calls == ['supplement']
+
+
 def test_fuyao_free_identity_ignores_legacy_paid_label_without_deleting_settings(isolated):
     from app.core import set_setting, setting
     from app.services import source_service as service

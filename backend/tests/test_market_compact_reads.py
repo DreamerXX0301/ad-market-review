@@ -244,6 +244,22 @@ def test_close_evidence_bounds_batch_and_invalidates_changed_source(retained_mar
     market.close()
 
 
+@pytest.mark.parametrize('dtype', ['Int64', 'Float64'])
+def test_close_evidence_keeps_native_nullable_numbers_after_warm_batch_gather(retained_market, dtype):
+    from app.core import json_clean
+    root,days,symbols=retained_market;path=root/'published'/'fixture'/'daily.parquet'
+    frame=pd.read_parquet(path);frame['close']=frame['close'].astype(dtype)
+    frame.loc[(frame.instrument_id==symbols[0])&(frame.date==days[0]),'close']=pd.NA
+    frame.to_parquet(path,index=False)
+    market=MarketData(root);requested=[symbols[1],symbols[0]]
+    expected=market.closing_prices_for_instruments(requested)
+    market._daily_frame()
+    actual=market.closing_prices_for_instruments(requested)
+    assert json_clean(actual)==json_clean(expected)
+    assert type(actual[symbols[0]][1]['close']) is type(expected[symbols[0]][1]['close'])
+    market.close()
+
+
 def declared_condition_market(retained_market,partitioned=False):
     from app.analytics.market import hash_file
     from app.analytics.market_storage import write_partitions

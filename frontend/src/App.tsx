@@ -28,6 +28,8 @@ import SectorMembersDialog from "./features/sector/SectorMembersDialog";
 import { globalSectorSelection } from "./components/searchPresentation";
 import { marketInstallationState } from "./components/marketInstallation";
 import IncrementProgressDialog from "./components/IncrementProgressDialog";
+// Opening a stock drawer keeps the active market list's inputs unchanged.
+const MemoMarketPage = memo(MarketPage);
 const currentRoute = () => {
   const hash = location.hash.slice(1).split("?")[0];
   return routeTitles[hash] ? hash : "market";
@@ -221,7 +223,7 @@ export default function App() {
       case "gainers":
       case "abnormal":
       case "flow":
-        return <MarketPage route={key} date={date} onStock={openStock} />;
+        return <MemoMarketPage route={key} date={date} onStock={openStock} />;
       case "topics":
         return <Topics onStock={openStock} onNavigate={navigate} />;
       case "strategy":

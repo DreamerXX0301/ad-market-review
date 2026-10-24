@@ -10,6 +10,7 @@ import re
 from statistics import mean, median
 
 from app.services.strategy_limits import LimitConditionEvidence, batch_quote_indexes
+from app.services.stock_board_presentation import retained_proof
 from app.services.sentiment_context import (CONTEXT_VERSION, GROUP_LABELS, cohort_group,
     dated_regime, dated_st_state, fingerprint, index_environment, provenance)
 
@@ -263,8 +264,12 @@ def short_term_cohort(market, reference, rows, day, *, proof=None):
 
 def describe_sentiment(market, reference, rows, day):
     broad = market_distribution(rows, day)
-    proof = LimitConditionEvidence(market)
-    proof.reference = reference; proof.supplement = reference.get('_supplement', {})
+    # The caller's panel already verified these local sources. Constructing
+    # against market would expand the whole supplement a second time, only to
+    # overwrite it immediately with this exact retained reference.
+    status_method = getattr(market, 'status', None)
+    snapshot_id = status_method().get('snapshot_id') if callable(status_method) else None
+    proof = retained_proof(reference, snapshot_id)
     short = short_term_cohort(market, reference, rows, day, proof=proof)
     calendar_method = getattr(market, 'calendar', None)
     calendar = calendar_method() if callable(calendar_method) else []

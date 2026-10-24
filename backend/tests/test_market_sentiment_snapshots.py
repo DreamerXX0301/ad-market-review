@@ -9,6 +9,9 @@ import sqlite3
 import pytest
 
 from app import core
+# Assemble HTTP dependencies before ws patches core.get_market. Importing the
+# real app inside that fixture can retain its fake reader in unrelated routes.
+from app.main import app
 from app.routers import market_sentiment_snapshots as router_module
 from app.services import market_sentiment_snapshots as service
 from test_workspace import ws
@@ -214,7 +217,6 @@ def test_detail_missing_or_damaged_content_never_falls_back_to_current_context(s
 
 
 def test_literal_snapshot_route_precedes_market_catch_all(snapshots):
-    from app.main import app
     from fastapi.testclient import TestClient
     response = TestClient(app).get('/api/v1/market/sentiment-snapshots')
     assert response.status_code == 200, response.text

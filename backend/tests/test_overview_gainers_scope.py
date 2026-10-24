@@ -37,8 +37,10 @@ def test_top_five_matches_full_fields_including_original_cohort_coverage_and_gap
     top,top_summary=service.gainers_rows(market,reference,market.day,rows,5)
     assert top==[row for row in full if row['rank'] is not None][:5]
     assert top_summary==summary and top[1]['return_30d_missing_sessions']==1
-    assert len(market.history_requests)==1
-    assert market.history_requests[0]['symbols']==set(symbols[:256])
+    assert len(market.history_requests)==4
+    assert all(request['start']==market.days[market.days.index(market.day)-30]
+               for request in market.history_requests[:3])
+    assert market.history_requests[-1]['symbols']==set(symbols[:256])
     assert top[0]['last_limit_up_date']==market.days[8], 'future source must not enter a past observation'
 
 

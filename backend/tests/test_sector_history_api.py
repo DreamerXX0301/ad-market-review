@@ -9,6 +9,7 @@ import pytest
 
 from app.services import market_service as service
 from app.services import market_topic_members as member_service
+from app.core import json_clean
 
 DAY='2026-10-20'
 PREVIOUS='2026-10-19'
@@ -169,3 +170,42 @@ def test_index_turnover_is_never_relabelled_as_net_inflow(install):
     row=service.market_page('sectors',DAY)['items'][0]
     assert row['amount']==123456.
     assert row.get('net_inflow') is None
+
+
+@pytest.mark.parametrize('limit', [1, 100, 1000])
+def test_missing_flow_reuses_panel_and_keeps_sector_selection_and_json(install, monkeypatch, limit):
+    source = [index_row(code=f'{881000+i:06d}.TI', change=1002-i,
+                        amount=float('nan') if i==0 else 10000. if i>=1000 else i)
+              for i in range(1002)]
+    _, _, current, _, _, calls = install(source)
+    monkeypatch.setattr(service, 'fund_flow_for_date', lambda *args: {})
+    monkeypatch.setattr(service, 'prior_ladder_feedback', lambda *args: [])
+    # The previous fallback consumed this endpoint's normalized first 1000,
+    # then reordered by amount. The final two have the largest amounts but
+    # must remain excluded because the sector endpoint selects by change.
+    sectors = service.market_page('sectors', DAY, limit=1000)
+    expected = json_clean([{**row, 'net_inflow': None} for row in
+                           sorted(sectors['items'], key=lambda row: row.get('amount') or 0,
+                                  reverse=True)])
+    before = deepcopy(current);calls.clear()
+    actual = service.market_page('flow', DAY, limit=limit)
+    assert calls==[DAY] and current==before
+    assert actual['items']==expected[:limit]
+    assert actual['total']==1000 and actual['summary']['net_flow_available'] is False
+    assert actual['summary']['basis']=='板块成交活跃度'
+    assert actual['history']==[] and actual['coverage']=={}
+    assert all(row['topic_code'] not in {'882000.TI', '882001.TI'} for row in actual['items'])
+    if limit==1000:
+        assert actual['items'][-1]['amount'] is None
+
+
+def test_verified_flow_does_not_construct_sector_fallback(install, monkeypatch):
+    install([index_row()])
+    verified = {**index_row(amount=123.), 'net_inflow': -456.}
+    monkeypatch.setattr(service, 'fund_flow_for_date', lambda *args: {'items':[deepcopy(verified)]})
+    monkeypatch.setattr(service, 'prior_ladder_feedback', lambda *args: [])
+    monkeypatch.setattr(service, '_sectors_from_panel', lambda *args: pytest.fail('verified flow needs no sector fallback'))
+    result=service.market_page('flow', DAY)
+    assert result['summary']['net_flow_available'] is True
+    assert result['items'][0]['amount']==123.
+    assert result['items'][0]['net_inflow']==-456.

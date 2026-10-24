@@ -25,6 +25,7 @@ const { chartBoll, bollCandleValues } = await helper("./chartBoll.ts");
 const { annotationColors, lineLabel } = await helper("./chartAnnotations.ts");
 const { chartPaneLayout } = await helper("./chartPaneLayout.ts");
 const { candleChartEndpoint } = await helper("./chartEndpoint.ts");
+const waveHelpers = await helper("./wavePresentation.ts");
 const source = await fs.readFile(
   new URL("./Charts.tsx", import.meta.url),
   "utf8",
@@ -52,6 +53,7 @@ const compiled = ts
   .replace(/export \{\};?\n?/g, "");
 const paths = [],
   annotations = [];
+const overlayReads = { boll: 0, patterns: 0, turns: 0 };
 let period = "D",
   option,
   allowLive = false,
@@ -77,7 +79,10 @@ const scopeValues = {
   useEffect: () => {},
   useRef: (current) => ({ current }),
   ...preferences,
-  chartBoll,
+  chartBoll: (data) => {
+    overlayReads.boll++;
+    return chartBoll(data);
+  },
   bollCandleValues,
   annotationColors,
   lineLabel,
@@ -120,12 +125,15 @@ const scopeValues = {
   projectEventBaseline: () => ({ price: null, reason: "" }),
   historicalChartEvents: () => [],
   projectHistoricalChartEvent: () => null,
-  wavePatterns: () => [],
-  waveTurningPoints: () => [],
-  waveCandidates: () => [],
-  selectedWavePatterns: () => [],
-  wavePatternWindow: () => null,
-  wavePlotSeries: () => [],
+  ...waveHelpers,
+  wavePatterns: (...args) => {
+    overlayReads.patterns++;
+    return waveHelpers.wavePatterns(...args);
+  },
+  waveTurningPoints: (...args) => {
+    overlayReads.turns++;
+    return waveHelpers.waveTurningPoints(...args);
+  },
   candleChange: () => ({ value: null, reason: "", label: "日涨跌幅" }),
   chartSinceReturn: () => ({ value: null, reason: "" }),
   chartIndicatorAvailability: () => ({ missing: [], reason: "", label: "" }),
@@ -312,6 +320,62 @@ for (let mask = 0; mask < 16; mask++) {
   );
   assert.deepEqual(option.axisPointer.link, [{ xAxisIndex: "all" }]);
 }
+// The real chart skips disabled overlays and unused wave modes. Enabling one
+// immediately uses the current frozen payload, without a GET or a cached quote.
+const waveDates = Array.from({ length: 6 }, (_, index) => `2026-10-${17 + index}`);
+chartData.bars = waveDates.map((date, index) => ({
+  ...chartData.bars[0],
+  date,
+  close: 10 + index / 10,
+}));
+const wavePoints = waveDates.map((date, index) => ({
+  date,
+  confirmed_at: "2026-10-22",
+  price: 10 + index / 10,
+  kind: index % 2 ? "high" : "low",
+  label: index ? `${index}?` : "0",
+  phase: "impulse",
+  segment_id: "verified-segment",
+}));
+chartData.waves = {
+  points: wavePoints,
+  patterns: [{
+    pattern_id: "verified-pattern",
+    direction: "up",
+    start_date: waveDates[0],
+    end_date: waveDates.at(-1),
+    confirmed_at: "2026-10-22",
+    has_correction: false,
+    points: wavePoints,
+  }],
+};
+function overlayRender({ boll = false, waves = false, mode = "turning" } = {}) {
+  settings.stockShowBoll = boll;
+  settings.stockShowWaves = waves;
+  settings.stockWaveMode = mode;
+  Object.keys(overlayReads).forEach((key) => { overlayReads[key] = 0; });
+  const count = paths.length;
+  renderToStaticMarkup(jsx(Chart, {
+    instrumentId: "000001.SZ",
+    instrumentKind: "stock",
+    frozenChartsByPeriod: { D: chartData },
+    showDataNotes: false,
+  }));
+  assert.deepEqual(paths.slice(count), [null]);
+  return { ...overlayReads };
+}
+assert.deepEqual(overlayRender(), { boll: 0, patterns: 0, turns: 0 });
+assert.deepEqual(overlayRender({ boll: true, waves: true }), {
+  boll: 1, patterns: 0, turns: 1,
+});
+assert.ok(option.series.some((series) => series.name === "高低点转折候选"));
+assert.deepEqual(overlayRender({ waves: true, mode: "latest" }), {
+  boll: 0, patterns: 1, turns: 0,
+});
+assert.ok(option.series.some((series) => series.name.includes("上涨五浪候选")));
+assert.ok(!option.series.some((series) => series.name === "高低点转折候选"));
+assert.deepEqual(overlayRender(), { boll: 0, patterns: 0, turns: 0 });
+assert.ok(!option.series.some((series) => series.id?.startsWith("wave-")));
 console.log(
-  "actual frozen CandleChart disables live GET/annotations, uses frozen BOLL pane and preserves missing-period placeholders",
+  "actual frozen CandleChart disables live GET/annotations, preserves missing periods, and calculates only enabled BOLL/wave overlays",
 );

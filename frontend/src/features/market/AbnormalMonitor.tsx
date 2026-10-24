@@ -53,53 +53,9 @@ export default function AbnormalMonitor({
   );
   const available = data?.data_coverage?.selected_date_available === true;
   const quoteDate = monitorQuoteDate(data?.quote_as_of);
+  const observedDate = monitorQuoteDate(data?.monitor_observed_date);
   return (
     <div className="page-stack">
-      <div className="section-intro">
-        <p>供应商严重异动与重点监控名单；官方监管原文尚未接入。</p>
-        <Badge>盘面选择日 {date || "未知"}</Badge>
-      </div>
-      <Panel title="异动与监管" subtitle="名单观察日期与股票行情日期独立">
-        <div className="result-toolbar">
-          <label>
-            查看范围{" "}
-            <select
-              aria-label="选择监控名单范围"
-              value={scope}
-              onChange={(event) => {
-                setScope(event.target.value as MonitorScope);
-                setFilter("");
-              }}
-            >
-              <option value="latest">最新已留存监控名单</option>
-              <option value="historical">指定盘面日历史名单</option>
-            </select>
-          </label>
-          <Badge>{scope === "latest" ? "当前观察" : "指定日历史"}</Badge>
-        </div>
-        <p className="muted">
-          {scope === "latest"
-            ? `查看已发布存档中最新的名单，不代表 ${date || "所选日"} 的历史监管状态；页面读取不联网，刷新只重读本地存档。`
-            : `仅查看名单观察日为 ${date || "所选日"} 的留存记录；未留存仍为未知，不用最新名单回填。`}
-        </p>
-        <div className="detail-list">
-          <p>
-            名单观察日 <b>{data?.monitor_observed_date || "未知"}</b>
-          </p>
-          <p>
-            名单获取时间 <b>{data?.monitor_fetched_at || "未知"}</b>
-          </p>
-          <p>
-            股票行情日 <b>{quoteDate || "未知"}</b>
-          </p>
-          <p>
-            名单记录 <b>{available ? integer(data?.total) : "未知"}</b>
-          </p>
-          <p>
-            来源 <b>{data?.source || "未知"}</b>
-          </p>
-        </div>
-      </Panel>
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
@@ -109,18 +65,11 @@ export default function AbnormalMonitor({
           retry={result.reload}
         />
       )}
-      <MarketDataCoverage
-        coverage={data?.data_coverage}
-        loading={result.loading}
-      />
-      <Warnings items={data?.warnings} />
       <Panel
         title={
-          scope === "latest"
-            ? "最新已留存监控名单"
-            : `${date || "所选日"} 历史监控名单`
+          scope === "latest" ? "监控名单" : `${date || "所选日"} 历史监控名单`
         }
-        subtitle="供应商区间不表示官方监管期限；官方解除日期未知"
+        subtitle="供应商严重异动与重点监控标签；官方监管原文尚未接入。"
         actions={
           <>
             <input
@@ -139,6 +88,37 @@ export default function AbnormalMonitor({
           </>
         }
       >
+        <div className="result-toolbar">
+          <label>
+            查看范围{" "}
+            <select
+              aria-label="选择监控名单范围"
+              value={scope}
+              onChange={(event) => {
+                setScope(event.target.value as MonitorScope);
+                setFilter("");
+              }}
+            >
+              <option value="latest">最新名单</option>
+              <option value="historical">指定盘面日历史名单</option>
+            </select>
+          </label>
+          <span className="muted">名单日期 {observedDate || "未知"}</span>
+          <span className="muted">行情日期 {quoteDate || "未知"}</span>
+          <Badge>
+            {available
+              ? `${integer(data?.total)} 条`
+              : result.loading
+                ? "核验中"
+                : "名单未知"}
+          </Badge>
+          {scope === "latest" &&
+            observedDate &&
+            date &&
+            observedDate !== date && (
+              <Badge tone="warn">非盘面选择日名单</Badge>
+            )}
+        </div>
         {result.loading && !data ? (
           <Loading />
         ) : (
@@ -181,6 +161,28 @@ export default function AbnormalMonitor({
             }
           />
         )}
+        <details className="detail-list">
+          <summary>来源与日期说明</summary>
+          <p>
+            {scope === "latest"
+              ? `查看最新已留存名单，不代表 ${date || "所选日"} 的历史监管状态。`
+              : `仅查看名单观察日为 ${date || "所选日"} 的记录；未留存仍为未知，不用最新名单回填。`}
+          </p>
+          <p>
+            名单获取时间 <b>{data?.monitor_fetched_at || "未知"}</b>
+          </p>
+          <p>
+            来源 <b>{data?.source || "未知"}</b>
+          </p>
+          <p>
+            供应商区间不表示官方监管期限；官方解除日期未知。刷新仅重读已有名单，不联网采集。
+          </p>
+          <MarketDataCoverage
+            coverage={data?.data_coverage}
+            loading={result.loading}
+          />
+          <Warnings items={data?.warnings} />
+        </details>
       </Panel>
     </div>
   );

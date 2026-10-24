@@ -197,6 +197,16 @@ def market_topic_members(day=None, *, topic_id=None, source_code=None, kind=None
     return list_members(market, status, day, reference, rows, topic_id=topic_id, source_code=source_code, kind=kind, source_name=source_name)
 
 
+def _sectors_from_panel(market, status, day, reference, indexed):
+    """Reuse one dated panel for the sector page and missing-flow fallback."""
+    local, membership = resolve_reference('sectors', day, status, reference)
+    prices = sector_prices_for_date(reference.get('_supplement', {}), day)
+    result = sector_view(day, reference, indexed, local, membership, prices)
+    from app.services.sector_activity import decorate_sector_activity
+    result['items'], result['sector_activity_7d'] = decorate_sector_activity(market,status,day,result['items'],reference,prices)
+    return result
+
+
 def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical'):
     if monitor_scope not in ('historical', 'latest') or (monitor_scope != 'historical' and kind != 'abnormal'):
         raise HTTPException(422, '监控名单范围仅支持监管页的historical或latest')
@@ -217,11 +227,7 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base["summary"] = {**summary,'top_n':top_n,'available_total':available_total,'available_ranked_total':ranked_total,'rank_scope_total':len(base['items']),'rank_scope':'先按近30日涨幅排名选择前N，再在该范围搜索、排序和分页' if top_n is not None else '全市场；端点未知者保留未排名'}
         base["warnings"] = ["30个市场交易日端点涨幅；中间缺报价不删股，另列缺口。区间已核验公司行动使用事件前复权价格，未核验则不计算涨幅。", "年内涨停以逐日来源池计数；覆盖不完整时只显示已确认次数下界，不补0。"]
     elif kind == "sectors":
-        local, membership = resolve_reference('sectors', day, status, reference)
-        prices = sector_prices_for_date(reference.get('_supplement', {}), day)
-        base.update(sector_view(day, reference, indexed, local, membership, prices))
-        from app.services.sector_activity import decorate_sector_activity
-        base['items'], base['sector_activity_7d'] = decorate_sector_activity(market,status,day,base['items'],reference,prices)
+        base.update(_sectors_from_panel(market, status, day, reference, indexed))
     elif kind == "ladder":
         from app.services.market_ladder import build_ladder
         base.update(build_ladder(market, status, day, reference, rows, events))
@@ -275,7 +281,10 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         if breadth.get('universe_expected_known') is False:base['warnings'].append('部分证券上市日期未知，无法确认全市场应有家数与缺报价家数；可比率以已观察样本为分母，不把应有范围记为0。')
     elif kind == "flow":
         verified=fund_flow_for_date(reference.get('_supplement',{}),day,market.calendar())
-        sectors = market_page("sectors", day,limit=1000) if not verified.get('items') else {'items':[]}
+        # Preserve the sector endpoint's existing first-1000 selection and JSON
+        # normalization before sorting by amount; reuse its already-read panel.
+        sectors = _sectors_from_panel(market,status,day,reference,indexed) if not verified.get('items') else {'items':[]}
+        sectors = {'items':json_clean(sectors['items'][:1000])}
         base["items"] = verified.get('items') or [{**r, "net_inflow": None} for r in sorted(sectors["items"], key=lambda r: r.get("amount") or 0, reverse=True)]
         if verified.get('items'):
             from app.services.market_topic_members import membership_link
@@ -335,12 +344,31 @@ def supplement_status(reference,day,capability):
     return {'state':'available' if record.get('items') else 'failed' if errors else 'unverified','source':record.get('source','eastmoney-public'),'date':day,'reason':'; '.join(errors[:3])+('；另有'+str(len(errors)-3)+'个板块缺口' if len(errors)>3 else '') if errors else doc.get('failure_reason') or (None if record.get('items') else '请在数据中心手动运行“盘面补充”以抓取并校验该日数据'),'scope':record.get('scope'),'verified_rows':record.get('verified_rows'),'fetched_at':record.get('fetched_at')}
 
 
+def _gainers_histories(market, day, baseline, rows):
+    """Materialize only this rank's exact market-date return window.
+
+    The previous reader kept the last 31 actual quotes before clipping to the
+    market baseline. Keep that tail for duplicate legacy quotes too; a bounded
+    read must not turn a formerly missing endpoint into a verified return.
+    """
+    if baseline is None:return {}
+    reader=getattr(market,'history_for_instruments',None)
+    if not callable(reader):return market.history_panel(day,lookback=31)
+    from app.services.topic_member_metrics import BATCH_SIZE
+    symbols=sorted({row['instrument_id'] for row in rows});histories={}
+    for offset in range(0,len(symbols),BATCH_SIZE):
+        batch=symbols[offset:offset+BATCH_SIZE]
+        selected=reader(batch,start=baseline,end=day)
+        for symbol in batch:histories[symbol]=selected.get(symbol,[])[-31:]
+    return histories
+
+
 def gainers_rows(market,reference,day,rows,max_items=None):
     """Use exact T/T-30 market dates; intermediate suspension is not exclusion."""
     from app.analytics.adjustments import continuous_prices
     calendar=market.calendar();position=calendar.index(day);baseline=calendar[position-30] if position>=30 else None
     expected=set(calendar[position-30:position+1]) if baseline else set()
-    histories=market.history_panel(day,lookback=31)
+    histories=_gainers_histories(market,day,baseline,rows)
     result=[]; represented=set()
     for original in rows:
         row=dict(original);symbol=row['instrument_id'];represented.add(symbol);history=[r for r in histories.get(symbol,[]) if not baseline or r['date']>=baseline]

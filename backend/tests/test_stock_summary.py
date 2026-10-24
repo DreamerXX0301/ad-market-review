@@ -19,7 +19,7 @@ def local(monkeypatch):
     monkeypatch.setattr(summary, 'get_market', lambda: market)
     document = complete_year(market, {market.days[-6]: [A, B]})
     document['annual_pools'][market.days[-1]] = source_pool(market, market.days[-1], [A, B])
-    monkeypatch.setattr(summary, 'load_supplement', lambda *a: deepcopy(document))
+    monkeypatch.setattr(summary, 'load_supplement_with_fingerprint', lambda *a, **kw: (deepcopy(document),None))
     from app.adapters.providers import ProviderClient
     monkeypatch.setattr(ProviderClient, 'request', lambda *a: pytest.fail('summary never requests a source'))
     with summary._LOCK: summary._CACHE.clear()
@@ -98,6 +98,24 @@ def test_historical_summary_excludes_later_positive_even_when_source_retains_it(
     assert result['latest_limit_up_date'] is None
     assert result['quote_date'] == day
     assert result['return_30d_coverage']['end'] == day
+
+
+def test_summary_projects_close_pools_but_keeps_all_past_event_evidence(local, monkeypatch):
+    from app.services.supplement_storage import expand_document
+    market, document = local
+    day = market.days[-7]
+    document.update(fund_flows={day:{'unrelated':'fund history'}},
+                    sector_index_history={day:{'unrelated':'board history'}})
+    expected = summary.get_summary(A, day)
+    calls=[]
+    def projected(snapshot, *, dates, fields):
+        calls.append(snapshot)
+        assert fields==('public_pools','annual_pools','annual_down_pools')
+        assert dates==[value for value in market.days if value<=day]
+        return expand_document(None,document,dates=dates,fields=fields),None
+    monkeypatch.setattr(summary,'load_supplement_with_fingerprint',projected)
+    assert summary.get_summary(A, day)==expected
+    assert calls==['metric-fixture']
 
 
 def test_missing_pool_is_unknown_not_zero_and_observed_is_only_lower_bound(local):
@@ -226,3 +244,40 @@ def test_summary_cache_has_small_lru_bound(local, tmp_path, monkeypatch):
     monkeypatch.setattr(summary, 'MAX_SUMMARIES', 2)
     for symbol in (A, B, C): summary.summary_for(market, symbol, fake.day)
     assert len(summary._CACHE) == 2
+
+
+def test_verified_summary_identity_avoids_full_document_hash_and_rechecks_source(local, tmp_path, monkeypatch):
+    import json
+    from app.analytics.market import MarketData
+    from app.services import market_supplement
+    fake, document = local
+    root = tmp_path/'verified-root'; folder = root/'published'/'verified-summary'
+    folder.mkdir(parents=True); (folder/'manifest.json').write_text('{}')
+    market = MarketData(root, snapshot_id='verified-summary')
+    monkeypatch.setattr(market, 'status', lambda: {'ready':True,'snapshot_id':'verified-summary',
+        'path':str(folder),'data_begin':fake.days[0],'data_end':fake.day})
+    for method in ('calendar','instruments','history_for_instruments','actions_for_instruments','reference'):
+        monkeypatch.setattr(market,method,getattr(fake,method))
+    source=root/'published'/'market-supplement'
+    monkeypatch.setattr(market_supplement,'_root',lambda:source)
+    monkeypatch.setattr(summary,'get_market',lambda:market)
+    monkeypatch.setattr(summary,'load_supplement_with_fingerprint',market_supplement.load_supplement_with_fingerprint)
+    document.update(version=market_supplement.VERSION,snapshot_id='verified-summary')
+    cache=market_supplement.SupplementCache(source);cache.publish(document)
+    original_digest=summary.topic_member_metrics.digest
+    monkeypatch.setattr(summary.topic_member_metrics,'digest',lambda *_:pytest.fail('verified source identity must not rehash expanded pools'))
+    first=summary.get_summary(A,fake.day)
+    assert first['annual_limit_up_count']==1
+    assert summary.get_summary(A,fake.day)==first
+    document['annual_pools'][fake.day]=source_pool(fake,fake.day,[A,B])
+    cache.publish(document)
+    revised=summary.get_summary(A,fake.day)
+    assert revised['annual_limit_up_count']==2 and revised['latest_limit_up_date']==fake.day
+    # A valid index alone cannot bless a damaged selected CAS dependency.
+    head=json.loads((source/'head.json').read_text())
+    index=json.loads((source/head['artifact']).read_text())
+    (source/index['annual_pools'][fake.day]['record_ref']).write_text('{}')
+    monkeypatch.setattr(summary.topic_member_metrics,'digest',original_digest)
+    damaged=summary.get_summary(A,fake.day)
+    assert damaged['annual_limit_up_count'] is None
+    assert damaged['annual_limit_up_count_coverage']['complete'] is False

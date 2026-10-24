@@ -167,11 +167,35 @@ def test_failed_supplement_integrity_is_reported_without_discarding_base_events(
     from app.services import chart_limits
     market=LimitMarket();day=market.days[0]
     market.ref={'pool_trade_date':day,'limitup':[entry(market,0)]}
-    monkeypatch.setattr(chart_limits,'load_supplement',lambda snapshot:{'quality':'unknown','failure_reason':'补充数据索引缺失或校验失败'})
+    monkeypatch.setattr(chart_limits,'load_supplement',lambda snapshot,**kw:{'quality':'unknown','failure_reason':'补充数据索引缺失或校验失败'})
     result=enrich_chart_limits(market,market.chart())
     assert result['bars'][0]['limit_up_state'] is True
     assert result['bars'][1]['limit_up_state'] is None
     assert any('补充数据索引缺失或校验失败' in warning for warning in result['warnings'])
+
+
+@pytest.mark.parametrize('focused', [False, True])
+def test_overlay_projects_only_required_close_pools_and_dates(monkeypatch, focused):
+    from app.services import chart_limits
+    from app.services.supplement_storage import expand_document
+    market=LimitMarket();day=market.days[-2]
+    document={'snapshot_id':'fixture-generation','job_id':'supplement-1',
+        'annual_pools':{observed:annual(market,index) for index,observed in enumerate(market.days)},
+        'annual_down_pools':{},'public_pools':{},
+        'fund_flows':{day:{'unrelated':'never needed by a closing badge'}},
+        'sector_index_history':{day:{'unrelated':'never needed by a stock candle'}}}
+    chart=market.chart(as_of=day)
+    if focused:chart['bars']=[chart['bars'][-1]]
+    expected=enrich_chart_limits(market,chart,document,focus_day=day if focused else None)
+    calls=[]
+    def projected(snapshot, *, dates, fields):
+        calls.append((snapshot,dates,fields))
+        assert set(fields)=={'public_pools','annual_pools','annual_down_pools'}
+        assert dates==([day] if focused else market.days[:-1])
+        return expand_document(None,document,dates=dates,fields=fields)
+    monkeypatch.setattr(chart_limits,'load_supplement',projected)
+    actual=enrich_chart_limits(market,chart,focus_day=day if focused else None)
+    assert actual==expected and len(calls)==1
 
 
 def test_router_chart_response_contains_overlay_without_analytics_coupling(monkeypatch):
@@ -182,7 +206,7 @@ def test_router_chart_response_contains_overlay_without_analytics_coupling(monke
     market=LimitMarket();day=market.days[0]
     market.ref={'pool_trade_date':day,'limitup':[entry(market,0)]}
     monkeypatch.setattr(market_service,'context',lambda as_of:(market,{},as_of or market.days[-1]))
-    monkeypatch.setattr(chart_limits,'load_supplement',lambda snapshot:{})
+    monkeypatch.setattr(chart_limits,'load_supplement',lambda snapshot,**kw:{})
     app=FastAPI();app.include_router(router)
     response=TestClient(app).get('/api/v1/instruments/'+SYMBOL+'/chart')
     assert response.status_code==200,response.text

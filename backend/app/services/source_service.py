@@ -15,7 +15,7 @@ CATALOG = {
 }
 
 
-def list_sources():
+def list_sources(*, include_supplement=True):
     vault = CredentialStore()
     with connect() as connection:
         profiles = {r["connection_id"]: dict(r) for r in connection.execute("SELECT * FROM provider_connection")}
@@ -42,7 +42,10 @@ def list_sources():
         # Legacy source-tier settings are preserved but no longer presented as
         # account facts, including incorrectly saved paid labels for Fuyao.
         result.append({"source_id": identifier, "name": meta["name"], "tier": meta["tier"], "billing_mode":meta['billing_mode'], "requires_key":meta['requires_key'], "sync_supported":meta['sync_supported'], "configuration_note":meta['configuration_note'], "configured": configured, "enabled": bool(profile.get("enabled", True)), "status": "verified" if any(r["account_access"] == "allowed" for r in verified) else "unverified" if configured else "needs_key", "description": meta["description"], "capabilities": capabilities, "last_verified_at": max((r["probed_at_ms"] for r in verified), default=None), "active": setting("active_source", "fuyao") == identifier})
-    return {"items": result, "total": len(result),"public_supplement":supplement_status()}
+    response = {"items": result, "total": len(result)}
+    if include_supplement:
+        response['public_supplement'] = supplement_status()
+    return response
 
 
 def supplement_status():

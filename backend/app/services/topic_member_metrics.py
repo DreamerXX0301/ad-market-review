@@ -28,7 +28,7 @@ def clear_metric_cache():
     with _CACHE_LOCK: _METRIC_CACHE.clear()
 
 
-def _cache_key(market, day, symbols, quotes, supplement):
+def _cache_key(market, day, symbols, quotes, supplement, *, supplement_fingerprint=None):
     """Only genuine immutable generations can cache lightweight result rows."""
     if type(market) is not MarketData or len(symbols) > 2048 or not market._fixed_snapshot: return None
     try:
@@ -38,7 +38,12 @@ def _cache_key(market, day, symbols, quotes, supplement):
         if Path(status.get('path','')).resolve()!=expected or not (expected/'manifest.json').is_file(): return None
         ordered=tuple(sorted(symbols))
         quote_inputs=tuple((symbol,str(quotes.get(symbol,{}).get('date',quotes.get(symbol,{}).get('trade_date',''))),_number(quotes.get(symbol,{}).get('close'))) for symbol in ordered)
-        return ('topic-member-metrics-v4-unified-positive-lower-bound',str(root),snapshot,day,ordered,quote_inputs,digest(supplement))
+        # A fingerprint is supplied only by the verified supplement reader,
+        # after every selected CAS dependency has passed its normal checks.
+        # Rehashing that expanded document duplicates JSON cleanup and encode
+        # work for each stock summary (and again for its member calculation).
+        source_identity = supplement_fingerprint if supplement_fingerprint is not None else digest(supplement)
+        return ('topic-member-metrics-v4-unified-positive-lower-bound',str(root),snapshot,day,ordered,quote_inputs,source_identity)
     except (ValueError,OSError,TypeError): return None
 
 
@@ -348,11 +353,11 @@ def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, 
     return result
 
 
-def member_metrics(market, day, symbols, master, quotes, supplement):
+def member_metrics(market, day, symbols, master, quotes, supplement, *, supplement_fingerprint=None):
     """Return lightweight metrics; at most 256 securities' history live at once."""
     symbols=sorted(set(symbols))
     if not symbols:return {}
-    cache_key=_cache_key(market,day,symbols,quotes,supplement)
+    cache_key=_cache_key(market,day,symbols,quotes,supplement,supplement_fingerprint=supplement_fingerprint)
     if cache_key is not None:
         with _CACHE_LOCK:
             if cache_key in _METRIC_CACHE:

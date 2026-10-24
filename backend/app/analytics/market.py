@@ -619,6 +619,7 @@ class MarketData:
                     self._frame=None;self._frame_source_stamp=None;self._symbol_ranges={};self._daily_columns=None;self._daily_native_dtypes=None;self._daily_text_nulls=None
             if self._frame is not None:
                 import pandas as pd
+                import numpy as np
                 dates=self._frame['date'];pieces=[]
                 for symbol in symbols:
                     bounds=self._symbol_ranges.get(symbol)
@@ -627,16 +628,24 @@ class MarketData:
                     try:
                         begin=left+int(days.searchsorted(start,side='left')) if start else left
                         finish=left+int(days.searchsorted(end,side='right')) if end else right
-                        if begin<finish:pieces.append(self._frame.iloc[begin:finish][['instrument_id','date','close']])
+                        if begin<finish:pieces.append(np.arange(begin,finish))
                     except ValueError:
                         selected=self._frame.iloc[left:right]
                         if start:selected=selected.loc[selected.date>=start]
                         if end:selected=selected.loc[selected.date<=end]
-                        if not selected.empty:pieces.append(selected[['instrument_id','date','close']])
+                        if not selected.empty:pieces.append(selected.index.to_numpy())
                 if not pieces:return result
-                selected=pd.concat(pieces).astype({name:self._daily_native_dtypes[name] for name in ('instrument_id','date','close')})
-                for row in selected.to_dict('records'):
-                    result[row['instrument_id']].append({'date':row['date'],'close':row['close']})
+                # Gather only three bounded columns once per cohort. Building
+                # thousands of tiny DataFrames costs more than verifying the
+                # prices, and projecting the whole five-year frame would copy
+                # unrelated securities under pandas versions without CoW.
+                positions=np.concatenate(pieces)
+                columns=('instrument_id','date','close')
+                selected=pd.DataFrame({name:self._frame[name].take(positions).array for name in columns})
+                selected=selected.astype({name:self._daily_native_dtypes[name] for name in columns})
+                values=selected.to_dict('list')
+                for symbol,day,close in zip(values['instrument_id'],values['date'],values['close']):
+                    result[symbol].append({'date':day,'close':close})
                 return result
             clauses=['instrument_id IN (SELECT unnest(?))'];params=[symbols]
             if start:clauses.append('date>=?');params.append(start)

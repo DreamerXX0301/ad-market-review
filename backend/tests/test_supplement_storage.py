@@ -60,6 +60,28 @@ def test_missing_corrupt_and_escape_objects_fail_even_after_cache_hit(tmp_path):
         expand_document(tmp_path, compact, fields=['annual_pools'])
 
 
+def test_cached_bulk_payloads_are_independent_and_same_size_tampering_is_rechecked(tmp_path):
+    import os
+    original=sample()
+    original['annual_pools']['2026-10-22']['items']=[
+        {'instrument_id':f'{index:06d}.SZ','nested':{'labels':['leaf',{'price':12.5}]}}
+        for index in range(100)]
+    compact=compact_document(tmp_path,original)  # Stores and warms the object cache.
+    first=expand_document(tmp_path,compact)
+    first['annual_pools']['2026-10-22']['items'][0]['nested']['labels'][1]['price']=999
+    first['annual_pools']['2026-10-22']['items'].append({'caller':'only'})
+    assert expand_document(tmp_path,compact)==original
+    pointer=compact['annual_pools']['2026-10-22']
+    record=json.loads((tmp_path/pointer['record_ref']).read_text())
+    path=tmp_path/record['__supplement_fields_v1']['items']['record_ref']
+    before=path.stat();content=path.read_bytes();tampered=content.replace(b'"leaf"',b'"fake"',1)
+    assert tampered!=content and len(tampered)==len(content)
+    path.write_bytes(tampered)
+    os.utime(path,ns=(before.st_atime_ns,before.st_mtime_ns))
+    with pytest.raises(ValueError,match='SHA'):
+        expand_document(tmp_path,compact)
+
+
 def test_selected_dates_do_not_open_unrelated_objects(tmp_path):
     document = sample()
     document['annual_pools']['2026-10-21'] = {'date': '2026-10-21', 'items': []}

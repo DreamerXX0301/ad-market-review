@@ -13,7 +13,7 @@ from app.core import get_market
 from app.domain.conditions import metrics_for
 from app.domain.universe import BOARDS, identity_flags
 from app.services import topic_member_metrics
-from app.services.market_supplement import load_supplement
+from app.services.market_supplement import load_supplement_with_fingerprint
 from app.services.workspace_common import fail
 
 MAX_SUMMARIES = 128
@@ -125,16 +125,23 @@ def summary_for(market, identifier, as_of=None):
     exact = [row for row in selected if row.get('date') == day]
     quote = exact[0] if len(exact) == 1 and topic_member_metrics._number(exact[0].get('close')) is not None and exact[0]['close'] > 0 else None
     quotes = {symbol: quote} if quote is not None else {}
-    supplement = load_supplement(status.get('snapshot_id')) if status.get('snapshot_id') else {}
+    # Returns and closing-limit statistics use the dated close pools only.
+    # Keep every past retained session for the latest confirmed event search,
+    # without decoding unrelated board-price and money-flow CAS histories.
+    supplement, fingerprint = load_supplement_with_fingerprint(status.get('snapshot_id'),
+        dates=[value for value in calendar if value <= day],
+        fields=('public_pools', 'annual_pools', 'annual_down_pools')) if status.get('snapshot_id') else ({}, None)
     # Reuse the verified generation/candidate/quote/source-digest key. Fake or
     # mutable market objects have no reliable key and must never reuse results.
-    key = topic_member_metrics._cache_key(market, day, [symbol], quotes, supplement)
+    key = topic_member_metrics._cache_key(market, day, [symbol], quotes, supplement,
+        supplement_fingerprint=fingerprint)
     with _LOCK:
         cached = _CACHE.get(key) if key is not None else None
         if cached is not None: _CACHE.move_to_end(key)
     if cached is not None: return deepcopy(cached)
     change, change_reason = _daily_change(market, symbol, day, previous_day, calendar, selected, quote)
-    statistics = topic_member_metrics.member_metrics(market, day, [symbol], master, quotes, supplement).get(symbol, {})
+    statistics = topic_member_metrics.member_metrics(market, day, [symbol], master, quotes, supplement,
+        supplement_fingerprint=fingerprint).get(symbol, {})
     value = summary_fields({**statistics, 'instrument_id': symbol, 'code': symbol[:6],
         'name': master[symbol].get('name') or symbol, 'data_date': day, 'as_of': day,
         'snapshot_id': status.get('snapshot_id'), 'quote_date': day if quote is not None else None,

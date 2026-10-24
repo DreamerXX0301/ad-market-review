@@ -37,8 +37,9 @@ def test_rank_latest_date_matches_member_statistics_and_excludes_future_source()
     assert by_symbol[A]['last_limit_up_date']==old
     assert not by_symbol[A]['last_limit_up_complete']
     assert by_symbol[B]['last_limit_up_date'] is None
-    assert market.calls['history_for_instruments']==1
-    assert market.history_requests[0]['start']==old
+    assert market.calls['history_for_instruments']==2
+    assert market.history_requests[0]['start']==market.days[market.days.index(day)-30]
+    assert market.history_requests[1]['start']==old
     assert market.calls['actions_for_instruments']==0
 
 

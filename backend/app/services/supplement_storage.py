@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -42,7 +41,11 @@ def _read_object(root, pointer):
         cached = _cache.get(key)
         if cached is not None:
             _cache.move_to_end(key)
-            return deepcopy(cached[0])
+            # Keep immutable verified JSON bytes, not a large shared Python
+            # tree that needs a recursive deepcopy on every chart/summary.
+            # Decoding produces a caller-owned value and keeps the same file
+            # identity/integrity checks before every cache hit.
+            return json.loads(cached[0])
     content = path.read_bytes()
     if hashlib.sha256(content).hexdigest() != expected:
         raise ValueError('补充数据索引引用的对象SHA不一致')
@@ -51,10 +54,10 @@ def _read_object(root, pointer):
         raise ValueError('补充数据对象内容标识不一致')
     with _lock:
         if key not in _cache:
-            _cache[key] = (value, len(content)); _cache_bytes += len(content)
+            _cache[key] = (content, len(content)); _cache_bytes += len(content)
         while len(_cache) > 1024 or _cache_bytes > 32 * 1024 * 1024:
             _, (_, size) = _cache.popitem(last=False); _cache_bytes -= size
-    return deepcopy(value)
+    return value
 
 
 def _read_record(root, pointer):

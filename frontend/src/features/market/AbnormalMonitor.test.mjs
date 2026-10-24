@@ -100,6 +100,7 @@ setData({
   source: "fuyao",
   data_coverage: { selected_date_available: true },
   total: 1,
+  warnings: ["合成来源覆盖说明"],
   items: [{ name: "合成监控股票", instrument_id: "600001.SH", code: "600001" }],
 });
 const current = renderToStaticMarkup(createElement(Monitor, props));
@@ -112,11 +113,28 @@ assert.equal(
   "latest",
   "UI defaults to explicit current observation while the API default remains history",
 );
-assert.match(current, /名单观察日[^]*2026-10-24/);
+assert.match(current, /名单日期 2026-10-24/);
 assert.match(current, /名单获取时间[^]*2026-10-24T09:30:00\+08:00/);
-assert.match(current, /股票行情日[^]*2026-10-23/);
+assert.match(current, /行情日期 2026-10-23/);
 assert.match(current, /不代表 2026-10-19 的历史监管状态/);
 assert.match(current, /官方解除日期未知/);
+assert.equal(
+  (current.match(/<section>/g) || []).length,
+  1,
+  "the monitor list is the only panel; source metadata has no separate card",
+);
+assert.match(current, /<details class="detail-list"><summary>来源与日期说明/);
+assert.doesNotMatch(current, /<details[^>]*\bopen\b/);
+const visible = current.replace(/<details\b[^]*?<\/details>/g, "");
+assert.match(visible, /名单日期 2026-10-24/);
+assert.match(visible, /行情日期 2026-10-23/);
+assert.match(visible, /1 条/);
+assert.match(visible, /非盘面选择日名单/);
+assert.doesNotMatch(
+  visible,
+  /名单获取时间|2026-10-24T09:30:00|fuyao|合成来源覆盖说明|section-intro/,
+  "technical source details stay collapsed; date freshness remains visible",
+);
 tables.at(-1).onStockNavigate("600001.SH", tables.at(-1).rows);
 assert.equal(
   selected.at(-1)[1].asOf,
@@ -141,9 +159,10 @@ assert.equal(
   "/market/abnormal?monitor_scope=historical&limit=1000&date=2026-10-19",
 );
 assert.equal(selectors.at(-1).value, "historical");
-assert.match(missing, /名单记录 <b>未知<\/b>/);
+assert.match(missing, /名单未知/);
+assert.match(missing, /名单日期 未知/);
 assert.match(missing, /监控状态未知/);
-assert.doesNotMatch(missing, /名单记录 <b>0<\/b>/);
+assert.doesNotMatch(missing, /0 条|非盘面选择日名单/);
 assert.match(missing, /不能用最新名单回填历史/);
 
 setScope("latest");
@@ -156,12 +175,34 @@ setData({
 });
 const empty = renderToStaticMarkup(createElement(Monitor, props));
 assert.match(empty, /该观察日名单为空/);
-assert.match(empty, /名单记录 <b>0<\/b>/);
+assert.match(empty, /0 条/);
+assert.match(empty, /行情日期 未知/);
 assert.equal(
   tables.at(-1).onStockNavigate,
   undefined,
   "unknown quote dates cannot fall back to shared historical dates",
 );
+setData({
+  monitor_scope: "latest",
+  monitor_observed_date: props.date,
+  quote_as_of: props.date,
+  items: [],
+  total: 0,
+  data_coverage: { selected_date_available: true },
+});
+const sameDate = renderToStaticMarkup(createElement(Monitor, props));
+assert.doesNotMatch(sameDate, /非盘面选择日名单/);
+setData({
+  monitor_scope: "latest",
+  monitor_observed_date: "2026-02-30",
+  quote_as_of: "2026-02-30",
+  items: [],
+  data_coverage: { selected_date_available: false },
+});
+const invalidDate = renderToStaticMarkup(createElement(Monitor, props));
+assert.match(invalidDate, /名单日期 未知/);
+assert.match(invalidDate, /行情日期 未知/);
+assert.doesNotMatch(invalidDate, /2026-02-30|非盘面选择日名单/);
 setData({
   items: [{ name: "旧服务历史名单不可冒充最新", instrument_id: "600001.SH" }],
   total: 1,
@@ -172,5 +213,5 @@ assert.match(incompatible, /当前API未返回所选监控名单范围/);
 assert.doesNotMatch(incompatible, /旧服务历史名单不可冒充最新/);
 assert.match(incompatible, /监控状态未知/);
 console.log(
-  "Abnormal monitor: explicit latest scope, separate collection and quote dates, historical unknowns, empty source and stock navigation verified",
+  "Abnormal monitor: one compact list panel, collapsed source details, explicit latest scope, separate collection and quote dates, historical unknowns, empty source and stock navigation verified",
 );

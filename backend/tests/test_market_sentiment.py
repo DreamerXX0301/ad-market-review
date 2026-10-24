@@ -4,6 +4,7 @@ import pytest
 
 from app.services.market_sentiment import describe_sentiment, market_distribution
 from app.services import strategy_limits
+from app.services import market_sentiment
 from test_market_ladder import Market, TODAY, DAYS, A, B, C, OTHER
 
 
@@ -129,3 +130,29 @@ def test_generic_absence_is_not_proof_of_a_complete_previous_cohort(market,mode)
     assert values(short)['promotion_rate_pct'] is None
     assert short['state']=='insufficient'
     assert short['cohort_candidate_count']==short['observed_count']+short['previous_unverified_count']
+
+
+def test_panel_reference_reuses_proof_without_loading_supplement_again(market, monkeypatch):
+    """Retained panel facts match the former constructor-and-overwrite path."""
+    calls=[]
+    def load(snapshot):
+        calls.append(snapshot)
+        return {'unrelated': 'would immediately be discarded'}
+    monkeypatch.setattr(strategy_limits, 'load_supplement', load)
+    original = market_sentiment.retained_proof
+    def previous_constructor(reference, snapshot_id):
+        proof = strategy_limits.LimitConditionEvidence(market)
+        proof.reference = reference
+        proof.supplement = reference.get('_supplement', {})
+        return proof
+    monkeypatch.setattr(market_sentiment, 'retained_proof', previous_constructor)
+    expected = describe_sentiment(market, market.ref, rows(market), TODAY)
+    assert len(calls)==1
+    calls.clear();market.history_calls.clear()
+    monkeypatch.setattr(market_sentiment, 'retained_proof', original)
+    before = deepcopy(market.ref)
+    actual = describe_sentiment(market, market.ref, rows(market), TODAY)
+    assert calls==[] and len(market.history_calls)==1
+    assert actual['provenance'].pop('computed_at')
+    assert expected['provenance'].pop('computed_at')
+    assert actual==expected and market.ref==before

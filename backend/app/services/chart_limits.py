@@ -165,9 +165,15 @@ def enrich_chart_limits(market, chart, supplement=None, *, focus_day=None):
     pattern_calendar = calendar
     if not calendar: calendar = sorted(raw_prices)
     reference = market.reference()
+    # Only closing pools can prove this overlay.  Do not expand unrelated
+    # sector-price/fund-flow histories each time a stock detail/chart opens.
+    # Focused detail badges still retain the full raw calendar for patterns,
+    # but need source-pool records only for the selected observation day.
+    source_dates = [focus_day] if focus_day is not None else calendar
     supplement_warning = None
     if supplement is None:
-        try: supplement = load_supplement(chart.get('snapshot_id'))
+        try: supplement = load_supplement(chart.get('snapshot_id'), dates=source_dates,
+            fields=('public_pools', 'annual_pools', 'annual_down_pools'))
         except (ValueError, OSError):
             supplement = {}; supplement_warning = '收盘事件补充索引未通过读取；仅使用基础已发布来源'
     if supplement.get('failure_reason'):

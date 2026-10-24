@@ -310,7 +310,7 @@ export function CandleChart({
         }),
   );
   const data = frozenMode ? frozenChartsByPeriod[period] || null : result.data;
-  const bars: Row[] = data?.bars || [];
+  const bars = useMemo<Row[]>(() => data?.bars || [], [data]);
   const annotations = useChartAnnotations(
     instrumentId,
     data,
@@ -379,7 +379,12 @@ export function CandleChart({
         ? panels.filter((value) => value !== key)
         : [...panels, key],
     });
-  const boll = useMemo(() => chartBoll(data), [data]);
+  // Hidden overlays should not scan the entire five-year response on open.
+  // Re-enabling one still computes from this chart's current dated payload.
+  const boll = useMemo(
+    () => (showBoll ? chartBoll(data) : []),
+    [data, showBoll],
+  );
   const last = bars.at(-1);
   const activeBar = bars.find((b) => b.date === activeDate) || last;
   const activeBoll = boll.find((point) => point.date === activeBar?.date);
@@ -409,21 +414,25 @@ export function CandleChart({
   const waveAsOf = data?.as_of || asOf || last?.date || "";
   const patterns = useMemo(
     () =>
-      wavePatterns(
-        waves,
-        bars.map((bar) => bar.date),
-        waveAsOf,
-      ),
-    [waves, bars, waveAsOf],
+      showWaves && waveMode !== "turning"
+        ? wavePatterns(
+            waves,
+            bars.map((bar) => bar.date),
+            waveAsOf,
+          )
+        : [],
+    [waves, bars, waveAsOf, showWaves, waveMode],
   );
   const turns = useMemo(
     () =>
-      waveTurningPoints(
-        waves,
-        bars.map((bar) => bar.date),
-        waveAsOf,
-      ),
-    [waves, bars, waveAsOf],
+      showWaves && waveMode === "turning"
+        ? waveTurningPoints(
+            waves,
+            bars.map((bar) => bar.date),
+            waveAsOf,
+          )
+        : [],
+    [waves, bars, waveAsOf, showWaves, waveMode],
   );
   const candidates = useMemo(
     () => waveCandidates(patterns, waveMode),
