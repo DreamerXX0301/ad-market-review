@@ -67,8 +67,9 @@ import {
 import DataNotes from "./DataNotes";
 import { chartDataNotes } from "./dataNotePresentation";
 import {
-  confirmedBarLimits,
+  barLimitMarker,
   LimitStatus,
+  PatternStatus,
   limitCoverageText,
   limitTooltipHtml,
 } from "./CandleLimitEvents";
@@ -76,6 +77,7 @@ import "./Charts.css";
 import "./StockNavigation.css";
 import StockLimitSummary from "./StockLimitSummary";
 import StockHeaderQuote from "./StockHeaderQuote";
+import { stockPatternHeader } from "./stockPatternHeader";
 import StockCurrentTopics from "./StockCurrentTopics";
 import WatchlistButton from "../features/watchlist/WatchlistButton";
 import StockEventBaseline, {
@@ -633,14 +635,18 @@ export function CandleChart({
           type: "scatter",
           xAxisIndex: 0,
           yAxisIndex: 0,
-          data: bars
-            .filter((bar) =>
-              confirmedBarLimits(bar).some((event) => event.kind === kind),
-            )
-            .map((bar) => ({
-              value: [bar.date, up ? bar.high : bar.low],
-              name: up ? "收盘涨停" : "收盘跌停",
-            })),
+          data: bars.flatMap((bar) => {
+            const marker = barLimitMarker(bar, kind);
+            return marker
+              ? [
+                  {
+                    value: [bar.date, up ? bar.high : bar.low],
+                    name: marker.name,
+                    label: { formatter: marker.text },
+                  },
+                ]
+              : [];
+          }),
           symbol: "triangle",
           symbolRotate: up ? 180 : 0,
           symbolSize: 5,
@@ -1062,7 +1068,7 @@ export function CandleChart({
         {supportsLimits && period === "D" && (
           <ChartToggle
             label="涨跌停标记"
-            title="仅标记经来源池与原始收盘价核验的收盘涨跌停，不含盘中触板或炸板"
+            title="显示已核验收盘涨跌停及地天、一字日形态；同日合并标注，不按涨幅或图上价格猜测"
             checked={showLimits}
             onChange={(value) => update({ showLimits: value })}
           />
@@ -1244,6 +1250,7 @@ export function CandleChart({
               : ""}
           </span>
           {supportsLimits && <LimitStatus bar={activeBar} period={period} />}
+          {supportsLimits && <PatternStatus bar={activeBar} period={period} />}
         </div>
       )}
       {data?.indicator_continuity_notice && (
@@ -1543,6 +1550,7 @@ export function CandleChart({
             <>
               <span className="up">▼ 收盘涨停</span>
               <span className="down">▲ 收盘跌停</span>
+              <span>同日形态合并标注：地天 / 一字涨 / 一字跌</span>
               <span>{showLimits ? "标记已显示" : "标记已隐藏"}</span>
             </>
           ) : (
@@ -1552,8 +1560,10 @@ export function CandleChart({
             </span>
           )}
           <span>{limitCoverageText(data?.limit_event_coverage)}</span>
-          <span>收盘池口径，不含触板 / 炸板。</span>
-          <span>仅标已核验事件；无标记不等于未涨跌停。</span>
+          <span>涨跌停按收盘池核验，单纯触板 / 炸板不作为收盘事件。</span>
+          <span>
+            形态只用原始日K与来源证据；无标记不等于未涨跌停或没有形态。
+          </span>
         </div>
       )}
       {data && (
@@ -1825,7 +1835,7 @@ export function CandleChart({
               指数始终显示原始点位，不覆盖个股偏好。本地前复权仍需每只股票通过事件核验；资料不足时保留原始价并提示。
             </p>
             <ChartToggle
-              label="默认显示个股日K收盘涨跌停标记"
+              label="默认显示个股日K涨跌停及日形态标记"
               checked={showLimits}
               onChange={(value) => update({ showLimits: value })}
             />
@@ -2001,6 +2011,7 @@ export function StockDrawer({
                 instrumentId={id}
                 asOf={asOf}
               />
+              <PatternStatus bar={stockPatternHeader(detailData, asOf)} />
             </div>
             {position && (
               <div className="stock-navigation-scope">

@@ -90,15 +90,17 @@ def instrument_tracking_baselines(instrument_id:str,as_of:str|None=None):
 @router.get('/instruments/{instrument_id}')
 def instrument_detail(instrument_id:str,as_of:str|None=None):
     from app.services.stock_memberships import stock_membership_fields
+    from app.services.stock_chart_patterns import stock_pattern_fields
     market,status,day=market_service.context(as_of)
     symbol=market.instrument(instrument_id)['instrument_id']
     chart=market.chart(symbol,as_of=day)
     row=chart['bars'][-1] if chart['bars'] else {}
+    patterns=stock_pattern_fields(market,chart,day)
     current=day==status['data_end']
     row.update(instrument_id=symbol,topics=[{'topic_id':t['topic_id'],'name':t['name']} for t in market.topics_data() if current and symbol in t['instrument_ids']],turnover_ratio_pct=None)
     identity=market.instrument(symbol)
     memberships=stock_membership_fields(market,symbol) if identity.get('kind',identity.get('asset_type','stock')) in ('stock','equity','a_share','A') else {}
-    return json_clean({**identity,**market_service.stock(row,market.reference() if current else None),**memberships,'instrument':identity,'data_date':day,'snapshot_id':status['snapshot_id'],'warnings':status.get('warnings',[])+([] if current else ['历史题材与监管标签未留存；当前归属单独列示，不使用当前分类回填历史'])})
+    return json_clean({**identity,**market_service.stock(row,market.reference() if current else None),**memberships,**patterns,'instrument':identity,'data_date':day,'snapshot_id':status['snapshot_id'],'warnings':status.get('warnings',[])+([] if current else ['历史题材与监管标签未留存；当前归属单独列示，不使用当前分类回填历史'])})
 
 @router.get('/data/status')
 def data_status():return json_clean(platform_service.data_status())

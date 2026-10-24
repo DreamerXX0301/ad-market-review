@@ -2,12 +2,21 @@ import type { Row } from "../lib/api";
 import type { ChartPeriod } from "./candleChange";
 
 export type LimitKind = "limit_up" | "limit_down";
+export type PatternKind =
+  "earth_to_sky" | "one_price_limit_up" | "one_price_limit_down";
 export type LimitDescription = {
   text: string;
   detail: string;
   source: string;
   tone: "up" | "down" | "muted";
 };
+export const PATTERN_BASIS = "verified-source-close-pool-and-raw-ohlc-v1";
+const patternLabels: Record<PatternKind, string> = {
+  earth_to_sky: "地天板",
+  one_price_limit_up: "一字涨停",
+  one_price_limit_down: "一字跌停",
+};
+const patternKinds = Object.keys(patternLabels) as PatternKind[];
 
 const sourceNames: Record<string, string> = {
   fuyao: "Fuyao",
@@ -28,6 +37,79 @@ export function confirmedBarLimits(bar?: Row): Row[] {
   return [...unique.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
+function isoDay(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+    return false;
+  const parsed = new Date(value + "T00:00:00Z");
+  return (
+    Number.isFinite(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  );
+}
+
+const positive = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0;
+
+/** Only backend-confirmed raw-day patterns; display OHLC never creates one. */
+export function confirmedBarPatterns(bar?: Row): Row[] {
+  const unique = new Map<string, Row>();
+  for (const event of Array.isArray(bar?.pattern_events)
+    ? bar.pattern_events
+    : []) {
+    if (
+      !event ||
+      !patternKinds.includes(event.kind) ||
+      event.basis !== PATTERN_BASIS ||
+      event.raw_price_basis !== "none" ||
+      !isoDay(event.date) ||
+      !isoDay(event.bar_date) ||
+      event.date > event.bar_date ||
+      (isoDay(bar?.date) &&
+        (event.bar_date !== bar.date || event.date > bar.date)) ||
+      !positive(event.raw_volume) ||
+      !["open", "high", "low", "close"].every((field) =>
+        positive(event.raw_ohlc?.[field]),
+      )
+    )
+      continue;
+    unique.set(event.date + ":" + event.kind, event);
+  }
+  return [...unique.values()].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind),
+  );
+}
+
+/** One plot label per closing direction, rather than stacked shape/limit tags. */
+export function barLimitMarker(bar: Row, kind: LimitKind) {
+  const up = kind === "limit_up";
+  const patterns = confirmedBarPatterns(bar).filter((event) =>
+    up
+      ? event.kind !== "one_price_limit_down"
+      : event.kind === "one_price_limit_down",
+  );
+  if (
+    !patterns.length &&
+    !confirmedBarLimits(bar).some((event) => event.kind === kind)
+  )
+    return null;
+  const pattern =
+    patterns.find((event) => event.kind === "earth_to_sky") || patterns[0];
+  return {
+    text: pattern
+      ? pattern.kind === "earth_to_sky"
+        ? "地天"
+        : up
+          ? "一字涨"
+          : "一字跌"
+      : up
+        ? "涨"
+        : "跌",
+    name: pattern
+      ? `${patternLabels[pattern.kind as PatternKind]} · 收盘${up ? "涨停" : "跌停"}`
+      : `收盘${up ? "涨停" : "跌停"}`,
+  };
+}
+
 function eventSources(events: Row[]) {
   return [
     ...new Set(
@@ -40,6 +122,80 @@ function eventSources(events: Row[]) {
   ]
     .map((source) => sourceNames[String(source)] || String(source))
     .join(" / ");
+}
+
+function patternDayDetail(event: Row) {
+  const price = (value: number) =>
+    value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  const quote = event.raw_ohlc;
+  const band = event.evidence?.limit_band;
+  const reference =
+    event.kind === "earth_to_sky" &&
+    band?.basis ===
+      "derived-symmetric-band-from-verified-close-and-previous-session-v1" &&
+    positive(band.limit_down_price) &&
+    positive(band.limit_up_price)
+      ? `；派生跌停参考价 ${price(band.limit_down_price)} / 涨停参考价 ${price(band.limit_up_price)}（由已核验收盘与前一市场交易日价格推导，非交易所直接字段）`
+      : "";
+  const basis =
+    event.kind === "earth_to_sky"
+      ? "最低价触及有依据的当日跌停参考价，收盘经来源池核验为涨停；日线不还原首次触板、开板回封或持续封板路径"
+      : `原始日K开高低收同价，且收盘经来源池核验为${event.kind === "one_price_limit_up" ? "涨停" : "跌停"}；不代表盘口封单稳定性`;
+  return `${event.date} · 原始最低 ${price(quote.low)} · 原始收盘 ${price(quote.close)} · 判定依据：${basis}${reference}`;
+}
+
+export function describeBarPatterns(
+  bar: Row | undefined,
+  period: ChartPeriod,
+  includeUnknown = false,
+): LimitDescription[] {
+  if (!bar) return [];
+  const events = confirmedBarPatterns(bar);
+  const cycle = period === "M" ? "月" : "周";
+  const descriptions: LimitDescription[] = [];
+  for (const kind of patternKinds) {
+    const positives = events.filter((event) => event.kind === kind);
+    if (!positives.length) continue;
+    const source = eventSources(positives) || "已核验收盘池与原始日K";
+    descriptions.push({
+      text:
+        period === "D"
+          ? patternLabels[kind]
+          : `${cycle}内${positives.length}日${patternLabels[kind]}`,
+      detail:
+        positives.map(patternDayDetail).join("；") +
+        (period === "D"
+          ? "；价格依据为未复权原始日线，图上位置随展示口径换算"
+          : `；只汇总具体交易日，不将整根${cycle}K称为${patternLabels[kind]}`),
+      source,
+      tone: kind === "one_price_limit_down" ? "down" : "up",
+    });
+  }
+  if (includeUnknown) {
+    const unknown = patternKinds.flatMap((kind) => {
+      if (period === "D") {
+        const state = bar.pattern_status?.[kind];
+        return state?.status === "unknown" && state.state == null
+          ? [
+              `${patternLabels[kind]}：${state.reason || "原始报价或判定依据不足"}`,
+            ]
+          : [];
+      }
+      const count = bar.pattern_summary?.[kind]?.unknown_days;
+      return Number.isInteger(count) && count > 0
+        ? [`${patternLabels[kind]}有${count}日待核验`]
+        : [];
+    });
+    if (unknown.length)
+      descriptions.push({
+        text:
+          period === "D" ? "日形态仍有待核验" : `${cycle}内日形态仍有待核验`,
+        detail: unknown.join("；") + "。未出现标记不等于已确认没有该形态。",
+        source: "依据不足",
+        tone: "muted",
+      });
+  }
+  return descriptions;
 }
 
 export function describeBarLimits(
@@ -134,12 +290,42 @@ export function limitTooltipHtml(
   period: ChartPeriod,
   colors: { up: string; down: string; text: string },
 ) {
-  return describeBarLimits(bar, period)
+  return [
+    ...describeBarLimits(bar, period),
+    ...describeBarPatterns(bar, period, true),
+  ]
     .map(
       (item) =>
         `<div style="margin-top:5px;color:${item.tone === "muted" ? colors.text : colors[item.tone]};max-width:260px;white-space:normal">${escapeHtml(item.text)} · ${escapeHtml(item.source)}<div style="font-size:10px;color:${colors.text}">${escapeHtml(item.detail)}</div></div>`,
     )
     .join("");
+}
+
+/** Reusable by the observed-day stock header; old reports remain empty. */
+export function PatternStatus({
+  bar,
+  period = "D",
+  showUnknown = false,
+}: {
+  bar?: Row;
+  period?: ChartPeriod;
+  showUnknown?: boolean;
+}) {
+  const descriptions = describeBarPatterns(bar, period, showUnknown);
+  if (!descriptions.length) return null;
+  return (
+    <span className="candle-pattern-status" aria-label="当前K线日形态状态">
+      {descriptions.map((item, index) => (
+        <span
+          key={index}
+          className={item.tone}
+          title={`${item.detail} · ${item.source}`}
+        >
+          {item.text}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 export function LimitStatus({
