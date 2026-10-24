@@ -23,7 +23,7 @@
 | -------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | 在同一观察日查看指数、市场广度、行业题材和涨停梯队 | 个股与板块分别配置日 / 周 / 月规则，组合历史事件与今日条件 | 把候选加入跟踪或自选，复查触发事件、加入基准和后续涨幅 |
 
-> **版本说明**：本页图文介绍[当前源码（Unreleased）](CHANGELOG.md#unreleased)，包含尚未另发镜像的新增功能。下方 Docker 命令安装已发布的 **v0.1.1**；需要本页新增功能时，请从当前源码运行。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
+> **版本说明**：本页图文介绍[0.1.2 的已实现功能](CHANGELOG.md#v012)，当前处于发行准备。下方 **v0.1.2** 安装命令仅在配套源码标签与镜像发行成功后可用；最终可用性、完整提交和镜像摘要以对应发行回执为准。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
 
 ## 界面预览
 
@@ -137,24 +137,24 @@ flowchart LR
 
 ## Docker 安装
 
-需要 Docker Engine / Docker Desktop、Compose 和 curl。以下流程安装 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.1`，只下载部署文件并拉取镜像，无需在本机构建。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+需要 Docker Engine / Docker Desktop、Compose 和 curl。以下流程面向发行成功后的 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，只下载配套部署文件并拉取镜像，无需在本机构建；当前文档不代表镜像已可用。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
 
-curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.1/deploy/docker-compose.yml -o docker-compose.yml
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.1
+curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.2/deploy/docker-compose.yml -o docker-compose.yml
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.2
 
 umask 077
 key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.1 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.2 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
-export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.1
+export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.2
 export SHIXU_HTTP_PORT=8788
 
 docker compose -p ad-market-review -f docker-compose.yml pull

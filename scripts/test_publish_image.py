@@ -167,7 +167,8 @@ def test_fresh_install_compose_is_standalone_pulls_version_and_requires_explicit
     run=subprocess.run(command,env=env,text=True,capture_output=True)
     assert run.returncode==0,run.stderr
     config=json.loads(run.stdout)
-    assert all(service['image']==IMAGE+':v0.1.1' and 'build' not in service for service in config['services'].values())
+    version=(ROOT/'VERSION').read_text().strip()
+    assert all(service['image']==IMAGE+':v'+version and 'build' not in service for service in config['services'].values())
     assert 'worker' not in config['services']
     api=config['services']['api'];assert api['ports'][0]['host_ip']=='127.0.0.1'
     assert any(m['target']=='/var/lib/shixu/published' and m['read_only'] for m in api['volumes'])

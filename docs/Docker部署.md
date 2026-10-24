@@ -1,8 +1,8 @@
 # Docker部署
 
-冒险的梦想家提供独立拉镜像入口，发布目标为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.1`，包含 Linux amd64、arm64。本文描述安装和发行流程；镜像实际可用性、摘要及平台检查结果以对应 GitHub Actions 发行记录为准。无需在安装机器构建前后端。
+冒险的梦想家提供独立拉镜像入口，本次发行准备目标为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，计划提供 Linux amd64、arm64。本文描述安装和发行流程；镜像实际可用性、摘要及平台检查结果以对应 GitHub Actions 发行回执为准。无需在安装机器构建前后端。
 
-当前源码的[Unreleased](../CHANGELOG.md#unreleased)包含市场温度、下一交易日计划、连板高度与板型反馈等新增功能，尚未另发镜像。合入或推送 `master` 不会更新既有 `v0.1.1` 镜像；本页固定版本安装命令也不会获得这些源码新增功能。需要验证新增功能时，应使用已审定提交自行构建独立候选，或等待包含该提交的新版本镜像发行，再按[版本升级与回滚](版本升级与回滚.md)切换。
+[0.1.2](../CHANGELOG.md#v012)冻结v0.1.1以来全部已实现功能，包括市场温度、下一交易日计划、连板高度与板型反馈和当日主线卡片修正。当前处于发行准备，下列安装命令仅在配套源码标签和镜像发行成功后可用。合入或推送 `master` 不会更新既有 `v0.1.1` 镜像，也不能覆盖该旧标签；已有安装按[版本升级与回滚](版本升级与回滚.md)使用独立恢复副本验收后切换。
 
 ## 全新安装
 
@@ -13,8 +13,8 @@
 ```bash
 mkdir ad-market-review
 cd ad-market-review
-curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.1/deploy/docker-compose.yml -o docker-compose.yml
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.1
+curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.2/deploy/docker-compose.yml -o docker-compose.yml
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.2
 ```
 
 创建一个新的、独立保存的主密钥。镜像中自带生成脚本，不要求宿主安装 Python；脚本遇到已有文件会拒绝覆盖。Docker Desktop 需允许挂载此目录。
@@ -25,7 +25,7 @@ key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.1 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.2 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
 
@@ -39,7 +39,7 @@ docker compose up -d api
 也可在宿主有 Python 3 时下载同一版本的脚本执行，二选一：
 
 ```bash
-curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.1/deploy/create_secret.py -o create_secret.py
+curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.2/deploy/create_secret.py -o create_secret.py
 python3 create_secret.py "$HOME/.local/share/ad-market-review-secrets/master.key"
 export SHIXU_MASTER_KEY_FILE="$HOME/.local/share/ad-market-review-secrets/master.key"
 ```
@@ -72,7 +72,7 @@ docker compose config
 
 `.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签也应指向同一审核提交，才能使用上面的固定版本下载 URL。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
-已有 `v0.1.1` 不能用于重新发布当前新增功能，也不能删除或覆盖旧版本标签来绕过门禁。先在独立发行变更中选定尚未发布的新版本，同步根 `VERSION`、前后端版本与锁文件、Docker/Compose 默认版本及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
+已有 `v0.1.1` 不能用于重新发布当前新增功能，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.2`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、Docker/Compose 默认版本及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
 
 ```bash
 gh workflow run publish-image.yml --ref master -f version="$(cat VERSION)" -F confirm=true
