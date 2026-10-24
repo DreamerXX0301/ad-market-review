@@ -72,15 +72,40 @@
   min-width: 0;
 }
 .daily-mainline-card-title {
+  flex-wrap: wrap;
   justify-content: flex-start;
+  gap: 6px 10px;
 }
-.daily-mainline-card-title > button {
+.daily-mainline-stock-name {
+  flex: 0 0 auto;
   padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   text-align: left;
+  white-space: nowrap;
 }
-.daily-mainline-card-title > span:last-child {
+.daily-mainline-stock-name:hover strong,
+.daily-mainline-stock-name:focus-visible strong {
+  color: var(--blue);
+}
+.daily-mainline-stock-name:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.daily-mainline-card-title > .copy-stock-code,
+.daily-mainline-change {
+  flex: 0 0 auto;
+}
+.daily-mainline-change {
   margin-left: auto;
   font-weight: 600;
+  white-space: nowrap;
+}
+.daily-mainline-card > .board-tags {
+  display: flex;
+  margin-top: 8px;
 }
 .daily-mainline-card details {
   margin: 10px 0;

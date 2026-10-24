@@ -19,6 +19,12 @@ const compile = async (path) =>
   ).outputText;
 const helpers = encode(await compile("./dailyMainlinePresentation.ts"));
 const ladder = encode(await compile("./ladderPresentation.ts"));
+const ladderBoard = encode(
+  (await compile("./ladderBoardPresentation.ts")).replaceAll(
+    'from "./ladderPresentation"',
+    "from " + JSON.stringify(ladder),
+  ),
+);
 const board = encode((await compile("./boardPresentation.ts")).replaceAll('from "./ladderPresentation"', "from " + JSON.stringify(ladder)));
 const boardComponent = encode((await compile("./BoardTags.tsx")).replaceAll('from "react/jsx-runtime"', "from " + JSON.stringify(runtime)).replaceAll('from "./boardPresentation"', "from " + JSON.stringify(board)).replace(/^import ["'][^"']+\.css["'];?$/gm, ""));
 const ui = encode(`import {jsx} from ${JSON.stringify(runtime)};
@@ -26,7 +32,8 @@ export const Modal=({title,children})=>jsx('section',{children:[jsx('h2',{childr
 export const Empty=({title,description})=>jsx('div',{children:[title,description]});
 export const ErrorBox=({message})=>jsx('div',{role:'alert',children:message});export const Loading=()=>null;`);
 const mockApi =
-  encode(`export const useApi=(path)=>({data:path.includes('/history')?{items:[],total:0}:{date:'2026-01-05',items:[],total:0},loading:false,error:'',reload:()=>{}});
+  encode(`let mainlineItems=[];export const setMainlineItems=(items)=>{mainlineItems=items};
+export const useApi=(path)=>({data:path.includes('/history')?{items:[],total:0}:{date:'2026-01-05',items:mainlineItems,total:mainlineItems.length},loading:false,error:'',reload:()=>{}});
 export const api=()=>{throw Error('render must not request or mutate')};export const post=api;`);
 let compiled = await compile("./DailyMainlines.tsx");
 for (const [name, replacement] of Object.entries({
@@ -39,6 +46,7 @@ for (const [name, replacement] of Object.entries({
   ),
   "../../components/UI": ui,
   "./dailyMainlinePresentation": helpers,
+  "./ladderBoardPresentation": ladderBoard,
   "./ladderPresentation": encode(await compile("./ladderPresentation.ts")),
   "./BoardTags": boardComponent,
   "../../components/CopyStockCode": encode(
@@ -57,6 +65,7 @@ const {
   encode(compiled.replace('import "./DailyMainlines.css";', ""))
 );
 const { emptyMainlineAttribution } = await import(helpers);
+const { setMainlineItems } = await import(mockApi);
 const stock = {
   instrument_id: "600001.SH",
   name: "合成测试证券",
@@ -73,11 +82,88 @@ let html = renderToStaticMarkup(
 assert.match(html, /当日主线复盘/);
 assert.match(html, /未归因/);
 assert.match(html, /有据录入主线/);
+assert.match(html, /尚无当日主线证据，行业和概念不会代填。/);
 assert.doesNotMatch(
   html,
   /热门概念/,
   "a concept is not silently converted into a daily group",
 );
+const initialProps = {
+  date: "2026-01-05",
+  rows: [stock],
+  onStock: () => {},
+};
+for (const reason of [undefined, null, "", " \t ", " - ", " —–- "]) {
+  html = renderToStaticMarkup(
+    createElement(DailyMainlines, {
+      ...initialProps,
+      rows: [{ ...stock, reason }],
+    }),
+  );
+  assert.match(
+    html,
+    /来源原因：待核验/,
+    "blank and dash-only source reasons remain unknown",
+  );
+}
+const rawReasonStock = {
+  ...stock,
+  reason: "  原因甲 + 原因乙—后续（来源原文）  ",
+};
+html = renderToStaticMarkup(
+  createElement(DailyMainlines, { ...initialProps, rows: [rawReasonStock] }),
+);
+assert.match(html, /来源原因：原因甲 \+ 原因乙—后续（来源原文）/);
+assert.equal(
+  rawReasonStock.reason,
+  "  原因甲 + 原因乙—后续（来源原文）  ",
+  "display normalization never rewrites the input source text",
+);
+const searchableRows = [
+  stock,
+  { ...stock, instrument_id: "600002.SH", name: "另一只合成测试证券" },
+];
+html = renderToStaticMarkup(
+  createElement(DailyMainlines, {
+    ...initialProps,
+    rows: searchableRows,
+    query: "没有匹配的关键词",
+  }),
+);
+assert.match(html, /没有匹配的当日主线样本/);
+assert.match(html, /已返回确认涨停样本 <b>2<\/b>/);
+assert.doesNotMatch(html, /class="daily-mainline-card"/);
+assert.doesNotMatch(html, /当前没有可展示的确认涨停样本/);
+html = renderToStaticMarkup(
+  createElement(DailyMainlines, {
+    ...initialProps,
+    rows: searchableRows,
+    query: "600002.SH",
+  }),
+);
+assert.doesNotMatch(html, /没有匹配的当日主线样本/);
+assert.match(html, /另一只合成测试证券/);
+assert.match(html, /已返回确认涨停样本 <b>2<\/b>/);
+setMainlineItems([{
+  date: initialProps.date,
+  instrument_id: stock.instrument_id,
+  instrument_name: stock.name,
+  revision: 2,
+  revision_id: "synthetic-revoke-revision",
+  action: "revoke",
+  source_kind: "manual_user_entry",
+  recorded_at_ms: 1,
+  change_reason: "合成撤销原因",
+  attributions: [],
+  display_state: "unattributed",
+  display_mainline: null,
+  secondary_mainlines: [],
+}]);
+html = renderToStaticMarkup(createElement(DailyMainlines, initialProps));
+assert.match(html, /当前当日主线归属已撤销；历史证据与修订可在下方审计中查阅。/);
+assert.match(html, /更正 \/ 撤销 \/ 审计/);
+assert.doesNotMatch(html, /尚无当日主线证据/);
+setMainlineItems([]);
 const shapeStock = {
   ...stock,
   date: "2026-01-05",
@@ -150,5 +236,5 @@ assert.match(
   "new manual entry has no default mainline seed",
 );
 console.log(
-  "daily mainline initial UI, manual evidence, safe refs and audit form passed",
+  "daily mainline source reasons, search states, revocation, manual evidence and audit form passed",
 );
