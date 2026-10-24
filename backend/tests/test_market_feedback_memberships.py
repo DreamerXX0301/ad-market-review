@@ -13,7 +13,11 @@ def setup_feedback(monkeypatch, topics):
     market = SimpleNamespace(calendar=lambda: DAYS, status=lambda: {'data_end': DAYS[-1], 'snapshot_id': 'current-fixture'})
     reference = {'topics': topics, 'ladder': {'item': [{'date': day, 'boards': {'2': [{'thscode': SYMBOL, 'board_num': 2}]}} for day in DAYS[:-1]]}}
     indexed = {SYMBOL: {'instrument_id': SYMBOL, 'change_pct': -2, 'topics': [{'name': 'must be replaced'}]}}
-    monkeypatch.setattr(market_history, '_archive_index', lambda: {'entries': [], 'listed_generations': set(), 'failure_count': 0, 'truncated': False})
+    def archive_index(*, monitor_only=False):
+        # Historical memberships must keep the full dated reference branch.
+        assert monitor_only is False
+        return {'entries': [], 'listed_generations': set(), 'failure_count': 0, 'truncated': False}
+    monkeypatch.setattr(market_history, '_archive_index', archive_index)
     return market, reference, indexed
 
 
