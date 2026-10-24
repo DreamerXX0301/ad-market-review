@@ -1,3 +1,4 @@
+import AbnormalMonitor from "./AbnormalMonitor";
 import { useEffect, useState } from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { list, useApi } from "../../lib/api";
@@ -43,6 +44,7 @@ import MarketOutlook from "./MarketOutlook";
 import { outlookStocks } from "./marketOutlookPresentation";
 import LimitLadder from "./LimitLadder";
 import TopicMembersDialog from "./TopicMembersDialog";
+import { latestMemberTopicCode } from "./topicMemberScope";
 import SectorChartDialog from "./SectorChartDialog";
 import { sectorChartTarget } from "./sectorChartPresentation";
 import type { SectorChartSelection } from "./sectorChartPresentation";
@@ -60,6 +62,7 @@ import {
   sortMarketRows,
   sectorQuoteSummary,
   industryFundsSummary,
+  topicMembersRequest,
 } from "./marketPresentation";
 import type { MarketSort } from "./marketPresentation";
 import {
@@ -652,7 +655,7 @@ export function MarketPage({
     order: "desc" as const,
   };
   const result = useApi<Row>(
-    date
+    date && route !== "abnormal"
       ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerTopN == null ? "" : "&top_n=" + gainerTopN) : ""}`
       : null,
   );
@@ -812,6 +815,8 @@ export function MarketPage({
           ].includes(k)),
     )
     .slice(0, 6);
+  if (route === "abnormal")
+    return <AbnormalMonitor date={date} onStock={onStock} />;
   if (route === "ladder")
     return (
       <LimitLadder
@@ -1357,14 +1362,15 @@ export function MarketPage({
                             <button
                               className="market-topic-link"
                               onClick={() => setMemberTopic(row)}
-                              disabled={
+                              disabled={!topicMembersRequest(row, date)}
+                              title={
                                 row.members_available === false ||
                                 row.membership_match_type === "unavailable"
-                              }
-                              title={
-                                row.membership_unavailable_reason ||
-                                row.membership_basis ||
-                                "查看所选盘面日留存成员"
+                                  ? latestMemberTopicCode(row)
+                                    ? "该日历史成分未留存；可打开查看缺口，并手动切换当前最新成员"
+                                    : "该日历史成分未留存；可打开查看缺口与数据口径"
+                                  : row.membership_basis ||
+                                    "查看所选盘面日留存成员"
                               }
                               aria-label={`查看${row.name || "分类"}在${date}的成分股`}
                             >

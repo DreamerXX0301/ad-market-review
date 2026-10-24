@@ -60,14 +60,32 @@
 | sectors | 指定日来源指数涨幅/成交额；没有真实指数时可明确回退存档成员等权样本 |
 | ladder | 来源连板梯队、首末封/开板等可用字段；反包、失败、20cm 分开，未核验核心不造龙头 |
 | gainers | 精确 T/T−30 市场交易日端点、年内涨停证据、技术观察和风险提示 |
-| abnormal | 仅名单来源观察日明确匹配的留存数据，不用当前名单回填历史 |
+| abnormal | 指定日历史仅名单观察日精确匹配；显式latest读取最新已留存名单，两个范围不混用 |
 | flow | 已核验行业日净流入、跨日趋势；板块成交额与资金净流入分开 |
+
+`abnormal` 当前接入供应商的严重异动与重点监控 `state=current` 名单。首次主行情同步按每页30条读取完整分页，并分别保留名单 `abnormal_observed_date/abnormal_fetched_at`；后续题材库重发只复用已留存名单，必须保留原观察日与获取时间，缺失仍为未知，不得改成题材任务本次 `collected_at`。板块K线及盘面补充完成不代表另行取得监管历史全集或官方函件。
+
+`GET /market/abnormal?date=&monitor_scope=historical|latest` 默认 `historical`，保持指定日精确匹配。`latest` 只从已登记且通过SHA核验的发布存档，按名单观察日、名单获取时间选择最新可读名单；不会联网或创建任务，不按较晚题材重发时间更新名单时点。页面默认显示明确标注的最新已留存名单，可切换指定日历史，不修改盘面共享日期。返回 `monitor_scope/requested_date/monitor_observed_date/monitor_fetched_at/quote_as_of`，名单日期与报价日期分开；例如周六24日首次采集、行情截至周五23日时，最新名单可为24日，股票报价与打开K线仍截至23日，23日历史名单仍未知。latest的顶层 `date` 为报价日，`requested_date` 保留原盘面选择日；其 `data_coverage` 可列非交易日观察日期，不冒称交易日历史档案。无合法观察日期的名单不可用，已核验空名单才返回已知空；损坏存档跳过并提示，降级旧档须披露旧观察日。其他分支不接受latest范围。
+
+名单记录标识 `evidence_type=provider_monitor`、`official_document=null`。供应商记录的起止区间不等于交易所正式监管起止或解除证明；无匹配观察日保持“未留存/未知”，不表示没有发生监管。正式监管结束日没有权威材料时保持未知，不由来源标签、停复牌日期或预计期限补齐。
 
 `sectors` 行包含 `quote_available/quote_source/quote_basis/members_available`。`quote_basis` 为 `provider_index` 或 `archived_member_sample`；没有成员时成员数、涨跌停家数为 null，但真实指数行情继续显示。顶层 `quote_coverage` 与 `membership_coverage` 分别返回，当前目录数量不称历史目录完整。
 
 `GET /market/topic-members?date=&topic_id=`，或使用明确 `source_code/kind/source_name`，只读所选日可用的历史成员档案；找不到时明确不可用。不能按同名当前成员补档。
 
-`GET /market/mainlines?date=&known_at_ms?` 与 `GET /market/mainlines/history?date=&instrument_id=&limit=&offset=` 读取独立的逐日手工主线审计；不改变 `ladder` 的行业、概念和原始来源原因。它们只读SQLite，date是合法ISO审计日期，即使当前行情目录已滚动也可读旧记录；无记录为空，不由当前概念补全。列表total是有修订的证券数，含撤销，不是涨停家数；前端仅与当前确认池按完整ID关联后去重展示，池外记录单列。写入、更正、撤销、来源转述/用户判断/待核验/冲突以及真实记录时间契约见[Workspace API：当日主线](workspace-api.md#当日主线归因手工证据-v01)。
+`GET /market/mainlines?date=&known_at_ms?` 与 `GET /market/mainlines/history?date=&instrument_id=&limit=&offset=` 读取独立的逐日手工主线审计；不改变 `ladder` 的行业、概念和原始来源原因。它们只读SQLite，date是合法ISO审计日期，即使当前行情目录已滚动也可读旧记录；无记录为空，不由当前概念补全。列表total是有修订的证券数，含撤销，不是涨停家数；这些接口仅保留既有手工数据的兼容读取，当前自动主线页面不消费该结果。写入、更正、撤销、来源转述/用户判断/待核验/冲突以及真实记录时间契约见[Workspace API：当日主线](workspace-api.md#当日主线归因手工证据-v01)。
+
+`GET /market/ladder?date=` 返回只读 `system_mainlines`，自动页面不读取手工审计。版本 `algorithm_version=source-reason-directions-v2`、`source_kind=local_source_synthesis`，包含 `state=candidate|unavailable/date/snapshot_id/groups/other_groups/individual_cues/missing_reason/coverage/reason/notice`。只复用本次已读同日确认收盘涨停行、唯一有效原始收盘与正成交量、绑定收盘事件证据；日期、行情代际、证券身份、原价、冲突或重复不一致时拒绝纳入，不以池价代替缺失报价。
+
+四个自动分区分别为重点方向`groups`、其他共同方向/事件组`other_groups`、未成组但有原文的`individual_cues`、真正空或占位原因的`missing_reason`。每只证券仅占一个分类位置，四个分区去重家数之和等于`coverage.confirmed_sample_count`。`coverage`保留`examined_row_count/eligible_reason_count/rejected_row_count/source_pool_complete/market_complete=false`，并分别给出`focus_count/other_count/individual_count/missing_reason_count`；拒绝行不伪造为缺原因证券，也不声称样本等于全市场。
+
+来源原因按半角/全角加号拆分、trim并按原文顺序去重。明确含机器人、具身智能的正向标签可归“机器人相关”；只有物理AI或否认、不涉及等反向描述不强归。剩余股票只按首个明确来源标签归组：商贸零售/商业零售/零售促销合为“零售”；业绩增长、三季报增长、半年报增长、三季度增长、业绩预增、净利润增长、业绩扭亏、毛利率提升合为“业绩线索”；其余首标签精确重复。规则仅用于来源线索阅读，不把次要标签变成已证主因，也不从公司名、当前目录、热门概念或后续涨幅推断历史。
+
+方向至少3只才可进重点，按家数降序、已核验最高板高降序、有效首封时间及名称稳定排序，最多3组，不硬凑。其余至少2只的共同方向及事件组进入`other_groups`，事件不进入重点。单例、长叙述及标签保护上限进入`individual_cues`，不能把它们误称来源未提供原因；真正空或占位原因才进入`missing_reason`。原文保护界限不影响原价/收盘事件核验。
+
+组结构为`key/name/kind=direction|catalyst/grouping_rule/labels/count/max_known_height/high_stock_ids/members`。`labels`是组内实际命中的原文标签去重汇总，高度未知为null，高标不认证龙头。所有成员统一包含`instrument_id/source_reason/matched_tag/matched_tags/source/source_ref/closing_pool_refs`；`matched_tags`为此次规则实际命中的原文标签、按原文顺序去重，`matched_tag`为第一项或无命中时空值，不将族名冒充原文。`source_ref`绑定`date/snapshot_id/endpoint=/api/v1/market/ladder/field_path=items[instrument_id="…"].reason`；原因提供方缺据则`source=null`，不拿报价/封板详情来源代填。`closing_pool_refs`只保留收盘事件来源、路径及有据原始SHA，固定`purpose=closing_event_only`，不独立证明原因。
+
+前端验证同日同代、完整ID、原文/标签绑定、四分区去重及家数，契约不匹配则不猜分类。全局高标独立从全部同日确认样本的`board_presentation.height`核验，不受前三方向影响；它是观察入口，不重复增加分类数量。正文只展示方向、样本和简短原始原因；技术定位和SHA保留API，不展示编辑、补录、审计或待办界面。缺原因只说明来源状态，不要求用户完成资料。既有SQLite手工记录及兼容API不删除，旧修订不参与自动页面分类。系统不联网、不写业务审计、不创建任务或迁移，不用当前成员回填历史，不伪造历史首知时间。
 
 `gainers` 的检索/排序对完整候选集合执行后再分页，null 升降序都最后；年内次数下界不参与精确次数排序。`flow` 的近若干日是跨日趋势，不是全天盘中资金时序，也不推断机构真实决策。
 
@@ -195,6 +213,8 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 - 历史缓存须先复验原始全段与 SHA，再按目标日截断重算聚合和指标；不得从未来已聚合结果切片。板块是原始指数点位，不做个股复权/涨跌停标记。
 - `GET /sectors/{topic_code}/members?as_of=&membership_scope=latest|historical` 无需跟踪轮次。latest 仅用当前业务日报价，显示真实成员采集日；historical 严格查历史留存。无档保持未知，不按名称猜成员。
 - 成员返回 `membership_as_of/quote_as_of/members_complete`、board 和上述收益/事件字段；`stock_entry_baseline=null`。展开成员不会创建个股跟踪，也不会把板块入池点位套给股票。
+
+盘面分类名称在历史成员缺档时仍可打开成员窗口，默认保持所选日历史口径和未知状态；只在用户显式切换“当前最新成员”后调用 `membership_scope=latest`，不携带旧盘面日。成员采集日和当前业务行情日分别展示，股票K线导航使用返回的 `quote_as_of`。当前成员需要明确来源代码或已核验唯一代理身份，不能按名称猜测；切换不联网、不排队、不补写历史。完整初始化只采集当时的当前成员，不补造五年成员变迁；日增量沿用成员和原采集日，完整成员更新仍需用户手动刷新。使用说明见[板块行情与成员档案](../docs/板块行情与成员档案.md)。
 
 精确字段与校验入口见[平台路由](../backend/app/routers/platform.py)、[工作区路由](../backend/app/routers/workspace.py)及[市场服务](../backend/app/services/market_service.py)。
 

@@ -77,6 +77,61 @@ for (const code of ["positive", "limit_down", "large_loss", "negative", "flat"])
   assert.equal(tags.length, 1);
   assert.ok(!tags[0].label.includes("承接"), "positive price alone must not claim sustained buying support");
 }
+for (const [code, label, expectedTone] of [
+  ["promoted", "晋级", "up"],
+  ["positive", "正反馈", "up"],
+  ["limit_down", "跌停反馈", "down"],
+  ["large_loss", "大幅回落", "down"],
+  ["negative", "回落", "down"],
+  ["flat", "平盘", "neutral"],
+]) {
+  const sample = structuredClone(row);
+  sample.board_presentation.feedback.code = code;
+  const [tag] = boardTags(sample, day, snapshot, { height: false, types: false, volume: false, feedback: true });
+  assert.equal(tag.label, label);
+  assert.equal(tag.tone, expectedTone, "market feedback follows A-share price direction, not permission or risk colors");
+  const rendered = renderToStaticMarkup(createElement(BoardTags, { row: sample, date: day, snapshotId: snapshot, height: false, types: false, volume: false, feedback: true }));
+  assert.match(rendered, new RegExp(`class="board-tag feedback ${expectedTone}"`));
+  assert.ok(rendered.includes(`>${label}</span>`));
+}
+for (const [code, label, expectedTone] of [
+  ["one_price_limit_up", "一字涨停", "up"],
+  ["non_one_price_limit_up", "非一字涨停", "up"],
+  ["earth_to_sky", "地天板", "up"],
+  ["one_price_limit_down", "一字跌停", "down"],
+  ["limit_down", "跌停", "down"],
+  ["open_count", "开板2次", "neutral"],
+  ["repeated_break", "反复开板", "neutral"],
+  ["broken_pool_source", "炸板来源样本", "neutral"],
+  ["pullback_reclaim", "回踩收回", "neutral"],
+]) {
+  const sample = structuredClone(row);
+  sample.board_presentation.types = [{ code, label, state: "confirmed", source_date: day }];
+  const [tag] = boardTags(sample, day, snapshot, { height: false, volume: false });
+  assert.equal(tag.tone, expectedTone, "only verified directional board facts use up/down colors");
+}
+const tagCss = await fs.readFile(new URL("./BoardTags.css", import.meta.url), "utf8");
+assert.match(tagCss, /\.board-tag\.up\s*\{[^}]*--board-tag-color:\s*var\(--red\)/);
+assert.match(tagCss, /\.board-tag\.down\s*\{[^}]*--board-tag-color:\s*var\(--green\)/);
+assert.match(tagCss, /\.board-tag\s*\{[^}]*--board-tag-color:\s*var\(--subtle\)/);
+assert.match(tagCss, /\.board-tags-empty\s*\{[^}]*color:\s*var\(--muted\)/);
+assert.doesNotMatch(tagCss, /\.board-tag\.(?:risk|positive|caution)\b/, "market badges do not reuse execution permission color aliases");
+const unknownFeedback = structuredClone(row);
+unknownFeedback.board_presentation.feedback.state = "unknown";
+const unknownFeedbackMarkup = renderToStaticMarkup(createElement(BoardTags, { row: unknownFeedback, date: day, snapshotId: snapshot, height: false, types: false, volume: false, feedback: true, emptyLabel: "待核验" }));
+assert.equal(unknownFeedbackMarkup, '<span class="board-tags-empty">待核验</span>');
+const legacyShape = {
+  instrument_id: row.instrument_id, date: day, snapshot_id: snapshot,
+  pattern_date: day, pattern_as_of: day,
+  pattern_status: { earth_to_sky: { state: true, status: "confirmed" } },
+  pattern_events: [{
+    kind: "earth_to_sky", date: day, bar_date: day, snapshot_id: snapshot,
+    basis: "verified-source-close-pool-and-raw-ohlc-v1", raw_price_basis: "none",
+    raw_volume: 100, raw_ohlc: { open: 9, high: 11, low: 9, close: 11 }, source: "合成来源",
+  }],
+};
+assert.equal(boardTags(legacyShape, day, snapshot, { height: false, volume: false })[0].tone, "up", "legacy verified limit-up shapes use the same red direction as dated facts");
+assert.deepEqual(boardTags(legacyShape, day, "another-generation"), [], "color compatibility never weakens source-generation checks");
 for (const update of [{ code: "toString" }, { cohort_date: day }, { source_date: previous }, { state: "unknown" }]) {
   const invalid = structuredClone(row); Object.assign(invalid.board_presentation.feedback, update);
   assert.ok(!boardTags(invalid, day, snapshot, { feedback: true }).some((tag) => tag.dimension === "feedback"));

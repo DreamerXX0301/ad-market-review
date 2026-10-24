@@ -129,11 +129,7 @@ export function boardTags(
           key: "type:" + tag.kind,
           dimension: "type" as const,
           label: tag.label,
-          tone: tag.kind.includes("down")
-            ? "down"
-            : tag.kind === "earth_to_sky"
-              ? "event"
-              : "up",
+          tone: tag.kind.includes("down") ? "down" : "up",
           detail: tag.detail,
         }))
       : [];
@@ -192,11 +188,13 @@ export function boardTags(
         label: item.label,
         tone: ["limit_down", "one_price_limit_down"].includes(item.code)
           ? "down"
-          : item.code === "one_price_limit_up"
+          : [
+                "one_price_limit_up",
+                "non_one_price_limit_up",
+                "earth_to_sky",
+              ].includes(item.code)
             ? "up"
-            : item.code === "earth_to_sky"
-              ? "event"
-              : "neutral",
+            : "neutral",
         detail: `${date} · 当日板型：${item.reason || item.label}`,
       });
     }
@@ -215,13 +213,11 @@ export function boardTags(
       key: "feedback:" + feedback.code,
       dimension: "feedback",
       label: feedbackLabels[feedback.code],
-      tone: ["limit_down", "large_loss"].includes(feedback.code)
-        ? "risk"
-        : feedback.code === "negative"
-          ? "caution"
-          : ["promoted", "positive"].includes(feedback.code)
-            ? "positive"
-            : "neutral",
+      tone: ["promoted", "positive"].includes(feedback.code)
+        ? "up"
+        : ["limit_down", "large_loss", "negative"].includes(feedback.code)
+          ? "down"
+          : "neutral",
       detail: `${feedback.cohort_date}样本 → ${date}反馈：${feedback.reason || "已核验的前日样本今日反馈"}`,
     });
   const volume = facts.volume;

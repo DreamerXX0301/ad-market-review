@@ -15,6 +15,7 @@ from app.services.strategy_limits import quote_index
 from app.services.ladder_age import BASIS as AGE_BASIS, quote_age_evidence
 from app.services.chart_patterns import attach_chart_patterns
 from app.services.stock_board_presentation import build_board_presentation, down_state, pattern_fields, retained_proof
+from app.services.market_mainline_synthesis import build_system_mainlines
 
 REGIME_SOURCES = [
     {'board': 'chinext', 'effective_since': '2020-08-24', 'url': 'https://www.szse.cn/aboutus/trends/news/t20200821_580924.html'},
@@ -330,13 +331,18 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
         coverage['complete'] = coverage['complete'] and coverage['source_scope_complete']
         if not coverage['source_scope_complete']:
             coverage['reason'] += '；候选来源范围不完整，零条确认不等于全市场不存在该类股票'
+    main_coverage = {'candidate_count': len(items) + len(unverified), 'confirmed_count': len(items), 'unknown_count': len(unverified),
+                     'source_pool_complete': bool(source_complete), 'complete': bool(source_complete and not unverified),
+                     'scope': '逐股同日原始收盘与有效成交量核验的来源收盘涨停池；全部返回，不截前N',
+                     'reason': None if source_complete and not unverified else '来源池或逐股原始报价仍有缺口，不代表全A完整涨停全集'}
+    system_mainlines = build_system_mainlines(
+        [{**row, 'kind': master.get(row['instrument_id'], {}).get('kind', 'unknown')} for row in items],
+        day=day, snapshot_id=presentation_snapshot, coverage=main_coverage,
+        quotes={symbol: values.get(day) for symbol, values in quotes.items()})
     return {'items': items, 'total': len(items), 'unverified_items': unverified,
             'rebound_items': rebounds, 'failed_items': failed, 'twenty_cm_items': twenties,
             'summary': dict(Counter(str(row['board_count']) + '板' if _number(row.get('board_count')) is not None else '高度未知' for row in items)),
-            'main_coverage': {'candidate_count': len(items) + len(unverified), 'confirmed_count': len(items), 'unknown_count': len(unverified),
-                              'source_pool_complete': bool(source_complete), 'complete': bool(source_complete and not unverified),
-                              'scope': '逐股同日原始收盘与有效成交量核验的来源收盘涨停池；全部返回，不截前N',
-                              'reason': None if source_complete and not unverified else '来源池或逐股原始报价仍有缺口，不代表全A完整涨停全集'},
+            'main_coverage': main_coverage, 'system_mainlines': system_mainlines,
             'classification_coverage': classifications,
             'theme_counts': theme_counts, 'theme_coverage': membership_coverage,
             'pagination_mode': 'all',

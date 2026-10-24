@@ -21,9 +21,19 @@ export const ErrorBox=({message})=>jsx('div',{role:'alert',children:message});
 export const Loading=()=>jsx('span',{children:'读取中'});
 export const Warning=({children})=>jsx('p',{children});
 export const Warnings=()=>null;`);
+const viewReact =
+  encode(`import * as React from ${JSON.stringify(import.meta.resolve("react"))};
+export * from ${JSON.stringify(import.meta.resolve("react"))};
+let viewOverride=null;
+export const changes=[];
+export function setViewOverride(value){viewOverride=value;changes.length=0;}
+export function useState(initial){const [value]=React.useState(initial==="height"&&viewOverride?viewOverride:initial);return [value,(next)=>changes.push(next)];}`);
+const mainlineProbe = encode(`import {jsx} from ${JSON.stringify(runtime)};
+export const received=[];
+export default function Mainlines(props){received.push(props);return jsx('section',{className:'synthetic-mainline-probe',children:'合成重点视图入口'});}`);
 const replacements = {
   "react/jsx-runtime": observedRuntime,
-  react: import.meta.resolve("react"),
+  react: viewReact,
   "lucide-react": import.meta.resolve("lucide-react"),
   "../../components/UI": ui,
   "./MarketDataCoverage": encode(
@@ -32,9 +42,7 @@ const replacements = {
   "./TopicMembersDialog": encode(
     "export default function Members(){return null;}",
   ),
-  "./DailyMainlines": encode(
-    "export default function Mainlines(){return null;}",
-  ),
+  "./DailyMainlines": mainlineProbe,
   "./MarketTable": encode(
     `import {jsx} from ${JSON.stringify(runtime)};export function CurrencyCell({value}){return jsx('span',{children:value??'—'});}`,
   ),
@@ -58,7 +66,12 @@ async function moduleUrl(path) {
     const target =
       replacements[name] ||
       (name.startsWith(".")
-        ? await moduleUrl(await fs.access(new URL(name + ".ts", path)).then(() => new URL(name + ".ts", path)).catch(() => new URL(name + ".tsx", path)))
+        ? await moduleUrl(
+            await fs
+              .access(new URL(name + ".ts", path))
+              .then(() => new URL(name + ".ts", path))
+              .catch(() => new URL(name + ".tsx", path)),
+          )
         : import.meta.resolve(name));
     source = source.replace(match[0], "from " + JSON.stringify(target));
   }
@@ -310,49 +323,122 @@ assert.deepEqual(
   attributionBefore,
   "rendering industry, concepts and source reason preserves source facts",
 );
-const markedRow = (code, name, kind, eventDay = props.date) => stock(code, name, "09:40:00", {
-  date: props.date,
-  snapshot_id: "synthetic-generation",
-  pattern_date: props.date,
-  pattern_as_of: props.date,
-  pattern_status: { [kind]: { state: true, status: "confirmed" } },
-  pattern_events: [{
-    kind,
-    date: eventDay,
-    bar_date: eventDay,
-    basis: "verified-source-close-pool-and-raw-ohlc-v1",
+const markedRow = (code, name, kind, eventDay = props.date) =>
+  stock(code, name, "09:40:00", {
+    date: props.date,
     snapshot_id: "synthetic-generation",
-    raw_price_basis: "none",
-    raw_volume: 100,
-    raw_ohlc: { open: 10, high: 11, low: 9, close: 11 },
-    source: "synthetic-source",
-  }],
-});
+    pattern_date: props.date,
+    pattern_as_of: props.date,
+    pattern_status: { [kind]: { state: true, status: "confirmed" } },
+    pattern_events: [
+      {
+        kind,
+        date: eventDay,
+        bar_date: eventDay,
+        basis: "verified-source-close-pool-and-raw-ohlc-v1",
+        snapshot_id: "synthetic-generation",
+        raw_price_basis: "none",
+        raw_volume: 100,
+        raw_ohlc: { open: 10, high: 11, low: 9, close: 11 },
+        source: "synthetic-source",
+      },
+    ],
+  });
 const shapes = [
   markedRow("600101", "地天合成样本", "earth_to_sky"),
   markedRow("600102", "一字合成样本", "one_price_limit_up"),
   markedRow("600103", "旧日不标样本", "earth_to_sky", "2026-10-20"),
 ];
-const shapeMarkup = renderToStaticMarkup(createElement(LimitLadder, {
-  ...props,
-  data: { snapshot_id: "synthetic-generation", items: shapes, rebound_items: [shapes[0]] },
-}));
-assert.equal((shapeMarkup.match(/data-board-tag="type:earth_to_sky"/g) || []).length, 2, "height cards and rebound cards share the same dated shape badge");
-assert.equal((shapeMarkup.match(/data-board-tag="type:one_price_limit_up"/g) || []).length, 1);
-assert.match(shapeMarkup, /地天合成样本<\/strong><\/button><div class="board-tags"/);
+const shapeMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, {
+    ...props,
+    data: {
+      snapshot_id: "synthetic-generation",
+      items: shapes,
+      rebound_items: [shapes[0]],
+    },
+  }),
+);
+assert.equal(
+  (shapeMarkup.match(/data-board-tag="type:earth_to_sky"/g) || []).length,
+  2,
+  "height cards and rebound cards share the same dated shape badge",
+);
+assert.equal(
+  (shapeMarkup.match(/data-board-tag="type:one_price_limit_up"/g) || []).length,
+  1,
+);
+assert.match(
+  shapeMarkup,
+  /地天合成样本<\/strong><\/button><div class="board-tags"/,
+);
 assert.match(shapeMarkup, /一字涨停<\/span>/);
 assert.match(shapeMarkup, /不还原首次触板或开板回封路径/);
 assert.match(shapeMarkup, /synthetic-source/);
-const nextDayMarkup = renderToStaticMarkup(createElement(LimitLadder, {
-  ...props, date: "2026-10-22",
-  data: { snapshot_id: "synthetic-generation", items: shapes },
-}));
+const nextDayMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, {
+    ...props,
+    date: "2026-10-22",
+    data: { snapshot_id: "synthetic-generation", items: shapes },
+  }),
+);
 assert.doesNotMatch(nextDayMarkup, /data-board-tag="type:/);
-const otherGenerationMarkup = renderToStaticMarkup(createElement(LimitLadder, {
-  ...props,
-  data: { snapshot_id: "another-generation", items: shapes },
-}));
+const otherGenerationMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, {
+    ...props,
+    data: { snapshot_id: "another-generation", items: shapes },
+  }),
+);
 assert.doesNotMatch(otherGenerationMarkup, /data-board-tag="type:/);
+const { setViewOverride, changes } = await import(viewReact);
+const { received } = await import(mainlineProbe);
+setViewOverride("mainlines");
+const focusMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, { ...props, data: attributionData }),
+);
+assert.match(focusMarkup, /synthetic-mainline-probe/);
+assert.doesNotMatch(
+  focusMarkup,
+  /class="ladder-supplemental-sections"/,
+  "the focus view must not repeat all rebound, failed and 20cm cards",
+);
+assert.doesNotMatch(
+  focusMarkup,
+  /class="ladder-theme-shortcuts"/,
+  "raw directory filters belong to the existing ladder/theme views",
+);
+assert.match(
+  focusMarkup,
+  /class="ladder-coverage-details"/,
+  "shared date and source coverage stays accessible",
+);
+assert.match(focusMarkup, /class="ladder-evidence"/);
+assert.equal(received.at(-1).date, props.date);
+assert.equal(received.at(-1).loading, props.loading);
+assert.equal(received.at(-1).error, props.error);
+assert.equal(received.at(-1).onReload, props.onReload);
+assert.equal(
+  received.at(-1).rows,
+  attributionData.items,
+  "focus view consumes the same confirmed pool",
+);
+received.at(-1).onBrowseView("theme");
+assert.deepEqual(
+  changes,
+  ["theme", "", null],
+  "directory navigation reuses the existing view and clears stale mainline text/topic filters",
+);
+changes.length = 0;
+received.at(-1).onBrowseView("height");
+assert.deepEqual(changes, ["height", "", null]);
+setViewOverride("theme");
+const themeMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, { ...props, data: attributionData }),
+);
+assert.match(themeMarkup, /class="ladder-theme-board"/);
+assert.match(themeMarkup, /class="ladder-supplemental-sections"/);
+assert.match(themeMarkup, /class="ladder-theme-shortcuts"/);
+setViewOverride(null);
 console.log(
-  "limit ladder: all supplemental sections visible, counts/uncertainty/sorting/navigation retained; industry-first cards, separate concepts and literal source reasons passed",
+  "limit ladder: existing height/theme classifications and focus-only navigation, counts/uncertainty/sorting, dated board tags and source boundaries passed",
 );

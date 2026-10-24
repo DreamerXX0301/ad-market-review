@@ -4,7 +4,9 @@ React、TypeScript、Vite 与 ECharts 实现盘面研究、个股/板块策略�
 
 产品入口和首次配置见[项目 README](../README.md)，部署与更新见[版本升级与回滚](../docs/版本升级与回滚.md)。
 
-0.1.2发行源码固定为 [47520dd30afdb1695d0a8de6d52873045da6540e](https://github.com/DreamerXX0301/ad-market-review/commit/47520dd30afdb1695d0a8de6d52873045da6540e)，已实现范围见[版本记录](../CHANGELOG.md#v012)。构建成功不证明镜像已可用，实际镜像可用性与摘要以[发行操作记录](https://github.com/DreamerXX0301/ad-market-review/actions/runs/40079019088)、[发布记录](https://github.com/DreamerXX0301/ad-market-review/releases)及对应回执为准。
+0.1.3发行源码以 [v0.1.3 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.3)为准，已实现范围见[版本记录](../CHANGELOG.md#v013)。构建成功不证明镜像已可用，实际镜像可用性与摘要以[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.3)、[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)及本版 `release-image.json` 为准；核对其中完整 `git_commit`，不沿用0.1.2回执。
+
+本版新增自动只读主线、监管最新/历史名单、板块历史/当前成员的明确口径；股票反馈使用红涨绿跌，交易权限仍是禁止红色、允许绿色。浏览页面只查询已发布资料，来源或历史缺档保留未知，不要求录入主线或创建补采任务。已有安装的schema仍为023，须按升级文档使用恢复副本验收。
 
 ## 本地开发
 

@@ -23,16 +23,13 @@
 .board-tag.height {
   --board-tag-color: var(--blue);
 }
-.board-tag.up,
-.board-tag.risk {
+.board-tag.up {
   --board-tag-color: var(--red);
 }
-.board-tag.down,
-.board-tag.positive {
+.board-tag.down {
   --board-tag-color: var(--green);
 }
-.board-tag.event,
-.board-tag.caution {
+.board-tag.event {
   --board-tag-color: var(--amber);
 }
 .board-tag.volume {

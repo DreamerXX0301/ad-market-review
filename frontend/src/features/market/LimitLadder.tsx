@@ -776,35 +776,46 @@ export default function LimitLadder({
                 query={query}
                 onStock={onStock}
                 snapshotId={data?.snapshot_id}
+                systemFocus={data?.system_mainlines}
+                loading={loading}
+                error={error}
+                onReload={onReload}
+                onBrowseView={(next) => {
+                  setView(next);
+                  setQuery("");
+                  setSelectedTopic(null);
+                }}
               />
             )}
           </div>
-          <div
-            className="ladder-supplemental-sections"
-            aria-label="补充事件分类"
-          >
-            {sections.map((section) => (
-              <ClassificationSection
-                key={section.key}
-                id={baseId + "-" + section.key}
-                title={section.title}
-                description={section.description}
-                accent={section.accent}
-                rows={filterLadderRows(section.rows, query, selectedTopic)}
-                allRows={section.rows}
-                coverage={coverage[section.key]}
-                onStock={onStock}
-                onTopic={onTopic}
-                selectedTopic={selectedTopic}
-                searching={searching}
-                failed={section.failed}
-                themeIndex={themeIndex}
-                sort={sort}
-                observationDate={date}
-                snapshotId={data?.snapshot_id}
-              />
-            ))}
-          </div>
+          {view !== "mainlines" && (
+            <div
+              className="ladder-supplemental-sections"
+              aria-label="补充事件分类"
+            >
+              {sections.map((section) => (
+                <ClassificationSection
+                  key={section.key}
+                  id={baseId + "-" + section.key}
+                  title={section.title}
+                  description={section.description}
+                  accent={section.accent}
+                  rows={filterLadderRows(section.rows, query, selectedTopic)}
+                  allRows={section.rows}
+                  coverage={coverage[section.key]}
+                  onStock={onStock}
+                  onTopic={onTopic}
+                  selectedTopic={selectedTopic}
+                  searching={searching}
+                  failed={section.failed}
+                  themeIndex={themeIndex}
+                  sort={sort}
+                  observationDate={date}
+                  snapshotId={data?.snapshot_id}
+                />
+              ))}
+            </div>
+          )}
           <details className="ladder-evidence">
             <summary>
               数据与归属详情
@@ -835,70 +846,77 @@ export default function LimitLadder({
               <p>
                 {data?.theme_coverage?.notice || data?.theme_coverage?.reason}
               </p>
-              <details
-                className="ladder-theme-shortcuts"
-                onToggle={(event) => setRawTopicsOpen(event.currentTarget.open)}
-              >
-                <summary>
-                  全部原始关联与筛选 <span>{themes.length}组已返回</span>
-                  <ChevronDown size={12} />
-                </summary>
-                <div className="ladder-theme-grid">
-                  {rawTopicsOpen && (
-                    <>
-                      {themes.length ? (
-                        themes.map((theme, index) => {
-                          const topic = ladderTopics({ topics: [theme] })[0];
-                          return (
-                            <div
-                              key={topic?.key || index}
-                              className={`ladder-theme-card ${topic?.key === selectedTopic?.key ? "active" : ""}`}
-                            >
-                              <button
-                                className="ladder-theme-select"
-                                onClick={() => topic && onTopic(topic)}
-                                aria-pressed={topic?.key === selectedTopic?.key}
-                                title={
-                                  theme.reason ||
-                                  "当日可核验题材成员中的涨停家数"
-                                }
+              {view !== "mainlines" && (
+                <details
+                  className="ladder-theme-shortcuts"
+                  onToggle={(event) =>
+                    setRawTopicsOpen(event.currentTarget.open)
+                  }
+                >
+                  <summary>
+                    全部原始关联与筛选 <span>{themes.length}组已返回</span>
+                    <ChevronDown size={12} />
+                  </summary>
+                  <div className="ladder-theme-grid">
+                    {rawTopicsOpen && (
+                      <>
+                        {themes.length ? (
+                          themes.map((theme, index) => {
+                            const topic = ladderTopics({ topics: [theme] })[0];
+                            return (
+                              <div
+                                key={topic?.key || index}
+                                className={`ladder-theme-card ${topic?.key === selectedTopic?.key ? "active" : ""}`}
                               >
-                                <span>{theme.name}</span>
-                                <strong>{themeCountText(theme)}</strong>
-                              </button>
-                              <div>
-                                <span>
-                                  首封 {theme.first_limit_time || "—"} · 末封{" "}
-                                  {theme.last_limit_time || "—"}
-                                  {theme.first_limit_time_complete === false ||
-                                  theme.last_limit_time_complete === false
-                                    ? " · 部分时间"
-                                    : ""}
-                                </span>
-                                {(theme.topic_id || theme.member_lookup) && (
-                                  <button
-                                    onClick={() => setMemberTopic(theme)}
-                                    aria-label={`查看${theme.name}的当日成员`}
-                                  >
-                                    <Users size={12} />
-                                    <ArrowUpRight size={11} />
-                                  </button>
-                                )}
+                                <button
+                                  className="ladder-theme-select"
+                                  onClick={() => topic && onTopic(topic)}
+                                  aria-pressed={
+                                    topic?.key === selectedTopic?.key
+                                  }
+                                  title={
+                                    theme.reason ||
+                                    "当日可核验题材成员中的涨停家数"
+                                  }
+                                >
+                                  <span>{theme.name}</span>
+                                  <strong>{themeCountText(theme)}</strong>
+                                </button>
+                                <div>
+                                  <span>
+                                    首封 {theme.first_limit_time || "—"} · 末封{" "}
+                                    {theme.last_limit_time || "—"}
+                                    {theme.first_limit_time_complete ===
+                                      false ||
+                                    theme.last_limit_time_complete === false
+                                      ? " · 部分时间"
+                                      : ""}
+                                  </span>
+                                  {(theme.topic_id || theme.member_lookup) && (
+                                    <button
+                                      onClick={() => setMemberTopic(theme)}
+                                      aria-label={`查看${theme.name}的当日成员`}
+                                    >
+                                      <Users size={12} />
+                                      <ArrowUpRight size={11} />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <p className="ladder-empty-themes">
-                          {data?.theme_coverage?.notice ||
-                            data?.theme_coverage?.reason ||
-                            "该盘面日未留存可关联题材，不用当前成员回填。"}
-                        </p>
-                      )}
-                    </>
-                  )}
-                </div>
-              </details>
+                            );
+                          })
+                        ) : (
+                          <p className="ladder-empty-themes">
+                            {data?.theme_coverage?.notice ||
+                              data?.theme_coverage?.reason ||
+                              "该盘面日未留存可关联题材，不用当前成员回填。"}
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </details>
+              )}
 
               <Warnings items={data?.warnings} />
             </div>

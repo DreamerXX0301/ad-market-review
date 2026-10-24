@@ -1,20 +1,20 @@
 # Docker部署
 
-本文是冒险的梦想家0.1.2发行说明，发行源码固定为 [47520dd30afdb1695d0a8de6d52873045da6540e](https://github.com/DreamerXX0301/ad-market-review/commit/47520dd30afdb1695d0a8de6d52873045da6540e)，镜像为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，目标平台为 Linux amd64、arm64。镜像实际可用性、摘要及平台检查结果以[发行操作记录](https://github.com/DreamerXX0301/ad-market-review/actions/runs/40079019088)、[发布记录](https://github.com/DreamerXX0301/ad-market-review/releases)及对应发行回执为准。无需在安装机器构建前后端。
+本文对应冒险的梦想家0.1.3发行，源码以 [v0.1.3 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.3)为准，镜像为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.3`，目标平台为 Linux amd64、arm64。使用安装命令前，须核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.3)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)的实际结果；完整源码 SHA、镜像摘要及平台检查以本版 `release-image.json` 为准，不沿用旧版提交或成功记录。无需在安装机器构建前后端。
 
-[0.1.2](../CHANGELOG.md#v012)冻结v0.1.1以来全部已实现功能，包括市场温度、下一交易日计划、连板高度与板型反馈和当日主线卡片修正。使用下列安装命令前，先核对配套源码标签、真实镜像摘要和发行结果。合入或推送 `master` 不会更新既有 `v0.1.1` 镜像，也不能覆盖该旧标签；已有安装按[版本升级与回滚](版本升级与回滚.md)使用独立恢复副本验收后切换。
+[0.1.3](../CHANGELOG.md#v013)在0.1.2基础上增加自动只读主线、监管最新/历史名单切换和明确的板块成员口径，股票反馈统一红涨绿跌；浏览只读取已发布资料，缺档保留未知。schema仍为023，无新增迁移。合入或推送 `master` 不会更新既有镜像；已有安装按[版本升级与回滚](版本升级与回滚.md)使用独立恢复副本验收后切换。[0.1.2历史发行](../CHANGELOG.md#v012)保留原源码与镜像标签，不重新覆盖。
 
 ## 全新安装
 
 需要 Docker Engine 或 Docker Desktop，以及 Docker Compose v2；`curl`仅用于可选健康检查。以下命令面向全新安装；已有实例应先阅读[版本升级与回滚](版本升级与回滚.md)，不要直接复用旧实例的卷。默认只绑定本机 `127.0.0.1:8788`；已有服务占用时先设置 `export SHIXU_HTTP_PORT=8789`。
 
-镜像允许匿名拉取，不要求GitHub登录；源码仓库和Release附件则为私有资源，需要授权。下载独立Compose文件须安装GitHub CLI（`gh`），使用已有的授权登录并具备仓库读权限，再从[0.1.2 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.2)获取，不必克隆仓库。匿名raw链接不能用于取得这些私有文件。
+镜像允许匿名拉取，不要求GitHub登录；源码仓库和Release附件则为私有资源，需要授权。下载独立Compose文件须安装GitHub CLI（`gh`），使用已有的授权登录并具备仓库读权限，再从[0.1.3 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.3)获取，不必克隆仓库。匿名raw链接不能用于取得这些私有文件。
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
-gh release download v0.1.2 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.2
+gh release download v0.1.3 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.3
 ```
 
 下载命令不覆盖已有同名文件；若文件已存在，先核对其版本，或使用新的安装目录。已持有对应发行源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录并命名为 `docker-compose.yml`，跳过附件下载命令，再继续后续步骤。GitHub授权只用于私有源码或附件访问，不需要把该授权配置为镜像登录。
@@ -27,7 +27,7 @@ key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.2 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.3 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
 
@@ -58,7 +58,7 @@ export SHIXU_IMAGE_REF='ghcr.io/dreamerxx0301/ad-market-review@sha256:实际发�
 docker compose config
 ```
 
-此行包含占位说明，须替换成真实摘要后执行。Compose 会按机器选择 amd64 或 arm64，无需强制 `platform`。GHCR镜像允许匿名访问，拉取镜像不要求GitHub登录；这不代表私有源码和Release附件也能匿名下载。本次已核验匿名索引及两个架构的配置读取，完整镜像层下载仍以实际拉取结果为准。若镜像返回拒绝访问，先核对版本与包权限，不应把数据源 Key 用作镜像登录密码。[GitHub Container Registry 权限与匿名拉取](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+此行包含占位说明，须替换成真实摘要后执行。Compose 会按机器选择 amd64 或 arm64，无需强制 `platform`。GHCR镜像允许匿名访问，拉取镜像不要求GitHub登录；这不代表私有源码和Release附件也能匿名下载。每次新发行须独立核验精确摘要的匿名访问；索引、配置读取或层HEAD检查不能代替完整镜像拉取，回执应分别记录实际完成范围。若镜像返回拒绝访问，先核对版本与包权限，不应把数据源 Key 用作镜像登录密码。[GitHub Container Registry 权限与匿名拉取](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
 业务、已发布行情、原始响应、worker 工作文件和密文凭据分别放在命名卷。API 对已发布行情只读，使用独立可丢弃 tmpfs 计算派生缓存，不打开 worker 的活动 DuckDB。`docker compose down` 保留数据；**不要加 `-v`、执行卷清理或覆盖原主密钥**。生产备份、迁移与回滚参见[版本升级与回滚](版本升级与回滚.md)。当前入口只监听本机，远程访问需要自行配置认证与反向代理。
 
@@ -66,17 +66,17 @@ docker compose config
 
 `.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签及配套Release附件也应绑定同一审核提交，私有附件的下载仍需仓库读权限。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
-已有 `v0.1.1` 不能用于重新发布当前新增功能，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.2`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、Docker/Compose 默认版本及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
+已有 `v0.1.2` 及更早版本不能用于重新发布当前新增功能，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.3`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
 
 ```bash
-gh workflow run publish-image.yml --ref master -f version="$(cat VERSION)" -F confirm=true
+gh workflow run publish-image.yml --repo DreamerXX0301/ad-market-review --ref master -f version="$(cat VERSION)" -F confirm=true
 ```
 
 流程先复用只读 CI，核对根 `VERSION`、前后端版本及完整 Git SHA；之后在原生 `ubuntu-24.04` 与 `ubuntu-24.04-arm` 分别构建。每个平台在隔离空目录运行 API 健康、品牌、版本和首页检查，amd64 另跑14项独立空卷验收；成功后才上传各平台完整提交标签。两个构建都成功，才按精确子镜像摘要创建版本标签与提交标签，已有版本标签拒绝覆盖。没有 `latest`、自动部署或本机服务操作。[Docker 原生多平台构建](https://docs.docker.com/build/ci/github-actions/multi-platform/)
 
 只在需要上传的 job 授予 `packages: write`，用仓库的 `GITHUB_TOKEN` 登录，不要求用户提供新的个人包 Token。OCI labels 和发行 artifact 留存版本、提交、平台摘要与总摘要；Actions 绑定完整提交。首次创建的 GHCR 包可能是 private，仓库维护者须明确设为 public，再独立验证匿名拉取，不能仅凭 workflow 上传成功宣称匿名可用。[GHCR 发布与可见性](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
-workflow 不创建 Git 源码标签或 GitHub Release。维护者需另外核对固定版本源码标签与 `release-image.json` 的 `git_commit` 完全一致，再将配套Compose文件作为Release附件交付；私有附件通过有仓库读权限的GitHub CLI下载，也可直接交付经核对的文件。不要将 `master` 上的 Compose 当成某个旧镜像的发行配套文件，也不要为公开镜像提供无法匿名访问的raw安装命令。
+workflow 不创建 Git 源码标签或 GitHub Release。维护者需另外核对固定版本源码标签与 `release-image.json` 的 `git_commit` 完全一致，再将该提交的配套Compose文件及本版 `release-image.json` 作为Release附件交付；源码完整SHA也须与镜像OCI revision一致。私有附件通过有仓库读权限的GitHub CLI下载，也可直接交付经核对的文件。不要将 `master` 上的 Compose 当成某个旧镜像的发行配套文件，也不要为公开镜像提供无法匿名访问的raw安装命令。
 
 CI 本身不部署、不开来源取数，也不操作现用数据。发行检查不能代替真实升级演练；schema 变化后的回滚需要旧镜像、切换前备份和独立恢复卷。
 

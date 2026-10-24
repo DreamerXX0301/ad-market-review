@@ -197,10 +197,13 @@ def market_topic_members(day=None, *, topic_id=None, source_code=None, kind=None
     return list_members(market, status, day, reference, rows, topic_id=topic_id, source_code=source_code, kind=kind, source_name=source_name)
 
 
-def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None):
+def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical'):
+    if monitor_scope not in ('historical', 'latest') or (monitor_scope != 'historical' and kind != 'abnormal'):
+        raise HTTPException(422, '监控名单范围仅支持监管页的historical或latest')
     if top_n is not None and (kind != 'gainers' or isinstance(top_n,bool) or top_n not in (100,200,300,500,1000)):
         raise HTTPException(422, '近30日涨幅榜仅支持前100、200、300、500或1000；省略top_n查看全市场')
-    market, status, day, reference, rows = panel(day)
+    requested_date = day
+    market, status, day, reference, rows = panel(None if kind == 'abnormal' and monitor_scope == 'latest' else day)
     indexed = {r["instrument_id"]: r for r in rows}
     latest = day == reference.get("pool_trade_date")
     events=dated_events(reference,day)
@@ -225,16 +228,8 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base["high_position_feedback"]=[r for r in prior_ladder_feedback(market,reference,day,indexed) if (r.get("previous_board_count") or 0)>=3]
         base['supplement_status']=supplement_status(reference,day,'seal_details')
     elif kind == "abnormal":
-        local, coverage = resolve_reference('abnormal', day, status, reference)
-        base['data_coverage'] = coverage
-        if coverage['selected_date_available']:
-            from app.analytics.market import date_ms
-            for event in local.get("abnormal", []):
-                symbol = event.get("thscode")
-                base["items"].append({**indexed.get(symbol, {}), "instrument_id": symbol, "code": symbol[:6] if symbol else None, "name": event.get("name"), "event_type": event.get("monitor_label"), "start_date": date_ms(event["start_date_ms"]) if event.get("start_date_ms") else None, "end_date": date_ms(event["end_date_ms"]) if event.get("end_date_ms") else None, "reason": "供应商监控标签", "evidence_type": "provider_monitor", "official_document": None, "observed_date":day, "source_snapshot_id":coverage.get('source_snapshot_id')})
-        else:
-            base["unavailable_reason"] = "该日监管监控名单未留存"
-        base["warnings"] = [coverage['notice'], "来源监控标签不等于交易所正式函件，官方披露原文尚未接入"]
+        from app.services.market_abnormal import monitor_view
+        base.update(monitor_view(day, status, reference, indexed, scope=monitor_scope, requested_date=requested_date))
     elif kind == "emotion":
         from app.services.emotion import describe_emotion
         history=market.breadth_history(day)

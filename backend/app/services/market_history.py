@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import json
 from pathlib import Path
@@ -48,6 +48,14 @@ def _subset(reference):
     return {key: reference[key] for key in _FIELDS if key in reference}
 
 
+def _fetched_order(value):
+    try:
+        parsed = datetime.fromisoformat(value)
+        return parsed.timestamp() if parsed.tzinfo is not None else 0
+    except (ValueError, TypeError, OverflowError, OSError):
+        return 0
+
+
 def _catalog():
     path = sqlite_path()
     if not path.is_file():
@@ -55,6 +63,9 @@ def _catalog():
     connection = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
     connection.row_factory = sqlite3.Row
     try:
+        connection.execute('PRAGMA foreign_keys=ON')
+        connection.execute('PRAGMA recursive_triggers=ON')
+        connection.execute('PRAGMA busy_timeout=10000')
         rows = connection.execute("""SELECT s.snapshot_id,s.module,s.data_end,
             s.lineage_json,s.published_at_ms,a.object_key,a.sha256,a.byte_count
             FROM dataset_snapshot s JOIN snapshot_artifact a ON a.snapshot_id=s.snapshot_id
@@ -105,6 +116,26 @@ def _read_reference(path, signature):
     return value
 
 
+def _read_monitor_reference(path, signature):
+    # latest命中目录缓存后仍核验名单自身的三个CAS对象，不能只信轻清单stat。
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != signature[1]:
+        raise ValueError('监管参考文件校验失败')
+    document = json.loads(raw)
+    if not isinstance(document, dict):
+        raise ValueError('监管参考文件结构无效')
+    fields = ('abnormal', 'abnormal_observed_date', 'abnormal_fetched_at')
+    if document.get('storage_version') in ('market-reference-parts-v1', 'market-reference-parts-v2'):
+        original = document.get('fields')
+        if not isinstance(original, dict):
+            raise ValueError('监管参考资料轻清单结构无效')
+        # 只读监控小对象；不为监管列表展开全部证券资料或指数历史。
+        document = {'storage_version': document['storage_version'], 'indices': {},
+                    'fields': {key: original[key] for key in fields if key in original}}
+        document = load_reference(path, document=document)
+    return {key: document[key] for key in fields if key in document}
+
+
 def _topics_for_day(reference, snapshot_day, day):
     return [topic for topic in reference.get('topics', [])
             if isinstance(topic, dict) and isinstance(topic.get('instrument_ids'), list)
@@ -123,7 +154,7 @@ def _source_dates(reference, snapshot_day):
     return sorted(dates), abnormal
 
 
-def _archive_index():
+def _archive_index(*, monitor_only=False):
     root = published_dir().resolve()
     rows, truncated = _catalog()
     descriptors = []
@@ -152,36 +183,42 @@ def _archive_index():
                    tuple((item['generation'], item['snapshot_day'], item['published_at_ms'],
                           item['signature']) for item in descriptors))
     with _lock:
-        if fingerprint in _indexes:
+        if not monitor_only and fingerprint in _indexes:
             _indexes.move_to_end(fingerprint)
             return _indexes[fingerprint]
     entries = []
     for descriptor in descriptors:
         try:
-            reference = _read_reference(Path(descriptor['path']), descriptor['signature'])
+            reference = (_read_monitor_reference(Path(descriptor['path']), descriptor['signature']) if monitor_only
+                         else _read_reference(Path(descriptor['path']), descriptor['signature']))
             dates, abnormal = _source_dates(reference, descriptor['snapshot_day'])
-            entries.append({**descriptor, 'topic_dates': dates, 'abnormal_date': abnormal})
+            entries.append({**descriptor, 'topic_dates': dates, 'abnormal_date': abnormal,
+                            'abnormal_fetched_at': reference.get('abnormal_fetched_at'),
+                            **({'monitor_reference': reference} if monitor_only else {})})
         except (OSError, ValueError, TypeError):
             failures += 1
     result = {'entries': entries, 'listed_generations': listed_generations,
               'failure_count': failures, 'truncated': truncated}
-    with _lock:
-        _indexes[fingerprint] = result
-        _indexes.move_to_end(fingerprint)
-        while len(_indexes) > INDEX_CACHE_LIMIT:
-            _indexes.popitem(last=False)
+    if not monitor_only:
+        with _lock:
+            _indexes[fingerprint] = result
+            _indexes.move_to_end(fingerprint)
+            while len(_indexes) > INDEX_CACHE_LIMIT:
+                _indexes.popitem(last=False)
     return result
 
 
-def resolve_reference(kind, day, market_status, current_reference):
+def resolve_reference(kind, day, market_status, current_reference, *, latest=False):
     """Return only branch-local dated metadata, never a replacement global ref."""
-    index = _archive_index()
+    if latest and kind != 'abnormal':
+        raise ValueError('最新名单范围仅适用于监管监控')
+    index = _archive_index(monitor_only=latest)
     entries = list(index['entries'])
     generation = market_status.get('snapshot_id')
     # Fixtures and older non-catalog imports may have a current trusted ref. It
     # is only a dated source, never a fallback around a damaged catalog entry.
     current = None
-    if generation not in index['listed_generations']:
+    if not latest and generation not in index['listed_generations']:
         current = _subset(current_reference)
         topic_dates, abnormal = _source_dates(current, market_status['data_end'])
         entries.append({'generation': generation, 'snapshot_day': market_status['data_end'],
@@ -189,20 +226,26 @@ def resolve_reference(kind, day, market_status, current_reference):
                         'abnormal_date': abnormal, 'current': True})
     available = sorted({value for entry in entries
                         for value in (entry['topic_dates'] if kind == 'sectors' else [entry['abnormal_date']])
-                        if value and value <= market_status['data_end']})
+                        if value and (latest or value <= market_status['data_end'])})
     candidates = [entry for entry in entries if day in entry['topic_dates']] if kind == 'sectors' else [entry for entry in entries if entry['abnormal_date'] == day]
-    candidates.sort(key=lambda entry: (entry['snapshot_day'] == day, entry['published_at_ms'] or 0), reverse=True)
+    if latest:
+        # 名单观察日独立于行情日；非交易日采集的名单仍可显式查看。
+        candidates = [entry for entry in entries if entry['abnormal_date']]
+        candidates.sort(key=lambda entry: (entry['abnormal_date'], _fetched_order(entry.get('abnormal_fetched_at')),
+                                           entry['published_at_ms'] or 0), reverse=True)
+    else:
+        candidates.sort(key=lambda entry: (entry['snapshot_day'] == day, entry['published_at_ms'] or 0), reverse=True)
     chosen = None
     reference = {}
     for entry in candidates:
         try:
-            source = current if entry.get('current') else _read_reference(Path(entry['path']), entry['signature'])
+            source = entry['monitor_reference'] if latest else current if entry.get('current') else _read_reference(Path(entry['path']), entry['signature'])
             selected = _subset(source)
             if kind == 'sectors':
                 selected['topics'] = _topics_for_day(source, entry['snapshot_day'], day)
                 if not selected['topics']:
                     continue
-            elif selected.get('abnormal_observed_date') != day or not isinstance(selected.get('abnormal'), list):
+            elif selected.get('abnormal_observed_date') != (entry['abnormal_date'] if latest else day) or not isinstance(selected.get('abnormal'), list):
                 continue
             chosen = entry
             reference = deepcopy(selected)
@@ -213,10 +256,12 @@ def resolve_reference(kind, day, market_status, current_reference):
         notice = '仅使用选择日已有留存、当日所知的成员样本；成员采集日期可能早于盘面日，须不晚于观察日。日增量沿用成员，完整成员需手动刷新；这不是当日新采集或完整历史时点成分。存档日期是离散日期，不保证中间每日连续；未确认交易日的行业指数快照不冒充指数涨跌幅。'
         label = '行业与题材成员存档'
     else:
-        notice = '仅显示名单来源观察日与选择日完全一致的来源监控名单；日期无留存即未知，监控标签不等于交易所正式函件。'
-        label = '异动与监管名单存档'
-    if index['failure_count']:
-        notice += f' {index["failure_count"]}条存档缺失或校验失败，已跳过。'
+        notice = ('仅显示已发布存档中观察日最新的来源监控名单，读取不联网；名单观察日与行情日分别标明，不代表所选盘面日的历史状态。'
+                  if latest else '仅显示名单来源观察日与选择日完全一致的来源监控名单；日期无留存即未知，监控标签不等于交易所正式函件。')
+        label = '最新已留存监控名单' if latest else '异动与监管名单存档'
+    failures = index['failure_count']
+    if failures:
+        notice += f' {failures}条存档缺失或校验失败，已跳过。'
     if index['truncated']:
         notice += ' 存档目录超过本次4096条元数据保护上限，仅列已核验范围。'
     coverage = {'label': label, 'start': available[0] if available else None,
@@ -225,6 +270,9 @@ def resolve_reference(kind, day, market_status, current_reference):
                 'selected_date_available': chosen is not None, 'partial': True,
                 'source_snapshot_id': chosen['generation'] if chosen else None,
                 'source_snapshot_day': chosen['snapshot_day'] if chosen else None}
+    if kind == 'abnormal':
+        coverage.update(source_observed_date=reference.get('abnormal_observed_date'),
+                        source_fetched_at=reference.get('abnormal_fetched_at'))
     return reference, coverage
 
 

@@ -18,7 +18,13 @@ import MarketDataCoverage from "./MarketDataCoverage";
 import WatchlistButton from "../watchlist/WatchlistButton";
 import "../sector/MemberDialog.css";
 import { SortableMarketTable } from "./MarketTable";
-import { filterMarketMembers, topicMembersRequest } from "./marketPresentation";
+import { filterMarketMembers } from "./marketPresentation";
+import {
+  latestMemberTopicCode,
+  memberQuoteDate,
+  topicMemberScopeRequest,
+  type TopicMemberScope,
+} from "./topicMemberScope";
 import {
   MemberBoardCell,
   MemberReturnCell,
@@ -41,9 +47,14 @@ export default function TopicMembersDialog({
 }) {
   const [query, setQuery] = useState("");
   const [board, setBoard] = useState("all");
-  const path = topicMembersRequest(topic, date);
+  const [scope, setScope] = useState<TopicMemberScope>("historical");
+  const path = topicMemberScopeRequest(topic, date, scope);
   const result = useApi<Row>(path);
   const data = result.data;
+  const quoteDate = memberQuoteDate(data, date, scope);
+  const currentCode = latestMemberTopicCode(topic);
+  const membershipDate =
+    data?.membership_as_of || data?.membership_observed_date;
   const items = list(data).map((row) =>
     row.board === "unknown" ? { ...row, board: null } : row,
   );
@@ -73,17 +84,32 @@ export default function TopicMembersDialog({
           </div>
         )}
         <div className="market-members-summary member-dialog-context">
-          <Badge>{date} · 盘面日期</Badge>
+          <Badge>
+            {scope === "latest" ? "当前最新成员" : `${date} · 历史成员档案`}
+          </Badge>
+          <span className="member-context-item">
+            <small>成员采集日</small>
+            <strong>{membershipDate || "未知"}</strong>
+          </span>
+          <span className="member-context-item">
+            <small>行情日</small>
+            <strong>{quoteDate || "未知"}</strong>
+          </span>
           <span className="member-context-item">
             <small>已知成员</small>
-            <strong>{data?.total ?? "—"} 只</strong>
+            <strong>
+              {data?.unavailable_reason ? "未知" : `${data?.total ?? "—"} 只`}
+            </strong>
           </span>
           {data?.quote_coverage && (
             <span className="member-context-item">
               <small>报价可用</small>
               <strong>
-                {data.quote_coverage.known ?? "—"} /{" "}
-                {data.quote_coverage.total ?? "—"}
+                {data.quote_coverage.known ??
+                  data.quote_coverage.quoted_count ??
+                  data.quote_coverage.available_count ??
+                  "—"}{" "}
+                / {data.quote_coverage.total ?? "—"}
               </strong>
             </span>
           )}
@@ -91,11 +117,19 @@ export default function TopicMembersDialog({
         {data?.unavailable_reason ? (
           <Warning>{data.unavailable_reason}</Warning>
         ) : (
-          data?.match_type === "cross_provider_name_proxy" && (
+          (data?.match_type || topic.membership_match_type) ===
+            "cross_provider_name_proxy" && (
             <Warning>
               此处查看本地同名行业的同花顺口径成员，不能视为东财资金分类的原始成分股。
             </Warning>
           )
+        )}
+        {scope === "latest" && (
+          <Warning>
+            当前成员采集于 {membershipDate || "未知日期"}，股票行情截至{" "}
+            {quoteDate || "未知日期"}。这是当前来源成员及本地人工调整，不代表{" "}
+            {date} 的历史归属；不会据此补写历史档案。
+          </Warning>
         )}
         <details className="market-members-details">
           <summary>数据口径与来源</summary>
@@ -103,9 +137,7 @@ export default function TopicMembersDialog({
             <div className="market-members-summary">
               <span>
                 成员观察日{" "}
-                {data?.membership_observed_date ||
-                  data?.topic?.observed_date ||
-                  "待核验"}
+                {membershipDate || data?.topic?.observed_date || "待核验"}
               </span>
               <span>归档日 {snapshotDay || "待核验"}</span>
               <Badge tone={data?.members_complete === true ? "good" : "warn"}>
@@ -118,7 +150,7 @@ export default function TopicMembersDialog({
               <p className="muted">{data.membership_basis}</p>
             )}
             <p className="muted">
-              历史指标均截至 {date}
+              股票指标均截至 {quoteDate || "待核验行情日"}
               。年内从年初计算；本月为MTD、不是近30个交易日。指标描述股票本身，不代表过去已属于当前题材。年内涨停覆盖不足时只展示确认下界；无记录不代表未涨停。
             </p>
             <MarketDataCoverage
@@ -130,6 +162,23 @@ export default function TopicMembersDialog({
         </details>
         <div className="member-dialog-toolbar">
           <div className="result-toolbar member-dialog-search-row">
+            <label className="member-dialog-field">
+              <span>成员口径</span>
+              <select
+                aria-label="选择成员口径"
+                value={scope}
+                onChange={(event) => {
+                  setScope(event.target.value as TopicMemberScope);
+                  setQuery("");
+                  setBoard("all");
+                }}
+              >
+                <option value="historical">所选日历史成员</option>
+                <option value="latest" disabled={!currentCode}>
+                  当前最新成员{!currentCode ? " · 来源代码未核验" : ""}
+                </option>
+              </select>
+            </label>
             <label className="member-dialog-field member-dialog-field-search">
               <span>搜索成分股</span>
               <input
@@ -142,9 +191,11 @@ export default function TopicMembersDialog({
             </label>
             <span className="muted">
               {result.loading
-                ? "正在读取所选日成员…"
+                ? "正在读取所选口径成员…"
                 : data
-                  ? `已返回 ${items.length}${data.total != null ? ` / ${data.total}` : ""} 只 · 当前匹配 ${filtered.length} 只`
+                  ? data.unavailable_reason
+                    ? "成员档案缺失，数量未知；可手动切换成员口径"
+                    : `已返回 ${items.length}${data.total != null ? ` / ${data.total}` : ""} 只 · 当前匹配 ${filtered.length} 只`
                   : "成员数量待核验"}
             </span>
           </div>
@@ -182,13 +233,18 @@ export default function TopicMembersDialog({
           <SortableMarketTable
             key={
               date +
+              scope +
               (topic.topic_id || topic.topic_code || topic.name) +
               query +
               board
             }
             rows={filtered}
             defaultSort={{ key: "change_pct", order: "desc" }}
-            sortScope={`仅对 ${date} 已留存成员和该日已返回报价排序，不使用今日成员回填历史；缺失报价不补0`}
+            sortScope={
+              scope === "latest"
+                ? `当前成员按 ${quoteDate || "已核验行情日"} 报价排序；成员采集日独立标明，不表示过去归属`
+                : `仅对 ${date} 已留存成员和该日已返回报价排序，不使用今日成员回填历史；缺失报价不补0`
+            }
             columns={[
               { key: "name" },
               {
@@ -200,14 +256,14 @@ export default function TopicMembersDialog({
               },
               {
                 key: "change_pct",
-                title: "所选日涨幅",
+                title: scope === "latest" ? "行情日涨幅" : "所选日涨幅",
                 render: (value: unknown, row: Row) => (
                   <span
                     className={tone(value)}
                     title={
                       row.quote_available === false
                         ? "该日缺少可核验报价，未使用其它日报价替代"
-                        : `报价日 ${row.quote_date || date}`
+                        : `报价日 ${row.quote_date || quoteDate || "未知"}`
                     }
                   >
                     {percent(value)}
@@ -239,7 +295,7 @@ export default function TopicMembersDialog({
                 key: "last_limit_up_date",
                 title: "最近涨停 / 交易日距离",
                 render: (_value: unknown, row: Row) => (
-                  <MemberRecentLimitCell row={row} date={date} />
+                  <MemberRecentLimitCell row={row} date={quoteDate || date} />
                 ),
               },
               { key: "close", title: "收盘价" },
@@ -283,28 +339,33 @@ export default function TopicMembersDialog({
                     sourceKind="sector"
                     sourceId={topic.topic_code || topic.topic_id}
                     sourceName={topic.name}
-                    observedDate={date}
+                    observedDate={quoteDate || undefined}
                     compact
                   />
                 ),
               },
             ]}
-            onStock={onStock}
-            onStockNavigate={(id, orderedRows) =>
-              onStock(
-                id,
-                createStockNavigation(orderedRows, {
-                  source: "members",
-                  scopeKey: JSON.stringify({
-                    topic: topic.topic_code || topic.topic_id || topic.name,
-                    date,
-                    query,
-                    board,
-                  }),
-                  label: `${topic.name || "行业与题材"} · 当前成员列表`,
-                  asOf: date,
-                }),
-              )
+            onStock={quoteDate ? onStock : undefined}
+            onStockNavigate={
+              quoteDate
+                ? (id, orderedRows) =>
+                    onStock(
+                      id,
+                      createStockNavigation(orderedRows, {
+                        source: "members",
+                        scopeKey: JSON.stringify({
+                          topic:
+                            topic.topic_code || topic.topic_id || topic.name,
+                          date,
+                          scope,
+                          query,
+                          board,
+                        }),
+                        label: `${topic.name || "行业与题材"} · ${scope === "latest" ? "当前" : "历史"}成员列表`,
+                        asOf: quoteDate,
+                      }),
+                    )
+                : undefined
             }
             pageSize={20}
             emptyTitle={
@@ -319,7 +380,8 @@ export default function TopicMembersDialog({
       </div>
       <div className="modal-footer">
         <span className="muted">
-          默认按所选日涨幅降序；点击股票查看该日截止K线。
+          默认按行情日涨幅降序；点击股票查看 {quoteDate || "已核验行情日"}{" "}
+          截止K线。
         </span>
         <button className="btn" onClick={onClose}>
           关闭

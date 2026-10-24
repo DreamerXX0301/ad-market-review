@@ -97,6 +97,11 @@ def execute_topic_collection(job_id,progress=None):
     # Re-publication must preserve unknown, rather than turning that bound into
     # a claimed exact missing-row count. The lower bound stays in coverage.
     bundle={'source':'fuyao','price_basis':'none','daily_file':'year.parquet','collected_at':plan['collected_at'],'quality_warnings':warnings,'unexplained_missing':missing,'coverage':status.get('coverage',{}),'pool_trade_date':reference.get('pool_trade_date',status['data_end']),'pool_history_file':'fuyao_pool_history.json','topic_files':definitions,'topic_coverage':f'{len(definitions)}/{total}个当前题材成员快照','sectors_snapshot_date_semantics':'current_unverified_trade_date','sectors_snapshot_observed_at':plan['collected_at'],'pool_coverage':pool_coverage}
+    # 此任务只复用监管名单，不能用题材本次采集时间改写名单来源日期。
+    # 显式保留未知，避免导入器把缺省字段回退为本次 collected_at。
+    retained_monitor=isinstance(reference.get('abnormal'),list)
+    bundle.update(abnormal_observed_date=reference.get('abnormal_observed_date') if retained_monitor else None,
+                  abnormal_fetched_at=reference.get('abnormal_fetched_at') if retained_monitor else None)
     if plan.get('storage_layout'):bundle['storage_layout']=plan['storage_layout']
     atomic_json(directory/'bundle.json',bundle);atomic_json(directory/'collection-quality.json',{'topic_count':len(definitions),'catalog_count':total,'failures':failures,'sector_count':len(sectors)})
     if progress:progress('题材校验',81,'构建固定行情代际与完整成员库')

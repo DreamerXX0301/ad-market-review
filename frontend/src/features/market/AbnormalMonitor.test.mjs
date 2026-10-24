@@ -1,0 +1,176 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
+
+const encode = (source) =>
+  "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+const runtime = import.meta.resolve("react/jsx-runtime");
+const reactProbe =
+  encode(`import * as React from ${JSON.stringify(import.meta.resolve("react"))};
+export * from ${JSON.stringify(import.meta.resolve("react"))};
+let scope='latest';export const changes=[];
+export function setScope(value){scope=value;changes.length=0;}
+export function useState(initial){const [value]=React.useState(initial==='latest'?scope:initial);return [value,(next)=>changes.push(next)];}`);
+const apiProbe = encode(`let data=null;export const requests=[];
+export function setData(value){data=value;requests.length=0;}
+export function useApi(path){requests.push(path);return {data,loading:false,error:'',reload(){throw Error('no automatic request');}};}
+export const list=value=>Array.isArray(value?.items)?value.items:[];`);
+const jsxProbe =
+  encode(`import {jsx as base,jsxs as bases} from ${JSON.stringify(runtime)};
+export {Fragment} from ${JSON.stringify(runtime)};export const selectors=[];
+function observe(type,props){if(type==='select')selectors.push(props);}
+export function jsx(type,props,key){observe(type,props);return base(type,props,key);}
+export function jsxs(type,props,key){observe(type,props);return bases(type,props,key);}`);
+const uiProbe =
+  encode(`import {jsx} from ${JSON.stringify(runtime)};export const tables=[];
+export const Badge=({children})=>jsx('span',{children});
+export const Panel=({title,subtitle,children,actions})=>jsx('section',{children:[jsx('h2',{children:title},'title'),jsx('p',{children:subtitle},'subtitle'),jsx('div',{children},'body'),jsx('div',{children:actions},'actions')]});
+export const ErrorBox=({message})=>jsx('p',{children:message});
+export const Warnings=({items})=>jsx('p',{children:items?.join('；')});
+export const Loading=()=>jsx('p',{children:'读取中'});
+export function Table(props){tables.push(props);return jsx('div',{children:props.rows.length?props.rows.map(row=>row.name).join(','):props.emptyTitle+'；'+props.emptyDescription});}`);
+const replacements = {
+  react: reactProbe,
+  "react/jsx-runtime": jsxProbe,
+  "../../lib/api": apiProbe,
+  "../../components/UI": uiProbe,
+  "./MarketDataCoverage": encode(
+    "export default function Coverage(){return null;}",
+  ),
+};
+const modules = new Map();
+async function moduleUrl(path) {
+  if (modules.has(path.href)) return modules.get(path.href);
+  let source = ts.transpileModule(await fs.readFile(path, "utf8"), {
+    compilerOptions: {
+      module: ts.ModuleKind.ES2022,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
+    },
+  }).outputText;
+  for (const match of [...source.matchAll(/from (["'])([^"']+)\1/g)]) {
+    const name = match[2];
+    const target =
+      replacements[name] ||
+      (name.startsWith(".")
+        ? await moduleUrl(new URL(name + ".ts", path))
+        : import.meta.resolve(name));
+    source = source.replace(match[0], "from " + JSON.stringify(target));
+  }
+  const url = encode(source);
+  modules.set(path.href, url);
+  return url;
+}
+const {
+  default: Monitor,
+  monitorRequest,
+  monitorQuoteDate,
+} = await import(
+  await moduleUrl(new URL("./AbnormalMonitor.tsx", import.meta.url))
+);
+const { setScope, changes } = await import(reactProbe);
+const { setData, requests } = await import(apiProbe);
+const { selectors } = await import(jsxProbe);
+const { tables } = await import(uiProbe);
+assert.equal(
+  monitorRequest("2026-10-23", "latest"),
+  "/market/abnormal?monitor_scope=latest&limit=1000&date=2026-10-23",
+);
+assert.equal(monitorRequest("", "historical"), null);
+for (const date of [
+  null,
+  "",
+  "2026-02-30",
+  "20261023",
+  "unknown",
+  "2026-10-24T09:00:00+08:00",
+])
+  assert.equal(monitorQuoteDate(date), undefined);
+assert.equal(monitorQuoteDate("2026-10-23"), "2026-10-23");
+const selected = [];
+const props = { date: "2026-10-19", onStock: (...args) => selected.push(args) };
+setData({
+  monitor_scope: "latest",
+  requested_date: props.date,
+  monitor_observed_date: "2026-10-24",
+  monitor_fetched_at: "2026-10-24T09:30:00+08:00",
+  quote_as_of: "2026-10-23",
+  source: "fuyao",
+  data_coverage: { selected_date_available: true },
+  total: 1,
+  items: [{ name: "合成监控股票", instrument_id: "600001.SH", code: "600001" }],
+});
+const current = renderToStaticMarkup(createElement(Monitor, props));
+assert.equal(
+  requests[0],
+  "/market/abnormal?monitor_scope=latest&limit=1000&date=2026-10-19",
+);
+assert.equal(
+  selectors.at(-1).value,
+  "latest",
+  "UI defaults to explicit current observation while the API default remains history",
+);
+assert.match(current, /名单观察日[^]*2026-10-24/);
+assert.match(current, /名单获取时间[^]*2026-10-24T09:30:00\+08:00/);
+assert.match(current, /股票行情日[^]*2026-10-23/);
+assert.match(current, /不代表 2026-10-19 的历史监管状态/);
+assert.match(current, /官方解除日期未知/);
+tables.at(-1).onStockNavigate("600001.SH", tables.at(-1).rows);
+assert.equal(
+  selected.at(-1)[1].asOf,
+  "2026-10-23",
+  "latest monitor cannot open collection day or old shared view date charts",
+);
+selectors.at(-1).onChange({ target: { value: "historical" } });
+assert.deepEqual(changes, ["historical", ""]);
+
+setScope("historical");
+setData({
+  monitor_scope: "historical",
+  quote_as_of: props.date,
+  items: [],
+  total: 0,
+  data_coverage: { selected_date_available: false },
+  unavailable_reason: "该日监管监控名单未留存，不能用最新名单回填历史",
+});
+const missing = renderToStaticMarkup(createElement(Monitor, props));
+assert.equal(
+  requests[0],
+  "/market/abnormal?monitor_scope=historical&limit=1000&date=2026-10-19",
+);
+assert.equal(selectors.at(-1).value, "historical");
+assert.match(missing, /名单记录 <b>未知<\/b>/);
+assert.match(missing, /监控状态未知/);
+assert.doesNotMatch(missing, /名单记录 <b>0<\/b>/);
+assert.match(missing, /不能用最新名单回填历史/);
+
+setScope("latest");
+setData({
+  monitor_scope: "latest",
+  monitor_observed_date: "2026-10-24",
+  items: [],
+  total: 0,
+  data_coverage: { selected_date_available: true },
+});
+const empty = renderToStaticMarkup(createElement(Monitor, props));
+assert.match(empty, /该观察日名单为空/);
+assert.match(empty, /名单记录 <b>0<\/b>/);
+assert.equal(
+  tables.at(-1).onStockNavigate,
+  undefined,
+  "unknown quote dates cannot fall back to shared historical dates",
+);
+setData({
+  items: [{ name: "旧服务历史名单不可冒充最新", instrument_id: "600001.SH" }],
+  total: 1,
+  data_coverage: { selected_date_available: true },
+});
+const incompatible = renderToStaticMarkup(createElement(Monitor, props));
+assert.match(incompatible, /当前API未返回所选监控名单范围/);
+assert.doesNotMatch(incompatible, /旧服务历史名单不可冒充最新/);
+assert.match(incompatible, /监控状态未知/);
+console.log(
+  "Abnormal monitor: explicit latest scope, separate collection and quote dates, historical unknowns, empty source and stock navigation verified",
+);
