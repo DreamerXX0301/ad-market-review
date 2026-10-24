@@ -6,16 +6,18 @@
 
 ## 全新安装
 
-需要 Docker Engine 或 Docker Desktop，以及 Docker Compose v2、curl。以下命令面向全新安装；已有实例应先阅读[版本升级与回滚](版本升级与回滚.md)，不要直接复用旧实例的卷。默认只绑定本机 `127.0.0.1:8788`；已有服务占用时先设置 `export SHIXU_HTTP_PORT=8789`。
+需要 Docker Engine 或 Docker Desktop，以及 Docker Compose v2；`curl`仅用于可选健康检查。以下命令面向全新安装；已有实例应先阅读[版本升级与回滚](版本升级与回滚.md)，不要直接复用旧实例的卷。默认只绑定本机 `127.0.0.1:8788`；已有服务占用时先设置 `export SHIXU_HTTP_PORT=8789`。
 
-下载独立 Compose 文件，不必克隆仓库：
+镜像允许匿名拉取，不要求GitHub登录；源码仓库和Release附件则为私有资源，需要授权。下载独立Compose文件须安装GitHub CLI（`gh`），使用已有的授权登录并具备仓库读权限，再从[0.1.2 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.2)获取，不必克隆仓库。匿名raw链接不能用于取得这些私有文件。
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
-curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.2/deploy/docker-compose.yml -o docker-compose.yml
+gh release download v0.1.2 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
 docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.2
 ```
+
+下载命令不覆盖已有同名文件；若文件已存在，先核对其版本，或使用新的安装目录。已持有对应发行源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录并命名为 `docker-compose.yml`，跳过附件下载命令，再继续后续步骤。GitHub授权只用于私有源码或附件访问，不需要把该授权配置为镜像登录。
 
 创建一个新的、独立保存的主密钥。镜像中自带生成脚本，不要求宿主安装 Python；脚本遇到已有文件会拒绝覆盖。Docker Desktop 需允许挂载此目录。
 
@@ -35,14 +37,6 @@ docker compose up -d api
 ```
 
 如果目录已存在，不要为了继续命令删除其中的密钥；先核对是不是原安装。原数据源密文需要原主密钥，重新生成不能解密它。主密钥不要放进源码、命名数据卷或公开备份。
-
-也可在宿主有 Python 3 时下载同一版本的脚本执行，二选一：
-
-```bash
-curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.2/deploy/create_secret.py -o create_secret.py
-python3 create_secret.py "$HOME/.local/share/ad-market-review-secrets/master.key"
-export SHIXU_MASTER_KEY_FILE="$HOME/.local/share/ad-market-review-secrets/master.key"
-```
 
 打开 `http://127.0.0.1:8788`，或先用 `curl -fsS http://127.0.0.1:8788/health` 检查应用名与版本。确认页面可用，再显式启动唯一 worker：
 
@@ -64,13 +58,13 @@ export SHIXU_IMAGE_REF='ghcr.io/dreamerxx0301/ad-market-review@sha256:实际发�
 docker compose config
 ```
 
-此行包含占位说明，须替换成真实摘要后执行。Compose 会按机器选择 amd64 或 arm64，无需强制 `platform`。公开 GHCR 镜像不要求新用户登录；若返回拒绝访问，先核对该版本是否发行及包是否已设为 public，不应把数据源 Key 用作镜像登录密码。[GitHub Container Registry 权限与匿名拉取](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+此行包含占位说明，须替换成真实摘要后执行。Compose 会按机器选择 amd64 或 arm64，无需强制 `platform`。GHCR镜像允许匿名访问，拉取镜像不要求GitHub登录；这不代表私有源码和Release附件也能匿名下载。本次已核验匿名索引及两个架构的配置读取，完整镜像层下载仍以实际拉取结果为准。若镜像返回拒绝访问，先核对版本与包权限，不应把数据源 Key 用作镜像登录密码。[GitHub Container Registry 权限与匿名拉取](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
 业务、已发布行情、原始响应、worker 工作文件和密文凭据分别放在命名卷。API 对已发布行情只读，使用独立可丢弃 tmpfs 计算派生缓存，不打开 worker 的活动 DuckDB。`docker compose down` 保留数据；**不要加 `-v`、执行卷清理或覆盖原主密钥**。生产备份、迁移与回滚参见[版本升级与回滚](版本升级与回滚.md)。当前入口只监听本机，远程访问需要自行配置认证与反向代理。
 
 ## 维护者发行流程
 
-`.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签也应指向同一审核提交，才能使用上面的固定版本下载 URL。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
+`.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签及配套Release附件也应绑定同一审核提交，私有附件的下载仍需仓库读权限。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
 已有 `v0.1.1` 不能用于重新发布当前新增功能，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.2`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、Docker/Compose 默认版本及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
 
@@ -82,7 +76,7 @@ gh workflow run publish-image.yml --ref master -f version="$(cat VERSION)" -F co
 
 只在需要上传的 job 授予 `packages: write`，用仓库的 `GITHUB_TOKEN` 登录，不要求用户提供新的个人包 Token。OCI labels 和发行 artifact 留存版本、提交、平台摘要与总摘要；Actions 绑定完整提交。首次创建的 GHCR 包可能是 private，仓库维护者须明确设为 public，再独立验证匿名拉取，不能仅凭 workflow 上传成功宣称匿名可用。[GHCR 发布与可见性](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
-workflow 不创建 Git 源码标签或 GitHub Release。维护者需另外核对固定版本源码标签与 `release-image.json` 的 `git_commit` 完全一致，再对外提供相应版本的 Compose 下载地址；不要将 `master` 上的 Compose 当成某个旧镜像的发行配套文件。
+workflow 不创建 Git 源码标签或 GitHub Release。维护者需另外核对固定版本源码标签与 `release-image.json` 的 `git_commit` 完全一致，再将配套Compose文件作为Release附件交付；私有附件通过有仓库读权限的GitHub CLI下载，也可直接交付经核对的文件。不要将 `master` 上的 Compose 当成某个旧镜像的发行配套文件，也不要为公开镜像提供无法匿名访问的raw安装命令。
 
 CI 本身不部署、不开来源取数，也不操作现用数据。发行检查不能代替真实升级演练；schema 变化后的回滚需要旧镜像、切换前备份和独立恢复卷。
 

@@ -137,13 +137,15 @@ flowchart LR
 
 ## Docker 安装
 
-需要 Docker Engine / Docker Desktop、Compose 和 curl。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.2`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+
+镜像本身允许匿名拉取，无需GitHub登录；本项目的源码仓库和[0.1.2 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.2)为私有资源，需要仓库读权限。下面的附件下载命令要求已安装GitHub CLI（`gh`）并已完成授权登录，不使用匿名raw下载。已持有配套源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录并命名为 `docker-compose.yml`，跳过下面的附件下载命令；下载命令不覆盖已有同名文件。
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
 
-curl -fL https://raw.githubusercontent.com/DreamerXX0301/ad-market-review/v0.1.2/deploy/docker-compose.yml -o docker-compose.yml
+gh release download v0.1.2 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
 docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.2
 
 umask 077

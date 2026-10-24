@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 修正私有仓库的Docker安装文件获取方式：通过有仓库读权限的GitHub CLI下载Release的Compose附件，或使用已持有的配套源码；镜像仍可匿名拉取，密钥使用镜像内脚本生成，不再提供匿名raw下载私有文件的命令。
+
 ## v0.1.2
 
 0.1.2发行说明：本节完整冻结 v0.1.1 以来已实现的源码改动，发行源码提交为 [47520dd30afdb1695d0a8de6d52873045da6540e](https://github.com/DreamerXX0301/ad-market-review/commit/47520dd30afdb1695d0a8de6d52873045da6540e)。镜像实际可用性、摘要及平台检查结果以[发行操作记录](https://github.com/DreamerXX0301/ad-market-review/actions/runs/40079019088)、[发布记录](https://github.com/DreamerXX0301/ad-market-review/releases)及对应发行回执为准，不由文档更新推定。迁移终点为023；从v0.1.1升级仍需先备份，在独立恢复副本应用011—023并验收，详见[升级与回滚](docs/版本升级与回滚.md)。
