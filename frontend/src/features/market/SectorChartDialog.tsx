@@ -115,20 +115,11 @@ export default function SectorChartDialog({
   const paused = progress?.status === "paused";
   return (
     <Modal title={`${topic.name} · 板块K线`} onClose={onClose} wide>
-      <div className="modal-body sector-chart-dialog-body">
+      <div className="modal-body sector-chart-dialog-body entry-page-scroll">
         {onMembers && (
-          <div
-            className="segmented global-sector-tabs"
-            role="tablist"
-            aria-label="板块详情视图"
-          >
-            <button role="tab" aria-selected="true" className="active">
-              板块K线
-            </button>
-            <button role="tab" aria-selected="false" onClick={onMembers}>
-              成分股
-            </button>
-          </div>
+          <button className="btn small entry-members-link" onClick={onMembers}>
+            查看成分股
+          </button>
         )}
         <div className="sector-chart-context">
           <div>
@@ -225,6 +216,7 @@ export default function SectorChartDialog({
             asOf={date}
             dataEndpoint={endpoint}
             height={680}
+            entryFocus
           />
         ) : (
           !chart.error && (

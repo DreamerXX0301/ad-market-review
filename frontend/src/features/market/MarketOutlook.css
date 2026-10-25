@@ -14,7 +14,9 @@
 }
 .outlook-hero,
 .outlook-plan,
-.outlook-watchlist {
+.outlook-watchlist,
+.outlook-insights,
+.outlook-routes {
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--surface);
@@ -90,6 +92,221 @@
   color: var(--subtle);
   line-height: 1.9;
   margin: 5px 0 0;
+}
+.outlook-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  margin: 14px 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.outlook-headline > span,
+.outlook-headline > small {
+  color: var(--muted);
+}
+.outlook-headline > strong {
+  color: var(--text);
+}
+.outlook-headline.unknown > strong {
+  color: var(--muted);
+}
+.outlook-changes,
+.outlook-insight-layers,
+.outlook-route-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 4px 25px 20px;
+  min-width: 0;
+}
+.outlook-change,
+.outlook-layer,
+.outlook-route {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface2);
+  overflow-wrap: anywhere;
+}
+.outlook-changes {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.outlook-change > span,
+.outlook-route > span,
+.outlook-route-missing > span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+.outlook-change > strong {
+  display: block;
+  margin: 7px 0;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.outlook-change > small,
+.outlook-route > small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.outlook-change.unknown > strong {
+  color: var(--muted);
+}
+.outlook-change > p,
+.outlook-layer p,
+.outlook-layer li,
+.outlook-route p,
+.outlook-route li {
+  margin: 7px 0;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--subtle);
+}
+.outlook-layer h3 {
+  margin: 0 0 9px;
+  font-size: 13px;
+  color: var(--text);
+}
+.outlook-layer ul,
+.outlook-route ul {
+  margin: 7px 0 0;
+  padding-left: 17px;
+}
+.outlook-layer.opportunity {
+  border-top: 2px solid var(--blue);
+}
+.outlook-layer.risk {
+  border-top: 2px solid var(--amber);
+}
+.outlook-layer.gap {
+  border-top: 2px solid var(--muted);
+}
+.outlook-layer.gap h3,
+.outlook-layer.gap li {
+  color: var(--muted);
+}
+.outlook-route {
+  --route-color: var(--outlook-wait);
+  border-top: 3px solid var(--route-color);
+}
+.outlook-route.conditional {
+  --route-color: var(--outlook-conditional);
+}
+.outlook-route.blocked {
+  --route-color: var(--outlook-blocked);
+}
+.outlook-route.unknown {
+  --route-color: var(--muted);
+}
+.outlook-route > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 13px;
+}
+.outlook-route h4 {
+  margin: 0;
+  font-size: 13px;
+}
+.outlook-route header > strong {
+  color: var(--route-color);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.outlook-route details {
+  margin: 13px 0;
+  font-size: 12px;
+}
+.outlook-route summary {
+  color: var(--subtle);
+}
+.outlook-route details h4 {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.outlook-action-observation > span,
+.outlook-action-execution > span {
+  display: block;
+  margin: 13px 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.outlook-action-observation > strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.outlook-action-observation > p {
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.outlook-action-execution {
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 12px;
+}
+.outlook-action-execution > strong,
+.outlook-action-execution > small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.outlook-action-execution > small {
+  font-size: 11px;
+}
+.outlook-candidate-replay {
+  min-width: 0;
+}
+.outlook-candidate-replay > small,
+.outlook-replay-references {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.outlook-replay-references > span {
+  display: block;
+  margin-top: 6px;
+}
+.outlook-replay-table {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.outlook-replay-table table {
+  width: 100%;
+  min-width: 450px;
+  border-collapse: collapse;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.outlook-replay-table caption {
+  text-align: left;
+  color: var(--muted);
+  padding-bottom: 7px;
+}
+.outlook-replay-table th,
+.outlook-replay-table td {
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: top;
+  padding: 7px;
+}
+.outlook-replay-table th {
+  font-weight: 500;
+  color: var(--subtle);
+}
+.outlook-replay-table th[scope="row"] {
+  white-space: nowrap;
 }
 .outlook-thermometer {
   padding: 25px 28px 20px;
@@ -580,9 +797,15 @@
   margin-bottom: 18px;
 }
 @media (max-width: 1100px) {
+  .outlook-changes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .outlook-actions,
   .outlook-context-grid,
-  .outlook-topic-grid {
+  .outlook-topic-grid,
+  .outlook-changes,
+  .outlook-insight-layers,
+  .outlook-route-grid {
     gap: 10px;
     padding-left: 18px;
     padding-right: 18px;
@@ -604,6 +827,10 @@
     border-top: 1px solid var(--border-soft);
   }
   .outlook-actions,
+  .outlook-context-grid,
+  .outlook-changes,
+  .outlook-insight-layers,
+  .outlook-route-grid,
   .outlook-topic-grid,
   .outlook-scenarios > div,
   .outlook-independent-stocks > div {

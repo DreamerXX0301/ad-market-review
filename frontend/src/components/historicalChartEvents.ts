@@ -66,15 +66,29 @@ export function historicalChartEvents(value: unknown): HistoricalChartEvent[] {
       const selected = node.selected_event,
         evidence = node.evidence,
         spec = node.history_event;
+      const raw =
+        selected?.price_basis === "none" && evidence?.price_basis === "none"
+          ? selected
+          : selected?.price_basis === "forward_event_affine" &&
+              evidence?.price_basis === "forward_event_affine" &&
+              date(selected.anchor_date) &&
+              selected.anchor_date === evidence.as_of &&
+              evidence.anchor_date === evidence.as_of
+            ? {
+                close: selected.raw_close,
+                high: selected.raw_high,
+                low: selected.raw_low,
+                open: selected.raw_open,
+              }
+            : null;
       if (
         node.event_checks?.result !== true ||
         !date(selected?.date) ||
         !date(evidence?.as_of) ||
         selected.date >= evidence.as_of ||
-        selected.price_basis !== "none" ||
-        evidence.price_basis !== "none" ||
+        !raw ||
         (spec?.match === "any" && node.result !== true) ||
-        !positive(selected.close)
+        !positive(raw.close)
       )
         return;
       const referenced = new Set<string>();
@@ -94,12 +108,12 @@ export function historicalChartEvents(value: unknown): HistoricalChartEvent[] {
         referenced.add(reclaimField);
       if (!referenced.size) referenced.add("close");
       for (const field of ["close", "high", "low", "open"] as const) {
-        if (!referenced.has(field) || !positive(selected[field])) continue;
+        if (!referenced.has(field) || !positive(raw[field])) continue;
         result.push({
           key: `${path}:${field}`,
           date: selected.date,
-          rawClose: selected.close,
-          rawPrice: selected[field],
+          rawClose: raw.close,
+          rawPrice: raw[field],
           priceBasis: "none",
           priceField: field,
           label: name(spec?.where),

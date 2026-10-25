@@ -1,8 +1,8 @@
 """Bounded daily price paths relative to one already-bound historical event.
 
-All prices use the existing strict raw-price comparability guard. A later gap
-cannot erase an earlier proven failure, and prices beyond a gap/action cannot
-be used to invent a comparable breach or reclaim.
+Prices use the context's explicit basis and strict comparability guard. Raw
+contexts block actions; verified forward contexts project both sides at the
+same observation anchor. A later quote gap cannot erase an earlier failure.
 """
 from math import isfinite
 from decimal import Decimal, localcontext
@@ -16,6 +16,10 @@ def _number(value, low, high, *, inclusive_high=True):
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
             and value >= low and (value <= high if inclusive_high else value < high)
             and isfinite(value))
+
+
+def _positive_price(value):
+    return isinstance(value,(int,float)) and not isinstance(value,bool) and isfinite(value) and value>0
 
 
 def validate_price_path(value):
@@ -90,8 +94,9 @@ def evaluate_price_path(spec, context, event, day):
     end_position = context.positions.get(day)
     result = {'type': 'history_price_path', 'model': VERSION, 'result': None,
               'event_date': event.get('date'), 'observation_date': day,
-              'observation_period': 'D', 'price_basis': 'none',
+              'observation_period': 'D', 'price_basis': context.price_basis,
               'reason': '缺少已绑定事件或精确市场交易日，价格过程保持未知'}
+    if context.price_context:result['anchor_date']=context.price_context.get('anchor_date')
     if 'cross_cycle' in spec:
         result['model']='daily-history-price-path-v2-cross-cycle'
     if start_position is None or end_position is None or start_position >= end_position or day > context.as_of:
@@ -155,7 +160,7 @@ def _cross_cycle(spec,context,event,day,days,comparable,blocking_date,blocking_r
             blocking_reason or '金叉、死叉或指标预热证据不足，不能把未知当作未发生')
     return {**spec,'result':state,'event_cross':event_cross,'current_cross':current_cross,
             'event_close':event['close'],'current_close':current_close,
-            'close_above_event':current_close>event['close'] if current_close is not None else None,
+            'close_above_event':current_close>event['close'] if _positive_price(current_close) and _positive_price(event.get('close')) else None,
             'dead_cross_result':has_dead,'dead_cross_date':dead_date,'expected_sessions':len(days)-1,
             'known_signal_sessions':known,'intervening_cross_date':intervening_cross,
             'previous_cross_confirmed':previous_confirmed,'blocking_date':blocking_date,'reason':reason}
@@ -163,6 +168,20 @@ def _cross_cycle(spec,context,event,day,days,comparable,blocking_date,blocking_r
 
 def _guard(spec, event, day, days, comparable, blocking_date, blocking_reason):
     event_close = event['close']; ratio = spec['max_drawdown_pct']
+    if not _positive_price(event_close):
+        reason=blocking_reason or '缺少可核验的同锚事件收盘价，守位保持未知'
+        guard={'result':None,'holding_result':None,'floor':None,'floor_decimal':None,
+               'event_close':event_close,'max_drawdown_pct':ratio,'formula':f'事件收盘价 × (1 − {ratio}/100)',
+               'start':days[0],'end':day,'expected_sessions':len(days),'comparable_sessions':len(comparable),
+               'min_close':None,'min_close_date':None,'first_breach_date':None,'first_breach_close':None,
+               'blocking_date':blocking_date,'reason':reason}
+        if spec.get('require_pullback'):guard['pullback']={'result':None,'date':None,'close':None,'reason':reason}
+        if 'near_floor' in spec:
+            near=spec['near_floor'];selected=days[:-1][-near['sessions']:]
+            guard['near_floor']={'result':None,**near,'start':selected[0] if selected else None,
+                'end':selected[-1] if selected else None,'date':None,'close':None,'upper':None,'upper_decimal':None,
+                'expected_sessions':len(selected),'reason':reason}
+        return guard
     # Multiplication on binary floats can turn an exact 8.20 floor into
     # 8.200000000000001. Compare the unrounded decimal expression instead.
     with localcontext() as arithmetic:
@@ -228,6 +247,9 @@ def _reclaim(spec, context, event, day, days, comparable, blocking_date, blockin
              'current_high': current.get('high') if current_known else None,
              'current_low': current.get('low') if current_known else None,
              'first_prior_reclaim_date': None, 'blocking_date': blocking_date, 'reason': blocking_reason}
+    if not _positive_price(reference):
+        proof['reason']=blocking_reason or '缺少可核验的同锚事件参照价，价格收复保持未知'
+        return proof
     if mode == 'close_at_or_above':
         state = close >= reference if current_known else None
     elif mode == 'high_at_or_above':

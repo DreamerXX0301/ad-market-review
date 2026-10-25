@@ -25,6 +25,9 @@ const { chartBoll, bollCandleValues } = await helper("./chartBoll.ts");
 const { annotationColors, lineLabel } = await helper("./chartAnnotations.ts");
 const { chartPaneLayout } = await helper("./chartPaneLayout.ts");
 const { candleChartEndpoint } = await helper("./chartEndpoint.ts");
+const { candleExtremeChange } = await helper("./candleExtremeChange.ts");
+const { chartSessionDistance } = await helper("./chartSessionDistance.ts");
+const { chartPriceBasis } = await helper("./chartPriceBasis.ts");
 const waveHelpers = await helper("./wavePresentation.ts");
 const source = await fs.readFile(
   new URL("./Charts.tsx", import.meta.url),
@@ -88,6 +91,7 @@ const scopeValues = {
   lineLabel,
   chartPaneLayout,
   candleChartEndpoint,
+  candleExtremeChange,
   useChartPreferences: () => ({
     preferences: settings,
     persistent: true,
@@ -136,6 +140,8 @@ const scopeValues = {
   },
   candleChange: () => ({ value: null, reason: "", label: "日涨跌幅" }),
   chartSinceReturn: () => ({ value: null, reason: "" }),
+  chartSessionDistance,
+  chartPriceBasis,
   chartIndicatorAvailability: () => ({ missing: [], reason: "", label: "" }),
   chartDataNotes: () => [],
   ChartToggle: ({ label }) => jsx("button", { children: label }),
@@ -195,6 +201,14 @@ const html = renderToStaticMarkup(
   }),
 );
 assert.ok(html.includes("报告冻结图"));
+assert.match(html, /最高 .*待核验/);
+assert.match(html, /最低 .*待核验/);
+const frozenTooltip = option.tooltip.formatter([
+  { axisValue: "2026-10-22", seriesName: "K线", dataIndex: 0 },
+]);
+assert.match(frozenTooltip, /当日最高涨幅.*待核验/);
+assert.match(frozenTooltip, /当日最低涨幅.*待核验/);
+assert.ok(html.includes("距行情截止日 2026-10-22 · 交易日距离待核验"));
 assert.ok(!html.includes("LIVE_ERROR") && !html.includes("2099-01-01"));
 assert.deepEqual(paths, [null]);
 assert.deepEqual(annotations, [false]);
@@ -227,13 +241,48 @@ assert.ok(missing.includes("不回退到当前行情"));
 assert.deepEqual(paths, [null, null]);
 allowLive = true;
 period = "D";
-renderToStaticMarkup(
+const liveMarkup = renderToStaticMarkup(
   jsx(Chart, {
     instrumentId: "000001.SZ",
     instrumentKind: "stock",
     showDataNotes: false,
   }),
 );
+assert.match(liveMarkup, /图表价格：未复权/);
+chartData.price_basis = "forward_event_affine";
+const forwardMarkup = renderToStaticMarkup(
+  jsx(Chart, {
+    instrumentId: "000001.SZ",
+    instrumentKind: "stock",
+    showDataNotes: false,
+  }),
+);
+assert.match(forwardMarkup, /图表价格：本地前复权/);
+chartData.price_basis = "none";
+Object.assign(chartData.bars[0], {
+  chart_high_change_pct: 10,
+  chart_low_change_pct: -10,
+  chart_extreme_change_period: "D",
+  chart_extreme_change_reference_date: "2026-10-21",
+  chart_high_change_pct_reason: "同图价格口径与上一市场交易日前收",
+  chart_low_change_pct_reason: "同图价格口径与上一市场交易日前收",
+});
+const extremeMarkup = renderToStaticMarkup(
+  jsx(Chart, {
+    instrumentId: "000001.SZ",
+    instrumentKind: "stock",
+    showDataNotes: false,
+  }),
+);
+assert.match(extremeMarkup, /高 <b>11<\/b>/);
+assert.match(extremeMarkup, /最高 10%/);
+assert.match(extremeMarkup, /低 <b>9<\/b>/);
+assert.match(extremeMarkup, /最低 -10%/);
+const liveTooltip = option.tooltip.formatter([
+  { axisValue: "2026-10-22", seriesName: "K线", dataIndex: 0 },
+]);
+assert.match(liveTooltip, /高 11 .*当日最高涨幅 10%/);
+assert.match(liveTooltip, /低 9 .*当日最低涨幅 -10%/);
 assert.ok(paths.at(-1).startsWith("/instruments/000001.SZ/chart?"));
 assert.equal(
   annotations.at(-1),
@@ -322,7 +371,10 @@ for (let mask = 0; mask < 16; mask++) {
 }
 // The real chart skips disabled overlays and unused wave modes. Enabling one
 // immediately uses the current frozen payload, without a GET or a cached quote.
-const waveDates = Array.from({ length: 6 }, (_, index) => `2026-10-${17 + index}`);
+const waveDates = Array.from(
+  { length: 6 },
+  (_, index) => `2026-10-${17 + index}`,
+);
 chartData.bars = waveDates.map((date, index) => ({
   ...chartData.bars[0],
   date,
@@ -339,38 +391,48 @@ const wavePoints = waveDates.map((date, index) => ({
 }));
 chartData.waves = {
   points: wavePoints,
-  patterns: [{
-    pattern_id: "verified-pattern",
-    direction: "up",
-    start_date: waveDates[0],
-    end_date: waveDates.at(-1),
-    confirmed_at: "2026-10-22",
-    has_correction: false,
-    points: wavePoints,
-  }],
+  patterns: [
+    {
+      pattern_id: "verified-pattern",
+      direction: "up",
+      start_date: waveDates[0],
+      end_date: waveDates.at(-1),
+      confirmed_at: "2026-10-22",
+      has_correction: false,
+      points: wavePoints,
+    },
+  ],
 };
 function overlayRender({ boll = false, waves = false, mode = "turning" } = {}) {
   settings.stockShowBoll = boll;
   settings.stockShowWaves = waves;
   settings.stockWaveMode = mode;
-  Object.keys(overlayReads).forEach((key) => { overlayReads[key] = 0; });
+  Object.keys(overlayReads).forEach((key) => {
+    overlayReads[key] = 0;
+  });
   const count = paths.length;
-  renderToStaticMarkup(jsx(Chart, {
-    instrumentId: "000001.SZ",
-    instrumentKind: "stock",
-    frozenChartsByPeriod: { D: chartData },
-    showDataNotes: false,
-  }));
+  renderToStaticMarkup(
+    jsx(Chart, {
+      instrumentId: "000001.SZ",
+      instrumentKind: "stock",
+      frozenChartsByPeriod: { D: chartData },
+      showDataNotes: false,
+    }),
+  );
   assert.deepEqual(paths.slice(count), [null]);
   return { ...overlayReads };
 }
 assert.deepEqual(overlayRender(), { boll: 0, patterns: 0, turns: 0 });
 assert.deepEqual(overlayRender({ boll: true, waves: true }), {
-  boll: 1, patterns: 0, turns: 1,
+  boll: 1,
+  patterns: 0,
+  turns: 1,
 });
 assert.ok(option.series.some((series) => series.name === "高低点转折候选"));
 assert.deepEqual(overlayRender({ waves: true, mode: "latest" }), {
-  boll: 0, patterns: 1, turns: 0,
+  boll: 0,
+  patterns: 1,
+  turns: 0,
 });
 assert.ok(option.series.some((series) => series.name.includes("上涨五浪候选")));
 assert.ok(!option.series.some((series) => series.name === "高低点转折候选"));

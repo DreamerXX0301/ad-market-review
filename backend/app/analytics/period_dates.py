@@ -20,7 +20,7 @@ def latest_closed_date(calendar,as_of,period):
     return result
 
 
-def completed_indicator_bars(rows,calendar,as_of,period,*,tail=None):
+def completed_indicator_bars(rows,calendar,as_of,period,*,tail=None,source_facts_only=False):
     """One shared stock strategy/backtest series; invalid periods reset seeds."""
     if tail is not None and (not isinstance(tail,int) or isinstance(tail,bool) or tail<1):
         raise ValueError('指标末期数量必须为正整数')
@@ -48,4 +48,7 @@ def completed_indicator_bars(rows,calendar,as_of,period,*,tail=None):
             continue
         if pending:row={**row,'weekly_continuity_reset_reason':pending}
         eligible.append(row);pending=None
-    return enrich_bars(eligible,tail=tail)
+    # Raw facts in an explicitly adjusted strategy need only the latest two
+    # eligible weeks. Preserve the entire calendar/coverage classification
+    # above; no raw EMA/KD seed is used by that facts-only projection.
+    return enrich_bars(eligible[-2:] if source_facts_only else eligible,tail=tail)

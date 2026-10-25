@@ -14,7 +14,7 @@ export default function StockHeaderQuote({
   return (
     <div
       className="stock-header-quote"
-      aria-label="观察日收盘报价"
+      aria-label="观察日原始收盘报价"
       title={view.reason}
     >
       <div>
@@ -25,7 +25,7 @@ export default function StockHeaderQuote({
           {view.change == null ? "涨幅待核验" : percent(view.change)}
         </span>
       </div>
-      <small>{view.label} · 未复权 · 非实时</small>
+      <small>原始收盘报价 · {view.label} · 未复权 · 非实时</small>
     </div>
   );
 }

@@ -113,19 +113,23 @@
 
 ### 市场温度与下一交易日条件预案
 
-`GET /market/emotion?date=` 另增顶层 `market_outlook`，版本 `dated-market-outlook-v1`。顶层预案使用自己的规则及输入指纹，不覆盖 `sentiment` 指纹；本轮 `sentiment` 新计算使用上节的 `descriptive-context-v2`，相应价格对象和指纹按该版本更新，旧手动留存内容原样保留。新字段是独立公开阈值的单日盘面观察，不是将上述离线六阶段草案转正。首屏显示新读数与条件预案，完整三轴指标、来源和留存功能按需展开。
+`GET /market/emotion?date=` 另增顶层 `market_outlook`，版本 `dated-market-outlook-v1`。顶层预案使用自己的规则及输入指纹，不覆盖 `sentiment` 指纹；本轮 `sentiment` 新计算使用上节的 `descriptive-context-v2`，相应价格对象和指纹按该版本更新，旧手动留存内容原样保留。新字段是独立公开阈值的单日盘面观察，不是将上述离线六阶段草案转正。首屏显示读数、今日变化、机会/风险/缺口和条件预案，完整三轴指标、来源和留存功能按需展开。新增提示不调整既有温度、阶段与20%显著放量阈值，不新增情绪总分。
 
 - `date/snapshot_id`绑定本次观察日和不可变行情代际。`temperature`含 `value/previous_value/delta/previous_date/scope/coverage_pct/calendar_valid/comparable_count/universe_expected_known/evidence_consistent`；温度固定同口径沪深上涨/(上涨+下跌+平盘)×100，不混入沪深京个股比例或队列反馈。当前可比率不足80%不判阶段，前日须为严格相邻同范围、有唯一广度记录且可比率达标的市场日；跨输入日期、范围或涨跌平数字冲突时待核验，缺档不跨日确认修复或退潮。
 - `temperature`另含 `universe_upper_bound/coverage_basis/observed_coverage_pct/universe_bound_known`。真实应有范围已知时使用该范围；否则只允许使用已取得的沪深主表数量作保守上界，分母取既有分母与上界的较大值，basis为 `retained_master_upper_bound`，不声称历史应有范围完整。应有范围未知且无有据上界时，basis为 `unbounded_observed_sample`、`coverage_pct=null`，保留观察温度和 `observed_coverage_pct`，阶段待核验且禁止开仓；前日与5日冰点历史同样约束，防止极少样本被误算为100%覆盖。
 - `stage={code,label,status,summary,reasons,conflicts,limitations}`。code为 `unknown/ice/repair/ebb/climax/broad_rise/mixed/divergence`，分别为待核验、冰点、修复、退潮、高潮、普涨、混沌、分化。阶段仅 `observation` 或 `unknown`，不声称完整周期已验证。混沌只用于已知方向矛盾，缺数据不默认混沌。冰点、修复、退潮、普涨沿用公开广度阈值；高潮额外要求沪深当日来源候选逐股原收盘及正成交量核验，完整来源涨停≥80且跌停≤5；来源缺档、冲突和空池不强算。`rules[]`返回版本化阈值。
 - `axes[]`并列指数环境、个股广度和短线价格反馈的 `id/label/state/state_label/evidence/scope`。四指数分别使用严格21日窗口，环境方向不合成价格收益；短线另含 `ordinary_group_ready`。普通10%同制度证据不足时，不能把全部昨日涨停队列价格反馈或混合制度晋级率当作该组精确接力结论。
 - `turnover={amount,previous_date,previous_amount,change_pct,expansion_threshold_pct,expanded,state,scope,reason,comparison_complete}` 与盘面总览使用同一沪深京股票成交额元值及严格相邻比较。显著放量阈值为20%，恰好达到也满足；缺失、重复或范围不可比时 `expanded=null`，不能当作不放量或允许开仓。
-- `bottom_watch` 含 `status:candidate|unconfirmed|unknown/confirmed:false/label/candidate_date/index_references/confirmation_conditions/invalidations/lookback_sessions/observations/history_complete/prior_ice_streak/recent_ice_count`。近5日观察只读T之前严格交易日，缺档中断连续计数。符合冰点后放量修复且指数低点有据时仅列候选；后续确认条件固定待观察，不能用未来价格确认T日底部。
-- `entry_gate={status:blocked|conditional|wait,label,reasons,release_conditions,blocked_conditions}`。冰点、退潮、关键数据不足或成交额比较未知时禁止开仓。冰点修复解禁要求显著放量及当日指数、广度核验；普通趋势日不一律要求20%放量，但成交额比较必须真实可比。任何放行仍为下一交易日条件清单。
+- `bottom_watch` 含 `status:candidate|unconfirmed|unknown/confirmed:false/label/candidate_date/index_references/confirmation_conditions/invalidations/lookback_sessions/observations/history_complete/prior_ice_streak/recent_ice_count`。近5日观察只读T之前严格交易日，缺档中断连续计数。当日为 `repair` 或 `climax`、严格前日真实冰点、成交额显著放大且四指数当日低点及收盘参照齐备时仅列候选；这不调整原阶段优先级或阈值，避免高潮标签遮蔽相同冰点修复证据。后续确认条件固定待观察，不能用未来价格确认T日底部。
+- `entry_gate={status:blocked|conditional|wait,label,reasons,release_conditions,blocked_conditions,routes}`。冰点、退潮、必要广度证据不足或成交额比较未知为优先禁止条件。`routes[]`与下述 `insights.routes` 使用同一分路径对象；趋势条件不依赖普通10%接力证据，短线接力须额外满足本组证据，冰点修复保留原候选门槛。修复未形成候选且趋势路径未满足时仍禁止开仓；高潮不因标签本身一律等待，而按实际路径证据判断。普通趋势路径不要求20%放量，但成交额比较必须真实可比。任何放行仍为下一交易日条件清单；此对象不接管策略、跟踪或回测的执行。
 - `next_session={date,label,calendar_reason}`，date仅从已留存市场日历取严格相邻后一交易日；没有未来日历时为空并显示下一交易日，不用自然日T+1或工作日猜测。历史回看可显示已留存下一交易日的日期，但不得读取其价格来制定T日预案。
 - `plan={stance,label,summary,actions,scenarios,trigger_state,verification_mode,notice}`。actions固定 `open/add/bottom`，对应开仓、加仓、抄底；每项有 `status:blocked|avoid|wait|conditional/status_label/reason/triggers/invalidations/trigger_state`。scenarios为转强、分歧、转弱，各列观察、应对与失效。所有触发状态固定 `unobserved`，模式为 `manual_next_session`；没有盘中数据时不能标已满足。加仓须另核验已有持仓的原定失效条件，不读取或假造账户成本和仓位，不输出自动交易或承诺可成交。一字封板不代表下一日可买。
 - `watchlist={topics,stocks,coverage,empty_reason,topics_empty_reason}`：最多3个方向、每方向3只股、独立个股列表5只，角色为观察候选。股票须有T日唯一正原始收盘、正成交量和精确匹配的同日来源涨停证据；含 `instrument_id/name/code/close/change_pct/board_count/evidence_date/role/reason/trigger/invalidations/source/price_basis/event_basis/source_fingerprint`。排序依来源连板数、当日成交额、代码；题材按指定日成员下已确认涨停下界排序，重叠分别计，不自动声称真实上涨原因或龙头。缺历史成员仅保留有据个股，不借当前成员回填历史。
-- `provenance`保留新规则、输入指纹、实际计算时间、行情代际及 `mode=retained_retrospective`；当前留存材料回看不等于T日当时可知或已经发布盘前计划。指纹包括实际阶段输入、事件核验、三轴和候选；不覆盖原sentiment指纹。新预案仅读发布数据，不联网、不写业务表、不创建任务。已有手动情绪快照仅保存原三轴证据，不声称已留存此顶层预案。
+- `insights` 为独立的提示对象，含 `version:"market-opportunity-insights-v1"/date/snapshot_id/headline/changes/opportunities/risks/gaps/routes/candidate_tracking`，与本次观察日及行情代际绑定。`headline={code,label,summary,observation_state:"observed"|"unknown",execution_state:"unobserved"}` 区分已观察到的盘面与尚未触发的执行条件。`opportunities/risks/gaps` 分别为字符串数组，机会、风险和资料缺口独立保留；不以缺资料证明风险已经发生，也不以机会抵消风险或缺口。
+- `insights.changes[]` 含 `id/label/state/date/previous_date/value/previous_value/delta/unit/delta_unit/evidence/interpretation/scope/reason`，逐项展示今日读数、严格前日比较、证据及解释；前日缺失、重复或口径不可比时保留未知及原因，不用较早日期补位或将缺失补0。`unit`为当前值单位（广度`/100`、成交额`CNY`），`delta_unit`独立区分温度变化的百分点与成交额变化的百分比；昨板今日反馈仅展示当日观察，不冒充与前日队列相同的变化率。
+- `insights.routes[]` 及 `entry_gate.routes[]` 各项含 `id:"trend"|"relay"|"repair"/label/status:"blocked"|"wait"|"conditional"/status_label/observation/reason/missing_conditions/triggers/invalidations/trigger_state:"unobserved"`，后三组条件为字符串数组。`trend` 在指数环境强、广度强及严格相邻量能比较已知时可为条件复核，不要求普通10%制度组齐备；`relay` 另要求短线反馈强和 `ordinary_group_ready`；`repair` 以当日短底候选为条件。全局必要证据和冰点/退潮限制优先于任何路径。分路径为趋势加仓与短线接力分别提供证据，已有持仓仍须人工核对原定失效条件、所属方向和真实可成交条件，修复候选不直接形成加仓建议。
+- `insights.candidate_tracking` 含 `status:"candidate"|"continuing"|"diverging"|"failed"|"unknown"|"none"/label/candidate_date/last_observed_date/as_of/lookback_sessions:20/window_begin/window_end/history_complete/confirmed:false/reason/conditions/index_references/observations/notice`。`observations[]` 含 `date/state/label/temperature/broken_indices/reason`，其中 `broken_indices` 为代码数组。窗口最多覆盖截至T的20个严格市场交易日，复用已读广度、成交额、四指数来源及严格日历，不逐日调用panel或全量sentiment重算，不展开全历史。候选及后续观察只使用不晚于该回放日的数据；任一指数收盘低于候选日实际低点时 `failed`，终止该候选；四指数收盘齐备、均未破候选低点且广度温度≥60时 `continuing`；其余有据情况为 `diverging`。缺必要资料为 `unknown`，不得沿用旧状态充作当前有效；窗口内无候选为 `none`，新独立候选可替换已失效候选。`confirmed` 始终为false，上述状态是未验证的描述规则，不代表确定底部或可执行信号，也不外推20日窗口之外的延续情况。
+- `provenance`保留新规则、输入指纹、实际计算时间、行情代际及 `mode=retained_retrospective`；当前留存材料回看不等于T日当时可知或已经发布盘前计划。指纹包括实际阶段输入、事件核验、三轴、候选及新增提示；不覆盖原sentiment指纹。新预案及候选跟踪仅读发布数据，不联网、不写业务表、不创建任务。已有手动情绪快照仅保存原三轴证据，不包含顶层预案、`insights`或候选跟踪，不声称已归档这些对象。
 
 涨停梯队各股票行另外增加 `snapshot_id/pattern_events/pattern_status/pattern_date/pattern_as_of/pattern_coverage`，形态使用同一 `verified-source-close-pool-and-raw-ohlc-v1` 判定，沿用一次有限三日批量报价和小日历，不逐股展开全历史。前端必须同时匹配观察日、行及事件代际和原价basis。主涨停类显示地天板、一字涨停；失败组缺独立同日跌停状态时保持未知，不推测一字跌停。连板/概念/当日主线/反包/20cm卡片共用同一标记，不改高度、分类、原事件或策略。使用说明见[市场温度与下一交易日计划](../docs/市场温度与下一交易日计划.md)。
 
@@ -139,6 +143,8 @@
 - `feedback={code,label,state,source_date,cohort_date,reason}`：前日确认涨停样本的当日观察，优先跌停、晋级，然后可比收盘收益≤−5%的大幅回落、回落、正反馈或平盘。未知不当作晋级失败；正反馈不等于资金承接或可成交收益。`limitations[]` 保留各维度的证据限制。
 
 连板反馈默认按已核验的昨日高度降序、代码升序，未知置末；新展示对象存在时，排序与高度分组均不从未核验原字段回填，原始 `previous_board_count` 保留。仅改变展示顺序，不改变样本和既有收益。总览两组前五共用一次最多10只P/T批量原始报价，反馈共用一次返回队列的P/T批量，梯队复用原有有限三日报价及已读补充来源，不逐股展开历史或发起采集。具体定义与公开资料见[连板高度板型与反馈](../docs/连板高度板型与反馈.md)。
+
+`board_presentation`另有`board_text={label,state,source,source_date,window_sessions,limit_up_count,reason}`，只读取扶摇同日已核验收盘池的`continue_day_text`原文（例如首板、2连板、5天4板），状态为reported/unknown/conflict。证券、日期、原始收盘及涨停状态均须匹配；缺字段不按连板高度推算，冲突不任选一条。N天M板仅为来源统计描述，不代表连续涨停高度，不新增策略信号或改变排序。公共梯队、情绪和盘面样本复用该字段；个股统计`board_presentation`以已有同日/前日有限报价批及同一来源闭包补充高度和文本，不新增全历史读取。相同的首板/连板标签去重。
 
 ### 手动留存复盘上下文
 
@@ -161,6 +167,8 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 - 返回 `instrument/period/as_of/bars/snapshot_id/quality/warnings`、价格/量额单位、实际与请求价格口径、`adjustment/indicator_gaps/quote_gaps/waves` 及涨跌停事件覆盖。
 - bar 含 date/OHLCV/amount、MA5/10/20/30/60/250、MACD DIF/DEA/柱、KDJ K/D/J；预热不足为 null。前端不另算一套指标。
 - 周/月从日线聚合，形成中和不完整周期带状态；策略信号只读已闭合可比周期，图表可显示形成中柱。缺交易日报价不补 K 线。
+- `trading_day_distance={anchor_date,basis:"market_calendar",state:"available"|"unknown",reason}` 为图表自己的市场日历距离证据；`anchor_date`固定本图`as_of`，不是电脑当前日期。每根bar追加`trading_days_to_as_of:number|null`，计算区间为`(bar.date,as_of]`，同日为0。停牌、缺报价不减少市场日间隔，不按K线根数、自然日或工作日猜算；已知的后续日历不会越过本图观察日参与计数。日历缺失、日期无效、重复、无序、观察日不在已留存日历或读取期间行情代际变化时状态保持unknown且距离为null；单根报价日不在该日历时该根距离为null。
+- 日K悬停提示和OHLC栏显示“距行情截止日 YYYY-MM-DD · N个交易日”。周/月以聚合柱`date`的末根实际报价日计距，标为“末根报价距行情截止日”，不将周/月柱数当交易日，也不改变形成中、完整周期和缺口状态。板块缓存图复用同一字段与本次已留存市场日历，读取不联网；新生成研究冻结图保存自己的距离证据，旧报告缺字段时前端显示待核验，不请求当前日历补写历史报告。该字段仅供展示，不参与选股、跟踪、回测或指标计算。
 - 默认 `none` 原价；显式 forward 仅对已核验事件做观察日锚定的本地仿射变换。证据不足回退原价并说明；不是完整分红/股数收益账户。
 - 默认 `quotes` 可按实际日报价连续显示指标；`market_sessions` 严格按市场日中断。两者不改变策略、跟踪或回测口径。
 - `waves` 仅为延迟确认的价格转折/骨架候选，点满足确认时间不晚于 as_of；不保证确定艾略特浪，不作自动交易信号。
@@ -225,3 +233,7 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 `POST /data/quote-gap-source {plan_id,request_key?,instrument_ids?}` 显式创建 `source_check / quote_gap_source_check` 任务。省略股票范围则核验当前报告全部缺口股票，提供时只能选择该报告中的股票。计划冻结行情代际、身份版本、本地诊断ID和凭据版本；变更后旧任务不继续提交。请求只覆盖含缺口的短日期窗口，保留上下文报价作对照，严格验证股票、原始日K口径、OHLCV和量额。逐股原始响应与SHA验收后可幂等恢复，暂停/取消及旧租约阻止提交；失败保持待核验。
 
 完整本地核验视图在同一 `source_signature/snapshot_id/diagnosis_id` 下将已保存证据附到每段 `source_verification`，不改写原本地核验文件。状态区分 `source_no_quote/local_missing/partial/failed`，附本次未返回与有效返回日期、响应证据与下一步。`source_no_quote` 只说明本次来源未返回该日报价，不证明停牌；`local_missing` 只表明有可进入单独发布核验的实际报价。此操作不修改当前不可变Parquet、不填造停牌K线，也不把出现率伪报为100%。
+
+## 图表高低涨幅（0.1.6）
+
+个股、指数与板块图表的bars新增`chart_high_change_pct`、`chart_low_change_pct`、各自的`_reason`、`chart_extreme_change_period`和`chart_extreme_change_reference_date`。使用同图价格口径及同锚前收，值为百分数；价格继续独立保留。日为严格前一市场交易日，周/月为前一完整可比周期。形成中或缺口不可比返回null及原因；旧冻结图未带字段不由前端猜算。该生成由`include_chart_extremes`图表开关启用，原选股`intraday_high_change_pct`及默认指标输出保持原契约。

@@ -48,3 +48,25 @@ assert.equal(collect(nav.items[0].historicalChecks)[0].date, "2026-10-09", "navi
 const stepped = stepStockSelection({ id: "600001.SH", navigation: nav }, 1);
 assert.deepEqual(collect(stockNavigationPosition(stepped.navigation, stepped.id).current.historicalChecks), [], "next stock cannot inherit previous event");
 console.log("Historical event chart references: frozen selection, selected day, reference field, adjustment, gaps and stock navigation passed");
+
+const forwardSelected = structuredClone(frozen);
+Object.assign(forwardSelected.selected_event, {
+  price_basis: "forward_event_affine", anchor_date: "2026-10-22",
+  close: 4.5, high: 4.75, low: 4.2, open: 4.25,
+  raw_close: 10, raw_high: 10.5, raw_low: 9.4, raw_open: 9.5,
+});
+Object.assign(forwardSelected.evidence, { price_basis: "forward_event_affine", anchor_date: "2026-10-22" });
+const forwardEvent = collect(forwardSelected)[0];
+assert.equal(forwardEvent.rawClose, 10);
+assert.equal(forwardEvent.rawPrice, 10.5);
+assert.equal(forwardEvent.priceBasis, "none");
+assert.equal(project(forwardEvent, adjusted).price, 4.75, "a frozen forward event is projected once from raw price, never adjusted twice");
+assert.equal(project(forwardEvent, raw).price, 10.5, "raw chart uses the original reference rather than the frozen forward value");
+for (const update of [{ anchor_date: "2026-10-21" }, { raw_close: null }, { raw_high: null }]) {
+  const bad = structuredClone(forwardSelected); Object.assign(bad.selected_event, update);
+  assert.deepEqual(collect(bad), [], "wrong anchors or missing original reference fields cannot silently reuse forward values as raw");
+}
+assert.deepEqual(collect({ ...forwardSelected, evidence: { ...forwardSelected.evidence, anchor_date: "2026-10-21" } }), []);
+assert.equal(project(forwardEvent, { ...adjusted, adjustment: { ...adjusted.adjustment, anchor: "2026-10-23" } }).price, null, "a chart plan from another anchor is unknown");
+const laterChart = { ...adjusted, as_of: "2026-10-23", bars: adjusted.bars.map((bar) => ({ ...bar, adjustment_anchor: "2026-10-23" })), adjustment: { ...adjusted.adjustment, anchor: "2026-10-23", events_count: 2, events: [...adjusted.adjustment.events, { date: "2026-10-23", cash: .2, bonus: 0, rights: 0, rights_price: 0 }] } };
+assert.equal(project(forwardEvent, laterChart).price, 4.55, "with original prices retained, a later valid chart anchor can reproject using its own verified plan");

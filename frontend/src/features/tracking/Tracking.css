@@ -198,3 +198,11 @@
     display: none;
   }
 }
+.tracking-price-context {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  max-width: 260px;
+  white-space: normal;
+}

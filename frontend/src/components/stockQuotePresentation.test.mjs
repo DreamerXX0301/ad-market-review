@@ -112,14 +112,74 @@ const chartSource = await fs.readFile(
   "utf8",
 );
 const drawerCode = declaration(chartSource, "StockDrawer");
-let loaded = null;
+const readTs = async (path) =>
+  transpile(await fs.readFile(new URL(path, import.meta.url), "utf8"));
+const jsxImports = (text) =>
+  text.replaceAll(
+    'from "react/jsx-runtime"',
+    `from ${JSON.stringify(import.meta.resolve("react/jsx-runtime"))}`,
+  );
+const { stockPatternHeader } = await import(
+  module(await readTs("./stockPatternHeader.ts"))
+);
+const { PatternStatus, PATTERN_BASIS } = await import(
+  module(jsxImports(await readTs("./CandleLimitEvents.tsx")))
+);
+const ladderModule = module(
+  await readTs("../features/market/ladderPresentation.ts"),
+);
+const boardModule = module(
+  (await readTs("../features/market/boardPresentation.ts")).replaceAll(
+    'from "./ladderPresentation"',
+    `from ${JSON.stringify(ladderModule)}`,
+  ),
+);
+const { default: BoardTags } = await import(
+  module(
+    jsxImports(await readTs("../features/market/BoardTags.tsx"))
+      .replaceAll(
+        'from "./boardPresentation"',
+        `from ${JSON.stringify(boardModule)}`,
+      )
+      .replace(/^import ["'][^"']+\.css["'];?$/gm, ""),
+  )
+);
+const { stockExtraMetrics } = await import(
+  module(await readTs("./stockExtraMetrics.ts"))
+);
+const compactComponent = declaration(
+  await fs.readFile(
+    new URL("./StockCompactMetrics.tsx", import.meta.url),
+    "utf8",
+  ),
+  "StockCompactMetrics",
+);
+const StockCompactMetrics = new Function(
+  "_jsx",
+  "_jsxs",
+  "stockExtraMetrics",
+  "stockHeaderQuote",
+  "percent",
+  "tone",
+  compactComponent + ";return StockCompactMetrics;",
+)(jsx, jsxs, stockExtraMetrics, stockHeaderQuote, percent, tone);
+const { stockNavigationPosition } = await import(
+  module(await readTs("./stockNavigation.ts"))
+);
+let loaded = null,
+  headerBoard = null,
+  stateIndex = 0;
 const requests = [];
 const scopeValues = {
   React,
   _jsx: jsx,
   _jsxs: jsxs,
   ...React,
-  useState: () => [loaded, () => {}],
+  // The drawer has separate chart and header-board states.
+  useState: (initial) => [
+    stateIndex++ === 0 ? loaded : (headerBoard ?? initial),
+    () => {},
+  ],
   useRef: (current) => ({ current }),
   useEffect: () => {},
   useApi: (path) => {
@@ -129,9 +189,15 @@ const scopeValues = {
   stockPayloadMatches: (payload, symbol, observed) =>
     payload?.instrument?.instrument_id === symbol &&
     (payload.as_of || payload.data_date) === observed,
-  stockNavigationPosition: () => null,
+  stockNavigationPosition,
   useStockEventBaseline: () => ({}),
   StockHeaderQuote,
+  StockCompactMetrics,
+  CopyStockCode: ({ code }) =>
+    jsx("button", { "data-copy-wired": true, children: code }),
+  stockPatternHeader,
+  PatternStatus,
+  BoardTags,
   num,
   percent,
 };
@@ -161,11 +227,13 @@ for (const period of ["D", "W", "M"]) {
         bars: [{ date: "2020-01-01", close: 9999, change_pct: 888 }],
       },
     };
+    stateIndex = 0;
     const html = renderToStaticMarkup(
       jsx(Drawer, { id, asOf, onClose: () => {} }),
     );
     assert.match(html, /stock-title-row/);
     assert.match(html, /12\.87/);
+    assert.match(html, /原始收盘报价/);
     assert.match(html, /-1\.61%/);
     assert.match(html, /2026-10-23 收盘.*未复权.*非实时/);
     assert.ok(
@@ -174,6 +242,144 @@ for (const period of ["D", "W", "M"]) {
     );
   }
 }
+
+// The fixed identity row receives dated height/source text and retains the
+// independently verified daily shape, without repeating it through BoardTags.
+const snapshotId = "synthetic-header-generation";
+Object.assign(detail, {
+  snapshot_id: snapshotId,
+  pattern_as_of: asOf,
+  pattern_date: asOf,
+  pattern_events: [
+    {
+      date: asOf,
+      bar_date: asOf,
+      snapshot_id: snapshotId,
+      kind: "earth_to_sky",
+      basis: PATTERN_BASIS,
+      raw_price_basis: "none",
+      raw_volume: 100,
+      raw_ohlc: { open: 9, high: 11, low: 9, close: 11 },
+      source: "fuyao",
+    },
+  ],
+});
+const boardRow = {
+  instrument_id: id,
+  date: asOf,
+  snapshot_id: snapshotId,
+  board_presentation: {
+    version: "dated-stock-board-presentation-v1",
+    instrument_id: id,
+    date: asOf,
+    snapshot_id: snapshotId,
+    height: { value: 1, label: "首板", state: "confirmed", source_date: asOf },
+    board_text: {
+      label: "5天3板",
+      state: "reported",
+      source: "fuyao",
+      source_date: asOf,
+    },
+    types: [
+      {
+        code: "earth_to_sky",
+        label: "地天板",
+        state: "confirmed",
+        source_date: asOf,
+      },
+    ],
+  },
+};
+const renderHeader = (value) => {
+  headerBoard = value;
+  stateIndex = 0;
+  const html = renderToStaticMarkup(
+    jsx(Drawer, { id, asOf, onClose: () => {} }),
+  );
+  return html.slice(
+    html.indexOf('class="entry-page-bar"'),
+    html.indexOf('class="entry-page-scroll"'),
+  );
+};
+const currentHeader = renderHeader({ row: boardRow, date: asOf });
+assert.match(currentHeader, /首板/);
+assert.match(currentHeader, /5天3板/);
+assert.match(currentHeader, /data-copy-wired="true">601900/);
+assert.match(currentHeader, /观察日行情摘要/);
+assert.match(currentHeader, /今日涨幅/);
+assert.match(currentHeader, /近30交易日/);
+assert.match(currentHeader, /年内涨停/);
+const navigation = {
+  source: "members",
+  scopeKey: "sample",
+  label: "样本成员",
+  asOf,
+  items: [{ id: "600001.SH" }, { id }, { id: "600002.SH" }],
+};
+stateIndex = 0;
+const navigable = renderToStaticMarkup(
+  jsx(Drawer, { id, asOf, navigation, onStep: () => {}, onClose: () => {} }),
+);
+const fixedNav = navigable.slice(
+  navigable.indexOf('class="entry-page-bar"'),
+  navigable.indexOf('class="entry-page-scroll"'),
+);
+assert.match(fixedNav, /上一只股票/);
+assert.match(fixedNav, /下一只股票/);
+assert.match(fixedNav, /2 \/ 3/);
+assert.equal(
+  (navigable.match(/aria-label="上一只股票"/g) || []).length,
+  1,
+  "navigation stays in fixed bar without duplicate controls above",
+);
+let steps = [];
+stateIndex = 0;
+const tree = Drawer({
+  id,
+  asOf,
+  navigation,
+  onStep: (direction) => steps.push(direction),
+  onClose: () => {},
+});
+const find = (node, label) => {
+  if (!node || typeof node !== "object") return null;
+  if (node.props?.["aria-label"] === label) return node;
+  const children = Array.isArray(node.props?.children)
+    ? node.props.children
+    : [node.props?.children];
+  for (const child of children) {
+    const found = find(child, label);
+    if (found) return found;
+  }
+  return null;
+};
+find(tree, "上一只股票").props.onClick();
+find(tree, "下一只股票").props.onClick();
+assert.deepEqual(steps, [-1, 1]);
+assert.equal(
+  (currentHeader.match(/>地天板</g) || []).length,
+  1,
+  "the original verified shape stays in the identity row and is not repeated by BoardTags",
+);
+assert.equal((currentHeader.match(/data-board-tag="height"/g) || []).length, 1);
+for (const invalid of [
+  null,
+  { row: { ...boardRow, instrument_id: "600519.SH" }, date: asOf },
+  { row: boardRow, date: "2026-10-22" },
+  { row: { ...boardRow, snapshot_id: "stale-generation" }, date: asOf },
+]) {
+  const header = renderHeader(invalid);
+  assert.ok(
+    !header.includes("首板") && !header.includes("5天3板"),
+    "switching instrument/date/generation never retains a stale summary height",
+  );
+  assert.match(
+    header,
+    />地天板</,
+    "the daily-detail shape remains independently sourced",
+  );
+}
+
 assert.deepEqual(
   [...new Set(requests)],
   [`/instruments/${id}?as_of=${asOf}`],

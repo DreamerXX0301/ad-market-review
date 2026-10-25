@@ -20,6 +20,11 @@ def strategy_fields():
     fields=specs()
     return {'items':fields,'total':len(fields),'unknown_policy':'数据缺失/预热不足/复权不可核对为unknown，不触发提醒和结束；数值条件支持right_field'}
 
+@router.get('/hot-universe')
+def hot_browse(as_of:str,window_sessions:int=Query(7,ge=1,le=60),top_n:int=Query(10,ge=1,le=50),kind:str=Query('all',pattern='^(all|concept|industry)$'),snapshot_id:str|None=Query(None,max_length=200),topic_revision_signature:str|None=Query(None,max_length=64)):
+    from app.services.hot_browse import read_hot_range
+    return read_hot_range(as_of,window_sessions=window_sessions,top_n=top_n,kind=kind,snapshot_id=snapshot_id,topic_revision_signature=topic_revision_signature)
+
 @router.get('/topics')
 def topics_list(q:str='',include_archived:bool=False,kind:str|None=None):return topics.list_topics(q,include_archived,kind)
 @router.get('/stock-topic-memberships/{instrument_id}')
@@ -57,7 +62,8 @@ def strategy_batch_get(batch_id:str):return strategy_batches.get_batch(batch_id)
 @router.post('/strategies')
 def strategy_create(payload:dict=Body(...)):return strategies.create_strategy(payload)
 @router.post('/strategies/bootstrap')
-def strategy_bootstrap():return strategies.seed_workspace()
+def strategy_bootstrap(payload:dict=Body(default={})):
+    return strategies.seed_workspace(payload.get('price_basis','none'))
 @router.get('/strategies/{strategy_id}')
 def strategy_get(strategy_id:str):return strategies.get_strategy(strategy_id)
 @router.patch('/strategies/{strategy_id}')

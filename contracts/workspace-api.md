@@ -87,13 +87,19 @@
 - `close_breakout_high` 使用 `op=new_high,value=N`（整数 1–750），观察日日收盘严格大于前 N 个市场交易日 high，排除今日；缺报/零量/行动不可比为未知。
 - `limit_up/prev_limit_up` 分别是当日收盘/前一市场交易日收盘来源事实，是/否均需证据。`limit_up_count_1y` 是截至昨日滚动自然一年次数，非负整数常量，不是年内次数；不完整 actual=null，有限上下界可证明的比较才成立。
 
+MACD/KDJ 数值缺失时，条件 `reason` 说明已有公司行动/缺报重置原因、当前连续可比报价根数及所需至少35根；金叉与死叉需至少36根。根数未知时明确未留存，不填零。缺失发生在右侧字段时使用该字段原因；技术条件的 `indicator_evidence` 按缺失字段保存 `indicator_warmup_bars/required_warmup_bars/indicator_reset_reason/indicator_warmup_reason`，最多两个输入，不附整段行情。该说明使用已算元数据，逐股与历史批量路径一致；不改变指标、三值结果、完整周/月边界、预热、未复权行动重置或 evaluator_version，也不重写已保存运行。
+
+`turnover_ratio_pct` 缺失时，reason 区分观察日有效成交不足与同日换手率未留存，并给出 `observation_date/observation_period=D`。成交额不是换手率，不以当前流通股本回填历史；该说明不补值、取新源或改变条件真假。
+
 历史条件节点为 `{history_event:{window:{from:1,to:30},match:"latest",where:条件树,then:条件树}}`。偏移均为前 N 个市场交易日、不含今天且含两端：近 N 日是 from=1,to=N，自定义前5—20日是 from=5,to=20，指定前 N 日是 from=to=N；范围 1–750。编辑器新建默认前1—30日，读取旧规则不改窗口或版本。latest/earliest 指按距离从近/远优先，不跳过优先位置的未知去伪造匹配；绑定后 then 不满足也不改选其他事件。where 支持日 OHLCV/指标与同日 `limit_up` 的自定义 all/any，不支持递归 history_event、prev_limit_up、历史题材/身份、滚动涨停次数或跟踪基准。
 
 `match="any"` 表示范围内任意一次完整满足。按近到远检查，每个候选必须用同一事件的 where、then 和已启用 price_path；第一个整体为true的事件才成为 `selected_event`，停止继续搜索，不代表已经枚举所有满足事件。较近日期未知不妨碍较早的完整true证明存在；没有true但存在未知候选时结果为null，完整已知但均不满足时为false。false/null时不绑定回退事件、不生成命中横线。不能把一次事件守位成功与另一次事件收复成功拼成命中。它与where内部“倍量或涨停任一条件”是两层独立选择；旧规则不会自动切换为any。
 
-then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3,period:"D"},{any:[{field:"macd_cross",op:"==",value:true,period:"D"},{field:"kd_cross",op:"==",value:true,period:"D"}]}]}`，不要求比较事件价；也可用 `{field:"close",op:">",right_event_field:"close"|"high"|"low",period:"D"}` 比较观察日收盘与本节点事件价。事件绑定互不串用。跨行动、缺中间有效日报价或来源覆盖不足时，事件价比较保持未知，独立今日涨幅/技术条件仍按自身覆盖判断。新编辑器历史内部固定 D；无显式 period 的旧 then 保留旧版本解释。共享历史预备同时保留 where 和显式日线 then 的依赖，保证批量与标量路径一致。
+then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3,period:"D"},{any:[{field:"macd_cross",op:"==",value:true,period:"D"},{field:"kd_cross",op:"==",value:true,period:"D"}]}]}`，不要求比较事件价；也可用 `{field:"close",op:">",right_event_field:"close"|"high"|"low",period:"D"}` 比较观察日收盘与本节点事件价。事件绑定互不串用。none口径跨公司行动时事件价比较保持未知；forward口径仅在同观察日锚的行动证据完整时跨行动比较。缺中间有效日报价或来源覆盖不足仍保持未知，独立今日涨幅/技术条件按自身覆盖判断。新编辑器历史内部固定 D；无显式 period 的旧 then 保留旧版本解释。共享历史预备同时保留 where 和显式日线 then 的依赖，保证批量与标量路径一致。
 
-事件价格比较叶可追加 `right_event_change_pct=p`，只允许在本事件then的 `field=close` / `right_event_field=close|high|low` 形式使用，不与value/right_field混用。p为有限数值 `-100<p≤10000`；右侧阈值为 `事件价×(1+p/100)`，用未舍入十进制比较。例如p=3、op="<"指今收低于事件价上方3%；p=-3、op=">="指今收不低于事件价下方3%；它不等于只比较事件价的3%。0显式有效，缺少该键的旧叶结构、求值与证据保持。新证据增加原始 `event_price`、`threshold_decimal`、实际相对原价的 `event_change_pct` 与比较模型，`right_actual`为偏移后的阈值。无法安全表示的数值不输出非有限JSON，也不绕过原价可比守卫。上下界可用all组合，等号是否包含由各比较符决定。
+“当前收盘高于事件收盘”对应上面的 `close > right_event_field:close`，只比较观察日与事件日两个收盘，不要求昨日低于事件价或事件后每日站上。“今日重新收复”是可选 `price_path.reclaim.mode=close_reclaim`，还要求昨日晚于事件日、昨收严格低于参照价而今收不低于；它最早在事件后第2个交易日触发。`close_at_or_above` 只要求今日收盘≥参照价，可连续多日满足，也不证明期间每天都站上；前端标为“仅看今日”。三者不能互换，不自动改写既有规则。
+
+事件价格比较叶可追加 `right_event_change_pct=p`，只允许在本事件then的 `field=close` / `right_event_field=close|high|low` 形式使用，不与value/right_field混用。p为有限数值 `-100<p≤10000`；右侧阈值为 `事件价×(1+p/100)`，用未舍入十进制比较。例如p=3、op="<"指今收低于事件价上方3%；p=-3、op=">="指今收不低于事件价下方3%；它不等于只比较事件价的3%。0显式有效，缺少该键的旧叶结构、求值与证据保持。新证据增加原始 `event_price`、`threshold_decimal`、实际相对同口径事件价的 `event_change_pct` 与比较模型，`right_actual`为偏移后的阈值。无法安全表示的数值不输出非有限JSON，也不绕过所选价格口径的可比守卫。上下界可用all组合，等号是否包含由各比较符决定。
 
 历史节点可追加可选 `price_path`，不带此键的旧定义保持原结构和解释。例如事件后守位、昨日回踩及今日回升：
 
@@ -169,6 +175,20 @@ then 是独立今日条件树，例如 `{all:[{field:"change_pct",op:">",value:3
 个股选股、跟踪、受限回测和板块自身策略共用`boll-signal-v1`定义；含该叶的新个股定义使用`workspace-v15-boll-signal-v1`、板块使用`sector-index-dwm-boll-signal-v3`，未使用BOLL的旧定义版本保持。多参数与逐条件周期缓存隔离。checks含`signal_version/observed_date/covered_periods/required_periods`，evidence含`close/upper/middle/lower/bandwidth_pct/historical_threshold_pct/recent_squeeze_date/middle_reference/middle_change_pct/expanding/primary_match/squeeze_match/middle_match/expansion_match`及有界`last_blocker`；带宽和阈值单位为百分数。新回测冻结`condition_contracts.boll_signal=boll-signal-v1`，未完成任务版本不匹配时拒绝恢复，不改变旧完成报告；无数据库迁移，也不改变图表BOLL偏好。用户入口见[BOLL选股条件](../docs/BOLL选股条件.md)。
 
 `trade_rules={entry:条件树|null,exit:条件树|null}` 与选股独立版本化：买入为选股 AND entry，exit 不要求仍满足选股。只接受已支持回测特征；不支持题材、未完整历史涨停或跟踪锚点，不因为 AST 能保存便保证可回测。
+
+### 个股策略的价格口径
+
+创建及修改个股策略可显式提供 `price_basis:"none"|"forward"`。旧客户端省略时，创建沿用none、修改沿用已有版本；新建页面和页面中的默认模板显式选择forward。已有策略可切换后保存新版本；不改写原版本、旧运行或已入池轮次。024迁移只为`strategy_version`增加该列，旧行默认none。
+
+forward复用本地`event_affine`变换，契约为`strategy-local-forward-v1`，求值版本为`workspace-v17-local-forward-prices-v1`。每个观察日T独立锚定，只使用不晚于T的已留存公司行动及行情；固定来源SHA、逐股动作覆盖、证券身份和事件字段核验失败时，价格依赖保留未知，不静默按原价放行。MA/MACD/KDJ/BOLL、结构及历史事件价比较使用同T价格轨；交易日缺报、零量及完整周/月边界仍严格核验，不直接采用图表的报价连续显示模式。历史where(E)的价格字段表示观察日T锚下回看的E值，绝对价格门槛也按该口径解释；它不声称E当时已冻结的可执行信号。回测每个T单独锚定，不能拿回测终点锚评价更早的T。原价日涨幅、涨跌停事实、量比、成交量/额及换手率保留独立原始证据，公司行动日不能因价格轨解除断点就伪造可比量比。
+
+策略返回`price_basis/price_basis_contract`。运行列表与详情的`requested_price_basis`来自该次冻结的策略版本；候选`metrics.price_basis`为实际none、forward_event_affine或unavailable，并保留`anchor_date/adjustment`及失败原因。输入签名与派生缓存包含口径、锚、契约及已核验来源闭包。改变图表偏好不会改变策略口径。
+
+前复权历史窗口另有可丢弃的进程内纯值缓存：压缩体总量最多64MiB、16,384项，单项解压上限8MiB；键绑定数据根、行情代际、已核验来源SHA、证券、观察日锚、窗口与所需字段及算法版本。每次运行先核验实际来源再命中，不能跳过源核验。缓存不保存策略阈值、题材、政策、事件绑定或判断结果；每次生成新历史上下文并重新核验涨停池证据。缺失、损坏、超界或键不匹配时丢弃重算，不据缓存错误认定采集失败。
+
+跟踪轮次冻结入池策略的信号口径，原始入池价与高低价仍独立保存。forward复核在每个T重新投影冻结参考价，不用后来的行情替换原始基准。浏览保持小原价缓存；缺少同日同代际的复核比较证据时，原价最新收盘照常显示、复权比较待核验，不借用昨日核对。政策仍每次重新读取，修改策略当前口径不改变旧轮次。
+
+forward回测冻结口径和契约，信号逐日锚定；真实撮合、费用及限价仍用原始价格。现有权益账本未处理分红、送股、配股，因此回测区间内有公司行动的证券仍按原受限契约排除，不能将前复权价格收益冒充已记账账户收益。旧none任务继续使用原引擎及冻结内容，不自动重跑。
 
 ## 个股策略删除与恢复
 
@@ -338,3 +358,9 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 016迁移仅新增append-only `listing_status_confirmation`、单调revision及派生摘要，不硬编码股票、不填来源日期、不改行情文件或快照quality。`source_kind`固定manual_user_confirmation，记录用户说明、确认业务日、真实创建时间、原始行情head和无报价证据；unknown更正也是新记录。`GET /data/listing-status/confirmations?instrument_id=&limit=100` 提供全部更正历史（上限1000），不删除旧确认。当前GET只读小名录与SQLite摘要，不扫描历史行情、不联网或排队。
 
 派生摘要精确匹配primary daily_raw head、market generation、业务日、来源名录签名与人工revision。无匹配摘要时不复用旧代人工pending回执，分类保守待核验；人工确认变化使已有本地覆盖报告过期，需重新核验。显式本地覆盖检查可复用已有SQL报价聚合写该小摘要。新手动初始化/增量冻结 `listing_status_check_version:listing-evidence-v1`，成功后接续source_check(operation=listing_status_check)，仅对来源日期缺失/未来的证券分批SQL聚合本地报价，自动捕捉上市或首次报价后的转换；旧任务无marker不扩范围、不回溯自动执行。暂停/取消不自动恢复，领取nonce与head/day/revision共同阻止旧attempt提交。待上市不从远端行情采集股票范围排除，后续真实行情照常接纳。
+
+## 热点浏览与数据保留（0.1.6）
+
+跟踪与自选列表响应增加`hot_filter_scope`，用于将近期热点浏览绑定到同一业务日、主行情快照和题材修订。`GET /hot-universe`读取已留存来源，复用选股热点排名与成员代理口径；窗口、前N、类型及scope受校验，日期/代际/修订变化返回409。不创建任务、不联网、不持久化新策略。浏览“已观察归属”与严格完整命中分开，数据不完整时逻辑结果仍unknown。
+
+新手动同步和普通盘面补充任务冻结`retention_policy_version=supplement-retention-250-v1`并逐链透传，旧冻结记录不补字段。025仅新增`supplement_retention_run`、`supplement_retention_file`，保留策略、行情与旧审计行。250为市场交易日活动窗口；引用保护、当年统计和五年K线来源例外必须披露，不把逻辑范围当作已释放物理空间。清理仅在补充成功发布后由唯一worker按SHA清单执行，API/备份与清理通过共享业务卷文件锁协调。逐文件删除事务外执行，短事务登记不可变计划、状态与释放字节；未知依赖、任务或引用变化时停止并留回执。

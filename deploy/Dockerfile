@@ -7,6 +7,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/index.html frontend/tsconfig*.json frontend/vite.config.* ./
 COPY frontend/src ./src
+COPY frontend/public ./public
 RUN npm run build
 
 FROM ${PYTHON_IMAGE} AS sqlite-builder
@@ -22,7 +23,7 @@ RUN curl --fail --location --retry 3 "https://www.sqlite.org/2026/${SQLITE_ARCHI
 
 FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE} AS runtime
-ARG APP_VERSION=0.1.5
+ARG APP_VERSION=0.1.6
 ARG VCS_REF=unknown
 ARG BUILD_DATE
 LABEL org.opencontainers.image.title="冒险的梦想家" \

@@ -86,6 +86,15 @@ import {
   savedRunNotice,
 } from "./strategyResultPresentation";
 import useSavedStrategyRun from "./useSavedStrategyRun";
+import {
+  CandidatePriceBasis,
+  StrategyPriceBasisSelect,
+} from "./StrategyPriceBasisControls";
+import {
+  initialStrategyPriceBasis,
+  requestedPriceBasisLabel,
+  strategyRunPriceBasis,
+} from "./strategyPriceBasis";
 import StrategyBatchToolbar, {
   useBatchStrategySelection,
 } from "./StrategyBatchToolbar";
@@ -146,6 +155,9 @@ function StrategyEditor({
   onSaved: () => void;
 }) {
   const initial = splitUniverse(strategy?.definition);
+  const [priceBasis, setPriceBasis] = useState(() =>
+    initialStrategyPriceBasis(strategy),
+  );
   const [universe, setUniverse] = useState(initial.universe);
   const [hotUniverse, setHotUniverse] = useState<HotUniverseValue | null>(
     strategy?.hot_universe || null,
@@ -223,6 +235,7 @@ function StrategyEditor({
       const body = {
         name: name.trim(),
         period,
+        price_basis: priceBasis,
         definition,
         hot_universe: hotUniverse,
         trade_rules: tradeRules,
@@ -273,6 +286,7 @@ function StrategyEditor({
             </select>
           </label>
         </div>
+        <StrategyPriceBasisSelect value={priceBasis} onChange={setPriceBasis} />
         <UniverseEditor value={universe} onChange={setUniverse} />
         <HotUniverseEditor value={hotUniverse} onChange={setHotUniverse} />
         <div className="form-section-title">
@@ -533,7 +547,7 @@ function StockStrategies({
   async function bootstrap() {
     setBusy("bootstrap");
     try {
-      await post("/strategies/bootstrap");
+      await post("/strategies/bootstrap", { price_basis: "forward" });
       result.reload();
       topicsResult.reload();
       toast("已创建默认策略，命中结果由真实行情计算");
@@ -740,7 +754,7 @@ function StockStrategies({
           {chosen && (
             <Panel
               title={chosen.name}
-              subtitle={`规则 V${chosen.version} · 默认${sectorPeriodLabel(chosen.period)}（周/月仅完整周期） · 默认跟踪 ${chosen.policy?.duration_sessions || 30} 个交易日`}
+              subtitle={`规则 V${chosen.version} · 默认${sectorPeriodLabel(chosen.period)}（周/月仅完整周期） · ${requestedPriceBasisLabel(initialStrategyPriceBasis(chosen))} · 默认跟踪 ${chosen.policy?.duration_sessions || 30} 个交易日`}
               actions={
                 <>
                   <button
@@ -857,7 +871,7 @@ function StockStrategies({
             title="运行结果"
             subtitle={
               run
-                ? `${run.business_date} · 规则 V${run.strategy_version} · 已保存`
+                ? `${run.business_date} · 规则 V${run.strategy_version} · 选股口径${strategyRunPriceBasis(run)} · 已保存`
                 : "运行后展示逐股命中依据"
             }
             actions={
@@ -935,6 +949,14 @@ function StockStrategies({
                     { key: "signal_date", title: "默认周期信号日" },
                     { key: "change_pct", title: "默认周期涨幅" },
                     { key: "volume_ratio", title: "默认周期量能倍数" },
+                    {
+                      key: "actual_price_basis",
+                      title: "本股实际价格口径",
+                      sortValue: (row) => row.metrics?.price_basis || null,
+                      render: (_value, row) => (
+                        <CandidatePriceBasis row={row} run={run} />
+                      ),
+                    },
                     {
                       key: "topics",
                       sortValue: (row) =>

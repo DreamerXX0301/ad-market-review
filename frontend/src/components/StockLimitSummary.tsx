@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   CalendarClock,
   Flame,
@@ -9,17 +10,29 @@ import {
 import { useApi } from "../lib/api";
 import type { Row } from "../lib/api";
 import { stockExtraMetrics, stockSummaryEndpoint } from "./stockExtraMetrics";
+import BoardTags from "../features/market/BoardTags";
 import "./StockLimitSummary.css";
 
 export default function StockLimitSummary({
   instrumentId,
   asOf,
+  showBoardTags = true,
+  onBoardData,
 }: {
   instrumentId: string;
   asOf?: string;
+  showBoardTags?: boolean;
+  onBoardData?: (value: { row: Row; date: string } | null) => void;
 }) {
   const result = useApi<Row>(stockSummaryEndpoint(instrumentId, asOf));
   const view = stockExtraMetrics(result.data, instrumentId, asOf);
+  useEffect(() => {
+    onBoardData?.(
+      view.valid && view.date && result.data
+        ? { row: result.data, date: view.date }
+        : null,
+    );
+  }, [onBoardData, view.valid, view.date, result.data]);
   const coverage = view.annual.coverage;
   const annualCoverage =
     coverage &&
@@ -28,7 +41,10 @@ export default function StockLimitSummary({
       ? `核验覆盖 ${coverage.covered_days}/${coverage.expected_days} 个交易日`
       : null;
   return (
-    <div className="stock-limit-summary-container">
+    <div
+      className="stock-limit-summary-container"
+      data-summary-loading={result.loading}
+    >
       <div className="stock-limit-summary" aria-label="个股行情与涨停历史摘要">
         <div className="stock-limit-metric daily" title={view.daily.reason}>
           <span className="stock-limit-symbol daily">
@@ -138,6 +154,18 @@ export default function StockLimitSummary({
           </span>
         )}
       </div>
+      {showBoardTags && view.valid && view.date && result.data && (
+        <BoardTags
+          row={result.data}
+          date={view.date}
+          snapshotId={result.data.snapshot_id}
+          height
+          boardText
+          types={false}
+          volume={false}
+          feedback={false}
+        />
+      )}
     </div>
   );
 }

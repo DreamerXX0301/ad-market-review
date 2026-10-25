@@ -214,6 +214,9 @@ def list_items(query=''):
     if not saved:
         return {'items': [], 'total': 0, 'matched_count': 0, 'business_date': day}
     market = get_market()
+    from app.services.hot_browse import browse_scope, require_scope
+    with connect() as connection:
+        hot_scope=browse_scope(connection,market,expected_day=day)
     calendar=market.calendar()
     if day:saved=_backfill_entries(saved,market,calendar,day,primary)
     master = identities(day)
@@ -244,7 +247,8 @@ def list_items(query=''):
     with connect() as connection:
         alerts=latest_by_stock(connection,[row['instrument_id'] for row in selected],day)
     for row in selected:row['latest_line_alert']=alerts.get(row['instrument_id'])
-    return {'items': selected, 'total': len(saved), 'matched_count': len(selected), 'business_date': day,
+    require_scope(hot_scope,market)
+    return {'items': selected, 'total': len(saved), 'matched_count': len(selected), 'business_date': day,'hot_filter_scope':hot_scope,
             'current_topics_scope': membership_data['scope'],
             'baseline_notice': '加入后涨幅以首次加入自选业务日的独立冻结收盘为基准；原跟踪入池日期和事件日收盘单独保留，不参与自选涨幅计算。重复收藏不重置，移除自选不影响策略跟踪。'}
 

@@ -14,7 +14,7 @@ from app.services.market_history import resolve_reference
 from app.services.strategy_limits import quote_index
 from app.services.ladder_age import BASIS as AGE_BASIS, quote_age_evidence
 from app.services.chart_patterns import attach_chart_patterns
-from app.services.stock_board_presentation import build_board_presentation, down_state, pattern_fields, retained_proof
+from app.services.stock_board_presentation import build_board_presentation, down_state, pattern_fields, retained_proof, source_board_events
 from app.services.market_mainline_synthesis import build_system_mainlines
 
 REGIME_SOURCES = [
@@ -238,7 +238,7 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
             quotes=own, events=[event] if event else [],
             previous_events=[event_days[previous][symbol]] if symbol in event_days.get(previous, {}) else [],
             up=state(symbol, day), previous_up=state(symbol, previous),
-            down=downs[symbol], patterns=presentation_patterns)
+            down=downs[symbol], patterns=presentation_patterns, board_text_events=source_board_events(proof,symbol,day))
         return row
 
     items = []; unverified = []; rebounds = []; failed = []; twenties = []

@@ -24,6 +24,8 @@
 -- 021_chart_annotation_origins.sql sha256=7851f88ebaa7ac730c3023a5a83652c2207bc0993a3c7fa2748aeddd0b4c1ff5
 -- 022_strategy_hot_universe.sql sha256=e7543389e7bd1437107ce94d98548f8c3eae94064a716527422ec08b89784bb3
 -- 023_market_storage_gc.sql sha256=74b135a3e6749189a1d344216c145f4f271c809745a56c45e19865346903cdf7
+-- 024_strategy_price_basis.sql sha256=5748f0fb752d29a285612882cc3ae4b25fc00d48952127766b2ea39e9afb5a62
+-- 025_supplement_retention.sql sha256=5bcb805d45f47345910720addd34a18a6a0eb0d107a84f025a6bd55912cfa4ed
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -521,8 +523,38 @@ CREATE TABLE strategy_version (
   evaluator_version TEXT NOT NULL,
   recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0), trade_rules_json TEXT NOT NULL DEFAULT '{"entry":null,"exit":null}' CHECK(json_valid(trade_rules_json)), signal_period TEXT
   CHECK(signal_period IS NULL OR signal_period IN ('D','W','M')), hot_universe_json TEXT
-  CHECK(hot_universe_json IS NULL OR json_valid(hot_universe_json)),
+  CHECK(hot_universe_json IS NULL OR json_valid(hot_universe_json)), price_basis TEXT NOT NULL DEFAULT 'none'
+  CHECK(price_basis IN ('none','forward')),
   PRIMARY KEY(strategy_id,version)
+) STRICT;
+
+CREATE TABLE supplement_retention_file (
+  collection_id TEXT NOT NULL REFERENCES supplement_retention_run(collection_id),
+  object_key TEXT NOT NULL CHECK(substr(object_key,1,1)<>'/' AND instr(object_key,'..')=0 AND instr(object_key,'://')=0),
+  sha256 TEXT NOT NULL CHECK(length(sha256)=64),
+  byte_count INTEGER NOT NULL CHECK(byte_count>=0),
+  status TEXT NOT NULL CHECK(status IN ('planned','removed','absent')),
+  removed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(removed_bytes>=0),
+  PRIMARY KEY(collection_id,object_key),
+  CHECK(status<>'planned' OR removed_bytes=0),
+  CHECK(status<>'absent' OR removed_bytes=0),
+  CHECK(status<>'removed' OR removed_bytes=byte_count)
+) STRICT;
+
+CREATE TABLE supplement_retention_run (
+  collection_id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL REFERENCES job(job_id),
+  version TEXT NOT NULL CHECK(version='supplement-retention-250-v1'),
+  anchor_date TEXT NOT NULL CHECK(date(anchor_date,'+0 days') IS anchor_date),
+  cutoff_date TEXT NOT NULL CHECK(date(cutoff_date,'+0 days') IS cutoff_date),
+  scope_json TEXT NOT NULL CHECK(json_valid(scope_json)),
+  scope_sha256 TEXT NOT NULL CHECK(length(scope_sha256)=64),
+  status TEXT NOT NULL CHECK(status IN ('planned','deleting','completed')),
+  created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
+  completed_at_ms INTEGER,
+  UNIQUE(job_id,version),
+  CHECK(cutoff_date<=anchor_date),
+  CHECK(status<>'completed' OR completed_at_ms IS NOT NULL)
 ) STRICT;
 
 CREATE TABLE sync_batch (
@@ -1076,6 +1108,24 @@ BEGIN SELECT RAISE(ABORT,'sentiment snapshot clock moved backwards'); END;
 CREATE TRIGGER snapshot_ready_coverage BEFORE UPDATE OF state ON dataset_snapshot WHEN NEW.state='published' AND NEW.quality='ready' BEGIN
  SELECT CASE WHEN EXISTS(SELECT 1 FROM snapshot_coverage WHERE snapshot_id=NEW.snapshot_id AND coverage_state<>'ready') THEN RAISE(ABORT,'ready snapshot cannot hide partial coverage') END;
 END;
+
+CREATE TRIGGER supplement_retention_file_immutable BEFORE UPDATE ON supplement_retention_file
+WHEN NEW.collection_id<>OLD.collection_id OR NEW.object_key<>OLD.object_key OR NEW.sha256<>OLD.sha256
+ OR NEW.byte_count<>OLD.byte_count OR OLD.status<>'planned'
+BEGIN SELECT RAISE(ABORT,'retain immutable supplement file receipt'); END;
+
+CREATE TRIGGER supplement_retention_file_retained BEFORE DELETE ON supplement_retention_file
+BEGIN SELECT RAISE(ABORT,'retain supplement file history'); END;
+
+CREATE TRIGGER supplement_retention_identity_immutable BEFORE UPDATE ON supplement_retention_run
+WHEN NEW.collection_id<>OLD.collection_id OR NEW.job_id<>OLD.job_id OR NEW.version<>OLD.version
+ OR NEW.anchor_date<>OLD.anchor_date OR NEW.cutoff_date<>OLD.cutoff_date
+ OR NEW.scope_json<>OLD.scope_json OR NEW.scope_sha256<>OLD.scope_sha256 OR NEW.created_at_ms<>OLD.created_at_ms
+ OR OLD.status='completed' OR (OLD.status='deleting' AND NEW.status='planned')
+BEGIN SELECT RAISE(ABORT,'retain immutable supplement retention authorization'); END;
+
+CREATE TRIGGER supplement_retention_retained BEFORE DELETE ON supplement_retention_run
+BEGIN SELECT RAISE(ABORT,'retain supplement retention history'); END;
 
 CREATE TRIGGER topic_override_current_day BEFORE INSERT ON topic_override
 WHEN NEW.effective_business_date IS NOT (SELECT business_date FROM business_clock WHERE singleton=1)

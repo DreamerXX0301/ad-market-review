@@ -77,16 +77,21 @@ def ensure_ready() -> None:
 
 @contextlib.contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
-    ensure_ready()
-    connection = _raw_connection(sqlite_path())
-    try:
-        yield connection
-        connection.commit()
-    except BaseException:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
+    # An HTTP task can be cancelled while its synchronous route still runs.
+    # Pin the shared file lease until this real thread commits/rolls back and
+    # closes. Import lazily: access uses core configuration during assembly.
+    from app.services.supplement_access import supplement_request_access
+    with supplement_request_access():
+        ensure_ready()
+        connection = _raw_connection(sqlite_path())
+        try:
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
 
 def seed_connections(connection: sqlite3.Connection) -> None:

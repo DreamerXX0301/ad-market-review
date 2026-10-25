@@ -10,10 +10,14 @@ import { amount, num, percent, tone } from "../../lib/format";
 import {
   outlookAction,
   outlookAxisEvidence,
+  outlookCandidateTracking,
+  outlookChanges,
   outlookForDate,
+  outlookInsightsForDate,
   outlookLines,
   outlookNumber,
   outlookRows,
+  outlookRoutes,
   outlookStocks,
 } from "./marketOutlookPresentation";
 import "./MarketOutlook.css";
@@ -80,6 +84,176 @@ function Candidate({
   );
 }
 
+function Change({ change }: { change: Row }) {
+  const value = outlookNumber(change.value);
+  const previous = outlookNumber(change.previous_value);
+  const delta = outlookNumber(change.delta);
+  const deltaUnit =
+    change.delta_unit || (change.unit === "%" ? "个百分点" : change.unit) || "";
+  const explanation = outlookLines([
+    change.evidence,
+    change.interpretation,
+    change.reason,
+  ])[0];
+  const readingText = (reading: number) =>
+    change.unit === "CNY"
+      ? amount(reading)
+      : `${num(reading, 1)}${change.unit || ""}`;
+  return (
+    <article
+      className={`outlook-change ${change.state === "unknown" ? "unknown" : "observed"}`}
+    >
+      <span>{change.label || "当日变化"}</span>
+      <strong>{value == null ? "待核验" : readingText(value)}</strong>
+      {delta != null && (
+        <small className={tone(delta)}>
+          较前日 {delta > 0 ? "+" : ""}
+          {num(delta, 1)}
+          {deltaUnit}
+        </small>
+      )}
+      <p>{explanation || "变化依据待核验"}</p>
+      {typeof change.interpretation === "string" &&
+        change.interpretation !== explanation && (
+          <small>{change.interpretation}</small>
+        )}
+      {change.previous_date && (
+        <small>
+          比较日 {change.previous_date}
+          {previous == null ? "" : ` · 前值 ${readingText(previous)}`}
+        </small>
+      )}
+      {change.scope && <small>{change.scope}</small>}
+    </article>
+  );
+}
+
+function EntryRoute({ route }: { route: Row }) {
+  const view = outlookAction(route);
+  return (
+    <article className={`outlook-route ${view.status}`}>
+      <header>
+        <h4>
+          {route.label ||
+            (
+              {
+                trend: "趋势参与",
+                relay: "短线接力",
+                repair: "冰点修复",
+              } as Row
+            )[route.id]}
+        </h4>
+        <strong>{view.label}</strong>
+      </header>
+      <span>已观察的市场条件</span>
+      <p>{route.observation || "市场条件待核验"}</p>
+      {route.reason && <p>{route.reason}</p>}
+      {!!outlookLines(route.missing_conditions).length && (
+        <div className="outlook-route-missing">
+          <span>尚缺条件</span>
+          <Lines items={route.missing_conditions} />
+        </div>
+      )}
+      <details>
+        <summary>
+          下一交易日确认 / 失效条件 <ChevronDown size={12} />
+        </summary>
+        <h4>待确认</h4>
+        <Lines items={route.triggers} />
+        <h4>失效条件</h4>
+        <Lines items={route.invalidations} />
+      </details>
+      <small>执行条件尚未观察，需下一交易日人工核验</small>
+    </article>
+  );
+}
+
+function CandidateReplay({
+  tracking,
+  date,
+}: {
+  tracking: Row | null;
+  date: string;
+}) {
+  if (!tracking)
+    return (
+      <p className="outlook-replay-empty">
+        本响应未提供可核验的20交易日候选回放。
+      </p>
+    );
+  const observations = outlookRows(tracking.observations);
+  return (
+    <details className="outlook-candidate-replay">
+      <summary>
+        近20交易日候选跟踪 · {tracking.label || "待核验"}{" "}
+        <ChevronDown size={12} />
+      </summary>
+      <p>{tracking.reason || "候选后续证据待核验"}</p>
+      <p>
+        截至 {date}
+        {tracking.candidate_date ? ` · 候选日 ${tracking.candidate_date}` : ""}
+        {tracking.last_observed_date
+          ? ` · 最近观察 ${tracking.last_observed_date}`
+          : ""}
+      </p>
+      <small>
+        {tracking.window_begin || "窗口起点待核验"} 至{" "}
+        {tracking.window_end || date} · 最多20个市场交易日
+        {tracking.history_complete === false
+          ? " · 窗口资料存在缺口，缺失不视为延续或失效"
+          : ""}
+      </small>
+      {!!outlookRows(tracking.index_references).length && (
+        <div className="outlook-replay-references">
+          {outlookRows(tracking.index_references).map((index) => (
+            <span key={index.instrument_id}>
+              {index.name || index.instrument_id} · {index.date}低点{" "}
+              {num(outlookNumber(index.low))}
+            </span>
+          ))}
+        </div>
+      )}
+      {observations.length ? (
+        <div className="outlook-replay-table">
+          <table>
+            <caption>候选之后的逐日证据，仅至所选观察日</caption>
+            <thead>
+              <tr>
+                <th scope="col">交易日</th>
+                <th scope="col">观察状态</th>
+                <th scope="col">广度温度</th>
+                <th scope="col">依据与缺口</th>
+              </tr>
+            </thead>
+            <tbody>
+              {observations.map((row) => (
+                <tr key={row.date}>
+                  <th scope="row">{row.date}</th>
+                  <td>{row.label || "待核验"}</td>
+                  <td>{num(outlookNumber(row.temperature), 1)}</td>
+                  <td>
+                    {row.reason || "—"}
+                    {outlookLines(row.broken_indices).length
+                      ? ` · 跌破参照：${outlookLines(row.broken_indices).join("、")}`
+                      : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p>窗口内尚无可展示的后续观察。</p>
+      )}
+      <Lines items={tracking.conditions} />
+      <p>
+        {tracking.notice ||
+          "仅使用候选日至所选观察日的留存证据；延续观察不等于确认底部。"}
+      </p>
+    </details>
+  );
+}
+
 export default function MarketOutlook({
   data,
   date,
@@ -116,6 +290,11 @@ export default function MarketOutlook({
   const gate = current.entry_gate || {};
   const turnover = current.turnover || {};
   const bottom = current.bottom_watch || {};
+  const insights = outlookInsightsForDate(current.insights, date, snapshotId);
+  const headline = insights?.headline || {};
+  const changes = outlookChanges(insights?.changes, date);
+  const routes = outlookRoutes(insights?.routes);
+  const tracking = outlookCandidateTracking(insights?.candidate_tracking, date);
   const actions = outlookRows(plan.actions).filter((action) =>
     ["open", "add", "bottom"].includes(action.id),
   );
@@ -148,8 +327,19 @@ export default function MarketOutlook({
             </span>
           </div>
           <p className="outlook-summary">
-            {stage.summary || "当前依据尚不足以形成阶段观察。"}
+            {headline.summary ||
+              stage.summary ||
+              "当前依据尚不足以形成阶段观察。"}
           </p>
+          {headline.label && (
+            <div
+              className={`outlook-headline ${headline.observation_state === "unknown" ? "unknown" : "observed"}`}
+            >
+              <span>今日观察</span>
+              <strong>{headline.label}</strong>
+              <small>下一交易日执行条件尚未观察</small>
+            </div>
+          )}
           <Lines items={stage.reasons} className="outlook-reasons" />
         </div>
         <div className="outlook-thermometer">
@@ -214,6 +404,54 @@ export default function MarketOutlook({
         )}
       </section>
 
+      <section className="outlook-insights" aria-label="今日变化与机会风险资料">
+        <header className="outlook-section-head">
+          <div>
+            <h2>今日变化与参与线索</h2>
+            <p>市场表现、风险与资料缺口分别核对。</p>
+          </div>
+          <span className="outlook-observation-tag">截至 {date}</span>
+        </header>
+        {insights ? (
+          <>
+            {!!changes.length && (
+              <div className="outlook-changes">
+                {changes.map((change) => (
+                  <Change key={change.id} change={change} />
+                ))}
+              </div>
+            )}
+            <div className="outlook-insight-layers">
+              <article className="outlook-layer opportunity">
+                <h3>机会线索</h3>
+                <Lines items={insights.opportunities} />
+                {!outlookLines(insights.opportunities).length && (
+                  <p>暂无有据的机会线索。</p>
+                )}
+              </article>
+              <article className="outlook-layer risk">
+                <h3>风险观察</h3>
+                <Lines items={insights.risks} />
+                {!outlookLines(insights.risks).length && (
+                  <p>本次未列额外风险观察，仍需核对各路径失效条件。</p>
+                )}
+              </article>
+              <article className="outlook-layer gap">
+                <h3>资料缺口</h3>
+                <Lines items={insights.gaps} />
+                {!outlookLines(insights.gaps).length && (
+                  <p>本次未列额外缺口，以各项来源核验为准。</p>
+                )}
+              </article>
+            </div>
+          </>
+        ) : (
+          <p className="outlook-empty">
+            本响应未提供当前日期与行情代际的分层观察，暂按原始阶段与条件清单核对。
+          </p>
+        )}
+      </section>
+
       <section
         id="emotion-plan"
         className="outlook-plan"
@@ -262,7 +500,26 @@ export default function MarketOutlook({
                   </h3>
                   <strong>{view.label}</strong>
                 </header>
-                <p>{action.reason}</p>
+                <div className="outlook-action-observation">
+                  <span>今日市场观察</span>
+                  <strong>
+                    {action.observation ||
+                      (action.id === "bottom"
+                        ? routes.find((route) => route.id === "repair")
+                            ?.observation || bottom.label
+                        : action.id === "add"
+                          ? routes.find((route) => route.id === "trend")
+                              ?.observation
+                          : headline.label) ||
+                      "按观察日依据准备"}
+                  </strong>
+                  <p>{action.reason}</p>
+                </div>
+                <div className="outlook-action-execution">
+                  <span>下一交易日执行状态</span>
+                  <strong>条件尚未观察</strong>
+                  <small>需真实数据人工核验</small>
+                </div>
                 <h4>明日先确认</h4>
                 <Lines items={action.triggers} />
                 <div className="outlook-invalidation">
@@ -366,7 +623,28 @@ export default function MarketOutlook({
             <h4>失效条件</h4>
             <Lines items={bottom.invalidations} />
           </details>
+          <CandidateReplay tracking={tracking} date={date} />
         </article>
+      </section>
+
+      <section className="outlook-routes" aria-label="趋势接力修复独立参与路径">
+        <header className="outlook-section-head">
+          <div>
+            <h2>分路径核对参与条件</h2>
+            <p>趋势、短线接力与冰点修复分别读取各自证据和缺口。</p>
+          </div>
+        </header>
+        {routes.length ? (
+          <div className="outlook-route-grid">
+            {routes.map((route) => (
+              <EntryRoute key={route.id} route={route} />
+            ))}
+          </div>
+        ) : (
+          <p className="outlook-empty">
+            本响应未提供独立路径条件，请结合现有开仓闸门与三轴原始依据核对。
+          </p>
+        )}
       </section>
 
       <section

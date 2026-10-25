@@ -54,6 +54,10 @@ services:
       start_period: 30s
   worker:
     <<: *runtime
+    # SQLite spill files must use the disk-backed worker volume, not /tmp tmpfs.
+    environment:
+      <<: *environment
+      SQLITE_TMPDIR: /var/lib/shixu/work
     command: [python, -m, app.worker]
     restart: unless-stopped
     read_only: true

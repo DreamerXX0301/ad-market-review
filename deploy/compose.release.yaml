@@ -50,6 +50,10 @@ services:
       start_period: 30s
   worker:
     <<: *runtime
+    # SQLite spill files must use the disk-backed worker volume, not /tmp tmpfs.
+    environment:
+      <<: *environment
+      SQLITE_TMPDIR: /var/lib/shixu/work
     # Explicit opt-in prevents a candidate `up -d` from starting a worker.
     profiles: [worker]
     command: [python, -m, app.worker]

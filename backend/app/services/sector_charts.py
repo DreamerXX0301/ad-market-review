@@ -517,6 +517,8 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
     period = str(period).upper()
     if period not in ('D', 'W', 'M'): raise ValueError('仅支持日K、周K和月K')
     plan = plan_sector_chart(market, topic_code, as_of)
+    calendar = market.calendar()
+    from app.analytics.chart_session_distance import attach_chart_session_distance
     base = {'instrument': plan['instrument'], 'period': period, 'as_of': plan['as_of'],
             'bars': [], 'snapshot_id': plan['snapshot_id'], 'available': False,
             'requested_price_basis': 'none', 'price_basis': 'none',
@@ -528,26 +530,26 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
             'indicator_version': INDICATOR_VERSION+'+'+NORMALIZATION_VERSION,
             'breadth_scope': None, 'coverage': {}, 'scope': SCOPE,
             'unavailable_reason': '该板块所选日完整K线尚未下载，请手动同步这个板块；读取不会联网'}
-    try: cached = _read_chart_cache(market, plan, market.calendar())
+    try: cached = _read_chart_cache(market, plan, calendar)
     except (OSError, ValueError, TypeError, AttributeError):
         base['unavailable_reason'] = '该板块所选日K线缓存校验失败，保持未知；未回填其它日期'
-        return base
-    if cached is None: return base
+        return attach_chart_session_distance(base, calendar)
+    if cached is None: return attach_chart_session_distance(base, calendar)
     record, pointer = cached
     # The shared aggregators add numeric volume/amount. NaN deliberately
     # propagates missing optional data through sums; never replace it with0.
     rows = [{**row, 'volume': row['volume'] if row['volume'] is not None else float('nan'),
              'amount': row['amount'] if row['amount'] is not None else float('nan')}
             for row in record['bars']]
-    if period == 'W': rows = aggregate_weekly(rows, market.calendar(), plan['as_of'])
-    if period == 'M': bars = enrich_monthly_bars(aggregate_monthly(rows, market.calendar(), plan['as_of']))
-    else: bars = enrich_bars(rows, market.calendar() if period == 'D' else None)
+    if period == 'W': rows = aggregate_weekly(rows, calendar, plan['as_of'])
+    if period == 'M': bars = enrich_monthly_bars(aggregate_monthly(rows, calendar, plan['as_of']), include_chart_extremes=True)
+    else: bars = enrich_bars(rows, calendar if period == 'D' else None, include_chart_extremes=True)
     bars = json_clean(bars)
     warnings = list(base['warnings'])
     if not record['complete']: warnings.append(record['coverage']['notice'])
     if period == 'M': warnings.append('月K按日线聚合，形成中、首月边界或缺日报价不计完整预热；MACD/KDJ需要35根可比月柱。')
     if period == 'W': warnings.append('周K按日线聚合，形成中或缺日报价会阻断完整周与指标预热。')
-    return {**base, 'available': True, 'unavailable_reason': None, 'bars': bars,
+    result = {**base, 'available': True, 'unavailable_reason': None, 'bars': bars,
             'quality': 'complete' if record['complete'] else 'partial', 'warnings': warnings,
             'coverage': record['coverage'], 'fetched_at': record.get('fetched_at'),
             'cache_as_of': record.get('cache_as_of', plan['as_of']),
@@ -557,3 +559,5 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
             'raw_sha256': record.get('raw_sha256'), 'artifact': pointer['artifact'],
             'indicator_gaps': _indicator_gaps(bars),
             'waves': candidate_waves(bars, threshold_pct=2.0 if period == 'D' else 4.0 if period == 'W' else 8.0)}
+
+    return attach_chart_session_distance(result, calendar, same_snapshot=market.status().get('snapshot_id') == plan['snapshot_id'])

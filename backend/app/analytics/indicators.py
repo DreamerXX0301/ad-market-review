@@ -39,6 +39,56 @@ def intraday_high_change(row, previous, positions):
     return (round(value, INTRADAY_HIGH_DECIMALS), None) if isfinite(value) else (None, INTRADAY_HIGH_REASONS['price'])
 
 
+def chart_extreme_changes(row, previous, positions):
+    """Chart OHLC extremes against the same verified previous close.
+
+    These display-only fields are separate from the daily strategy high field.
+    They never substitute an earlier visible quote for a missing market session
+    or an incomplete preceding week/month, and never change signal inputs.
+    """
+    period = 'M' if 'month_closed' in row else 'W' if 'week_closed' in row else 'D'
+    cycle = {'D': '交易日', 'W': '周', 'M': '月'}[period]
+    result = {'chart_high_change_pct': None, 'chart_low_change_pct': None,
+              'chart_extreme_change_period': period,
+              'chart_extreme_change_reference_date': None}
+    def unknown(reason):
+        return {**result, 'chart_high_change_pct_reason': reason,
+                'chart_low_change_pct_reason': reason}
+    positive = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value > 0
+    if not previous:
+        return unknown('缺少前一可比'+cycle+'收盘，最高/最低涨幅保持未知')
+    if period == 'D':
+        current = positions.get(row.get('date'))
+        if current is None or current < 1 or positions.get(previous.get('date')) != current - 1:
+            return unknown('缺少前一个市场交易日的有效报价，不使用上一条可见K线替代')
+    else:
+        coverage = 'monthly_quote_coverage_complete' if period == 'M' else 'weekly_quote_coverage_complete'
+        closed = 'month_closed' if period == 'M' else 'week_closed'
+        reason = row.get('monthly_continuity_reset_reason') if period == 'M' else row.get('weekly_continuity_reset_reason')
+        if (previous.get(closed) is not True or previous.get('complete') is not True
+                or previous.get(coverage) is not True or row.get(coverage) is not True or reason):
+            return unknown(reason or '前一'+cycle+'不是完整可比周期，或本'+cycle+'报价覆盖不足')
+    if any(item.get('corporate_action_coverage_known', True) is not True for item in (row, previous)):
+        return unknown('公司行动覆盖未核验，最高/最低价与前收不可直接比较')
+    if row.get('corporate_action') or row.get('price_continuity') is False:
+        return unknown('本'+cycle+'价格不可比或存在未复权公司行动，最高/最低涨幅保持未知')
+    opening, high, low, close, prior = (row.get('open'), row.get('high'), row.get('low'), row.get('close'), previous.get('close'))
+    if (not all(positive(value) for value in (opening, high, low, close, prior))
+            or high < max(opening, low, close) or low > min(opening, high, close)):
+        return unknown('本'+cycle+'OHLC或前一可比收盘无效，最高/最低涨幅保持未知')
+    high_pct, low_pct = (high / prior - 1) * 100, (low / prior - 1) * 100
+    if not isfinite(high_pct) or not isfinite(low_pct):
+        return unknown('最高/最低价与前收比值无效')
+    reason = ('本'+cycle+'最高/最低价相对前一'+('市场交易日' if period == 'D' else '完整'+cycle)+
+              '收盘；沿用本图同一价格口径，不是相对开盘价')
+    if period != 'D' and row.get('month_closed' if period == 'M' else 'week_closed') is False:
+        reason += '；本'+cycle+'形成中，显示截至观察日的区间'
+    return {**result, 'chart_high_change_pct': round(high_pct, 12),
+            'chart_low_change_pct': round(low_pct, 12),
+            'chart_high_change_pct_reason': reason, 'chart_low_change_pct_reason': reason,
+            'chart_extreme_change_reference_date': previous['date']}
+
+
 def crossed_down(previous_fast, previous_slow, fast, slow):
     """A real downward crossing, rather than the negation of a golden cross."""
     values = (previous_fast, previous_slow, fast, slow)
@@ -47,7 +97,7 @@ def crossed_down(previous_fast, previous_slow, fast, slow):
     return previous_fast >= previous_slow and fast < slow
 
 
-def enrich_bars(rows, calendar=None, *, tail=None):
+def enrich_bars(rows, calendar=None, *, tail=None, include_chart_extremes=False):
     """Keep the original recurrence; optionally materialize only its last rows.
 
     Selection needs the current and preceding indicators, while charts and
@@ -93,6 +143,8 @@ def enrich_bars(rows, calendar=None, *, tail=None):
             row['change_pct'] = (close / prev['close'] - 1) * 100 if prev and prev['close'] and not reset else None
             row['pct_change'] = row['change_pct']
             row['intraday_high_change_pct'], row['intraday_high_change_pct_reason'] = intraday_high_change(row, prev, positions)
+            if include_chart_extremes:
+                row.update(chart_extreme_changes(row, prev, positions))
             row['volume_ratio'] = row['volume'] / prev['volume'] if prev and prev['volume'] and not reset else None
             row['volume_multiple_prev'] = row['volume_ratio']
         closes.append(close)

@@ -56,6 +56,29 @@ def reclaim(mode='close_reclaim', field='close'):
     return {'reclaim': {'mode': mode, 'event_field': field}}
 
 
+@pytest.mark.parametrize('price_path', [guarded(),guarded(pullback=True,near={'sessions':3,'band_pct':2})]+[
+    reclaim(mode,field) for mode in ('close_at_or_above','close_reclaim','first_close_reclaim','high_at_or_above','touch')
+    for field in ('close','high','low')])
+def test_unavailable_forward_event_price_is_unknown_without_raw_fallback(price_path):
+    from app.domain.strategy_prices import prepare_condition_prices
+    calendar,rows,offset=path_fixture()
+    rows[-1]['corporate_action_coverage_known']=False
+    context=prepare_condition_prices(rows,[],calendar,calendar[-1],'forward',actions_coverage={'known':False})
+    history=HistoryContext(rows,calendar,calendar[-1],price_context=context)
+    node=rule(offset,price_path,then={'field':'volume','op':'>','value':0,'period':'D'})
+    metrics=metrics_for(rows,calendar[-1],calendar,price_context=context)
+    result=evaluate(node,metrics,history.at(calendar[-1]))
+    assert result['selected_event']['raw_close']>0 and result['selected_event']['close'] is None
+    assert result['result'] is None and result['price_path_checks']['result'] is None
+    path=result['price_path_checks']
+    assert path['reason'] and path['price_basis']=='unavailable'
+    if 'guard' in path:
+        assert path['guard']['floor'] is None and path['guard']['event_close'] is None
+        assert path['guard']['reason']
+    if 'reclaim' in path:
+        assert path['reclaim']['reference_price'] is None and path['reclaim']['reason']
+
+
 @pytest.mark.parametrize('close,expected', [(9.5, True), (9.49, False), (9.51, True)])
 def test_guard_uses_event_close_percentage_and_includes_equal(close, expected):
     calendar, rows, offset = path_fixture((10, 9.8, close, 9.9))

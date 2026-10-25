@@ -189,13 +189,31 @@ def entry_low_for(round_, prepared):
     return prepared.get(_key(round_), _unknown(round_, '未准备入池事件日最低价证据', 'low'))
 
 
-def condition_metrics(round_, day, quote, anchor, normalized, normalization_state, normalization_reason, action_evidence, *, _kind='high'):
+def condition_metrics(round_, day, quote, anchor, normalized, normalization_state, normalization_reason, action_evidence, *, _kind='high', price_context=None):
     """Pure strict state comparison; alert idempotency/lifecycle remains outside."""
     kind = _kind
     if kind not in ('high', 'low'): raise ValueError('unknown entry-day price kind')
     field = FIELD if kind == 'high' else LOW_FIELD
     label = '最高价' if kind == 'high' else '最低价'
     actual = None; reason = anchor.get('reason'); raw_close = quote.get('close') if quote else None
+    if price_context is not None:
+        from app.domain.strategy_prices import project_reference_price
+        adjusted, proof = project_reference_price(anchor.get('raw_' + kind), round_['entry_business_date'], price_context)
+        if anchor.get('state') != 'ready':reason = reason or '入池事件日' + label + '未通过核验'
+        elif not quote or quote.get('date') != day or _number(raw_close) is None or _number(quote.get('volume')) is None:
+            reason = '观察日缺少唯一有效原始成交报价，保持未知'
+        elif price_context.get('anchor_date') != day or adjusted is None:
+            reason = proof.get('reason') or '入池事件日参考价尚未转换到本观察日，保持未知'
+        else:
+            actual = _e8(raw_close) > _e8(adjusted) if kind == 'high' else _e8(raw_close) < _e8(adjusted)
+            reason = None
+        return {field: actual, field + '_reason': reason,
+                field + '_evidence': {'entry_' + kind: deepcopy(anchor), 'observed_date': day,
+                    'provider_observed_close_e8': _e8(raw_close), 'adjusted_reference_e8': _e8(adjusted),
+                    'adjusted_reference_price_basis': 'forward_event_affine', 'adjustment_anchor': day,
+                    'reference_projection': proof, 'comparison_basis_id': _basis(round_).get('comparison_basis_id'),
+                    'comparison': 'strict_close_gt_frozen_entry_daily_high' if kind == 'high' else 'strict_close_lt_frozen_entry_daily_low',
+                    'is_cross_event': False}}
     if anchor.get('state') != 'ready': reason = reason or '入池事件日' + label + '未通过核验'
     elif not quote or quote.get('date') != day or _number(raw_close) is None or _number(quote.get('volume')) is None:
         reason = '观察日缺少唯一有效原始成交报价，保持未知'
@@ -216,8 +234,8 @@ def condition_metrics(round_, day, quote, anchor, normalized, normalization_stat
     return {field: actual, field + '_reason': reason, field + '_evidence': evidence}
 
 
-def low_condition_metrics(round_, day, quote, anchor, normalized, normalization_state, normalization_reason, action_evidence):
-    return condition_metrics(round_, day, quote, anchor, normalized, normalization_state, normalization_reason, action_evidence, _kind='low')
+def low_condition_metrics(round_, day, quote, anchor, normalized, normalization_state, normalization_reason, action_evidence, *, price_context=None):
+    return condition_metrics(round_, day, quote, anchor, normalized, normalization_state, normalization_reason, action_evidence, _kind='low', price_context=price_context)
 
 
 def load_action_evidence(snapshot_id, symbols, start, end, expected_generation=None):

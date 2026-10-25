@@ -2,6 +2,9 @@
   container: stock-summary / inline-size;
   margin: 0 0 14px;
 }
+.stock-limit-summary-container > .board-tags {
+  margin-top: 8px;
+}
 .stock-limit-summary {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

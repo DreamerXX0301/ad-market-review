@@ -19,7 +19,8 @@ from app.core import digest, dumps, hash_file, new_id, now_ms, raw_dir, work_dir
 VERSION='market-storage-gc-v1'
 _GENERATION=re.compile(r'market-[0-9a-f]{24}\Z')
 _IGNORED={'_schema_migration','dataset_snapshot','snapshot_artifact','snapshot_coverage','retention_pin','published_head','snapshot_gc',
-          'job_event','sync_batch','market_storage_collection','market_storage_collection_file','workspace_purge','workspace_purge_file','workspace_purge_audit'}
+          'job_event','sync_batch','market_storage_collection','market_storage_collection_file','workspace_purge','workspace_purge_file','workspace_purge_audit',
+          'supplement_retention_run','supplement_retention_file'}
 
 
 def _strings(value):

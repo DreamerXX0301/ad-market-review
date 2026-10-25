@@ -1,4 +1,10 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import {
+  useSinglePageEntry,
+  singlePagePaneLayout,
+  singlePageDefaultWindow,
+} from "./SinglePageEntry";
+import "./SinglePageEntry.css";
 import * as echarts from "echarts/core";
 import type { EChartsOption } from "echarts";
 import {
@@ -42,9 +48,12 @@ import {
   textValue,
 } from "../lib/format";
 import { candleChange } from "./candleChange";
+import { candleExtremeChange } from "./candleExtremeChange";
 import { bollCandleValues, chartBoll } from "./chartBoll";
 import { chartPaneLayout } from "./chartPaneLayout";
 import { chartSinceReturn } from "./chartSinceReturn";
+import { chartSessionDistance } from "./chartSessionDistance";
+import { chartPriceBasis } from "./chartPriceBasis";
 import {
   curveAxisAmount,
   curvePercent,
@@ -76,7 +85,9 @@ import {
 import "./Charts.css";
 import "./StockNavigation.css";
 import StockLimitSummary from "./StockLimitSummary";
+import BoardTags from "../features/market/BoardTags";
 import StockHeaderQuote from "./StockHeaderQuote";
+import StockCompactMetrics from "./StockCompactMetrics";
 import { stockPatternHeader } from "./stockPatternHeader";
 import StockCurrentTopics from "./StockCurrentTopics";
 import WatchlistButton from "../features/watchlist/WatchlistButton";
@@ -221,6 +232,8 @@ export function CandleChart({
   showStockSummary = true,
   showDataNotes = true,
   frozenChartsByPeriod,
+  entryFocus = false,
+  onBoardPresentation,
 }: {
   instrumentId: string;
   asOf?: string;
@@ -235,8 +248,20 @@ export function CandleChart({
   showStockSummary?: boolean;
   showDataNotes?: boolean;
   frozenChartsByPeriod?: Partial<Record<ChartPeriod, Row>>;
+  entryFocus?: boolean;
+  onBoardPresentation?: (value: { row: Row; date: string } | null) => void;
 }) {
   const { preferences, persistent, update, reset } = useChartPreferences();
+  const entryRoot = useRef<HTMLDivElement>(null);
+  const entryStage = useRef<HTMLElement>(null);
+  const [entryCanvasReadyKey, setEntryCanvasReadyKey] = useState("");
+  const [entryLocateNonce, setEntryLocateNonce] = useState(0);
+  const [entryPanels, setEntryPanels] = useState([
+    "volume",
+    "boll",
+    "kdj",
+    "macd",
+  ]);
   const knownIndex = [
     "000001.SH",
     "399001.SZ",
@@ -263,10 +288,21 @@ export function CandleChart({
   const priceBasis = effectiveChartPriceBasis(preferences, isIndex);
   const cycleLabel = period === "D" ? "日" : period === "W" ? "周" : "月";
   const mas = effectiveChartMas(preferences, isIndex);
-  const panels = effectiveChartPanels(preferences, isIndex);
-  const showBoll = effectiveChartBoll(preferences, isIndex);
-  const setShowBoll = (value: boolean) =>
-    update(isIndex ? { indexShowBoll: value } : { stockShowBoll: value });
+  const panels = entryFocus
+    ? entryPanels.filter((key) => key !== "boll")
+    : effectiveChartPanels(preferences, isIndex);
+  const showBoll = entryFocus
+    ? entryPanels.includes("boll")
+    : effectiveChartBoll(preferences, isIndex);
+  const setShowBoll = (value: boolean) => {
+    if (entryFocus)
+      setEntryPanels((current) =>
+        value
+          ? [...new Set([...current, "boll"])]
+          : current.filter((key) => key !== "boll"),
+      );
+    else update(isIndex ? { indexShowBoll: value } : { stockShowBoll: value });
+  };
   const { showWaves, waveMode } = effectiveChartWaves(preferences, isIndex);
   const setShowWaves = (value: boolean) =>
     update(isIndex ? { indexShowWaves: value } : { stockShowWaves: value });
@@ -297,20 +333,30 @@ export function CandleChart({
     zoomTo(start, start + width);
   }
   const frozenMode = frozenChartsByPeriod !== undefined;
-  const result = useApi<Row>(
-    frozenMode
-      ? null
-      : candleChartEndpoint({
-          instrumentId,
-          period,
-          priceBasis,
-          indicatorContinuity,
-          asOf,
-          dataEndpoint,
-        }),
-  );
+  const chartRequestPath = frozenMode
+    ? null
+    : candleChartEndpoint({
+        instrumentId,
+        period,
+        priceBasis,
+        indicatorContinuity,
+        asOf,
+        dataEndpoint,
+      });
+  const entryCanvasKey =
+    chartRequestPath || `frozen|${instrumentId}|${asOf || ""}|${period}`;
+  const result = useApi<Row>(chartRequestPath);
   const data = frozenMode ? frozenChartsByPeriod[period] || null : result.data;
   const bars = useMemo<Row[]>(() => data?.bars || [], [data]);
+  const entryHeight = useSinglePageEntry(
+    entryRoot,
+    entryStage,
+    `${instrumentId}|${asOf || ""}|${period}|${entryLocateNonce}`,
+    entryFocus,
+    !result.loading &&
+      (!!data || !!result.error) &&
+      (!bars.length || entryCanvasReadyKey === entryCanvasKey),
+  );
   const annotations = useChartAnnotations(
     instrumentId,
     data,
@@ -322,6 +368,10 @@ export function CandleChart({
   );
   const annotationPick = useRef<((price: number) => void) | null>(null);
   annotationPick.current = annotations.drawing ? annotations.picked : null;
+  const entryWindow = useMemo(
+    () => singlePageDefaultWindow(period, bars, data),
+    [period, bars, data],
+  );
   const nextZoomContext = JSON.stringify([
     instrumentId,
     asOf || null,
@@ -330,7 +380,9 @@ export function CandleChart({
     data?.as_of || null,
   ]);
   if (bars.length && zoomContext.current !== nextZoomContext) {
-    zoomWindow.current = defaultChartWindow(period, bars.length);
+    zoomWindow.current = entryFocus
+      ? { start: entryWindow.start, end: entryWindow.end }
+      : defaultChartWindow(period, bars.length);
     zoomContext.current = nextZoomContext;
   }
   const baselineView = projectEventBaseline(
@@ -373,12 +425,20 @@ export function CandleChart({
         ? mas.filter((x) => x !== n)
         : [...mas, n],
     });
-  const togglePanel = (key: ChartPanel) =>
-    update({
-      [isIndex ? "indexPanels" : "stockPanels"]: panels.includes(key)
-        ? panels.filter((value) => value !== key)
-        : [...panels, key],
-    });
+  const togglePanel = (key: ChartPanel) => {
+    if (entryFocus)
+      setEntryPanels((current) =>
+        current.includes(key)
+          ? current.filter((value) => value !== key)
+          : [...current, key],
+      );
+    else
+      update({
+        [isIndex ? "indexPanels" : "stockPanels"]: panels.includes(key)
+          ? panels.filter((value) => value !== key)
+          : [...panels, key],
+      });
+  };
   // Hidden overlays should not scan the entire five-year response on open.
   // Re-enabling one still computes from this chart's current dated payload.
   const boll = useMemo(
@@ -389,7 +449,10 @@ export function CandleChart({
   const activeBar = bars.find((b) => b.date === activeDate) || last;
   const activeBoll = boll.find((point) => point.date === activeBar?.date);
   const activeChange = candleChange(activeBar, period);
+  const activeExtremes = candleExtremeChange(activeBar, period);
   const activeSinceReturn = chartSinceReturn(activeBar, data);
+  const activeSessionDistance = chartSessionDistance(activeBar, data);
+  const actualPriceBasis = chartPriceBasis(data, isIndex);
   const activeMAState = chartIndicatorAvailability(
     activeBar,
     mas.map((window) => "ma" + window),
@@ -404,12 +467,14 @@ export function CandleChart({
       : panels.includes(key) && (key !== "breadth" || broad),
   );
   const palette = chartPalette();
-  const { actualHeight, mainHeight, paneHeights, paneTops } = chartPaneLayout(
-    height,
-    chosen.length,
-    compact,
-    chosen.map((key) => (key === "boll" ? 140 : 55)),
-  );
+  const { actualHeight, mainHeight, paneHeights, paneTops } = entryFocus
+    ? singlePagePaneLayout(entryHeight, chosen)
+    : chartPaneLayout(
+        height,
+        chosen.length,
+        compact,
+        chosen.map((key) => (key === "boll" ? 140 : 55)),
+      );
   const waves = data?.waves;
   const waveAsOf = data?.as_of || asOf || last?.date || "";
   const patterns = useMemo(
@@ -826,7 +891,9 @@ export function CandleChart({
               bars[candle?.dataIndex ?? entries[0]?.dataIndex];
           if (!b) return "";
           const change = candleChange(b, period);
+          const extremes = candleExtremeChange(b, period);
           const since = chartSinceReturn(b, data);
+          const sessionDistance = chartSessionDistance(b, data);
           // Axis filtering may reindex individual series after zooming. Use
           // the selected date's source values for every price overlay.
           const point = boll.find((point) => point.date === b.date);
@@ -877,8 +944,22 @@ export function CandleChart({
                   "'": "&#39;",
                 })[char] || char,
             );
+          const extremeHtml = (side: "high" | "low") => {
+            const view = extremes[side];
+            const color =
+              view.value == null || view.value === 0
+                ? pal.text
+                : view.value > 0
+                  ? pal.up
+                  : pal.down;
+            return `<span style="color:${color}" title="${escape(view.reason)}">（${view.label} ${percent(view.value)}${view.value == null ? " · 待核验" : ""}）</span>`;
+          };
           return (
-            `<div style="font-weight:700;margin-bottom:6px;color:${pal.text}">${b.date}</div><div>开 ${num(b.open)}　高 ${num(b.high)}</div><div>收 ${num(b.close)}　低 ${num(b.low)}</div>` +
+            `<div style="font-weight:700;margin-bottom:6px;color:${pal.text}">${b.date}</div>` +
+            `<div style="margin-bottom:6px;color:${pal.text}" title="${escape(sessionDistance.reason)}">${escape(sessionDistance.label)}</div>` +
+            `<div>开 ${num(b.open)}　收 ${num(b.close)}</div>` +
+            `<div>高 ${num(b.high)} ${extremeHtml("high")}</div>` +
+            `<div>低 ${num(b.low)} ${extremeHtml("low")}</div>` +
             `<div style="color:${color}" title="${escape(change.reason)}">${change.label}　${percent(change.value)}</div>` +
             (change.value == null
               ? `<div style="max-width:260px;white-space:normal;font-size:10px">${escape(change.reason)}</div>`
@@ -933,6 +1014,8 @@ export function CandleChart({
     } as EChartsOption;
   }, [
     bars,
+    data?.as_of,
+    data?.trading_day_distance,
     mas.join(","),
     boll,
     showBoll,
@@ -959,7 +1042,16 @@ export function CandleChart({
     annotations.visible,
   ]);
   return (
-    <div className="candle-chart">
+    <div
+      ref={entryRoot}
+      data-default-window-start={
+        entryFocus ? entryWindow.firstDate || undefined : undefined
+      }
+      data-default-window-sessions={
+        entryFocus ? entryWindow.sessions : undefined
+      }
+      className={"candle-chart" + (entryFocus ? " entry-single-chart" : "")}
+    >
       {showStockSummary &&
         !frozenMode &&
         !isIndex &&
@@ -968,514 +1060,585 @@ export function CandleChart({
           <StockLimitSummary
             instrumentId={instrumentId}
             asOf={asOf || data?.as_of}
+            showBoardTags={!entryFocus}
+            onBoardData={onBoardPresentation}
           />
         )}
-      <div className="chart-toolbar">
-        <div className="segmented">
-          {(["D", "W", "M"] as const).map((v) => (
-            <button
-              key={v}
-              className={period === v ? "active" : ""}
-              aria-pressed={period === v}
-              onClick={() => setPeriod(v)}
+      <section
+        ref={entryStage}
+        data-chart-period={entryFocus ? period : undefined}
+        className={entryFocus ? "entry-single-stage" : undefined}
+        aria-label={entryFocus ? "K线与全部技术副图" : undefined}
+      >
+        <div className="chart-toolbar">
+          <div className="segmented">
+            {(["D", "W", "M"] as const).map((v) => (
+              <button
+                key={v}
+                className={period === v ? "active" : ""}
+                aria-pressed={period === v}
+                onClick={() => {
+                  setPeriod(v);
+                  if (entryFocus) setEntryLocateNonce((value) => value + 1);
+                }}
+              >
+                {v === "D" ? "日 K" : v === "W" ? "周 K" : "月 K"}
+              </button>
+            ))}
+          </div>
+          {frozenMode ? (
+            <span
+              className="chart-index-basis"
+              title="报告内留存行情；不读取当前行情，不随个股复权偏好重算"
             >
-              {v === "D" ? "日 K" : v === "W" ? "周 K" : "月 K"}
-            </button>
-          ))}
-        </div>
-        {frozenMode ? (
-          <span
-            className="chart-index-basis"
-            title="报告内留存行情；不读取当前行情，不随个股复权偏好重算"
-          >
-            报告冻结图 · 未复权
-          </span>
-        ) : isIndex ? (
-          <span
-            className="chart-index-basis"
-            title="指数显示原始点位，不使用或修改个股默认复权口径"
-          >
-            指数原始点位
-          </span>
-        ) : (
-          <ChartSelect
-            label="K线复权口径"
-            value={priceBasis}
-            onChange={setPriceBasis}
-            options={[
-              { value: "none", label: "未复权", description: "来源原始价格" },
-              {
-                value: "forward",
-                label: "本地前复权",
-                description:
-                  forwardOption?.available === false
-                    ? "公司行动条件不足，暂不可用"
-                    : "以当前观察日为锚换算历史价格",
-                disabled: forwardOption?.available === false,
-              },
-            ]}
-          />
-        )}
-        {period === "D" && !dataEndpoint && !frozenMode ? (
-          <ChartSelect
-            label="图表指标连续口径"
-            value={indicatorContinuity}
-            title="仅切换图表MA/MACD/KDJ/BOLL；不填停牌或缺失K线，策略与回测仍按严格市场交易日"
-            onChange={(value) =>
-              setIndicatorContinuity(value as "quotes" | "market_sessions")
-            }
-            options={[
-              {
-                value: "quotes",
-                label: "指标：报价序列",
-                description: "按有效报价连续计算，缺失日不补K线",
-              },
-              {
-                value: "market_sessions",
-                label: "指标：严格交易日",
-                description: "报价缺口中断指标预热；策略保持此口径",
-              },
-            ]}
-          />
-        ) : (
-          <span
-            className="chart-index-basis"
-            title={
-              period === "D"
-                ? "板块日K指标采用严格市场交易日口径"
-                : "周/月指标保留完整周期与报价覆盖约束"
-            }
-          >
-            指标：{period === "D" ? "严格交易日" : "完整周期"}
-          </span>
-        )}
-        <div className="ma-controls">
-          {MA_WINDOWS.map((n, i) => (
-            <ChartToggle
-              key={n}
-              label={`MA${n}`}
-              color={maColors[i]}
-              checked={mas.includes(n)}
-              onChange={() => toggleMA(n)}
-              title={
-                last?.["ma" + n] == null
-                  ? `MA${n} 需要${n}根连续有效${cycleLabel}K，当前预热不足`
-                  : `MA${n} ${num(last["ma" + n])}`
-              }
-            />
-          ))}
-        </div>
-        {waves && (
-          <ChartToggle
-            label="波浪结构"
-            title={waves.notice}
-            checked={showWaves}
-            onChange={setShowWaves}
-            color="#b292f0"
-          />
-        )}
-        {supportsLimits && period === "D" && (
-          <ChartToggle
-            label="涨跌停标记"
-            title="显示已核验收盘涨跌停及地天、一字日形态；同日合并标注，不按涨幅或图上价格猜测"
-            checked={showLimits}
-            onChange={(value) => update({ showLimits: value })}
-          />
-        )}
-        <button
-          className="btn small chart-preferences-button"
-          title="指数与个股的均线、波浪显示分别保存；修改后自动保存"
-          onClick={() => setPreferencesOpen(true)}
-        >
-          <Settings2 size={13} />
-          图表偏好
-        </button>
-        <ChartAnnotationButton state={annotations} />
-        {!isIndex && eventBaseline && (
-          <ChartToggle
-            label="事件基准线"
-            title={baselineView.reason}
-            color="#c79136"
-            checked={showEventBaseline}
-            onChange={(value) => update({ showEventBaseline: value })}
-          />
-        )}
-        {!!historyEvents.length && (
-          <ChartToggle
-            label="历史事件标记"
-            title="显示本次选股或所选跟踪轮次实际绑定的历史事件日与事件价；不重新选择事件"
-            checked={showHistoricalEvents}
-            color="#bd96f3"
-            onChange={setShowHistoricalEvents}
-          />
-        )}
-        <div className="chart-zoom">
-          <button className="icon-btn" title="缩小" onClick={() => zoomBy(15)}>
-            <Minus size={14} />
-          </button>
-          <button className="icon-btn" title="放大" onClick={() => zoomBy(-15)}>
-            <Plus size={14} />
-          </button>
-          <button
-            className="icon-btn"
-            title="显示全部"
-            onClick={() => zoomTo(0, 100)}
-          >
-            <RotateCcw size={13} />
-          </button>
-        </div>
-      </div>
-      <ChartAnnotationPanel state={annotations} />
-      {waves && showWaves && (
-        <div className="chart-wave-selectors">
-          <label>
-            显示
+              报告冻结图 · 未复权
+            </span>
+          ) : isIndex ? (
+            <span
+              className="chart-index-basis"
+              title="指数显示原始点位，不使用或修改个股默认复权口径"
+            >
+              指数原始点位
+            </span>
+          ) : (
             <ChartSelect
-              label="波浪结构显示范围"
-              value={waveMode}
-              onChange={(value) => {
-                setWaveMode(value as WaveMode);
-              }}
+              label="K线复权口径"
+              value={priceBasis}
+              onChange={setPriceBasis}
               options={[
-                { value: "latest", label: "最新结构" },
-                { value: "up", label: "↑ 上涨候选" },
-                { value: "down", label: "↓ 下跌候选" },
-                { value: "turning", label: "仅转折" },
+                { value: "none", label: "未复权", description: "来源原始价格" },
+                {
+                  value: "forward",
+                  label: "本地前复权",
+                  description:
+                    forwardOption?.available === false
+                      ? "公司行动条件不足，暂不可用"
+                      : "以当前观察日为锚换算历史价格",
+                  disabled: forwardOption?.available === false,
+                },
               ]}
             />
-          </label>
-          {waveMode !== "turning" && (
+          )}
+          {data && !frozenMode && !isIndex && (
+            <span className="chart-index-basis" title={actualPriceBasis.reason}>
+              图表价格：{actualPriceBasis.label}
+            </span>
+          )}
+          {period === "D" && !dataEndpoint && !frozenMode ? (
+            <ChartSelect
+              label="图表指标连续口径"
+              value={indicatorContinuity}
+              title="仅切换图表MA/MACD/KDJ/BOLL；不填停牌或缺失K线，策略与回测仍按严格市场交易日"
+              onChange={(value) =>
+                setIndicatorContinuity(value as "quotes" | "market_sessions")
+              }
+              options={[
+                {
+                  value: "quotes",
+                  label: "指标：报价序列",
+                  description: "按有效报价连续计算，缺失日不补K线",
+                },
+                {
+                  value: "market_sessions",
+                  label: "指标：严格交易日",
+                  description: "报价缺口中断指标预热；策略保持此口径",
+                },
+              ]}
+            />
+          ) : (
+            <span
+              className="chart-index-basis"
+              title={
+                period === "D"
+                  ? "板块日K指标采用严格市场交易日口径"
+                  : "周/月指标保留完整周期与报价覆盖约束"
+              }
+            >
+              指标：{period === "D" ? "严格交易日" : "完整周期"}
+            </span>
+          )}
+          <div className="ma-controls">
+            {MA_WINDOWS.map((n, i) => (
+              <ChartToggle
+                key={n}
+                label={`MA${n}`}
+                color={maColors[i]}
+                checked={mas.includes(n)}
+                onChange={() => toggleMA(n)}
+                title={
+                  last?.["ma" + n] == null
+                    ? `MA${n} 需要${n}根连续有效${cycleLabel}K，当前预热不足`
+                    : `MA${n} ${num(last["ma" + n])}`
+                }
+              />
+            ))}
+          </div>
+          {waves && (
+            <ChartToggle
+              label="波浪结构"
+              title={waves.notice}
+              checked={showWaves}
+              onChange={setShowWaves}
+              color="#b292f0"
+            />
+          )}
+          {supportsLimits && period === "D" && (
+            <ChartToggle
+              label="涨跌停标记"
+              title="显示已核验收盘涨跌停及地天、一字日形态；同日合并标注，不按涨幅或图上价格猜测"
+              checked={showLimits}
+              onChange={(value) => update({ showLimits: value })}
+            />
+          )}
+          <button
+            className="btn small chart-preferences-button"
+            title="指数与个股的均线、波浪显示分别保存；修改后自动保存"
+            onClick={() => setPreferencesOpen(true)}
+          >
+            <Settings2 size={13} />
+            图表偏好
+          </button>
+          <ChartAnnotationButton state={annotations} />
+          {!isIndex && eventBaseline && (
+            <ChartToggle
+              label="事件基准线"
+              title={baselineView.reason}
+              color="#c79136"
+              checked={showEventBaseline}
+              onChange={(value) => update({ showEventBaseline: value })}
+            />
+          )}
+          {!!historyEvents.length && (
+            <ChartToggle
+              label="历史事件标记"
+              title="显示本次选股或所选跟踪轮次实际绑定的历史事件日与事件价；不重新选择事件"
+              checked={showHistoricalEvents}
+              color="#bd96f3"
+              onChange={setShowHistoricalEvents}
+            />
+          )}
+          <div className="chart-zoom">
+            <button
+              className="icon-btn"
+              title="缩小"
+              onClick={() => zoomBy(15)}
+            >
+              <Minus size={14} />
+            </button>
+            <button
+              className="icon-btn"
+              title="放大"
+              onClick={() => zoomBy(-15)}
+            >
+              <Plus size={14} />
+            </button>
+            <button
+              className="icon-btn"
+              title="显示全部"
+              onClick={() => zoomTo(0, 100)}
+            >
+              <RotateCcw size={13} />
+            </button>
+          </div>
+        </div>
+        <ChartAnnotationPanel state={annotations} />
+        {waves && showWaves && (
+          <div className="chart-wave-selectors">
             <label>
-              结构日期
+              显示
               <ChartSelect
-                label="选择波浪结构日期"
-                value={effectivePatternKey}
-                onChange={setWavePatternKey}
-                disabled={!candidates.length}
+                label="波浪结构显示范围"
+                value={waveMode}
+                onChange={(value) => {
+                  setWaveMode(value as WaveMode);
+                }}
                 options={[
-                  {
-                    value: "latest",
-                    label: candidates.length ? "最新已识别结构" : "尚未识别",
-                  },
-                  ...(waveMode !== "latest" && candidates.length > 1
-                    ? [
-                        {
-                          value: "all",
-                          label: `全部${waveMode === "up" ? "上涨" : "下跌"}候选（${candidates.length}）`,
-                        },
-                      ]
-                    : []),
-                  ...candidates.map((pattern) => ({
-                    value: pattern.pattern_id,
-                    label: `${pattern.direction === "up" ? "↑" : "↓"} ${pattern.start_date} → ${pattern.end_date}`,
-                    description: pattern.has_correction
-                      ? "含 ABC 修正"
-                      : "五浪候选",
-                  })),
+                  { value: "latest", label: "最新结构" },
+                  { value: "up", label: "↑ 上涨候选" },
+                  { value: "down", label: "↓ 下跌候选" },
+                  { value: "turning", label: "仅转折" },
                 ]}
               />
             </label>
-          )}
-          {waveMode !== "turning" && (
-            <button
-              className="btn small"
-              disabled={!waveWindow}
-              onClick={() => {
-                if (waveWindow) zoomTo(waveWindow.start, waveWindow.end);
-              }}
-              title={
-                waveWindow
-                  ? "缩放到选中结构起止，并保留两端边距"
-                  : "选择一个已识别结构后可定位"
-              }
-            >
-              <Maximize2 size={12} />
-              定位结构
-            </button>
-          )}
-          <span className="chart-wave-hint">
-            {waveMode === "turning"
-              ? "已确认高低点 · 不编号"
-              : "推进实线 · ABC虚线 · 每个结构独立连线"}
-          </span>
-        </div>
-      )}
-      {activeBar && (
-        <div className="ohlc-strip">
-          <span>{activeBar.date}</span>
-          <span>
-            开 <b>{num(activeBar.open)}</b>
-          </span>
-          <span>
-            高 <b>{num(activeBar.high)}</b>
-          </span>
-          <span>
-            低 <b>{num(activeBar.low)}</b>
-          </span>
-          <span>
-            收{" "}
-            <b className={tone(activeBar.close - activeBar.open)}>
-              {num(activeBar.close)}
-            </b>
-          </span>
-          <span>
-            成交额 <b>{amount(activeBar.amount)}</b>
-          </span>
-          <span title={activeChange.reason}>
-            {activeChange.label}{" "}
-            <b className={tone(activeChange.value)}>
-              {percent(activeChange.value)}
-            </b>
-            {activeChange.value == null && (
-              <small className="muted">（待核验）</small>
-            )}
-          </span>
-          {data?.price_basis === "forward_event_affine" &&
-            activeBar.raw_close != null && (
-              <span>
-                原始收盘 <b>{num(activeBar.raw_close)}</b>
-              </span>
-            )}
-          <span title={activeSinceReturn.reason}>
-            至{activeSinceReturn.end || "观察日"}涨跌幅{" "}
-            <b className={tone(activeSinceReturn.value)}>
-              {percent(activeSinceReturn.value)}
-            </b>
-            {activeSinceReturn.value == null && (
-              <small className="muted">（待核验）</small>
-            )}
-          </span>
-          <span className="muted">
-            {period !== "D" && activeBar.complete === false
-              ? (period === "M"
-                  ? activeBar.monthly_quote_coverage_complete
-                  : activeBar.weekly_quote_coverage_complete) === false
-                ? `${cycleLabel}内报价不完整`
-                : (period === "M"
-                      ? activeBar.month_closed
-                      : activeBar.week_closed) === false
-                  ? `本${cycleLabel}形成中`
-                  : `${cycleLabel}K未完整`
-              : ""}
-          </span>
-          {supportsLimits && <LimitStatus bar={activeBar} period={period} />}
-          {supportsLimits && <PatternStatus bar={activeBar} period={period} />}
-        </div>
-      )}
-      {data?.indicator_continuity_notice && (
-        <div className="source-line chart-continuity-note">
-          {data.indicator_continuity_notice}
-        </div>
-      )}
-      {activeMAState.missing.length > 0 && (
-        <div className="source-line" title={activeMAState.reason}>
-          {activeBar?.date} ·{" "}
-          {activeMAState.missing.map(chartIndicatorLabel).join("、")}{" "}
-          {activeMAState.label} · {activeMAState.reason}
-        </div>
-      )}
-      {!frozenMode && result.loading ? (
-        <Loading />
-      ) : !frozenMode && result.error ? (
-        <ErrorBox message={result.error} retry={result.reload} />
-      ) : !bars.length ? (
-        <Empty
-          title={frozenMode ? "报告中没有留存该周期K线" : "该区间暂无K线"}
-          description={
-            frozenMode
-              ? "本图仅读取报告冻结数据，不回退到当前行情；所需周期与预热不足时保留缺口。"
-              : "请先初始化行情，或选择有覆盖的日期。"
-          }
-        />
-      ) : (
-        <div
-          className={`candle-plot${annotations.drawing ? " drawing-line" : ""}`}
-        >
-          <EChart
-            option={option}
-            height={actualHeight}
-            onReady={(c) => {
-              instance.current = c;
-              c.getZr().on("click", (event: any) => {
-                const pick = annotationPick.current;
-                const point = [event.offsetX, event.offsetY];
-                if (!pick || !c.containPixel({ gridIndex: 0 }, point)) return;
-                const value = c.convertFromPixel(
-                  { gridIndex: 0 },
-                  point,
-                ) as number[];
-                if (Array.isArray(value)) pick(value[1]);
-              });
-              c.on("datazoom", () => {
-                const current = (c.getOption().dataZoom as any[])?.[0];
-                if (current)
-                  zoomWindow.current = {
-                    start: current.start ?? 0,
-                    end: current.end ?? 100,
-                  };
-              });
-              c.on("updateAxisPointer", (event: any) => {
-                const axis = event.axesInfo?.find(
-                  (item: any) => item.axisDim === "x",
-                );
-                if (!axis) return;
-                const record =
-                  typeof axis.value === "number"
-                    ? latestBars.current[axis.value]
-                    : latestBars.current.find(
-                        (bar) => bar.date === axis.value,
-                      ) || latestBars.current[Number(axis.value)];
-                if (record) setActiveDate(record.date);
-              });
-            }}
-          />
-          {chosen.map((key, i) => (
-            <div
-              key={key}
-              className={`candle-pane-value${key === "boll" ? " candle-pane-boll" : ""}`}
-              style={{
-                top: paneTops[i] - 18,
-              }}
-              aria-label={key + "副图当前值"}
-            >
-              <strong>
-                {
-                  (
+            {waveMode !== "turning" && (
+              <label>
+                结构日期
+                <ChartSelect
+                  label="选择波浪结构日期"
+                  value={effectivePatternKey}
+                  onChange={setWavePatternKey}
+                  disabled={!candidates.length}
+                  options={[
                     {
-                      boll: "BOLL 20 · 2",
-                      volume: "成交量",
-                      macd: "MACD 12 · 26 · 9",
-                      kdj: "KDJ 9 · 3 · 3",
-                      breadth:
-                        period === "D"
-                          ? "沪深样本上涨家数"
-                          : "周期末沪深样本上涨家数",
-                    } as Record<string, string>
-                  )[key]
+                      value: "latest",
+                      label: candidates.length ? "最新已识别结构" : "尚未识别",
+                    },
+                    ...(waveMode !== "latest" && candidates.length > 1
+                      ? [
+                          {
+                            value: "all",
+                            label: `全部${waveMode === "up" ? "上涨" : "下跌"}候选（${candidates.length}）`,
+                          },
+                        ]
+                      : []),
+                    ...candidates.map((pattern) => ({
+                      value: pattern.pattern_id,
+                      label: `${pattern.direction === "up" ? "↑" : "↓"} ${pattern.start_date} → ${pattern.end_date}`,
+                      description: pattern.has_correction
+                        ? "含 ABC 修正"
+                        : "五浪候选",
+                    })),
+                  ]}
+                />
+              </label>
+            )}
+            {waveMode !== "turning" && (
+              <button
+                className="btn small"
+                disabled={!waveWindow}
+                onClick={() => {
+                  if (waveWindow) zoomTo(waveWindow.start, waveWindow.end);
+                }}
+                title={
+                  waveWindow
+                    ? "缩放到选中结构起止，并保留两端边距"
+                    : "选择一个已识别结构后可定位"
                 }
-              </strong>
-              {key === "boll" && (
-                <>
-                  <span className="candle-boll-close">
-                    收 {num(activeBar?.close)}
-                  </span>
-                  <span style={{ color: palette.bollUpper }}>
-                    上轨 {num(activeBoll?.upper)}
-                  </span>
-                  <span style={{ color: palette.bollMiddle }}>
-                    中轨 {num(activeBoll?.middle)}
-                  </span>
-                  <span style={{ color: palette.bollLower }}>
-                    下轨 {num(activeBoll?.lower)}
-                  </span>
-                  {activeBoll?.middle == null && (
-                    <span
-                      className="candle-pane-reason"
-                      title={activeBoll?.reason}
-                    >
-                      {activeBoll?.reason || "BOLL预热依据待核验"}
-                    </span>
-                  )}
-                </>
+              >
+                <Maximize2 size={12} />
+                定位结构
+              </button>
+            )}
+            <span className="chart-wave-hint">
+              {waveMode === "turning"
+                ? "已确认高低点 · 不编号"
+                : "推进实线 · ABC虚线 · 每个结构独立连线"}
+            </span>
+          </div>
+        )}
+        {activeBar && (
+          <div className="ohlc-strip">
+            <span>{activeBar.date}</span>
+            <span title={activeSessionDistance.reason}>
+              {activeSessionDistance.label}
+            </span>
+            <span>
+              开 <b>{num(activeBar.open)}</b>
+            </span>
+            <span>
+              高 <b>{num(activeBar.high)}</b>{" "}
+              <small
+                className={tone(activeExtremes.high.value)}
+                title={activeExtremes.high.reason}
+              >
+                （最高 {percent(activeExtremes.high.value)}
+                {activeExtremes.high.value == null ? " · 待核验" : ""}）
+              </small>
+            </span>
+            <span>
+              低 <b>{num(activeBar.low)}</b>{" "}
+              <small
+                className={tone(activeExtremes.low.value)}
+                title={activeExtremes.low.reason}
+              >
+                （最低 {percent(activeExtremes.low.value)}
+                {activeExtremes.low.value == null ? " · 待核验" : ""}）
+              </small>
+            </span>
+            <span>
+              收{" "}
+              <b className={tone(activeBar.close - activeBar.open)}>
+                {num(activeBar.close)}
+              </b>
+            </span>
+            <span>
+              成交额 <b>{amount(activeBar.amount)}</b>
+            </span>
+            <span title={activeChange.reason}>
+              {activeChange.label}{" "}
+              <b className={tone(activeChange.value)}>
+                {percent(activeChange.value)}
+              </b>
+              {activeChange.value == null && (
+                <small className="muted">（待核验）</small>
               )}
-              {key === "volume" && (
-                <>
-                  <span>
-                    量{" "}
-                    <b>
-                      {compactQuantity(
-                        valueAt("volume"),
-                        data?.volume_unit || "股",
-                      )}
-                    </b>
-                  </span>
-                  <span>
-                    额 <b>{amount(valueAt("amount"))}</b>
-                  </span>
-                </>
-              )}
-              {key === "macd" && (
-                <>
-                  <span style={{ color: "#e8c16b" }}>
-                    DIF {num(valueAt("macd_dif"))}
-                  </span>
-                  <span style={{ color: "#b292f0" }}>
-                    DEA {num(valueAt("macd_dea"))}
-                  </span>
-                  <span className={tone(valueAt("macd_hist"))}>
-                    MACD {num(valueAt("macd_hist"))}
-                  </span>
-                </>
-              )}
-              {key === "kdj" && (
-                <>
-                  <span style={{ color: "#e8c16b" }}>
-                    K {num(valueAt("kdj_k"))}
-                  </span>
-                  <span style={{ color: "#4cbbe3" }}>
-                    D {num(valueAt("kdj_d"))}
-                  </span>
-                </>
-              )}
-              {key === "breadth" && (
-                <span className="up">
-                  上涨 {num(valueAt("advancers"), 0)} 家
+            </span>
+            {data?.price_basis === "forward_event_affine" &&
+              activeBar.raw_close != null && (
+                <span>
+                  原始收盘 <b>{num(activeBar.raw_close)}</b>
                 </span>
               )}
-              {(key === "macd" || key === "kdj") &&
-                (() => {
-                  const state = chartIndicatorAvailability(
-                    activeBar,
-                    key === "macd"
-                      ? ["macd_dif", "macd_dea", "macd_hist"]
-                      : ["kdj_k", "kdj_d"],
-                    period,
+            <span title={activeSinceReturn.reason}>
+              至{activeSinceReturn.end || "观察日"}涨跌幅{" "}
+              <b className={tone(activeSinceReturn.value)}>
+                {percent(activeSinceReturn.value)}
+              </b>
+              {activeSinceReturn.value == null && (
+                <small className="muted">（待核验）</small>
+              )}
+            </span>
+            <span className="muted">
+              {period !== "D" && activeBar.complete === false
+                ? (period === "M"
+                    ? activeBar.monthly_quote_coverage_complete
+                    : activeBar.weekly_quote_coverage_complete) === false
+                  ? `${cycleLabel}内报价不完整`
+                  : (period === "M"
+                        ? activeBar.month_closed
+                        : activeBar.week_closed) === false
+                    ? `本${cycleLabel}形成中`
+                    : `${cycleLabel}K未完整`
+                : ""}
+            </span>
+            {supportsLimits && <LimitStatus bar={activeBar} period={period} />}
+            {supportsLimits && (
+              <PatternStatus bar={activeBar} period={period} />
+            )}
+          </div>
+        )}
+        {data?.indicator_continuity_notice && (
+          <div className="source-line chart-continuity-note">
+            {data.indicator_continuity_notice}
+          </div>
+        )}
+        {activeMAState.missing.length > 0 && (
+          <div className="source-line" title={activeMAState.reason}>
+            {activeBar?.date} ·{" "}
+            {activeMAState.missing.map(chartIndicatorLabel).join("、")}{" "}
+            {activeMAState.label} · {activeMAState.reason}
+          </div>
+        )}
+        {!frozenMode && result.loading ? (
+          <Loading />
+        ) : !frozenMode && result.error ? (
+          <ErrorBox message={result.error} retry={result.reload} />
+        ) : !bars.length ? (
+          <Empty
+            title={frozenMode ? "报告中没有留存该周期K线" : "该区间暂无K线"}
+            description={
+              frozenMode
+                ? "本图仅读取报告冻结数据，不回退到当前行情；所需周期与预热不足时保留缺口。"
+                : "请先初始化行情，或选择有覆盖的日期。"
+            }
+          />
+        ) : (
+          <div
+            className={`candle-plot${annotations.drawing ? " drawing-line" : ""}`}
+          >
+            <EChart
+              key={entryFocus ? entryCanvasKey : undefined}
+              option={option}
+              height={actualHeight}
+              onReady={(c) => {
+                instance.current = c;
+                if (entryFocus) {
+                  setEntryCanvasReadyKey(entryCanvasKey);
+                  if (entryStage.current) {
+                    entryStage.current.dataset.zoomStart = String(
+                      zoomWindow.current.start,
+                    );
+                    entryStage.current.dataset.zoomEnd = String(
+                      zoomWindow.current.end,
+                    );
+                  }
+                }
+                c.getZr().on("click", (event: any) => {
+                  const pick = annotationPick.current;
+                  const point = [event.offsetX, event.offsetY];
+                  if (!pick || !c.containPixel({ gridIndex: 0 }, point)) return;
+                  const value = c.convertFromPixel(
+                    { gridIndex: 0 },
+                    point,
+                  ) as number[];
+                  if (Array.isArray(value)) pick(value[1]);
+                });
+                c.on("datazoom", () => {
+                  const current = (c.getOption().dataZoom as any[])?.[0];
+                  if (current)
+                    zoomWindow.current = {
+                      start: current.start ?? 0,
+                      end: current.end ?? 100,
+                    };
+                  if (entryFocus && entryStage.current && current) {
+                    entryStage.current.dataset.zoomStart = String(
+                      zoomWindow.current.start,
+                    );
+                    entryStage.current.dataset.zoomEnd = String(
+                      zoomWindow.current.end,
+                    );
+                  }
+                });
+                c.on("updateAxisPointer", (event: any) => {
+                  const axis = event.axesInfo?.find(
+                    (item: any) => item.axisDim === "x",
                   );
-                  return state.missing.length > 0 ? (
-                    <span className="muted" title={state.reason}>
-                      {state.label}
-                    </span>
-                  ) : null;
-                })()}
-              <time>{activeBar?.date}</time>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="chart-bottom">
-        <div className="indicator-controls">
-          {CHART_INDICATOR_ORDER.filter(
-            (key) => key !== "breadth" || broad,
-          ).map((key) => (
-            <ChartToggle
-              key={key}
-              label={
-                {
-                  volume: "成交量",
-                  boll: "BOLL",
-                  kdj: "KDJ",
-                  macd: "MACD",
-                  breadth: "上涨家数",
-                }[key]
-              }
-              title={
-                key === "boll"
-                  ? "独立副图K线与布林带 · 20周期 · 2倍标准差"
-                  : undefined
-              }
-              color={key === "boll" ? palette.bollMiddle : undefined}
-              checked={key === "boll" ? showBoll : panels.includes(key)}
-              onChange={() =>
-                key === "boll" ? setShowBoll(!showBoll) : togglePanel(key)
-              }
+                  if (!axis) return;
+                  const record =
+                    typeof axis.value === "number"
+                      ? latestBars.current[axis.value]
+                      : latestBars.current.find(
+                          (bar) => bar.date === axis.value,
+                        ) || latestBars.current[Number(axis.value)];
+                  if (record) setActiveDate(record.date);
+                });
+              }}
             />
-          ))}
+            {chosen.map((key, i) => (
+              <div
+                key={key}
+                className={`candle-pane-value${key === "boll" ? " candle-pane-boll" : ""}`}
+                style={{
+                  top: paneTops[i] - 18,
+                }}
+                aria-label={key + "副图当前值"}
+              >
+                <strong>
+                  {
+                    (
+                      {
+                        boll: "BOLL 20 · 2",
+                        volume: "成交量",
+                        macd: "MACD 12 · 26 · 9",
+                        kdj: "KDJ 9 · 3 · 3",
+                        breadth:
+                          period === "D"
+                            ? "沪深样本上涨家数"
+                            : "周期末沪深样本上涨家数",
+                      } as Record<string, string>
+                    )[key]
+                  }
+                </strong>
+                {key === "boll" && (
+                  <>
+                    <span className="candle-boll-close">
+                      收 {num(activeBar?.close)}
+                    </span>
+                    <span style={{ color: palette.bollUpper }}>
+                      上轨 {num(activeBoll?.upper)}
+                    </span>
+                    <span style={{ color: palette.bollMiddle }}>
+                      中轨 {num(activeBoll?.middle)}
+                    </span>
+                    <span style={{ color: palette.bollLower }}>
+                      下轨 {num(activeBoll?.lower)}
+                    </span>
+                    {activeBoll?.middle == null && (
+                      <span
+                        className="candle-pane-reason"
+                        title={activeBoll?.reason}
+                      >
+                        {activeBoll?.reason || "BOLL预热依据待核验"}
+                      </span>
+                    )}
+                  </>
+                )}
+                {key === "volume" && (
+                  <>
+                    <span>
+                      量{" "}
+                      <b>
+                        {compactQuantity(
+                          valueAt("volume"),
+                          data?.volume_unit || "股",
+                        )}
+                      </b>
+                    </span>
+                    <span>
+                      额 <b>{amount(valueAt("amount"))}</b>
+                    </span>
+                  </>
+                )}
+                {key === "macd" && (
+                  <>
+                    <span style={{ color: "#e8c16b" }}>
+                      DIF {num(valueAt("macd_dif"))}
+                    </span>
+                    <span style={{ color: "#b292f0" }}>
+                      DEA {num(valueAt("macd_dea"))}
+                    </span>
+                    <span className={tone(valueAt("macd_hist"))}>
+                      MACD {num(valueAt("macd_hist"))}
+                    </span>
+                  </>
+                )}
+                {key === "kdj" && (
+                  <>
+                    <span style={{ color: "#e8c16b" }}>
+                      K {num(valueAt("kdj_k"))}
+                    </span>
+                    <span style={{ color: "#4cbbe3" }}>
+                      D {num(valueAt("kdj_d"))}
+                    </span>
+                  </>
+                )}
+                {key === "breadth" && (
+                  <span className="up">
+                    上涨 {num(valueAt("advancers"), 0)} 家
+                  </span>
+                )}
+                {(key === "macd" || key === "kdj") &&
+                  (() => {
+                    const state = chartIndicatorAvailability(
+                      activeBar,
+                      key === "macd"
+                        ? ["macd_dif", "macd_dea", "macd_hist"]
+                        : ["kdj_k", "kdj_d"],
+                      period,
+                    );
+                    return state.missing.length > 0 ? (
+                      <span className="muted" title={state.reason}>
+                        {state.label}
+                      </span>
+                    ) : null;
+                  })()}
+                <time>{activeBar?.date}</time>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="chart-bottom">
+          <div className="indicator-controls">
+            {CHART_INDICATOR_ORDER.filter(
+              (key) => key !== "breadth" || broad,
+            ).map((key) => (
+              <ChartToggle
+                key={key}
+                label={
+                  {
+                    volume: "成交量",
+                    boll: "BOLL",
+                    kdj: "KDJ",
+                    macd: "MACD",
+                    breadth: "上涨家数",
+                  }[key]
+                }
+                title={
+                  key === "boll"
+                    ? "独立副图K线与布林带 · 20周期 · 2倍标准差"
+                    : undefined
+                }
+                color={key === "boll" ? palette.bollMiddle : undefined}
+                checked={key === "boll" ? showBoll : panels.includes(key)}
+                onChange={() =>
+                  key === "boll" ? setShowBoll(!showBoll) : togglePanel(key)
+                }
+              />
+            ))}
+          </div>
+          <span>
+            {entryFocus
+              ? entryWindow.label + " · "
+              : period === "D"
+                ? "默认最近100根 · "
+                : "默认全范围 · "}
+            {entryFocus
+              ? "图内滚轮 / 双指缩放 · 图外滚动页面"
+              : "滚轮 / 双指缩放"}
+            · 拖拽平移 · 联动十字线
+          </span>
         </div>
-        <span>
-          {period === "D" ? "默认最近100根 · " : "默认全范围 · "}滚轮 / 双指缩放
-          · 拖拽平移 · 联动十字线
-        </span>
-      </div>
+      </section>
       {(!!historyViews.length || historicalChecksReason) && (
         <div className="chart-history-events" aria-label="策略历史事件参照">
           <strong>历史事件 · 实际规则绑定</strong>
@@ -1901,6 +2064,10 @@ export function StockDrawer({
     asOf?: string;
     data: Row;
   } | null>(null);
+  const [entryHeaderBoard, setEntryHeaderBoard] = useState<{
+    row: Row;
+    date: string;
+  } | null>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -1987,6 +2154,13 @@ export function StockDrawer({
     document.addEventListener("keydown", f);
     return () => document.removeEventListener("keydown", f);
   }, [onClose]);
+  const headerSummary =
+    entryHeaderBoard &&
+    entryHeaderBoard.row.instrument_id === id.toUpperCase() &&
+    entryHeaderBoard.date === (asOf || detailData?.data_date) &&
+    entryHeaderBoard.row.snapshot_id === detailData?.snapshot_id
+      ? entryHeaderBoard.row
+      : null;
   return (
     <div
       className="drawer-backdrop"
@@ -1994,171 +2168,251 @@ export function StockDrawer({
     >
       <aside
         ref={drawerRef}
-        className="stock-drawer"
+        className="stock-drawer single-page-stock-frame"
         role="dialog"
         aria-modal="true"
         aria-label="个股行情详情"
       >
-        <div
-          className={
-            "drawer-heading" +
-            (position && onStep ? " with-stock-navigation" : "")
-          }
-        >
-          <div>
-            <div className="eyebrow">个股行情详情</div>
-            <div className="stock-title-row">
-              <h2>
-                {meta.name || position?.current.name || id}{" "}
-                <CopyStockCode
-                  code={meta.code || position?.current.code || id.slice(0, 6)}
-                  instrumentId={id}
-                />
-              </h2>
-              <StockHeaderQuote
-                data={detailData}
+        <div className="entry-page-bar">
+          <div className="entry-header-identity">
+            <strong>
+              {meta.name || position?.current.name || id}{" "}
+              <CopyStockCode
+                code={meta.code || position?.current.code || id.slice(0, 6)}
                 instrumentId={id}
-                asOf={asOf}
               />
+            </strong>
+            <div className="entry-header-board" aria-label="观察日板况">
+              {headerSummary && (
+                <BoardTags
+                  row={headerSummary}
+                  date={entryHeaderBoard!.date}
+                  snapshotId={headerSummary.snapshot_id}
+                  height
+                  boardText
+                  types={false}
+                  volume={false}
+                  feedback={false}
+                />
+              )}
               <PatternStatus bar={stockPatternHeader(detailData, asOf)} />
             </div>
-            {position && (
-              <div className="stock-navigation-scope">
-                <span>{navigation?.label}</span>
-                <span>
-                  {navigation?.source === "tracking"
-                    ? "跟踪观察日"
-                    : navigation?.source === "watchlist"
-                      ? "自选观察日"
-                      : navigation?.source === "market"
-                        ? "盘面观察日"
-                        : navigation?.source === "members"
-                          ? "成员报价日"
-                          : "选股观察日"}{" "}
-                  {asOf || "未指定"}
-                </span>
-              </div>
-            )}
-            <StockCurrentTopics data={detailData} instrumentId={id} />
-            <div className="tags">
-              {(detailData?.risk_labels || []).map((t: any, i: number) => (
-                <Badge key={i} tone="warn">
-                  {textValue(t)}
-                </Badge>
-              ))}
-            </div>
           </div>
-          <div className="stock-heading-actions">
-            {position && onStep && (
-              <div
-                className="stock-navigation-controls"
-                role="group"
-                aria-label="按当前选股结果浏览"
-                title="按打开时的筛选和排序顺序浏览全部已加载结果，跨本地分页"
+          <StockCompactMetrics
+            summary={headerSummary}
+            detail={detailData}
+            instrumentId={id}
+            asOf={asOf || detailData?.data_date}
+            isIndex={meta.kind === "index"}
+          />
+          <div className="entry-header-actions">
+            <div
+              className="stock-navigation-controls entry-header-navigation"
+              role="group"
+              aria-label="按当前结果浏览股票"
+              title={
+                position
+                  ? "按打开时的筛选与排序浏览全部已加载结果"
+                  : "从榜单、策略、跟踪、自选或成员列表打开后可按原顺序浏览"
+              }
+            >
+              <button
+                className="btn small"
+                disabled={!position?.previousId || !onStep}
+                onClick={() => onStep?.(-1)}
+                aria-label="上一只股票"
               >
-                <button
-                  className="btn small"
-                  disabled={!position.previousId}
-                  onClick={() => onStep(-1)}
-                  aria-label="上一只股票"
-                >
-                  <ChevronLeft size={15} />
-                  上一只
-                </button>
+                <ChevronLeft size={15} />
+                <span>上一只</span>
+              </button>
+              {position && (
                 <output aria-live="polite" aria-atomic="true">
                   {position.position} / {position.total}
                 </output>
-                <button
-                  className="btn small"
-                  disabled={!position.nextId}
-                  onClick={() => onStep(1)}
-                  aria-label="下一只股票"
-                >
-                  下一只
-                  <ChevronRight size={15} />
-                </button>
-              </div>
-            )}
-            <div className="button-group">
-              {["stock", "equity", "a_share", "A"].includes(
-                meta.kind || meta.asset_type,
-              ) && (
-                <WatchlistButton
-                  instrumentId={id}
-                  trackingRoundId={eventReference.sourceBaseline?.roundId}
-                  sourceKind={
-                    eventReference.sourceBaseline?.roundId
-                      ? "tracking"
-                      : "stock"
-                  }
-                  observedDate={asOf || detailData?.data_date}
-                />
-              )}
-              {onResearch && (
-                <button className="btn" onClick={() => onResearch(id)}>
-                  个股研究
-                </button>
               )}
               <button
-                ref={closeButtonRef}
-                className="icon-btn"
-                aria-label="关闭个股详情"
-                onClick={onClose}
+                className="btn small"
+                disabled={!position?.nextId || !onStep}
+                onClick={() => onStep?.(1)}
+                aria-label="下一只股票"
               >
-                <X size={22} />
+                <span>下一只</span>
+                <ChevronRight size={15} />
               </button>
             </div>
+            <button
+              className="link"
+              aria-label="查看顶部资料"
+              onClick={() =>
+                drawerRef.current
+                  ?.querySelector(".entry-page-scroll")
+                  ?.scrollTo({ top: 0, behavior: "smooth" })
+              }
+            >
+              <span className="entry-action-text">↑ 顶部资料</span>
+              <span className="entry-action-short" aria-hidden="true">
+                ↑ 资料
+              </span>
+            </button>
+            <button
+              className="link"
+              aria-label="定位图表"
+              onClick={() =>
+                drawerRef.current
+                  ?.querySelector(".entry-single-stage")
+                  ?.scrollIntoView({ block: "start", behavior: "smooth" })
+              }
+            >
+              <span className="entry-action-text">定位图表</span>
+              <span className="entry-action-short" aria-hidden="true">
+                图表
+              </span>
+            </button>
+            <button
+              className="icon-btn"
+              aria-label="关闭当前详情"
+              onClick={onClose}
+            >
+              <X size={19} />
+            </button>
           </div>
         </div>
-        <div className="drawer-body">
-          <StockEventBaseline state={eventReference} />
-          <CandleChart
-            key={id}
-            instrumentId={id}
-            instrumentKind={meta.kind}
-            asOf={asOf}
-            height={660}
-            onLoad={(next) => {
-              if (
-                currentRequest.current.id === id &&
-                currentRequest.current.asOf === asOf &&
-                stockPayloadMatches(next, id, asOf)
-              )
-                setLoaded({ id, asOf, data: next });
-            }}
-            eventBaseline={eventReference.baseline}
-            historicalChecks={eventReference.historicalChecks}
-            historicalChecksReason={eventReference.historicalChecksReason}
-            showDataNotes={false}
-          />
-          <Panel title="资料与风险">
-            <div className="detail-list">
-              <p>
-                数据截止{" "}
-                <strong>
-                  {data?.as_of || asOf || data?.bars?.at(-1)?.date || "—"}
-                </strong>
-              </p>
-              <p>
-                最新换手率{" "}
-                <strong>
-                  {percent(
-                    detailData?.turnover_rate ??
-                      data?.bars?.at(-1)?.turnover_rate,
-                  )}
-                </strong>
-              </p>
-              <p>
-                真实盘口时序 <Badge tone="warn">未提供</Badge>
-              </p>
+        <div
+          className="entry-page-scroll"
+          data-detail-loading={detail.loading || eventReference.loading}
+        >
+          <div
+            className={
+              "drawer-heading" +
+              (position && onStep ? " with-stock-navigation" : "")
+            }
+          >
+            <div>
+              <div className="eyebrow">个股行情详情</div>
+              <div className="stock-title-row">
+                <h2>
+                  {meta.name || position?.current.name || id}{" "}
+                  <CopyStockCode
+                    code={meta.code || position?.current.code || id.slice(0, 6)}
+                    instrumentId={id}
+                  />
+                </h2>
+                <StockHeaderQuote
+                  data={detailData}
+                  instrumentId={id}
+                  asOf={asOf}
+                />
+              </div>
+              {position && (
+                <div className="stock-navigation-scope">
+                  <span>{navigation?.label}</span>
+                  <span>
+                    {navigation?.source === "tracking"
+                      ? "跟踪观察日"
+                      : navigation?.source === "watchlist"
+                        ? "自选观察日"
+                        : navigation?.source === "market"
+                          ? "盘面观察日"
+                          : navigation?.source === "members"
+                            ? "成员报价日"
+                            : "选股观察日"}{" "}
+                    {asOf || "未指定"}
+                  </span>
+                </div>
+              )}
+              <StockCurrentTopics data={detailData} instrumentId={id} />
+              <div className="tags">
+                {(detailData?.risk_labels || []).map((t: any, i: number) => (
+                  <Badge key={i} tone="warn">
+                    {textValue(t)}
+                  </Badge>
+                ))}
+              </div>
             </div>
-            <DataNotes
-              items={chartDataNotes(data?.warnings, detailData?.warnings)}
+            <div className="stock-heading-actions">
+              <div className="button-group">
+                {["stock", "equity", "a_share", "A"].includes(
+                  meta.kind || meta.asset_type,
+                ) && (
+                  <WatchlistButton
+                    instrumentId={id}
+                    trackingRoundId={eventReference.sourceBaseline?.roundId}
+                    sourceKind={
+                      eventReference.sourceBaseline?.roundId
+                        ? "tracking"
+                        : "stock"
+                    }
+                    observedDate={asOf || detailData?.data_date}
+                  />
+                )}
+                {onResearch && (
+                  <button className="btn" onClick={() => onResearch(id)}>
+                    个股研究
+                  </button>
+                )}
+                <button
+                  ref={closeButtonRef}
+                  className="icon-btn"
+                  aria-label="关闭个股详情"
+                  onClick={onClose}
+                >
+                  <X size={22} />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="drawer-body">
+            <StockEventBaseline state={eventReference} />
+            <CandleChart
+              key={id}
+              instrumentId={id}
+              instrumentKind={meta.kind}
+              asOf={asOf}
+              height={660}
+              entryFocus
+              onBoardPresentation={setEntryHeaderBoard}
+              onLoad={(next) => {
+                if (
+                  currentRequest.current.id === id &&
+                  currentRequest.current.asOf === asOf &&
+                  stockPayloadMatches(next, id, asOf)
+                )
+                  setLoaded({ id, asOf, data: next });
+              }}
+              eventBaseline={eventReference.baseline}
+              historicalChecks={eventReference.historicalChecks}
+              historicalChecksReason={eventReference.historicalChecksReason}
+              showDataNotes={false}
             />
-            <p className="footnote">
-              缺失字段保持未知。行情详情不自动触发公告研究。
-            </p>
-          </Panel>
+            <Panel title="资料与风险">
+              <div className="detail-list">
+                <p>
+                  数据截止{" "}
+                  <strong>
+                    {data?.as_of || asOf || data?.bars?.at(-1)?.date || "—"}
+                  </strong>
+                </p>
+                <p>
+                  最新换手率{" "}
+                  <strong>
+                    {percent(
+                      detailData?.turnover_rate ??
+                        data?.bars?.at(-1)?.turnover_rate,
+                    )}
+                  </strong>
+                </p>
+                <p>
+                  真实盘口时序 <Badge tone="warn">未提供</Badge>
+                </p>
+              </div>
+              <DataNotes
+                items={chartDataNotes(data?.warnings, detailData?.warnings)}
+              />
+              <p className="footnote">
+                缺失字段保持未知。行情详情不自动触发公告研究。
+              </p>
+            </Panel>
+          </div>
         </div>
       </aside>
     </div>

@@ -17,6 +17,28 @@ from app.services.tracking_quotes import tracking_quotes
 from app.services.strategy_periods import add_period_metrics
 
 
+def _signal_price_basis(round_):
+    """A round keeps its entry version's signal basis, independently of policies."""
+    return 'forward' if obj(round_.get('entry_basis_json'), {}).get('signal_price_basis') == 'forward' else 'none'
+
+
+def _comparison_metrics(round_, day, price, price_context, generation):
+    """Freeze a same-day price comparison; this is not a dividend cash account."""
+    from app.domain.strategy_prices import project_reference_price
+    reference, proof = project_reference_price(money(round_['entry_price_e8']), round_['entry_business_date'], price_context)
+    quotes=[row for row in price_context.get('raw_rows',[]) if row.get('date')==day]
+    traded=len(quotes)==1 and finite(quotes[0].get('volume')) is not None and quotes[0]['volume']>0
+    valid = traded and reference is not None and price is not None and reference > 0 and price > 0
+    return {'tracking_reference_price': reference,
+            'tracking_reference_price_basis': 'forward_event_affine',
+            'tracking_comparison_anchor': day,
+            'tracking_comparison_market_snapshot_id': generation,
+            'tracking_reference_evidence': proof,
+            'tracking_change_pct': (price/reference-1)*100 if valid else None,
+            'close_below_entry': price < reference if valid else None,
+            'tracking_comparison_scope': '同观察日前复权价格变化；不含分红到账、送转股数或配股权益记账'}
+
+
 def add_tracking(payload, *, automatic=False, transaction_guard=None, on_commit=None):
     rid=payload.get('run_id');ids=payload.get('instrument_ids',[])
     if not isinstance(ids,list) or not ids or len(ids)>500:fail('请选择1至500只已命中股票')
@@ -54,6 +76,10 @@ def add_tracking(payload, *, automatic=False, transaction_guard=None, on_commit=
             if automatic and c.execute('SELECT 1 FROM tracking_round WHERE origin_run_id=? AND instrument_id=?',(rid,ident)).fetchone():
                 skipped.append({'instrument_id':ident,'reason':'本次运行已生成过跟踪轮次，保留原结束状态','reason_code':'already_recorded'});continue
             tid=new_id('tracking');basis={'comparison_basis_id':snapshot['snapshot_id']+':'+snapshot['price_basis']+':'+str(snapshot['adjustment_anchor']),'price_basis':snapshot['price_basis'],'adjustment_anchor':snapshot['adjustment_anchor'],'algorithm_version':snapshot['algorithm_version'],'entry_snapshot_id':snapshot['snapshot_id'],'source_lineage':obj(snapshot['lineage_json'],{}),'entry_topics':obj(found['topic_snapshot_json'],[]),'entry_checks':obj(found['checks_json'],{}),'entry_complete_topic_ids':obj(found['metrics_json'],{}).get('_complete_topic_ids',[]),'entry_price_date':day,'signal_date':obj(found['metrics_json'],{}).get('signal_date',day),'signal_price':obj(found['metrics_json'],{}).get('signal_close',money(found['close_price_e8'])),'signal_period':obj(found['metrics_json'],{}).get('indicator_period','D')}
+            basis['signal_price_basis']=strategy.get('price_basis','none')
+            if basis['signal_price_basis']=='forward':
+                from app.domain.strategy_prices import VERSION as price_version
+                basis['signal_price_contract']=price_version
             basis['entry_high']=entry_high_for({'entry_snapshot_id':snapshot['snapshot_id'],'instrument_id':ident,'entry_business_date':day,'entry_price_e8':found['close_price_e8']},entry_highs)
             basis['entry_low']=entry_low_for({'entry_snapshot_id':snapshot['snapshot_id'],'instrument_id':ident,'entry_business_date':day,'entry_price_e8':found['close_price_e8']},entry_lows)
             insert(c,'tracking_round',dict(round_id=tid,strategy_id=run['strategy_id'],entry_strategy_version=run['strategy_version'],origin_run_id=rid,instrument_id=ident,entry_business_date=day,entry_price_e8=found['close_price_e8'],entry_snapshot_id=snapshot['snapshot_id'],entry_policy_version=strategy['current_policy_version'],current_policy_version=strategy['current_policy_version'],entry_basis_json=js(basis),created_at_ms=now_ms()))
@@ -72,10 +98,22 @@ def _policy_at(c,r,day):
 def _age(calendar,entry,day):
     return trading_age(calendar,entry,day)
 
-def _entry_comparison(r,day,price,market=None):
+def _entry_comparison(r,day,price,market=None,price_context=None):
     basis=obj(r['entry_basis_json'],{})
     if price is None:return None,'unknown','缺少当日收盘价'
     if basis.get('price_basis')!='none':return None,'unknown','当前实现没有经过验收的跨复权锚转换'
+    if _signal_price_basis(r)=='forward':
+        if day==r['entry_business_date']:return price,'verified',None
+        if price_context is None:return None,'unknown','本轮使用本地前复权价格比较，需手动核对当前观察日；未借用其它日期的调整基准'
+        quotes=[row for row in price_context.get('raw_rows',[]) if row.get('date')==day]
+        if len(quotes)!=1 or finite(quotes[0].get('volume')) is None or quotes[0]['volume']<=0:
+            return None,'unknown','观察日没有唯一有效的正成交量报价，前复权入池比较保持待核验'
+        from app.domain.strategy_prices import project_reference_price
+        reference,proof=project_reference_price(money(r['entry_price_e8']),r['entry_business_date'],price_context)
+        if reference is None:return None,'unknown',proof.get('reason') or '本轮入池参考价未通过当前观察日前复权核验'
+        # Preserve the legacy normalization interface while its percentage is
+        # exactly current-T-price / entry-reference-adjusted-to-T minus one.
+        return price*money(r['entry_price_e8'])/reference,'verified',None
     market=market or get_market()
     if day==r['entry_business_date']:return price,'not_required',None
     if hasattr(market,'corporate_actions_between'):
@@ -94,12 +132,32 @@ def _round_view(c,r,master,calendar,bars,day,with_events=False,current_membershi
     saved_review=c.execute("SELECT evidence_json FROM tracking_event WHERE round_id=? AND event_type='review' AND business_date=? ORDER BY recorded_at_ms DESC,rowid DESC LIMIT 1",(r['round_id'],valuation_date)).fetchone()
     if r['status']!='tracking' and saved_review:ms=obj(saved_review[0],{}).get('metrics',ms)
     price=ms.get('close');normalized,state,reason=_entry_comparison(r,valuation_date,price,market)
+    frozen_comparison=None
+    if _signal_price_basis(r)=='forward' and saved_review:
+        saved=obj(saved_review[0],{});frozen=obj(saved.get('metrics'),{}) if isinstance(saved.get('metrics'),str) else saved.get('metrics',{})
+        status=market.status() if market is not None and callable(getattr(market,'status',None)) else {}
+        if (isinstance(frozen,dict) and frozen.get('tracking_comparison_anchor')==valuation_date
+                # An ended round displays its immutable ending review, including
+                # its close. Only an active round compares a freshly read quote
+                # and must match the current market generation as well.
+                and (r['status']!='tracking' or frozen.get('tracking_comparison_market_snapshot_id')==status.get('snapshot_id'))
+                and price is not None and finite(frozen.get('close')) is not None and e8(frozen['close'])==e8(price)
+                and frozen.get('tracking_reference_price_basis')=='forward_event_affine'):
+            frozen_comparison=frozen
+            state=saved.get('comparison_state','unknown');reason=saved.get('comparison_reason')
     latest=c.execute('SELECT * FROM tracking_event WHERE round_id=? ORDER BY business_date DESC,recorded_at_ms DESC,rowid DESC LIMIT 1',(r['round_id'],)).fetchone()
     alerts=rows(c,"SELECT * FROM tracking_event WHERE round_id=? AND event_type='alert' AND business_date=? ORDER BY recorded_at_ms DESC",(r['round_id'],day))
     latest_review=c.execute("SELECT * FROM tracking_event WHERE round_id=? AND event_type='review' ORDER BY business_date DESC,recorded_at_ms DESC,rowid DESC LIMIT 1",(r['round_id'],)).fetchone()
     topics=obj(latest_review['evidence_json'],{}).get('topics') if latest_review else None
     if topics is None:topics=obj(r['entry_basis_json'],{}).get('entry_topics',[])
     item={**{k:v for k,v in r.items() if k not in ('entry_basis_json','entry_price_e8')},**code_info(r['instrument_id'],master),'valuation_date':valuation_date,'entry_price':money(r['entry_price_e8']),'entry_basis':obj(r['entry_basis_json'],{}),'latest_price':price,'today_change_pct':ms.get('change_pct'),'tracking_change_pct':(normalized/money(r['entry_price_e8'])-1)*100 if normalized is not None else None,'comparison_state':state,'comparison_reason':reason,'trading_age':age,'remaining_sessions':max(0,p['duration_sessions']-age) if age is not None else None,'policy':p,'topics':topics,'latest_event':_event_view(dict(latest)) if latest else None,'alerts':[_event_view(a) for a in alerts]}
+    if frozen_comparison is not None:
+        item.update(tracking_change_pct=frozen_comparison.get('tracking_change_pct'),
+                    tracking_reference_price=frozen_comparison.get('tracking_reference_price'),
+                    tracking_reference_price_basis='forward_event_affine',
+                    tracking_comparison_anchor=valuation_date,
+                    tracking_reference_evidence=frozen_comparison.get('tracking_reference_evidence'),
+                    tracking_comparison_scope=frozen_comparison.get('tracking_comparison_scope'))
     if entry_high is not None:item.update(entry_high=entry_high.get('raw_high'),entry_high_date=entry_high.get('date'),entry_high_state=entry_high.get('state'),entry_high_reason=entry_high.get('reason'),entry_high_basis=entry_high)
     if entry_low is not None:item.update(entry_low=entry_low.get('raw_low'),entry_low_date=entry_low.get('date'),entry_low_state=entry_low.get('state'),entry_low_reason=entry_low.get('reason'),entry_low_basis=entry_low)
     # Current membership is a browsing filter only; frozen entry/review evidence
@@ -121,7 +179,9 @@ def list_tracking(strategy_id=None,status='tracking',triggered_only=False):
         if status and status!='all':
             if status not in ('tracking','expired','condition_ended','manual_removed'):fail('不支持的跟踪状态')
             sql+=' AND r.status=?';params.append(status)
-        sql+=' ORDER BY r.created_at_ms DESC';data=rows(c,sql,params);market=get_market();items=[];current_memberships=topic_map(c,day)
+        sql+=' ORDER BY r.created_at_ms DESC';data=rows(c,sql,params);market=get_market();items=[]
+        from app.services.hot_browse import browse_scope, require_scope
+        hot_scope=browse_scope(c,market,expected_day=day);current_memberships=topic_map(c,day)
     entry_highs=load_entry_highs(data)
     entry_lows=load_entry_lows(data)
     quotes=tracking_quotes(market,data,calendar,day)
@@ -130,7 +190,8 @@ def list_tracking(strategy_id=None,status='tracking',triggered_only=False):
             valuation_date=r['end_business_date'] if r['status']!='tracking' else day
             item=_round_view(c,r,master,calendar,[],day,current_memberships=current_memberships,entry_high=entry_high_for(r,entry_highs),entry_low=entry_low_for(r,entry_lows),quote=quotes[(r['instrument_id'],valuation_date)],market=market)
             if not triggered_only or item['alerts']:items.append(item)
-    return {'items':items,'total':len(items),'counts':counts,'business_date':day,'current_topics_scope':'当前业务日有效的本地来源成员与人工修改；不是历史归属，未完整分类的缺席不能判为不属于。'}
+    require_scope(hot_scope,market)
+    return {'items':items,'total':len(items),'counts':counts,'business_date':day,'hot_filter_scope':hot_scope,'current_topics_scope':'当前业务日有效的本地来源成员与人工修改；不是历史归属，未完整分类的缺席不能判为不属于。'}
 
 def get_tracking(tid):
     with connect() as c:
@@ -216,20 +277,33 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
     entry_lows=load_entry_lows(active)
     status_method=getattr(market,'status',None)
     generation=status_method().get('snapshot_id') if callable(status_method) else None
+    forward_rounds=[round_ for round_ in active if _signal_price_basis(round_)=='forward']
+    forward_actions={};forward_source=None
+    if forward_rounds:
+        from app.domain.strategy_prices import compact_source_token
+        verify=getattr(market,'verify_condition_sources',None)
+        forward_source=compact_source_token(verify()) if callable(verify) else None
+        action_reader=getattr(market,'actions_for_instruments',None)
+        symbols=sorted({round_['instrument_id'] for round_ in forward_rounds})
+        if callable(action_reader):
+            for offset in range(0,len(symbols),32):
+                batch=action_reader(symbols[offset:offset+32])
+                if isinstance(batch,dict):forward_actions.update(batch)
     action_inputs=load_action_evidence(deps.get('corporate_actions'),sorted({round_['instrument_id'] for round_ in active}),min((round_['entry_business_date'] for round_ in active),default=day),day,generation) if active else {}
     for original in active:
         bars=market.bars(original['instrument_id'],as_of=day)
+        signal_basis=_signal_price_basis(original)
         # Already-loaded bars carry the immutable generation's action flags.
         # Build outside BEGIN IMMEDIATE; never persist the full context.
         history_trees=[node for policy in policies_for_history if policy['strategy_id']==original['strategy_id'] for node in obj(policy['alerts_json'],[])+obj(policy['exits_json'],[])]
         historical_start=history_retain_start(history_trees,calendar,original['entry_business_date'])
-        history_context=HistoryContext(bars,calendar,day,generation,retain_start=historical_start) if original['strategy_id'] in history_strategies else None
+        history_context=HistoryContext(bars,calendar,day,generation,retain_start=historical_start) if signal_basis=='none' and original['strategy_id'] in history_strategies else None
         if history_context:
             from app.services.history_events import attach_limit_events
             attach_limit_events(history_context,original['instrument_id'],history_trees,limit_evidence)
         limit_quotes=quote_index(bars)
         dates=[d for d in calendar if original['entry_business_date']<=d<=day]
-        comparisons={observed:_entry_comparison(original,observed,finite(limit_quotes[observed].get('close')) if limit_quotes.get(observed) else None,market) for observed in dates}
+        comparisons={observed:_entry_comparison(original,observed,finite(limit_quotes[observed].get('close')) if limit_quotes.get(observed) else None,market) for observed in dates} if signal_basis=='none' else {}
         count_values=limit_evidence.count_series(original['instrument_id'],dates,calendar,limit_quotes) if original['strategy_id'] in count_strategies else {}
         boll_series={}
         for date_ in dates:
@@ -242,18 +316,43 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
                 prepared_round=one(checked,'SELECT * FROM tracking_round WHERE round_id=?',(original['round_id'],))
                 if prepared_round['status']!='tracking':break
                 prepared_policy=_policy_at(checked,prepared_round,date_)
+            price_context=None
+            prepared_history=history_context
+            if signal_basis=='forward':
+                from app.domain.strategy_prices import prepare_condition_prices
+                # The wrapper verifies local source/action evidence before a
+                # business write lock. Every replay date owns its own anchor.
+                symbol=original['instrument_id'];actions=forward_actions.get(symbol)
+                price_context=prepare_condition_prices(bars,actions,calendar,date_,'forward',instrument_id=symbol,
+                    actions_coverage={'known':forward_source is not None and isinstance(actions,list),
+                                      'source_token':forward_source,'snapshot_id':generation})
+                if original['strategy_id'] in history_strategies:
+                    prepared_history=HistoryContext(bars,calendar,date_,generation,retain_start=historical_start,price_context=price_context)
+                    from app.services.history_events import attach_limit_events
+                    attach_limit_events(prepared_history,original['instrument_id'],history_trees,limit_evidence)
+                comparisons[date_]=_entry_comparison(original,date_,finite(limit_quotes[date_].get('close')) if limit_quotes.get(date_) else None,market,price_context)
             boll_by_period=configs_for(prepared_policy['alerts']+prepared_policy['exits'],'D')
             prepared_boll={}
             for selected,configs in boll_by_period.items():
                 for config in configs:
-                    cache_key=(selected,config_key(config))
+                    cache_key=(selected,config_key(config),date_ if signal_basis=='forward' else None)
                     if cache_key not in boll_series:
                         if len(boll_series)>=32:boll_series.pop(next(iter(boll_series)))
-                        computed=states_for_bars(bars,calendar,day,selected,[config])
+                        computed=states_for_bars(price_context['price_rows'] if price_context is not None else bars,calendar,date_ if price_context is not None else day,selected,[config])
                         boll_series[cache_key]={observed:value.get(cache_key[1]) for observed,value in computed.items()}
                     observed=latest_closed_date(calendar,date_,selected)
                     state=boll_series[cache_key].get(observed)
                     if state is not None:prepared_boll.setdefault(selected,{})[cache_key[1]]=state
+            prepared_metrics=None
+            if price_context is not None:
+                prepared_metrics=metrics_for(bars,date_,calendar,'D',
+                    include_higher_lows=any('higher_lows' in names(node) for node in prepared_policy['alerts']+prepared_policy['exits']),
+                    price_context=price_context)
+                if boll_by_period.get('D'):prepared_metrics['boll_states']=prepared_boll.get('D',{})
+                prepared_metrics=add_period_metrics(prepared_metrics,bars,date_,calendar,
+                    prepared_policy['alerts']+prepared_policy['exits'],'D',
+                    instrument_id=original['instrument_id'],generation=generation,price_context=price_context,
+                    **({'boll_states_by_period':prepared_boll} if any(boll_by_period.values()) else {}))
             with connect() as c:
                 c.execute("BEGIN IMMEDIATE")
                 if job_id:check_api_task(job_id,c)
@@ -269,12 +368,16 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
                 key=r['round_id']+':'+date_+':review'+(':policy:'+str(p['policy_version']) if previous_reviews else '')
                 if age is None:stats['unknown']+=1;continue
                 current_topics=_historical_topics(c,r,date_,day,topics)
-                ms=metrics_for(bars,date_,calendar,'D',[x['topic_id'] for x in current_topics] if current_topics is not None else None,
-                               include_higher_lows=any('higher_lows' in names(node) for node in p['alerts']+p['exits']))
-                if boll_by_period.get('D'):ms['boll_states']=prepared_boll.get('D',{})
-                ms=add_period_metrics(ms,bars,date_,calendar,p['alerts']+p['exits'],'D',
-                                      instrument_id=r['instrument_id'],generation=generation,
-                                      **({'boll_states_by_period':prepared_boll} if any(boll_by_period.values()) else {}))
+                if prepared_metrics is not None:
+                    ms=prepared_metrics
+                    ms['topic_ids']=[x['topic_id'] for x in current_topics] if current_topics is not None else None
+                else:
+                    ms=metrics_for(bars,date_,calendar,'D',[x['topic_id'] for x in current_topics] if current_topics is not None else None,
+                                   include_higher_lows=any('higher_lows' in names(node) for node in p['alerts']+p['exits']))
+                    if boll_by_period.get('D'):ms['boll_states']=prepared_boll.get('D',{})
+                    ms=add_period_metrics(ms,bars,date_,calendar,p['alerts']+p['exits'],'D',
+                                          instrument_id=r['instrument_id'],generation=generation,
+                                          **({'boll_states_by_period':prepared_boll} if any(boll_by_period.values()) else {}))
                 if any(names(node) & DAILY_LIMIT_FIELDS for node in p['alerts']+p['exits']):
                     ms.update(limit_evidence.metrics(r['instrument_id'],date_,calendar,limit_quotes))
                 if any(names(node)&{COUNT_FIELD,'limit_up_1y'} for node in p['alerts']+p['exits']):
@@ -289,11 +392,12 @@ def _review_tracking_impl(payload=None,job_id=None,expected_inputs=None):
                     ms['_complete_topic_ids']=complete_topic_ids(c,references) if date_==day else obj(r['entry_basis_json'],{}).get('entry_complete_topic_ids',[]) if date_==r['entry_business_date'] else []
                 normalized,nstate,nreason=comparisons[date_] if ms.get('close') is not None else (None,'unknown','缺少当日收盘价')
                 ms['trading_age']=age;ms['tracking_change_pct']=(normalized/money(r['entry_price_e8'])-1)*100 if normalized is not None else None;ms['close_below_entry']=e8(normalized)<r['entry_price_e8'] if normalized is not None else None
+                if price_context is not None:ms.update(_comparison_metrics(r,date_,ms.get('close'),price_context,generation))
                 if any(ENTRY_HIGH_FIELD in names(node) for node in p['alerts']):
-                    ms.update(entry_high_metrics(r,date_,limit_quotes.get(date_),entry_high_for(r,entry_highs),normalized,nstate,nreason,action_inputs.get(r['instrument_id'],{'state':'unknown'})))
+                    ms.update(entry_high_metrics(r,date_,limit_quotes.get(date_),entry_high_for(r,entry_highs),normalized,nstate,nreason,action_inputs.get(r['instrument_id'],{'state':'unknown'}),**({'price_context':price_context} if price_context is not None else {})))
                 if any(ENTRY_LOW_FIELD in names(node) for node in p['alerts']+p['exits']):
-                    ms.update(entry_low_metrics(r,date_,limit_quotes.get(date_),entry_low_for(r,entry_lows),normalized,nstate,nreason,action_inputs.get(r['instrument_id'],{'state':'unknown'})))
-                alert,exit_=condition_decisions(p,ms,age,history_context.at(date_) if history_context else None)
+                    ms.update(entry_low_metrics(r,date_,limit_quotes.get(date_),entry_low_for(r,entry_lows),normalized,nstate,nreason,action_inputs.get(r['instrument_id'],{'state':'unknown'}),**({'price_context':price_context} if price_context is not None else {})))
+                alert,exit_=condition_decisions(p,ms,age,prepared_history.at(date_) if prepared_history else None)
                 raw_state='ready' if ms.get('close') is not None else 'unknown'
                 outcome='satisfied' if alert['result'] is True or exit_['result'] is True else 'unknown' if alert['result'] is None or exit_['result'] is None or raw_state!='ready' else 'not_satisfied'
                 evidence={'policy_version':p['policy_version'],'alerts':alert,'exits':exit_,'metrics':ms,'topics':current_topics,'comparison_state':nstate,'comparison_reason':nreason,'source_snapshot_id':primary,'historical_replay':date_!=day}

@@ -41,6 +41,12 @@ def load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=Non
     actual files on every load; a failed/partial verification never receives a
     trusted identity. The fingerprint belongs only to this load and projection.
     """
+    from .supplement_access import supplement_access
+    with supplement_access():
+        return _load_supplement_with_fingerprint(snapshot_id,dates=dates,fields=fields)
+
+
+def _load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=None):
     root=_root();head=_load(root/'head.json',{})
     if snapshot_id and head.get('snapshot_id')!=snapshot_id:return {},None
     if not head:return {},None
@@ -144,7 +150,12 @@ def _revalidate_raw(cache,day,pool_kind,signature,closes,master,guard=None):
     return cache.accept('fuyao',pool_kind,day,signature,record,evidence['pages'])
 
 
-def _publish_document(doc,calendar,target,cache,guard=None,on_publish=None,sector_history=False):
+def _publish_document(doc,calendar,target,cache,guard=None,on_publish=None,sector_history=False,*,retention_policy_version=None):
+    if retention_policy_version is not None:
+        from .retention_policy import validate
+        validate(retention_policy_version)
+        from .supplement_retention import trim_document
+        doc=trim_document(doc,calendar,target)
     doc['annual_coverage']=annual_coverage(doc,calendar,target)
     doc['annual_down_coverage']=annual_coverage(doc,calendar,target,pool_kind='limitdown')
     doc['quality']='partial' if doc['failures'] or not doc['annual_coverage']['complete'] or not doc['annual_down_coverage']['complete'] else 'complete'
@@ -291,8 +302,10 @@ def fetch_history_for_market(public, market, target, cache, *, progress=None, gu
     return result
 
 
-def refresh_for_market(market, target, *, year_history=False, recent_days=1, progress=None, guard=None, job_id=None, sector_history=False, fund_request_budget_version=None):
+def refresh_for_market(market, target, *, year_history=False, recent_days=1, progress=None, guard=None, job_id=None, sector_history=False, fund_request_budget_version=None, retention_policy_version=None):
     validate_fund_budget_version(fund_request_budget_version)
+    from .retention_policy import validate as validate_retention
+    validate_retention(retention_policy_version)
     status=market.status(); calendar=market.calendar()
     if target not in calendar:raise ValueError('补充目标日期必须是已留存交易日')
     if target!=status['data_end']:raise ValueError('补充任务以当前冻结行情日为锚；历史盘面从该任务留存的逐日数据读取')
@@ -319,7 +332,14 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         if progress:progress(label,pct,message or label,{'actual_completed_batches':done,'actual_total_batches':planned})
     con=duckdb.connect(':memory:')
     try:
-        con.execute('CREATE TABLE quotes AS SELECT instrument_id,date,close FROM read_parquet(?)',[market.parquet_input('daily.parquet') if callable(getattr(market,'parquet_input',None)) else status['path']+'/daily.parquet'])
+        # Signatures below only inspect these real dates. Predicate pushdown
+        # avoids repeatedly materializing every retained year for a one-day
+        # increment; no source requests or quote validation rules change.
+        quote_days=set(history_dates+dates+recent)
+        quote_days.update(day for day in old.get('public_pools',{}) if day in calendar and day<=target)
+        quote_begin=min(quote_days) if quote_days else target
+        con.execute('CREATE TABLE quotes AS SELECT instrument_id,date,close FROM read_parquet(?) WHERE date>=? AND date<=?',
+                    [market.parquet_input('daily.parquet') if callable(getattr(market,'parquet_input',None)) else status['path']+'/daily.parquet',quote_begin,target])
         def prices(day):return dict(con.execute('SELECT instrument_id,close FROM quotes WHERE date=?',[day]).fetchall())
         def signature_for(day,source,pool_kind=None):return _pool_signature(day,source,prices(day),identity_hash,pool_kind)
         def validate_cached(record,day,pool_kind=None):
@@ -465,7 +485,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         except (ValueError,ProviderError) as error:
             doc['failures'].append({'capability':'sector_index_history','date':target,'reason':str(error)})
         progress=original_progress
-    return _publish_document(doc,calendar,target,cache,guard,tick,sector_history)
+    return _publish_document(doc,calendar,target,cache,guard,tick,sector_history,retention_policy_version=retention_policy_version)
 
 
 def execute_supplement(job_id, progress=None):
@@ -486,4 +506,19 @@ def execute_supplement(job_id, progress=None):
     guard()
     if params.get('revalidate_only') is True:
         return revalidate_for_market(market,target,progress=progress,guard=guard,job_id=job_id)
-    return refresh_for_market(market,target,year_history=bool(params.get('year_history',True)),recent_days=params.get('recent_days',20),progress=progress,guard=guard,job_id=job_id,sector_history=params.get('sector_history') is True,fund_request_budget_version=params.get('fund_request_budget_version'))
+    from .retention_policy import validate as validate_retention
+    retention_version=validate_retention(params.get('retention_policy_version'))
+    result=refresh_for_market(market,target,year_history=bool(params.get('year_history',True)),recent_days=params.get('recent_days',20),progress=progress,guard=guard,job_id=job_id,sector_history=params.get('sector_history') is True,fund_request_budget_version=params.get('fund_request_budget_version'),**({'retention_policy_version':retention_version} if retention_version is not None else {}))
+    if retention_version is not None:
+        from .supplement_retention import collect_after_publication
+        try:
+            retention=collect_after_publication(job_id,market,result,guard=guard)
+        except (TaskCancelled,TaskPaused):
+            raise
+        except Exception as error:
+            retention={'status':'warning','reason':'滚动清理未完成，已发布数据保留；后续手动更新可继续核验','error_type':type(error).__name__}
+            from .task_service import append_event
+            with connect() as connection:
+                append_event(connection,job_id,'supplement_retention',retention['reason'],'warning',retention)
+        result={**result,'retention_result':retention}
+    return result

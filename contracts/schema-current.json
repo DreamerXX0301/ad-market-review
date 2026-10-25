@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 23,
+  "migration_version": 25,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -90,15 +90,23 @@
     {
       "name": "023_market_storage_gc.sql",
       "sha256": "74b135a3e6749189a1d344216c145f4f271c809745a56c45e19865346903cdf7"
+    },
+    {
+      "name": "024_strategy_price_basis.sql",
+      "sha256": "5748f0fb752d29a285612882cc3ae4b25fc00d48952127766b2ea39e9afb5a62"
+    },
+    {
+      "name": "025_supplement_retention.sql",
+      "sha256": "5bcb805d45f47345910720addd34a18a6a0eb0d107a84f025a6bd55912cfa4ed"
     }
   ],
   "counts": {
-    "table": 52,
+    "table": 54,
     "index": 32,
     "view": 1,
-    "trigger": 102
+    "trigger": 106
   },
-  "schema_sha256": "56b07db288cc0845316d67b2a290d6ea85ae8e57651540d9c5bbbb19fb957171",
+  "schema_sha256": "8278e940b810956f3064860af347125724a6c890cc1ec48353cba609731aa009",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -3693,6 +3701,14 @@
           "notnull": 0,
           "dflt_value": null,
           "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "price_basis",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'none'",
+          "pk": 0
         }
       ],
       "foreign_keys": [
@@ -3710,6 +3726,174 @@
       "triggers": [
         "append_only_strategy_version_delete",
         "append_only_strategy_version_update"
+      ]
+    },
+    "supplement_retention_file": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "collection_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "object_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "byte_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "removed_bytes",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "supplement_retention_run",
+          "from": "collection_id",
+          "to": "collection_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "supplement_retention_file_immutable",
+        "supplement_retention_file_retained"
+      ]
+    },
+    "supplement_retention_run": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "collection_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "version",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "anchor_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "cutoff_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "scope_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "scope_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "created_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "completed_at_ms",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "job",
+          "from": "job_id",
+          "to": "job_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "supplement_retention_identity_immutable",
+        "supplement_retention_retained"
       ]
     },
     "sync_batch": {

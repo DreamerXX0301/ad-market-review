@@ -367,7 +367,7 @@ export function appendTodayCondition(then: RuleNode, leaf: RuleNode): RuleNode {
   };
 }
 export const historyReclaimModes = [
-  { value: "close_at_or_above", label: "今日收盘不低于事件价（持续状态）" },
+  { value: "close_at_or_above", label: "今日收盘不低于事件价（仅看今日）" },
   { value: "close_reclaim", label: "今日重新收复（昨收低于、今收不低于）" },
   { value: "first_close_reclaim", label: "事件后首次重新收复（只看价格首次）" },
   { value: "high_at_or_above", label: "今日最高价达到或超过事件价" },

@@ -185,7 +185,8 @@ def sync(payload:dict=Body(...)):
     if not adapter.key:raise HTTPException(422,'请先在数据源配置扶摇免费Key并验证连接')
     from app.services.history_window import resolve_initial_window
     window=resolve_initial_window(payload,for_new_task=True)['window'] if mode=='initialise' else None
-    parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1'})}
+    from app.services.retention_policy import VERSION as retention_version
+    parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1'})}
     return task_service.create_task(mode,parameters,request_key=payload.get('request_key'))
 
 @router.post('/sync/sector-charts')
@@ -229,7 +230,8 @@ def market_supplement(payload:dict=Body(default={})):
     sector_history=payload.get('sector_history',True)
     if not isinstance(year_history,bool) or not isinstance(sector_history,bool) or isinstance(recent_days,bool) or not isinstance(recent_days,int) or not 1<=recent_days<=30:raise HTTPException(422,'year_history和sector_history须为布尔，recent_days须为1至30整数')
     if (year_history or sector_history) and not source_service.client('fuyao').key:raise HTTPException(422,'年内来源池及板块日行情补充需要已配置的扶摇免费Key')
-    return task_service.create_task('source_check',{'operation':'market_supplement','year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'source_id':'fuyao' if year_history or sector_history else 'akshare-public','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,**repair},target_date=status['data_end'],request_key=payload.get('request_key'))
+    from app.services.retention_policy import VERSION as retention_version
+    return task_service.create_task('source_check',{'operation':'market_supplement','year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'source_id':'fuyao' if year_history or sector_history else 'akshare-public','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**repair},target_date=status['data_end'],request_key=payload.get('request_key'))
 
 @router.post('/research/jobs')
 def research_create(payload:dict=Body(...)):return research_service.create(payload)

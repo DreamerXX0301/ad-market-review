@@ -37,6 +37,7 @@ import {
   Warnings,
 } from "../../components/UI";
 import { EquityChart } from "../../components/Charts";
+import { backtestPriceContext } from "./backtestPricePresentation";
 import DatePicker from "../../components/DatePicker";
 import RecycleConfirm from "../../components/RecycleConfirm";
 import PermanentDeleteDialog, {
@@ -95,11 +96,13 @@ function BoundaryDetails({
   quality,
   summary,
   config = false,
+  priceContext,
 }: {
   warnings: any;
   quality?: Row;
   summary: string;
   config?: boolean;
+  priceContext?: Row | null;
 }) {
   const texts = warningTexts(warnings);
   return (
@@ -110,12 +113,20 @@ function BoundaryDetails({
       }
     >
       <summary>
-        <span className="boundary-summary">{summary}</span>
+        <span className="boundary-summary">
+          {backtestPriceContext(priceContext)
+            ? `${backtestPriceContext(priceContext)?.label} · `
+            : ""}
+          {summary}
+        </span>
         <span className="boundary-more">
           {config ? "查看区间与研究边界" : "本次数据范围与研究限制"}
         </span>
       </summary>
       <div className="boundary-body">
+        {backtestPriceContext(priceContext) && (
+          <p>{backtestPriceContext(priceContext)?.reason}</p>
+        )}
         {texts.length > 0 && (
           <ul>
             {texts.map((text, i) => (
@@ -452,6 +463,7 @@ export default function Backtests({
         {warningTexts(availability?.warnings).length > 0 && (
           <BoundaryDetails
             config
+            priceContext={availability}
             warnings={availability?.warnings}
             summary={`受限研究样本 · 未复权撮合 · 排除区间分红送转${availability?.warmup_bars ? " · " + availability.warmup_bars + "期预热" : ""}`}
           />
@@ -632,6 +644,7 @@ export default function Backtests({
                     {(r.data_quality ||
                       warningTexts(r.warnings).length > 0) && (
                       <BoundaryDetails
+                        priceContext={r}
                         warnings={r.warnings}
                         quality={r.data_quality}
                         summary={`受限研究样本${r.data_quality?.eligible_symbols != null && r.data_quality?.total_symbols != null ? " " + integer(r.data_quality.eligible_symbols) + " / " + integer(r.data_quality.total_symbols) : ""} · 未复权撮合，已排除区间分红送转 · 收盘信号次日撮合`}
@@ -864,6 +877,11 @@ export default function Backtests({
                       <p>
                         {x.start_date} → {x.end_date}
                       </p>
+                      {backtestPriceContext(x) && (
+                        <small title={backtestPriceContext(x)?.reason}>
+                          {backtestPriceContext(x)?.label}
+                        </small>
+                      )}
                       <footer>
                         <span>{dateTime(x.deleted_at_ms)}</span>
                         <span className={tone(x.stats?.total_return)}>
@@ -894,6 +912,11 @@ export default function Backtests({
                       <p>
                         {x.start_date} → {x.end_date}
                       </p>
+                      {backtestPriceContext(x) && (
+                        <small title={backtestPriceContext(x)?.reason}>
+                          {backtestPriceContext(x)?.label}
+                        </small>
+                      )}
                       <footer>
                         <span>{dateTime(x.created_at ?? x.created_at_ms)}</span>
                         <span

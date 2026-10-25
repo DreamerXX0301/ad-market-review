@@ -54,7 +54,10 @@ export default function BoardTags({
     </span>
   );
   return (
-    <div className="board-tags" aria-label="连板高度、当日板型、量能与反馈">
+    <div
+      className="board-tags"
+      aria-label="连板高度、来源板况、当日板型、量能与反馈"
+    >
       {visible.map(renderTag)}
       {extra.length > 0 && (
         <details className="board-tags-more">

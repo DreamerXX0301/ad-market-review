@@ -115,6 +115,9 @@ def _queue_followup_once(job,completed_result=None):
     from app.adapters.public_fund_budget import validate_fund_budget_version
     fund_version=validate_fund_budget_version(parameters.get('fund_request_budget_version'))
     fund_policy={'fund_request_budget_version':fund_version} if fund_version is not None else {}
+    from app.services.retention_policy import validate as validate_retention
+    retention_version=validate_retention(parameters.get('retention_policy_version'))
+    if retention_version is not None:fund_policy['retention_policy_version']=retention_version
     if job['kind']=='initialise':
         extra={'data_chain_version':'sector-charts-v1'} if parameters.get('data_chain_version')=='sector-charts-v1' else {}
         child=tasks.create_task('topic_refresh',{'source_id':'fuyao','scope':'current-full-catalog','initialization_chain':True,'parent_sync_job_id':job['job_id'],**extra,**fund_policy},target_date=target,request_key='topics-after-initialise:'+job['job_id'])

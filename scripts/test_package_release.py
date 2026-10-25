@@ -243,6 +243,19 @@ def test_public_jpeg_rejects_exif_icc_xmp_comments_and_other_application_metadat
     with pytest.raises(ValueError,match='公开演示JPEG'):
         package.validate_content('docs/images/overview.jpg',public_jpeg((kind,b'synthetic private metadata')))
 
+def test_user_authorized_favicon_is_the_only_application_jpeg_exception():
+    value=public_jpeg()
+    package.validate_path('frontend/public/favicon.jpg')
+    package.validate_content('frontend/public/favicon.jpg',value)
+    for name in ('frontend/public/other.jpg','frontend/public/favicon.jpeg','frontend/src/favicon.jpg'):
+        with pytest.raises(ValueError,match='二进制'):
+            package.validate_content(name,value)
+    for kind in (0xe1,0xe2,0xfe):
+        with pytest.raises(ValueError,match='公开演示JPEG'):
+            package.validate_content('frontend/public/favicon.jpg',public_jpeg((kind,b'private metadata')))
+    with pytest.raises(ValueError,match='公开演示JPEG'):
+        package.validate_content('frontend/public/favicon.jpg',value+b'trailing payload')
+
 
 @pytest.mark.parametrize('value',[
     b'not a JPEG',public_jpeg()+b'trailing payload',public_jpeg()[:-1],

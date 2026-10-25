@@ -28,6 +28,7 @@ MAX_PUBLIC_JPEG_BYTES = 2*1024*1024
 MAX_PNG_DECODED_BYTES = 64*1024*1024
 _PUBLIC_PNG = re.compile(r'docs/images/[a-z0-9][a-z0-9_-]{0,63}\.png\Z')
 _PUBLIC_JPEG = re.compile(r'docs/images/[a-z0-9][a-z0-9_-]{0,63}\.jpg\Z')
+_APP_FAVICON = 'frontend/public/favicon.jpg'  # User-authorized application asset only.
 _PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 _PNG_CHUNKS = {b'IHDR',b'IDAT',b'IEND',b'sRGB',b'gAMA',b'pHYs',b'cHRM'}
 _SEMVER = re.compile(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?')
@@ -236,7 +237,8 @@ def validate_public_jpeg(name, value):
 
 def validate_content(name, value):
     if len(value)>MAX_FILE_BYTES: raise ValueError('源码文件超过保护上限：'+name)
-    if _PUBLIC_PNG.fullmatch(name) or _PUBLIC_JPEG.fullmatch(name):
+    jpeg = bool(_PUBLIC_JPEG.fullmatch(name) or name == _APP_FAVICON)
+    if _PUBLIC_PNG.fullmatch(name) or jpeg:
         # Metadata is rejected below; also retain byte-visible secret/path
         # checks even inside an otherwise permitted image container.
         visible=value.decode('latin1')
@@ -245,7 +247,7 @@ def validate_content(name, value):
     if _PUBLIC_PNG.fullmatch(name):
         validate_public_png(name,value)
         return
-    if _PUBLIC_JPEG.fullmatch(name):
+    if jpeg:
         validate_public_jpeg(name,value)
         return
     try: text=value.decode('utf-8')

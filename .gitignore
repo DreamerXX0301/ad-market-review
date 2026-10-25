@@ -53,6 +53,8 @@ playwright-report/
 !/docs/补充数据对象复用.md
 !/docs/BOLL选股条件.md
 !/docs/日期切换与选股性能.md
+!/docs/前复权选股计算优化.md
+!/docs/补充数据250交易日保留.md
 !/docs/个股成交形态标记.md
 !/docs/市场温度与下一交易日计划.md
 !/docs/连板高度板型与反馈.md

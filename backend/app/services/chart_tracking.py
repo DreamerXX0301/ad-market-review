@@ -75,9 +75,16 @@ def _historical_event_checks(tree, as_of):
             continue
         prices = [event.get(field) for field in ('open', 'high', 'low', 'close')]
         offset = event.get('offset')
+        forward=event.get('price_basis')=='forward_event_affine'
+        raw_prices=[event.get('raw_'+field) for field in ('open','high','low','close')]
+        basis_valid=(event.get('price_basis')=='none' and proof.get('price_basis')=='none') or (
+            forward and proof.get('price_basis')=='forward_event_affine'
+            and event.get('anchor_date')==proof.get('as_of')==proof.get('anchor_date')
+            and all(_price(value) for value in raw_prices)
+            and event['raw_high']>=max(raw_prices) and event['raw_low']<=min(raw_prices))
         if (not _day(event.get('date')) or not _day(proof.get('as_of'))
                 or not event['date'] < proof['as_of'] <= as_of
-                or event.get('price_basis') != 'none' or proof.get('price_basis') != 'none'
+                or not basis_valid
                 or not isinstance(offset, int) or isinstance(offset, bool) or not 1 <= offset <= 750
                 or not all(_price(value) for value in prices)
                 or event['high'] < max(prices) or event['low'] > min(prices)
@@ -95,11 +102,16 @@ def _historical_event_checks(tree, as_of):
             summary['price_path'] = {'reclaim': {'event_field': reclaim['event_field']}}
         references, references_truncated = _reference_fields(spec)
         truncated = truncated or references_truncated
+        selected={key:event[key] for key in ('date','open','high','low','close','offset','price_basis')}
+        evidence={'as_of':proof['as_of'],'price_basis':proof['price_basis']}
+        if forward:
+            selected.update(anchor_date=event['anchor_date'],**{'raw_'+field:event['raw_'+field] for field in ('open','high','low','close')})
+            evidence['anchor_date']=proof['anchor_date']
         items.append({'type': 'history_event', 'result': node.get('result') if isinstance(node.get('result'), bool) else None,
                       'reference_fields': references,
-                      'selected_event': {key: event[key] for key in ('date', 'open', 'high', 'low', 'close', 'offset', 'price_basis')},
+                      'selected_event': selected,
                       'event_checks': {'result': True}, 'history_event': summary,
-                      'evidence': {'as_of': proof['as_of'], 'price_basis': proof['price_basis']}})
+                      'evidence': evidence})
     return items, truncated or bool(pending)
 
 

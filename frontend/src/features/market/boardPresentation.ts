@@ -4,12 +4,13 @@ import { ladderPatternTags } from "./ladderPresentation";
 export type BoardTag = {
   key: string;
   label: string;
-  dimension: "height" | "type" | "feedback" | "volume";
+  dimension: "height" | "source_text" | "type" | "feedback" | "volume";
   tone: string;
   detail: string;
 };
 export type BoardTagOptions = {
   height?: boolean;
+  boardText?: boolean;
   previousHeight?: boolean;
   types?: boolean;
   feedback?: boolean;
@@ -170,6 +171,33 @@ export function boardTags(
       label: (key === "previous_height" ? "昨" : "") + value.label,
       detail: `${value.source_date} · ${key === "previous_height" ? "前一交易日高度" : "当日高度"}：${value.reason || "有据来源高度"}`,
     });
+  }
+  const reported = facts.board_text;
+  if (
+    (flags.boardText ?? (flags.height || flags.types)) &&
+    reported?.state === "reported" &&
+    reported.source === "fuyao" &&
+    reported.source_date === date &&
+    text(reported.label)
+  ) {
+    const label = reported.label.trim();
+    const detail = `${date} · 扶摇来源板况：${label}；${reported.reason || "同日来源文字与原始收盘核验"}；N天M板表示窗口内涨停次数，与连续连板高度分别观察。`;
+    const duplicate = tags.find(
+      (tag) => tag.dimension === "height" && tag.label === label,
+    );
+    if (duplicate) duplicate.detail += `；${detail}`;
+    else if (!(
+      facts.height?.state === "confirmed" &&
+      facts.height.source_date === date &&
+      facts.height.label === label
+    ))
+      tags.push({
+        key: "board_text",
+        dimension: "source_text",
+        tone: "height",
+        label,
+        detail,
+      });
   }
   if (flags.types)
     for (const item of Array.isArray(facts.types) ? facts.types : []) {

@@ -377,6 +377,10 @@ def test_ambiguous_axis_identity_cannot_masquerade_as_a_four_index_entry_alignme
     by_id = {item['id']: item for item in result['axes']}
     if mode == 'duplicate_ordinary_group':
         assert by_id['short_term']['ordinary_group_ready'] is False
+        routes = {route['id']: route for route in result['entry_gate']['routes']}
+        assert routes['trend']['status'] == 'conditional'
+        assert routes['relay']['status'] == 'wait'
+        return
     else:
         assert by_id['index']['state'] == 'unknown'
     assert result['entry_gate']['status'] != 'conditional'

@@ -105,7 +105,7 @@ def aggregate_monthly(rows, calendar=None, as_of=None):
     return result
 
 
-def enrich_monthly_bars(rows):
+def enrich_monthly_bars(rows, *, include_chart_extremes=False):
     """Keep preview candles, but warm indicators only on comparable full months.
 
     An unadjusted action month can contain prices from both sides of the action,
@@ -132,10 +132,12 @@ def enrich_monthly_bars(rows):
             row['weekly_continuity_reset_reason'] = row.get('monthly_continuity_reset_reason') or pending_reason
         eligible.append(row)
         pending_reason = None
-    computed = {row['date']: row for row in enrich_bars(eligible)}
+    computed = {row['date']: row for row in enrich_bars(eligible, include_chart_extremes=include_chart_extremes)}
     indicator_fields = [*(f'ma{window}' for window in WINDOWS), 'change_pct', 'pct_change',
                         'volume_ratio', 'volume_multiple_prev', 'return_30d', 'macd_cross', 'kd_cross',
                         'macd_dif', 'macd_dea', 'macd_hist', 'kdj_k', 'kdj_d', 'kdj_j']
+    if include_chart_extremes:
+        indicator_fields += ['chart_high_change_pct', 'chart_low_change_pct']
     result = []
     for source in rows:
         reason = reasons[source['date']]
@@ -148,6 +150,9 @@ def enrich_monthly_bars(rows):
                    'price_continuity': False, 'indicator_warmup_bars': 0,
                    'indicator_reset_reason': reason, 'indicator_warmup_reason': reason,
                    'missing_market_sessions_before': source.get('monthly_missing_market_sessions', 0)}
+            if include_chart_extremes:
+                row.update(chart_extreme_change_period='M', chart_extreme_change_reference_date=None,
+                           chart_high_change_pct_reason=reason, chart_low_change_pct_reason=reason)
             row.setdefault('turnover_ratio_pct', None)
         result.append(row)
     return result

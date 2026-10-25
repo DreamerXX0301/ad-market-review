@@ -96,6 +96,7 @@ def test_get_missing_cache_is_offline_and_does_not_create_directories(local):
     market, adapter, published = local
     result = charts.read_sector_chart(market, CODE, DAY, 'D')
     assert result['available'] is False and result['bars'] == [] and result['unavailable_reason']
+    assert result['trading_day_distance']['state'] == 'unknown'
     assert adapter.calls == [] and not published.exists()
 
 
@@ -208,6 +209,10 @@ def test_chart_reuses_shared_analytics_and_never_uses_member_quotes(local, perio
             assert actual.get(field) == reference.get(field)
     assert len(chart['bars']) == len(expected)
     assert chart['breadth_scope'] is None
+    assert chart['trading_day_distance']['anchor_date'] == DAY
+    assert chart['trading_day_distance']['state'] == 'available'
+    for row in chart['bars']:
+        assert row['trading_days_to_as_of'] == market.days.index(DAY) - market.days.index(row['date'])
 
 
 def test_missing_source_dates_are_partial_and_reset_daily_indicators(local):
@@ -223,6 +228,24 @@ def test_missing_source_dates_are_partial_and_reset_daily_indicators(local):
     assert chart['available'] and chart['bars'][-1]['macd_dif'] is None
     assert chart['indicator_gaps'][-1]['reason']
     assert '不区分' in chart['coverage']['notice']
+
+
+def test_read_generation_changes_make_session_distances_unknown(local, monkeypatch):
+    market, _, _ = local
+    collect(local)
+    original = charts._read_chart_cache
+
+    def concurrent_publication(*args, **kwargs):
+        cached = original(*args, **kwargs)
+        market.state['snapshot_id'] = 'another-market-generation'
+        return cached
+
+    monkeypatch.setattr(charts, '_read_chart_cache', concurrent_publication)
+    chart = charts.read_sector_chart(market, CODE, DAY)
+    assert chart['available'] and chart['bars']
+    assert chart['trading_day_distance']['state'] == 'unknown'
+    assert '代际变化' in chart['trading_day_distance']['reason']
+    assert all(row['trading_days_to_as_of'] is None for row in chart['bars'])
 
 
 def test_short_history_does_not_invent_index_inception_or_pre_window_prices(local):

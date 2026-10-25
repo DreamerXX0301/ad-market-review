@@ -5,6 +5,7 @@ derive a historical index from a later membership list. A valid cache is read
 back to its raw provider response and normalized again on every collection.
 """
 from __future__ import annotations
+from app.services.supplement_access import supplement_reader
 
 from collections import Counter
 from datetime import date, datetime, time as datetime_time
@@ -298,6 +299,7 @@ def collect_sector_history(market, target, cache, adapter, progress=None, guard=
             'normalization_version': NORMALIZATION_VERSION, 'scope': SCOPE}
 
 
+@supplement_reader
 def sector_prices_for_date(document, day):
     """Return exact-day, versioned price proofs only, never a nearest date."""
     empty = {'date': day, 'source': 'fuyao', 'items': [], 'coverage': {},

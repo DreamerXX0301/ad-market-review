@@ -232,6 +232,22 @@ def test_compose_permissions_and_single_writer(tmp_path):
     assert services['api']['depends_on']['init']['condition']=='service_completed_successfully'
     assert 'shixu_master' in config['secrets']
 
+@pytest.mark.parametrize('filename', ['compose.yaml','compose.release.yaml','docker-compose.yml'])
+def test_worker_sqlite_spill_uses_persistent_work_volume(tmp_path,filename):
+    env=os.environ|{'SHIXU_MASTER_KEY_FILE':str(tmp_path/'unused-secret'),
+                    'SHIXU_IMAGE_REF':'ghcr.io/dreamerxx0301/ad-market-review@sha256:'+'a'*64,
+                    'SHIXU_HTTP_PORT':'8788'}
+    result=subprocess.run(['docker','compose','-f',str(ROOT/'deploy'/filename),'--profile','worker','config','--format','json'],env=env,text=True,capture_output=True)
+    if result.returncode and 'not found' in result.stderr:pytest.skip('Docker Compose unavailable')
+    assert result.returncode==0,result.stderr
+    services=json.loads(result.stdout)['services'];worker=services['worker']
+    assert worker['environment']['SQLITE_TMPDIR']==worker['environment']['SHIXU_WORK_DIR']=='/var/lib/shixu/work'
+    mounts={v['target']:v for v in worker['volumes']}
+    assert mounts['/var/lib/shixu/work']['type']=='volume'
+    assert mounts['/var/lib/shixu/work'].get('read_only',False) is False
+    assert not any('/var/lib/shixu/work' in entry for entry in worker.get('tmpfs',[]))
+    assert 'SQLITE_TMPDIR' not in services['api']['environment']
+
 def test_docker_archive_project_names_are_not_shell_input():
     from docker_archive import project_name
     assert project_name('shixu-restored-20261020')=='shixu-restored-20261020'

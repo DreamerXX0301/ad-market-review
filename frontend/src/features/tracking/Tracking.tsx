@@ -41,8 +41,13 @@ import { policyRuleTree, policyGroupFromTree } from "./policyRuleTree";
 import PolicyScope from "../strategies/PolicyScope";
 import TrackingFilters from "./TrackingFilters";
 import StrategyPicker from "./StrategyPicker";
+import { trackingPriceContext } from "./trackingPricePresentation";
 import TrackingTabs from "./TrackingTabs";
 import WatchlistButton from "../watchlist/WatchlistButton";
+import HotBrowseFilter, {
+  HotBrowseBadge,
+  useHotBrowseFilter,
+} from "../../components/HotBrowseFilter";
 import {
   createStockNavigation,
   trackingEventBaseline,
@@ -485,11 +490,16 @@ function StockTracking({
   const unknownCount = checked.filter(
     (row) => row._topic_filter_state === "unknown",
   ).length;
-  const rows = checked.filter(
+  const topicRows = checked.filter(
     (row) =>
       row._topic_filter_state === "matched" ||
       (includeUnknown && row._topic_filter_state === "unknown"),
   );
+  const hotFilter = useHotBrowseFilter(
+    topicRows,
+    result.data?.hot_filter_scope,
+  );
+  const rows = hotFilter.rows;
   const toast = useToast();
   async function review() {
     setBusy("review");
@@ -560,6 +570,14 @@ function StockTracking({
           topicMatch,
           stockQuery,
           includeUnknown,
+          hot: hotFilter.enabled
+            ? {
+                config: hotFilter.applied,
+                mode: hotFilter.mode,
+                includeUnknown: hotFilter.includeUnknown,
+                scope: result.data?.hot_filter_scope,
+              }
+            : null,
           businessDate: result.data?.business_date,
         }),
         label: `跟踪池 · ${tab === "alerts" ? "触发列表" : tab === "history" ? "结束历史" : "跟踪中"} · 当前筛选 · 已去重股票`,
@@ -599,6 +617,7 @@ function StockTracking({
       {row._topic_filter_state === "unknown" && (
         <Badge tone="warn">筛选归属待核验</Badge>
       )}
+      <HotBrowseBadge row={row} />
       {Array.isArray(value) && value.length > 2 && (
         <details className="tracking-topic-more">
           <summary>+{value.length - 2} 项归属</summary>
@@ -701,6 +720,7 @@ function StockTracking({
           unknownCount={unknownCount}
           scope={result.data?.current_topics_scope}
         />
+        <HotBrowseFilter model={hotFilter} onRefreshList={result.reload} />
         {topicsResult.error && (
           <ErrorBox message={topicsResult.error} retry={topicsResult.reload} />
         )}
@@ -824,17 +844,29 @@ function StockTracking({
               {
                 key: "tracking_change_pct",
                 title: "跟踪涨幅",
-                render: (v, r) => (
-                  <span
-                    className={tone(v)}
-                    title={r.comparison_reason || "冻结入池基准，按同口径比较"}
-                  >
-                    {percent(v)}
-                    {v == null && r.comparison_reason && (
-                      <Badge tone="warn">待核验</Badge>
-                    )}
-                  </span>
-                ),
+                render: (v, r) => {
+                  const price = trackingPriceContext(r);
+                  return (
+                    <span
+                      className={tone(price.forward ? price.change : v)}
+                      title={price.reason}
+                    >
+                      {percent(price.forward ? price.change : v)}
+                      {(price.forward ? price.change : v) == null &&
+                        r.comparison_reason && (
+                          <Badge tone="warn">待核验</Badge>
+                        )}
+                      {price.forward && (
+                        <small className="tracking-price-context">
+                          同口径价格变化 ·{" "}
+                          {price.reference == null
+                            ? price.reason
+                            : `参照 ${num(price.reference)} · 锚 ${price.anchor}`}
+                        </small>
+                      )}
+                    </span>
+                  );
+                },
               },
               {
                 key: "trading_age",
@@ -973,7 +1005,7 @@ function StockTracking({
               <Stat
                 label="事件日收盘"
                 value={num(detail.entry_price)}
-                sub={`跟踪涨幅 ${percent(detail.tracking_change_pct)}`}
+                sub={`${trackingPriceContext(detail).label} ${percent(trackingPriceContext(detail).change)}`}
               />
               <Stat
                 label="事件日最高价"
@@ -1003,6 +1035,15 @@ function StockTracking({
               />
             </div>
             <div className="panel-footnote">
+              {trackingPriceContext(detail).forward && (
+                <div>
+                  同口径参照价 {num(trackingPriceContext(detail).reference)} ·
+                  锚 {trackingPriceContext(detail).anchor || "待核验"}；
+                  {trackingPriceContext(detail).scope}{" "}
+                  {detail.comparison_reason || ""}
+                  最新报价仍为来源原始收盘价，入池原价不改写。
+                </div>
+              )}
               入池归属快照（
               {detail.topics_snapshot_date || detail.entry_business_date}）：
               {textValue(

@@ -808,6 +808,7 @@ class MarketData:
         if period not in ('D','W','M'):raise ValueError('仅支持日K、周K和月K')
         if indicator_continuity not in ('quotes','market_sessions'):raise ValueError('图表指标连续口径仅支持quotes/market_sessions')
         status=self.status(); as_of=as_of or status.get('data_end')
+        calendar=self.calendar()
         raw=self.bars(instrument_id,as_of)
         forward,adjustment=self.prices(instrument_id,as_of,'forward')
         from .chart_annotation_projection import annotation_projection_evidence
@@ -815,15 +816,15 @@ class MarketData:
         if price_basis not in ('none','forward'):raise ValueError('价格口径仅支持none/forward')
         rows=forward if price_basis=='forward' else raw
         actual_basis='forward_event_affine' if price_basis=='forward' and adjustment.get('usable') else 'none'
-        if period=='W':rows=aggregate_weekly(rows,self.calendar(),as_of)
+        if period=='W':rows=aggregate_weekly(rows,calendar,as_of)
         if period=='M':
             from .monthly import aggregate_monthly,enrich_monthly_bars
-            bars=enrich_monthly_bars(aggregate_monthly(rows,self.calendar(),as_of))
-        else:bars=enrich_bars(rows,self.calendar() if period=='D' else None)
+            bars=enrich_monthly_bars(aggregate_monthly(rows,calendar,as_of),include_chart_extremes=True)
+        else:bars=enrich_bars(rows,calendar if period=='D' else None,include_chart_extremes=True)
         from .chart_indicators import display_indicators,indicator_gaps,quote_gaps
         bars,actual_continuity=display_indicators(bars,rows,indicator_continuity,period)
         gaps=indicator_gaps(bars)
-        missing_quotes=quote_gaps(raw,self.calendar())
+        missing_quotes=quote_gaps(raw,calendar)
         continuity_notice=('日K图表MA/MACD/KDJ按实际报价连续计算；不补停牌或缺失K线，不据缺行认定停牌。策略、跟踪与回测信号仍按严格市场交易日口径。'
                            if actual_continuity=='quotes' else '图表指标采用严格市场交易日/完整周期口径；停牌或未解释的缺报价会重新预热，周/月不会跳过缺失周期。')
         breadth_scope=None
@@ -836,9 +837,13 @@ class MarketData:
         if price_basis=='forward':warnings.append('本地事件前复权以当前观察日为锚，仅用于价格研究；不等于已处理回测持仓分红、送股或税费。' if adjustment.get('usable') else adjustment.get('reason','复权条件不足，保留未复权价格'))
         from .waves import candidate_waves
         if period=='M':warnings.append('月K由已留存日行情聚合；首月或本月不完整、缺报价和公司行动会阻断指标预热。MACD/KDJ需要35根连续完整可比月柱。')
-        if self.status().get('snapshot_id') != status.get('snapshot_id'):
+        same_snapshot = self.status().get('snapshot_id') == status.get('snapshot_id')
+        if not same_snapshot:
             annotation_projection.update(available=False, reason='读取期间行情代际变化，不能证明原锚至本图的公司行动区间，请刷新')
-        return {'instrument':self.instrument(instrument_id),'period':period,'as_of':as_of,'bars':bars,'snapshot_id':status.get('snapshot_id'),'annotation_projection_evidence':annotation_projection,'requested_price_basis':price_basis,'price_basis':actual_basis,'price_basis_options':[{'value':'none','label':'未复权','available':True,'reason':None},{'value':'forward','label':'本地前复权','available':bool(adjustment.get('usable')),'reason':adjustment.get('reason')}],'adjustment':adjustment,'indicator_gaps':gaps,'requested_indicator_continuity':indicator_continuity,'indicator_continuity':actual_continuity,'indicator_continuity_notice':continuity_notice,'quote_gaps':missing_quotes,'waves':candidate_waves(bars,threshold_pct=2.0 if period=='D' else 4.0 if period=='W' else 8.0) if self.instrument(instrument_id).get('kind') in ('index','stock') else None,'volume_unit':'股','amount_unit':'CNY','price_unit':'点' if self.instrument(instrument_id)['kind']=='index' else 'CNY','quality':status.get('quality'),'warnings':warnings,'indicator_version':ALGORITHM+'+explicit-chart-basis-v2+display-continuity-v1','breadth_scope':breadth_scope}
+        result = {'instrument':self.instrument(instrument_id),'period':period,'as_of':as_of,'bars':bars,'snapshot_id':status.get('snapshot_id'),'annotation_projection_evidence':annotation_projection,'requested_price_basis':price_basis,'price_basis':actual_basis,'price_basis_options':[{'value':'none','label':'未复权','available':True,'reason':None},{'value':'forward','label':'本地前复权','available':bool(adjustment.get('usable')),'reason':adjustment.get('reason')}],'adjustment':adjustment,'indicator_gaps':gaps,'requested_indicator_continuity':indicator_continuity,'indicator_continuity':actual_continuity,'indicator_continuity_notice':continuity_notice,'quote_gaps':missing_quotes,'waves':candidate_waves(bars,threshold_pct=2.0 if period=='D' else 4.0 if period=='W' else 8.0) if self.instrument(instrument_id).get('kind') in ('index','stock') else None,'volume_unit':'股','amount_unit':'CNY','price_unit':'点' if self.instrument(instrument_id)['kind']=='index' else 'CNY','quality':status.get('quality'),'warnings':warnings,'indicator_version':ALGORITHM+'+explicit-chart-basis-v2+display-continuity-v1','breadth_scope':breadth_scope}
+
+        from .chart_session_distance import attach_chart_session_distance
+        return attach_chart_session_distance(result, calendar, same_snapshot=same_snapshot)
 
     def indices(self,as_of=None):
         rows=[]

@@ -138,6 +138,24 @@ def frozen_event():
             'evidence': {'as_of': '2026-01-08', 'price_basis': 'none', 'large_proof': 'never-export'}}
 
 
+def test_forward_frozen_event_exports_original_prices_and_its_own_anchor():
+    node=frozen_event()
+    node['selected_event'].update(price_basis='forward_event_affine',anchor_date='2026-01-08',
+        raw_open=11,raw_high=13,raw_low=10,raw_close=12)
+    node['evidence'].update(price_basis='forward_event_affine',anchor_date='2026-01-08')
+    items,truncated=chart_tracking._historical_event_checks(node,'2026-01-09')
+    assert not truncated and len(items)==1
+    assert items[0]['selected_event']==node['selected_event']
+    assert items[0]['selected_event']['raw_close']==12
+    assert items[0]['selected_event']['close']==11
+    assert items[0]['evidence']['anchor_date']=='2026-01-08'
+    node['selected_event']['anchor_date']='2026-01-09'
+    assert chart_tracking._historical_event_checks(node,'2026-01-09')==([],False)
+    node['selected_event']['anchor_date']='2026-01-08'
+    node['selected_event']['raw_close']=None
+    assert chart_tracking._historical_event_checks(node,'2026-01-09')==([],False)
+
+
 @pytest.mark.parametrize('change', [
     lambda node: node['event_checks'].update(result=None),
     lambda node: node['event_checks'].update(result=1),

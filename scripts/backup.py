@@ -153,6 +153,23 @@ def needed_files(c,published):
     return required,snapshots
 
 def perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credential_dir=None):
+    # The API and sole collector use this same lock on the shared business
+    # volume. Hold a reader lock through the supplement inventory/copy so GC
+    # cannot unlink an object after it has been captured by this backup.
+    import fcntl
+    import os
+    database=Path(sqlite_path or os.environ.get('SHIXU_SQLITE_PATH') or Path(data_dir)/'business/app.sqlite3').expanduser().absolute()
+    parent=database.parent
+    if not database.is_file() or parent.is_symlink():raise ValueError('Source SQLite database does not exist or has an unsafe parent')
+    descriptor=os.open(parent/'supplement-access.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    try:
+        fcntl.flock(descriptor,fcntl.LOCK_SH)
+        return _perform_backup(data_dir,output,sqlite_path,published_dir,credential_dir)
+    finally:
+        fcntl.flock(descriptor,fcntl.LOCK_UN);os.close(descriptor)
+
+
+def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credential_dir=None):
     data_dir=Path(data_dir).expanduser().resolve();output=Path(output).expanduser().resolve()
     if output.exists():raise ValueError('Backup output must be a new path')
     if output.is_relative_to(data_dir):raise ValueError('Backup output cannot be inside live data')

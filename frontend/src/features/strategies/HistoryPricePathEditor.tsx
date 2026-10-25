@@ -48,6 +48,10 @@ export default function HistoryPricePathEditor({
           <small>
             只检查已绑定的同一次事件。下方已启用的过程全部满足，再同时检查今日条件。
           </small>
+          <small>
+            只要求当前收盘高于事件收盘时，在“今日条件”添加“观察日收盘价 &gt;
+            事件日收盘价”。“今日重新收复”还要求昨日低于事件价。
+          </small>
         </div>
       </header>
       <div className="history-price-presets">
@@ -325,7 +329,7 @@ export default function HistoryPricePathEditor({
               </label>
               <small>
                 {reclaim.mode === "close_at_or_above" &&
-                  "持续状态可能连续多日满足；收盘等于参照价也满足。"}
+                  "仅检查今日收盘不低于参照价，等于也满足；不要求昨日回踩，也不检查事件后每天都站上。"}
                 {reclaim.mode === "close_reclaim" &&
                   "昨日收盘须低于参照价，今日收盘不低于参照价；昨日必须晚于事件日。"}
                 {reclaim.mode === "first_close_reclaim" &&

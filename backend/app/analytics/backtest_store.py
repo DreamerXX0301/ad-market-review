@@ -8,7 +8,7 @@ import pyarrow.parquet as pq
 
 from app.core import connect,data_dir,published_dir,new_id,now_ms,dumps,digest,hash_file,atomic_json,publish_snapshot
 from .market import MarketData
-from .backtest_engine import VERSION,availability,config_checked,run_backtest
+from .backtest_engine import VERSION,availability,config_checked,run_backtest,engine_version
 from app.domain.conditions import names
 from app.services.task_service import TaskCancelled,TaskPaused,append_event
 from app.services.workspace_deletion import require_strategy_present,backtest_block_reason
@@ -60,6 +60,10 @@ def create_backtest(payload):
     sessions=sum(start<=d<=end for d in cal)
     if sessions<10:raise ValueError('回测区间至少10个市场交易日')
     frozen={'name':strategy['name'],'strategy_id':strategy['strategy_id'],'version':strategy['version'],'period':strategy['period'],'definition':strategy['definition'],'trade_rules':bounds['trade_rules'],'market_snapshot_id':generation}
+    if strategy.get('price_basis','none')=='forward':
+        from app.domain.strategy_prices import VERSION as price_version
+        frozen.update(price_basis='forward',price_basis_contract=price_version)
+    execution_version=engine_version(frozen) if frozen.get('price_basis')=='forward' else VERSION
     predicates=[strategy['definition']]+[tree for tree in bounds['trade_rules'].values() if tree is not None]
     if any('higher_lows' in names(tree) for tree in predicates):
         from .higher_lows import VERSION as structure_version
@@ -70,7 +74,7 @@ def create_backtest(payload):
     requested_key=payload.get('request_key')
     if requested_key is not None and (not isinstance(requested_key,str) or not requested_key.strip() or len(requested_key)>200):raise ValueError('request_key必须为1至200字符的非空字符串')
     request_key=requested_key if requested_key is not None else new_id('manual-backtest')
-    key=digest({'strategy':frozen,'config':config,'start':start,'end':end,'inputs':inputs,'engine_version':VERSION})
+    key=digest({'strategy':frozen,'config':config,'start':start,'end':end,'inputs':inputs,'engine_version':execution_version})
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         require_strategy_present(c,strategy['strategy_id'])
@@ -88,7 +92,7 @@ def create_backtest(payload):
         params={'backtest_id':bid}
         insert(c,'job',{'job_id':job_id,'request_key':request_key,'logical_key':'backtest:'+key,'kind':'backtest','target_date':end,'parameters_json':dumps(params),'parameters_hash':digest(params),'status':'queued','phase':'等待回测','created_at_ms':now})
         predicates=[strategy['definition']]+[tree for tree in frozen['trade_rules'].values() if tree is not None]
-        insert(c,'backtest_run',{'backtest_id':bid,'job_id':job_id,'strategy_id':strategy['strategy_id'],'strategy_version':strategy['version'],'requested_start':start,'requested_end':end,'input_snapshots_json':dumps(inputs),'required_features_json':dumps(sorted(set().union(*(names(tree) for tree in predicates)))),'warmup_contract_json':dumps({'bars':bounds['warmup_bars'],'period':strategy['period']}),'range_acceptance_json':dumps({'accepted':True,'accepted_start':start,'accepted_end':end,'calendar_sessions':sessions,'dependency_gaps':0,'scope':'restricted_complete_quote_no_action_sample','full_market_coverage':False}),'strategy_snapshot_json':dumps(frozen),'execution_config_json':dumps(config),'engine_version':VERSION,'input_sha256':key,'status':'queued','created_at_ms':now})
+        insert(c,'backtest_run',{'backtest_id':bid,'job_id':job_id,'strategy_id':strategy['strategy_id'],'strategy_version':strategy['version'],'requested_start':start,'requested_end':end,'input_snapshots_json':dumps(inputs),'required_features_json':dumps(sorted(set().union(*(names(tree) for tree in predicates)))),'warmup_contract_json':dumps({'bars':bounds['warmup_bars'],'period':strategy['period'],**({'signal_price_basis':'forward','price_basis_contract':frozen['price_basis_contract']} if frozen.get('price_basis')=='forward' else {})}),'range_acceptance_json':dumps({'accepted':True,'accepted_start':start,'accepted_end':end,'calendar_sessions':sessions,'dependency_gaps':0,'scope':'restricted_complete_quote_no_action_sample','full_market_coverage':False,**({'signal_price_basis':'forward','execution_price_basis':'none'} if frozen.get('price_basis')=='forward' else {})}),'strategy_snapshot_json':dumps(frozen),'execution_config_json':dumps(config),'engine_version':execution_version,'input_sha256':key,'status':'queued','created_at_ms':now})
         for snapshot in set(inputs.values()):
             c.execute("INSERT INTO retention_pin(pin_id,snapshot_id,owner_kind,owner_id,created_at_ms) VALUES(?,?,?,?,?) ON CONFLICT(snapshot_id,owner_kind,owner_id) DO NOTHING",(new_id('pin'),snapshot,'backtest',bid,now))
     return {'backtest_id':bid,'job_id':job_id,'status':'queued'}
@@ -104,7 +108,8 @@ def _metadata(row):
     restore_blocked='永久清理已确认，请查看清理任务' if purge and purge['status'] in ('queued','cleaning') else None
     restore_blocked=restore_blocked or ('请先恢复所属策略' if deleted and row.get('strategy_deleted') else None)
     return {'backtest_id':row['backtest_id'],'job_id':row['job_id'],'status':state,'calculation_status':row['status'],'task_status':row.get('job_status'),'strategy_id':row['strategy_id'],'strategy_name':frozen['name'],'strategy_version':row['strategy_version'],'trade_rules':frozen.get('trade_rules',{'entry':None,'exit':None}),'start_date':row['requested_start'],'end_date':row['requested_end'],'config':json.loads(row['execution_config_json']),'stats':summary.get('stats'),'error':summary.get('error'),'created_at_ms':row['created_at_ms'],'completed_at_ms':row['completed_at_ms'],'engine_version':row['engine_version'],
-            'active_purge':purge,'deleted':deleted,'deleted_at_ms':row.get('deleted_at_ms'),'can_delete':not deleted and blocked is None,'delete_blocked_reason':blocked if not deleted else None,'can_restore':deleted and restore_blocked is None,'restore_blocked_reason':restore_blocked}
+            'active_purge':purge,'deleted':deleted,'deleted_at_ms':row.get('deleted_at_ms'),'can_delete':not deleted and blocked is None,'delete_blocked_reason':blocked if not deleted else None,'can_restore':deleted and restore_blocked is None,'restore_blocked_reason':restore_blocked,
+            **({'signal_price_basis':'forward','execution_price_basis':'none','price_basis_contract':frozen.get('price_basis_contract')} if frozen.get('price_basis')=='forward' else {})}
 
 
 _READ_SELECT="""SELECT b.*,j.status job_status,j.lease_owner,j.lease_expires_at_ms,d.deleted_at_ms,sd.strategy_id strategy_deleted,(SELECT json_object('purge_id',p.purge_id,'status',p.status,'business_deleted',p.business_deleted) FROM workspace_purge p WHERE p.target_kind='backtest' AND p.target_id=b.backtest_id AND p.superseded_by IS NULL AND p.status IN ('queued','cleaning','failed') ORDER BY p.created_at_ms DESC,p.rowid DESC LIMIT 1) active_purge_json FROM backtest_run b JOIN job j ON j.job_id=b.job_id LEFT JOIN backtest_deletion d USING(backtest_id) LEFT JOIN strategy_deletion sd ON sd.strategy_id=b.strategy_id"""
@@ -176,9 +181,13 @@ def execute_backtest(job_id,progress=None):
         if row['status']=='queued':c.execute("UPDATE backtest_run SET status='running' WHERE backtest_id=?",(row['backtest_id'],))
         elif row['status']!='running':raise ValueError('仅恢复授权running回测；已失败/取消需手动新建')
     try:
-        if row['engine_version'] != VERSION:
-            raise ValueError('回测冻结引擎版本'+row['engine_version']+'与当前'+VERSION+'不同；保留旧任务与结果，请使用当前版本手动新建回测')
         frozen=json.loads(row['strategy_snapshot_json']);config=json.loads(row['execution_config_json'])
+        execution_version=engine_version(frozen) if frozen.get('price_basis')=='forward' else VERSION
+        if row['engine_version'] != execution_version:
+            raise ValueError('回测冻结引擎版本'+row['engine_version']+'与当前'+execution_version+'不同；保留旧任务与结果，请使用当前版本手动新建回测')
+        if frozen.get('price_basis')=='forward':
+            from app.domain.strategy_prices import VERSION as price_version
+            if frozen.get('price_basis_contract')!=price_version:raise ValueError('前复权信号价格契约与冻结输入不同，请保留旧任务并手动新建回测')
         predicates=[frozen['definition']]+[tree for tree in frozen.get('trade_rules',{}).values() if tree is not None]
         if any('higher_lows' in names(tree) for tree in predicates):
             from .higher_lows import VERSION as structure_version
@@ -221,7 +230,7 @@ def execute_backtest(job_id,progress=None):
         for path in sorted(folder.iterdir()):
             artifacts.append({'object_key':str(path.relative_to(published_dir())),'sha256':hash_file(path),'byte_count':path.stat().st_size,'row_count':counts.get(path.stem,1),'role':'report' if path.suffix=='.json' else path.stem})
         if progress:progress('发布回测明细和权益',95)
-        snapshot=publish_snapshot(module='backtest_result',job_id=job_id,start=row['requested_start'],end=row['requested_end'],artifacts=artifacts,quality='partial',scope=bid,lineage={'input_snapshots':result['input_snapshots'],'input_sha256':row['input_sha256'],'market_snapshot_id':frozen['market_snapshot_id'],'data_quality':result['data_quality']},price_basis='none',algorithm=VERSION,snapshot_id='result-'+bid,activate=False)
+        snapshot=publish_snapshot(module='backtest_result',job_id=job_id,start=row['requested_start'],end=row['requested_end'],artifacts=artifacts,quality='partial',scope=bid,lineage={'input_snapshots':result['input_snapshots'],'input_sha256':row['input_sha256'],'market_snapshot_id':frozen['market_snapshot_id'],'data_quality':result['data_quality']},price_basis='none',algorithm=row['engine_version'],snapshot_id='result-'+bid,activate=False)
         with connect() as c:
             c.execute('BEGIN IMMEDIATE')
             job_state=c.execute('SELECT status FROM job WHERE job_id=?',(job_id,)).fetchone()[0]

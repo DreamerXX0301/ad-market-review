@@ -445,6 +445,12 @@ globalThis.__watchlistFixture = {
 const watchApi = encoded(
   "export const useApi=()=>globalThis.__watchlistFixture;export const list=(v)=>Array.isArray(v)?v:Array.isArray(v?.items)?v.items:[];",
 );
+const hotBrowseURL = await compile("../../components/HotBrowseFilter.tsx", {
+  "../lib/api": watchApi,
+  "./UI": ui,
+  "../features/strategies/HotUniverse": await compile("../strategies/HotUniverse.tsx"),
+  "./hotBrowsePresentation": await compile("../../components/hotBrowsePresentation.ts"),
+});
 const watchURL = await compile("./Watchlist.tsx", {
   "../../lib/api": watchApi,
   "../../components/UI": ui,
@@ -469,6 +475,7 @@ const watchURL = await compile("./Watchlist.tsx", {
     "export const useLineAlerts=()=>({result:{data:null,error:'',loading:true,reload:()=>{}},evaluate:()=>{},busy:false,pending:false,task:null,error:''});",
   ),
   "./watchlistPresentation": watchPresentation,
+  "../../components/HotBrowseFilter": hotBrowseURL,
 });
 const { default: Watchlist } = await import(watchURL);
 const cold = renderToStaticMarkup(createElement(Watchlist, { onStock: nope }));

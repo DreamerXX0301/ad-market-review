@@ -15,11 +15,16 @@ from .period_dates import latest_closed_date,completed_indicator_bars
 from app.services.strategy_periods import periods_for,dependencies_for_period
 
 VERSION='restricted-next-open-v6-volume-comparison'
+FORWARD_VERSION='restricted-next-open-v7-local-forward-prices-v1'
 DEFAULTS={'initial_capital':100000,'max_positions':5,'position_pct':20,'hold_days':10,'stop_loss_pct':8,'take_profit_pct':20,'commission_bps':3,'min_commission':5,'sell_tax_bps':5,'slippage_bps':5,'exit_ma':0}
 WARNINGS=['受限研究样本：当前证券名单、区间内完整报价且无公司行动；存在幸存者与事后样本选择偏差，不是严格无偏的全市场历史回测。','撮合市场范围：仅主板、创业板的当前非 ST 研究样本；科创板、北交所和当前 ST 不参与撮合，不能据此评估策略在这些股票上的表现。','仅未复权原始价格，不模拟未经完整验收的分红送股；历史ST及退市身份覆盖不足，ST 筛选按当前名称识别，不能冒充历史逐日身份。','日收盘产生信号，下一市场交易日开盘尝试成交；止盈止损也按收盘判断，不能推断盘中成交。','费用、滑点为可配置研究参数，非现行法定费率声明；期末持仓估值且不强制平仓。']
 UNSUPPORTED={'topic_ids':'缺少历史题材成员版本','limit_up':'缺少完整历史限价身份与涨停证据','prev_limit_up':'昨日涨停条件尚未接入回测的完整历史限价证据，不能按上一条报价或未来来源补算','limit_up_count_1y':'截至昨日近一年涨停次数尚未接入回测的完整滚动历史来源证据，不能用年内次数或未来来源补算','limit_up_1y':'缺少完整一年历史涨停证据','turnover_ratio_pct':'换手率数据未覆盖','trading_age':'跟踪字段不是选股历史特征','tracking_change_pct':'跟踪字段不是选股历史特征','close_below_entry':'选股时尚无事件日价格'}
 UNSUPPORTED['close_below_entry_low']='事件日最低价属于跟踪结束基准，回测没有本轮入池基准'
 UNSUPPORTED['close_above_entry_high']='本轮事件日最高价属于跟踪提醒基准，选股回测没有该跟踪轮次，不能作为回测条件'
+
+
+def engine_version(strategy):
+    return FORWARD_VERSION if strategy.get('price_basis','none')=='forward' else VERSION
 
 
 def D(v):return Decimal(str(v))
@@ -87,6 +92,8 @@ def universe_availability(ast):
 
 
 def availability(market,strategy,exit_ma=0):
+    basis=strategy.get('price_basis','none')
+    if basis not in ('none','forward'):raise ValueError('回测信号价格口径仅支持none/forward')
     ast,rules,dependencies=strategy_predicates(strategy);fields=names(dependencies);cal=market.calendar();period=strategy.get('period','D')
     blocked=fields & UNSUPPORTED.keys()
     # Historical event-day closing pools have their own exact-date adapter.
@@ -99,6 +106,8 @@ def availability(market,strategy,exit_ma=0):
     universe=universe_availability({'all':[ast,rules['entry']]} if rules['entry'] is not None else ast)
     reason='；'.join(value for value in (reason,universe['reason']) if value)
     warnings=list(WARNINGS)
+    if basis=='forward':
+        warnings[2]='信号采用各观察日本地前复权价格；撮合、限价、费用和权益使用真实未复权价格，区间内有公司行动的股票仍排除；不模拟分红到账、送转股数或配股权益。'
     if universe['warning']:warnings.append(universe['warning'])
     listing_coverage=None
     identity_method=getattr(market,'instruments',None)
@@ -138,11 +147,13 @@ def availability(market,strategy,exit_ma=0):
     if not earliest:reason=reason or f'现存{len(cal)}个日线交易日不足{n}个{period}周期预热'
     valid=[d for d in cal if earliest and d>=earliest]
     if len(valid)<10:reason=reason or '预热后不足10个市场交易日'
-    return {'available':not bool(reason),'reason':reason or None,'min_date':earliest,'max_date':cal[-1] if cal else None,'default_start':valid[-60] if len(valid)>=60 else (valid[0] if valid else None),'default_end':cal[-1] if cal else None,'warmup_bars':n,'daily_lookback_sessions':_daily_breakout_lookback(dependencies),'period':period,'trade_rules':rules,'warnings':warnings,'eligible_count':0 if listing_coverage and listing_coverage['observed_stock_count'] and not listing_coverage['known_listing_date_count'] else None,'execution_universe':universe,'listing_date_coverage':listing_coverage}
+    return {'available':not bool(reason),'reason':reason or None,'min_date':earliest,'max_date':cal[-1] if cal else None,'default_start':valid[-60] if len(valid)>=60 else (valid[0] if valid else None),'default_end':cal[-1] if cal else None,'warmup_bars':n,'daily_lookback_sessions':_daily_breakout_lookback(dependencies),'period':period,'trade_rules':rules,'warnings':warnings,'eligible_count':0 if listing_coverage and listing_coverage['observed_stock_count'] and not listing_coverage['known_listing_date_count'] else None,'execution_universe':universe,'listing_date_coverage':listing_coverage,
+            **({'signal_price_basis':'forward','execution_price_basis':'none','engine_version':FORWARD_VERSION} if basis=='forward' else {})}
 
 
 def prepare(market,strategy,start,end,progress=None,exit_ma=0):
     """Explicit ex-post restricted sample, disclosed in report; stream per symbol."""
+    if strategy.get('price_basis','none')=='forward':return _prepare_forward(market,strategy,start,end,progress,exit_ma)
     if strategy.get('hot_universe') is not None:
         from app.services.strategy_hot_universe import HISTORICAL_REASON
         raise ValueError(HISTORICAL_REASON)
@@ -238,6 +249,119 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
         if progress and i%300==0:progress('计算策略历史信号',min(55,5+int(50*i/max(total,1))))
     for group in signals.values():group.sort(key=lambda r:r['instrument_id'])
     quality={'scope':'restricted_research','total_symbols':total,'eligible_symbols':len(eligible),'excluded_symbols':sum(excluded.values()),'exclusions':dict(excluded),'evaluated_observations':evaluated,'unknown_observations':unknown,'exit_unknown_observations':exit_unknown,'matched_signals':len(signal_rows),'universe_selection_uses_interval_coverage':True,'historical_identity_complete':False,'strict_unbiased_backtest':False}
+    return quotes,signals,signal_rows,quality
+
+
+def _prepare_forward(market,strategy,start,end,progress=None,exit_ma=0,*,_reuse_interval=True):
+    """Signals own an observation-date anchor; the execution ledger stays raw.
+
+    The original no-action-in-interval restriction is deliberate. Reconstructing
+    a continuous signal is not evidence of a correct dividend/share cash ledger.
+    """
+    from app.domain.conditions import metrics_for
+    from app.domain.strategy_prices import prepare_condition_prices, compact_source_token, VERSION as price_version
+    from app.services.strategy_periods import add_period_metrics
+    from .boll_conditions import configs_for
+    if strategy.get('hot_universe') is not None:
+        from app.services.strategy_hot_universe import HISTORICAL_REASON
+        raise ValueError(HISTORICAL_REASON)
+    cal=market.calendar();dates=[d for d in cal if start<=d<=end];expected=set(dates)
+    master={row['instrument_id']:row for row in market.instruments(limit=10000)}
+    verify=getattr(market,'verify_condition_sources',None)
+    source=compact_source_token(verify()) if callable(verify) else None
+    snapshot=market.status().get('snapshot_id');action_map={}
+    action_reader=getattr(market,'actions_for_instruments',None)
+    symbols=list(master)
+    if callable(action_reader):
+        for offset in range(0,len(symbols),32):
+            batch=action_reader(symbols[offset:offset+32])
+            if isinstance(batch,dict):action_map.update(batch)
+    ast,rules,dependencies=strategy_predicates(strategy)
+    buy_ast={'all':[ast,rules['entry']]} if rules['entry'] is not None else ast
+    needs_history=bool(history_nodes(dependencies))
+    needs_history_limits=any('limit_up' in names(event['where']) for event in history_nodes(dependencies))
+    if needs_history_limits:
+        from app.services.strategy_limits import LimitConditionEvidence
+        from app.services.history_events import attach_limit_events
+        limit_evidence=LimitConditionEvidence(market)
+    default=strategy.get('period','D');configs=configs_for(dependencies,default)
+    required_periods=periods_for(dependencies,default)|{default}
+    def dated_action(event):
+        try:return isinstance(event,dict) and isinstance(event.get('date'),str) and date.fromisoformat(event['date']).isoformat()==event['date']
+        except ValueError:return False
+    excluded=defaultdict(int);signals=defaultdict(list);quotes=defaultdict(dict);signal_rows=[]
+    unknown=evaluated=exit_unknown=0;eligible=[];total=market.status().get('symbols',0)
+    for i,(symbol,rows) in enumerate(market.iter_histories(end)):
+        identity=master.get(symbol,{});code=symbol[:6]
+        if symbol.endswith('.BJ') or code.startswith(('688','689')):excluded['unsupported_board']+=1;continue
+        if 'ST' in identity.get('name','').upper():excluded['current_st']+=1;continue
+        if not identity.get('list_date'):excluded['identity_missing']+=1;continue
+        if (date.fromisoformat(start)-date.fromisoformat(identity['list_date'])).days<30:excluded['new_listing']+=1;continue
+        in_range=[row for row in rows if start<=row['date']<=end]
+        if len(in_range)!=len(expected) or {row['date'] for row in in_range}!=expected:excluded['missing_quotes_in_interval']+=1;continue
+        if any(row.get('corporate_action') for row in in_range):excluded['corporate_action_in_interval']+=1;continue
+        if any(row['volume']<=0 or min(row['open'],row['close'],row['high'],row['low'])<=0 for row in in_range):excluded['invalid_or_no_trading']+=1;continue
+        actions=action_map.get(symbol)
+        if source is None or not isinstance(actions,list) or any(not dated_action(event) for event in actions):
+            excluded['corporate_action_coverage_unknown']+=1;continue
+        if any(start<=event['date']<=end for event in actions):excluded['corporate_action_in_interval']+=1;continue
+        eligible.append(symbol)
+        # Copies prevent any signal-specific price/indicator from changing the
+        # actual OHLC consumed by the next-open execution and cash accounting.
+        for row in in_range:quotes[row['date']][symbol]=dict(row)
+        prior=next((row for row in reversed(rows) if row['date']<start),None)
+        if prior:quotes['_previous'][symbol]=dict(prior)
+        optimized=None
+        if _reuse_interval:
+            from .backtest_forward_prices import interval_prices
+            seed=prepare_condition_prices(rows,actions,cal,start,'forward',instrument_id=symbol,
+                actions_coverage={'known':True,'source_token':source,'snapshot_id':snapshot})
+            optimized=interval_prices(seed,rows,cal,start,end,required_periods,symbol,source,actions)
+        ordinary=not bool(names(dependencies)&{'higher_lows','boll_signal'})
+        if default in ('W','M'):
+            observed={row['date'] for row in completed_indicator_bars(rows,cal,end,default) if start<=row['date']<=end}
+        else:observed=expected
+        for day in dates:
+            if day not in observed and not exit_ma:continue
+            context=(optimized.context(day) if optimized is not None else
+                prepare_condition_prices(rows,actions,cal,day,'forward',instrument_id=symbol,
+                    actions_coverage={'known':True,'source_token':source,'snapshot_id':snapshot}))
+            if exit_ma:
+                daily=optimized.metrics(day,'D',context) if optimized is not None else metrics_for(rows,day,cal,'D',price_context=context)
+                quotes[day][symbol]['exit_ma_value']=daily.get(f'ma{exit_ma}')
+            if day not in observed:continue
+            metrics=(optimized.metrics(day,default,context) if optimized is not None and ordinary else
+                metrics_for(rows,day,cal,default,include_higher_lows='higher_lows' in names(dependencies),
+                            boll_configs=configs.get(default),price_context=context))
+            ready=({selected:optimized.metrics(day,selected,context) for selected in required_periods-{default}}
+                   if optimized is not None and ordinary else None)
+            metrics=add_period_metrics(metrics,rows,day,cal,[dependencies],default,
+                instrument_id=symbol,generation=snapshot,price_context=context,ready=ready)
+            metrics.update(identity_flags(identity,day));metrics['indicator_period']=default
+            history=None
+            if needs_history:
+                history=HistoryContext(rows,cal,day,snapshot,
+                    retain_start=history_retain_start([dependencies],cal,start),price_context=context)
+                if needs_history_limits:attach_limit_events(history,symbol,[dependencies],limit_evidence)
+            if rules['exit'] is not None:
+                check=evaluate(rules['exit'],metrics,history.at(day) if history else None)
+                if check['result'] is None:exit_unknown+=1
+                quotes[day][symbol].update(custom_exit=check['result'],custom_exit_checks=check)
+            decision=evaluate(buy_ast,metrics,history.at(day) if history else None);evaluated+=1
+            if decision['result'] is None:unknown+=1
+            if decision['result'] is True:
+                signal={'date':day,'instrument_id':symbol,'code':code,'name':identity.get('name',symbol),
+                        'close':quotes[day][symbol]['close'],'metrics':metrics,'checks':decision,
+                        'signal_price_basis':'forward','signal_adjustment_anchor':day,'price_basis_contract':price_version}
+                signals[day].append(signal);signal_rows.append(signal)
+        if progress and i%300==0:progress('按信号日核验前复权历史信号',min(55,5+int(50*i/max(total,1))))
+    for group in signals.values():group.sort(key=lambda row:row['instrument_id'])
+    quality={'scope':'restricted_research','total_symbols':total,'eligible_symbols':len(eligible),
+             'excluded_symbols':sum(excluded.values()),'exclusions':dict(excluded),'evaluated_observations':evaluated,
+             'unknown_observations':unknown,'exit_unknown_observations':exit_unknown,'matched_signals':len(signal_rows),
+             'universe_selection_uses_interval_coverage':True,'historical_identity_complete':False,
+             'strict_unbiased_backtest':False,'signal_price_basis':'forward','execution_price_basis':'none',
+             'price_basis_contract':price_version,'corporate_action_accounting':'区间内公司行动股票排除；未模拟分红到账、送转股数或配股权益'}
     return quotes,signals,signal_rows,quality
 
 
@@ -338,7 +462,10 @@ def run_backtest(market,strategy,payload,progress=None):
     identities={r['instrument_id']:r for r in market.instruments(limit=10000)}
     if progress:progress('撮合并对账权益',70)
     result=simulate([previous]+dates,quotes,signals,config,identities)
-    result.update(config=config,trade_rules=bounds['trade_rules'],signals=signal_rows,data_quality=quality,start_date=start,end_date=end,warnings=bounds['warnings']+[f"样本共{quality['total_symbols']}只，可用{quality['eligible_symbols']}只，排除{quality['excluded_symbols']}只；逐项原因见data_quality。"],execution_universe=bounds['execution_universe'],engine_version=VERSION)
+    result.update(config=config,trade_rules=bounds['trade_rules'],signals=signal_rows,data_quality=quality,start_date=start,end_date=end,warnings=bounds['warnings']+[f"样本共{quality['total_symbols']}只，可用{quality['eligible_symbols']}只，排除{quality['excluded_symbols']}只；逐项原因见data_quality。"],execution_universe=bounds['execution_universe'],engine_version=engine_version(strategy))
+    if strategy.get('price_basis','none')=='forward':
+        from app.domain.strategy_prices import VERSION as price_version
+        result.update(signal_price_basis='forward',execution_price_basis='none',price_basis_contract=price_version)
     if any('higher_lows' in names(tree) for tree in [strategy['definition']]+[tree for tree in bounds['trade_rules'].values() if tree is not None]):
         from .higher_lows import VERSION as structure_version
         result['condition_contracts']={'higher_lows':structure_version}

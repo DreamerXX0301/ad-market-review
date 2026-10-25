@@ -107,8 +107,46 @@ def _height(events, symbol, day, quote, confirmed):
             'source_date': day, 'reason': '同日原始收盘与正成交量核验涨停；高度仅为该日来源连板数，不自动认定龙头'}
 
 
+def source_board_events(proof, symbol, day):
+    """Read the provider's own statistic text from its already indexed pool."""
+    result=[]
+    for record, by_code, source, path, *_ in proof._records(day,'up'):
+        if source!='fuyao':continue
+        for event in by_code.get(symbol[:6],[]):
+            if isinstance(event,dict) and event.get('continue_day_text') is not None:
+                result.append({**event,'source':'fuyao','source_path':path})
+    return result
+
+
+def board_text_for(events, symbol, day, quote, confirmed):
+    """Preserve a dated source description; never infer N-day/N-board counts."""
+    base={'label':None,'state':'unknown','source':'fuyao','source_date':day,
+          'window_sessions':None,'limit_up_count':None,
+          'reason':'同日来源未留存可核验的几天几板描述；不以连续连板数反推'}
+    if not confirmed or not _raw(quote,symbol,day):return base
+    valid=[]
+    for event in events:
+        if not _event_matches(event,symbol,day,quote):continue
+        text=event.get('continue_day_text')
+        if not isinstance(text,str):continue
+        text=text.strip()
+        if text=='首板' or re.fullmatch(r'[1-9]\d{0,3}连板',text):
+            valid.append((text,None,None,event.get('source_path')))
+            continue
+        match=re.fullmatch(r'([1-9]\d{0,3})天([1-9]\d{0,3})板',text)
+        if match:
+            sessions,boards=map(int,match.groups())
+            if boards<=sessions:valid.append((text,sessions,boards,event.get('source_path')))
+    labels={item[0] for item in valid}
+    if len(labels)>1:return {**base,'state':'conflict','reason':'同日扶摇来源的几天几板描述冲突，未选择其中一条'}
+    if not valid:return base
+    text,sessions,boards,path=valid[0]
+    return {**base,'label':text,'state':'reported','window_sessions':sessions,'limit_up_count':boards,
+            'source_path':path,'reason':'扶摇同日收盘池原始涨停统计文本，证券、日期及原始收盘已匹配；属于来源描述，不等同于连续涨停高度，未据此新增策略信号'}
+
+
 def build_board_presentation(row, *, symbol, day, snapshot_id, calendar, quotes, events=(), previous_events=(),
-                             break_events=(), up=None, previous_up=None, down=None, patterns=None):
+                             break_events=(), up=None, previous_up=None, down=None, patterns=None, board_text_events=()):
     """Return independent height, shape, volume and next-day feedback facts."""
     valid_calendar = isinstance(calendar, list) and calendar == sorted(set(calendar)) and day in calendar
     position = calendar.index(day) if valid_calendar else 0
@@ -122,6 +160,7 @@ def build_board_presentation(row, *, symbol, day, snapshot_id, calendar, quotes,
     prior_confirmed = bool(prior_valid and _confirmed(previous_up, prior, symbol, previous))
     down_confirmed = bool(current_valid and _confirmed(down, current, symbol, day))
     height = _height(events, symbol, day, current, up_confirmed)
+    board_text = board_text_for(board_text_events,symbol,day,current,up_confirmed)
     previous_height = _height(previous_events, symbol, previous, prior, prior_confirmed)
     types = []
     def tag(code, label, reason):
@@ -182,7 +221,7 @@ def build_board_presentation(row, *, symbol, day, snapshot_id, calendar, quotes,
     if change is not None and _number(current.get('low')) is not None and current['low'] < prior['close'] <= current['close'] and quote:
         tag('pullback_reclaim', '回踩收回', '日线最低价低于前收且收盘不低于前收；仅日价关系，不还原盘中顺序或资金承接')
     return {'version': VERSION, 'date': day, 'snapshot_id': snapshot_id, 'instrument_id': symbol,
-            'height': height, 'previous_height': previous_height, 'types': types, 'feedback': feedback, 'volume': volume,
+            'height': height, 'previous_height': previous_height, 'board_text':board_text, 'types': types, 'feedback': feedback, 'volume': volume,
             'limitations': ['高度、板型、量能和前日队列反馈分别核验；标签不改变策略条件。',
                             '未接入完整盘口，不能据此认定充分换手、锁量、封单稳定或明日可成交。']}
 
@@ -215,7 +254,8 @@ def decorate_board_collections(market, status, day, reference, collections):
             shape = pattern_fields(symbol, master.get(symbol, {}), day, generation, calendar, own, row, up, down)
             display = build_board_presentation(row, symbol=symbol, day=day, snapshot_id=generation, calendar=calendar,
                 quotes=own, events=current_events.get('limitup', []), previous_events=past_events.get('limitup', []),
-                break_events=current_events.get('breakpool', []), up=up, previous_up=prior_up, down=down, patterns=shape)
+                break_events=current_events.get('breakpool', []), up=up, previous_up=prior_up, down=down, patterns=shape,
+                board_text_events=source_board_events(proof,symbol,day))
             decorated.append({**row, 'board_presentation': display})
         result[key] = decorated
     return result

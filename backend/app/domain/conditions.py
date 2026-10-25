@@ -39,6 +39,9 @@ DAILY_ONLY_FIELDS = {'limit_up','prev_limit_up','limit_up_1y','limit_up_count_1y
                      'close_breakout_high','intraday_high_change_pct','turnover_ratio_pct','board','is_st','topic_ids',
                      'tracking_change_pct','trading_age','close_below_entry',
                      'close_above_entry_high','close_below_entry_low'}
+INDICATOR_NUMERIC_FIELDS = ('macd_dif','macd_dea','macd_hist','kdj_k','kdj_d','kdj_j')
+INDICATOR_CROSS_FIELDS = ('macd_cross','kd_cross','macd_dead_cross','kd_dead_cross')
+INDICATOR_DIAGNOSTIC_FIELDS = ('indicator_warmup_bars','indicator_reset_reason','indicator_warmup_reason')
 
 def specs():
     from app.domain.history_events import supported_field
@@ -167,8 +170,15 @@ def evaluate(node:dict, metrics:dict, history=None)->dict:
             elif op=='!=':result=a!=b
         except (TypeError,ValueError):result=None
     extra={'evidence':metrics.get(node['field']+'_evidence')} if node['field'] in ('close_above_entry_high','close_below_entry_low','limit_up_1y','limit_up','prev_limit_up') else {}
-    if node['field']=='intraday_high_change_pct':extra.update(observation_date=metrics.get(node['field']+'_date'),observation_period='D')
-    return {**node,'actual':a,'right_actual':b,'result':result,'reason':(metrics.get(node['field']+'_reason') or '数据/预热/历史身份不足，按未知处理') if result is None else None,**extra}
+    if node['field'] in ('intraday_high_change_pct','turnover_ratio_pct'):
+        extra.update(observation_date=metrics.get(node['field']+'_date'),observation_period='D')
+    missing=[field for field,value in ((node['field'],a),(node.get('right_field'),b)) if field and value is None]
+    if result is None:
+        technical={field:metrics[field+'_evidence'] for field in missing
+                   if field in INDICATOR_NUMERIC_FIELDS+INDICATOR_CROSS_FIELDS and metrics.get(field+'_evidence')}
+        if technical:extra['indicator_evidence']=technical
+    reason=next((metrics.get(field+'_reason') for field in missing if metrics.get(field+'_reason')),None)
+    return {**node,'actual':a,'right_actual':b,'result':result,'reason':(reason or metrics.get(node['field']+'_reason') or '数据/预热/历史身份不足，按未知处理') if result is None else None,**extra}
 
 def _evaluate_limit_count(node,metrics):
     """A partial count stays null; only mathematically certain bounds decide."""
@@ -247,6 +257,8 @@ def normalized_bar(row):
     # proof; do not inherit the legacy display indicator's missing-key default.
     out['_higher_lows_action_coverage_known']=r.get('corporate_action_coverage_known') is True and isinstance(r.get('corporate_action'),bool)
     out['_boll_action_coverage_known']=r.get('_boll_action_coverage_known',r.get('corporate_action_coverage_known') is True and isinstance(r.get('corporate_action'),bool)) is True
+    for key in ('raw_open','raw_high','raw_low','raw_close','raw_volume','raw_amount','corporate_action_original','price_basis','adjustment_anchor'):
+        if key in r:out[key]=r[key]
     return out
 
 
@@ -281,6 +293,24 @@ def normalized_metric_rows(bars,as_of):
     return [row for row in rows if row['date'] and row['date']<=as_of]
 
 
+def explain_missing_indicators(metrics,row):
+    """Add bounded diagnostics only; never recompute or validate a signal."""
+    for field in INDICATOR_NUMERIC_FIELDS+INDICATOR_CROSS_FIELDS:
+        if metrics.get(field) is not None:
+            metrics[field+'_reason']=None
+            continue
+        required=36 if field in INDICATOR_CROSS_FIELDS else 35
+        fallback=('死叉需前后两期有效成交及已预热指标，不以金叉未触发替代' if 'dead_cross' in field
+                  else '交叉需前后两期已预热指标' if required==36 else '缺少可核验的MACD/KDJ指标数值')
+        cause=row.get('indicator_reset_reason') or row.get('indicator_warmup_reason') or fallback
+        count=row.get('indicator_warmup_bars')
+        count=count if isinstance(count,int) and not isinstance(count,bool) and count>=0 else None
+        metrics[field+'_reason']=cause+(f'；当前连续可比报价{count}根，需至少{required}根' if count is not None else f'；需至少{required}根连续可比报价，当前根数未留存')
+        metrics[field+'_evidence']={**{key:row.get(key) for key in INDICATOR_DIAGNOSTIC_FIELDS},
+                                   'required_warmup_bars':required}
+    return metrics
+
+
 def metrics_from_enriched(row,previous=None,topics=None):
     """Condition-only adapter over the one shared chart/backtest indicator implementation."""
     m={field:None for field in FIELDS}
@@ -297,6 +327,8 @@ def metrics_from_enriched(row,previous=None,topics=None):
     m['topic_ids']=topics
     m['observed_date']=row.get('date')
     m['indicator_warmup_bars']=row.get('indicator_warmup_bars')
+    for field in ('indicator_reset_reason','indicator_warmup_reason'):
+        m[field]=row.get(field)
     field='intraday_high_change_pct'
     m[field]=finite(row.get(field))
     m[field+'_date']=row.get('date')
@@ -337,10 +369,53 @@ def metrics_from_enriched(row,previous=None,topics=None):
             old_ma=previous.get(f'ma{window}') if previous else None
             if old_ma is not None and row.get('price_continuity',True):
                 m[f'cross_above_ma{window}']=previous['close']<=old_ma and close>ma
-    return m
+    return explain_missing_indicators(m,row)
 
 
-def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,include_higher_lows=False,boll_configs=None)->dict:
+def _price_context_metrics(bars,as_of,calendar,period,topics,include_higher_lows,boll_configs,context):
+    """Price indicators and raw source facts use separate, causal lanes."""
+    raw_source=context.get('raw_rows',[])
+    raw=(raw_source if isinstance(raw_source,_PreparedMetricBars) and all(row.get('date','')<=as_of for row in raw_source)
+         else [row for row in raw_source if row.get('date','')<=as_of])
+    # Daily source facts only need the last two actual quotes; do not replay a
+    # second full EMA seed merely to recover raw volume and daily returns.
+    source=metrics_for(raw[-2:] if period=='D' else raw,as_of,calendar,period,topics=topics,_source_facts_only=True)
+    if period=='D' and any(row.get('corporate_action_coverage_known') is not True for row in raw[-2:]):
+        for field in ('change_pct','volume_ratio','volume_expand','volume_shrink'):
+            source[field]=None;source[field+'_reason']='前后原始报价的公司行动覆盖未知，不能证明原价涨幅或量能可比'
+    usable=context.get('price_basis')=='forward_event_affine' and context.get('anchor_date')==as_of
+    price=metrics_for(context.get('price_rows',[]) if usable else [],as_of,calendar,period,topics=topics,
+                      include_higher_lows=include_higher_lows,boll_configs=boll_configs)
+    return merge_condition_price_metrics(source,price,context,as_of,period)
+
+
+def merge_condition_price_metrics(source,price,context,as_of,period='D'):
+    """Merge already computed lanes without source I/O or indicator recurrence."""
+    price=dict(price)
+    usable=context.get('price_basis')=='forward_event_affine' and context.get('anchor_date')==as_of
+    facts={'change_pct','volume','amount','volume_ratio','volume_expand','volume_shrink','intraday_high_change_pct',
+           'limit_up','prev_limit_up','limit_up_1y','turnover_ratio_pct'}
+    for field in facts:
+        for suffix in ('','_reason','_date','_status','_evidence'):
+            if field+suffix in source:price[field+suffix]=source[field+suffix]
+    adjustment=context.get('adjustment',{})
+    reason=('复权锚与当前观察日不一致，不能使用未来锚价格' if context.get('anchor_date')!=as_of else
+            adjustment.get('reason') or '本地前复权价格与公司行动覆盖未核验')
+    if not usable:
+        for field in set(FIELDS)-facts-{'board','is_st','topic_ids','limit_up_count_1y','tracking_change_pct','trading_age'}:
+            price[field]=None;price[field+'_reason']=reason
+    from app.domain.strategy_prices import VERSION
+    price.update(requested_price_basis='forward',price_basis=context.get('price_basis') if usable else 'unavailable',
+                 adjustment_anchor=as_of,anchor_date=as_of,price_contract=VERSION,
+                 adjustment={key:adjustment.get(key) for key in ('version','model','usable','reason','events_count','quarantined','source_snapshot_id','source_proof_sha256')},
+                 indicator_period=period,observed_date=price.get('observed_date') or source.get('observed_date'))
+    for field in ('open','high','low','close','volume','amount'):price['raw_'+field]=source.get(field)
+    return price
+
+
+def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,include_higher_lows=False,boll_configs=None,price_context=None,_source_facts_only=False)->dict:
+    if price_context and price_context.get('requested_price_basis')=='forward':
+        return _price_context_metrics(bars,as_of,calendar,period,topics,include_higher_lows,boll_configs,price_context)
     from app.analytics.indicators import enrich_bars,aggregate_weekly,intraday_high_change
     rows=normalized_metric_rows(bars,as_of)
     daily_rows=rows
@@ -362,6 +437,10 @@ def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,
     daily_high_metrics={'intraday_high_change_pct':daily_high,'intraday_high_change_pct_reason':daily_high_reason,'intraday_high_change_pct_date':as_of}
     today=found_current[0] if len(found_current)==1 else None
     daily_high_metrics['turnover_ratio_pct']=today.get('turnover_ratio_pct') if today and today.get('volume') is not None and today['volume']>0 else None
+    daily_high_metrics['turnover_ratio_pct_date']=as_of
+    daily_high_metrics['turnover_ratio_pct_reason']=(None if daily_high_metrics['turnover_ratio_pct'] is not None else
+        '观察日缺少唯一有效的正成交量报价，换手率保持未知' if not today or today.get('volume') is None or today['volume']<=0 else
+        '缺少观察日可核验的换手率；成交额不是换手率，不能用当前流通股本回填历史')
     empty.update(daily_high_metrics)
     if not rows:return empty
     # Invalid price records remain unknown. Removing a bad day makes shared calendar logic restart.
@@ -372,13 +451,13 @@ def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,
         row['volume']=row['volume'] if row['_volume_known'] else 0
         row['amount']=row['amount'] if row['amount'] is not None else 0
     daily_breakout={}
-    if period in ('W','M'):
+    if period in ('W','M') and not _source_facts_only:
         from app.analytics.rolling_high import rolling_high_state
         daily_breakout=rolling_high_state(daily_rows,calendar,as_of)
         empty.update(daily_breakout)
     if period in ('W','M'):
         from app.analytics.period_dates import completed_indicator_bars
-        enriched=completed_indicator_bars(rows,calendar,as_of,period,tail=2)
+        enriched=completed_indicator_bars(rows,calendar,as_of,period,tail=2,**({'source_facts_only':True} if _source_facts_only else {}))
     else:enriched=enrich_bars(rows,calendar,tail=2)
     if not enriched:return empty
     current=enriched[-1];previous=enriched[-2] if len(enriched)>1 else None

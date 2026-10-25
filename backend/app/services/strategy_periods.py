@@ -94,7 +94,7 @@ def dependencies_for_period(node,period,default='D'):
     return {'all':children} if children else None
 
 
-def add_period_metrics(base,bars,day,calendar,trees,default='D',*,instrument_id=None,generation=None,boll_states_by_period=None,plan=None,ready=None):
+def add_period_metrics(base,bars,day,calendar,trees,default='D',*,instrument_id=None,generation=None,boll_states_by_period=None,plan=None,ready=None,price_context=None):
     plan=plan or compile_metric_plan(trees,default)
     requested=set(plan.periods)
     # Old definitions without scoped clauses keep their original metrics and
@@ -106,15 +106,16 @@ def add_period_metrics(base,bars,day,calendar,trees,default='D',*,instrument_id=
         if boll_states_by_period is not None:request=metric_request(request.include_higher_lows)
         by_period[period]=(ready or {}).get(period)
         if by_period[period] is None:
-            by_period[period]=cached_metrics(bars,day,calendar,period,instrument_id=instrument_id,generation=generation,request=request)
+            by_period[period]=cached_metrics(bars,day,calendar,period,instrument_id=instrument_id,generation=generation,request=request,price_context=price_context)
         if boll_states_by_period is not None and period in boll_states_by_period:
             by_period[period]['boll_states']=boll_states_by_period[period]
     return {**base,'_period_metrics':by_period}
 
 
-def _summary_key(day,period,instrument_id,generation):
+def _summary_key(day,period,instrument_id,generation,price_context=None):
     from app.analytics.indicators import INDICATOR_VERSION
-    return (str(data_dir()),generation,instrument_id,day,period,INDICATOR_VERSION,'volume-comparison-v1')
+    key=(str(data_dir()),generation,instrument_id,day,period,INDICATOR_VERSION,'volume-comparison-v1')
+    return key+('forward',price_context.get('anchor_date'),price_context.get('cache_key')) if price_context and price_context.get('requested_price_basis')=='forward' else key
 
 
 def _get(cache,key):
@@ -146,16 +147,17 @@ def _compose(ordinary,higher,bands,request,topics):
     return result
 
 
-def cached_metrics_if_ready(day,period,*,instrument_id=None,generation=None,topics=None,request=None):
+def cached_metrics_if_ready(day,period,*,instrument_id=None,generation=None,topics=None,request=None,price_context=None):
     """Probe small proofs before materializing a security's full EMA seed."""
     if not generation or not instrument_id:return None
+    if price_context and price_context.get('requested_price_basis')=='forward' and not price_context.get('cache_key'):return None
     request=request or metric_request()
-    ordinary,higher,bands=_saved_parts(_summary_key(day,period,instrument_id,generation),request)
+    ordinary,higher,bands=_saved_parts(_summary_key(day,period,instrument_id,generation,price_context),request)
     if ordinary is None or request.include_higher_lows and higher is None or any(value is None for value in bands.values()):return None
     return _compose(ordinary,higher,bands,request,topics)
 
 
-def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None,topics=None,include_higher_lows=False,boll_configs=None,request=None):
+def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None,topics=None,include_higher_lows=False,boll_configs=None,request=None,price_context=None):
     """Compose independently cached indicator/structure/configuration proofs.
 
     The fixed generation binds prices, calendar and action coverage. Unknown
@@ -166,16 +168,17 @@ def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None
     from app.analytics.boll_conditions import VERSION as boll_version,latest_states
     request=request or metric_request(include_higher_lows,boll_configs)
     usable=bool(generation and instrument_id)
+    if price_context and price_context.get('requested_price_basis')=='forward' and not price_context.get('cache_key'):usable=False
     if not usable:
-        return metrics_for(bars,day,calendar,period,topics=topics,include_higher_lows=request.include_higher_lows,boll_configs=request.boll_configs)
-    key=_summary_key(day,period,instrument_id,generation)
+        return metrics_for(bars,day,calendar,period,topics=topics,include_higher_lows=request.include_higher_lows,boll_configs=request.boll_configs,price_context=price_context)
+    key=_summary_key(day,period,instrument_id,generation,price_context)
     ordinary,higher,bands=_saved_parts(key,request)
     need_ordinary=ordinary is None
     missing_keys={config_id for config_id,value in bands.items() if value is None}
     missing_configs=[config for config,config_id in zip(request.boll_configs,request.boll_keys) if config_id in missing_keys]
     need_higher=request.include_higher_lows and higher is None
     if ordinary is None:
-        computed=metrics_for(bars,day,calendar,period,include_higher_lows=need_higher,boll_configs=missing_configs)
+        computed=metrics_for(bars,day,calendar,period,include_higher_lows=need_higher,boll_configs=missing_configs,price_context=price_context)
         ordinary={field:value for field,value in computed.items() if field not in ('higher_lows_state','boll_states')}
         if need_higher:higher=computed['higher_lows_state']
         bands.update(computed.get('boll_states',{}))
@@ -183,7 +186,8 @@ def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None
         # Normalize exactly as metrics_for does, before its legacy missing-
         # volume adaptation. A new structure must keep missing/duplicate/action
         # blockers even when an ordinary indicator summary is already cached.
-        rows=normalized_metric_rows(bars,day)
+        basis_rows=price_context.get('price_rows',[]) if price_context and price_context.get('requested_price_basis')=='forward' else bars
+        rows=normalized_metric_rows(basis_rows,day)
         if need_higher:higher=higher_lows_latest(rows,calendar,day,period)
         if missing_configs:bands.update(latest_states(rows,calendar,day,period,missing_configs))
     with _lock:

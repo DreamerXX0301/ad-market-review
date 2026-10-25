@@ -1,5 +1,6 @@
 """Dated market research assembled from one immutable real-data generation."""
 from __future__ import annotations
+from app.services.supplement_access import supplement_reader
 
 from collections import Counter, OrderedDict
 import threading
@@ -161,6 +162,7 @@ def index_overview(day=None):
         "data_coverage": data_coverage("overview", status, day, market.reference(), market.calendar())})
 
 
+@supplement_reader
 def overview(day=None):
     market, status, day, reference, rows = panel(day)
     events=dated_events(reference,day)
@@ -191,6 +193,7 @@ def overview(day=None):
     return json_clean({"date": day, "snapshot_id": status["snapshot_id"], "data_coverage": data_coverage("overview", status, day, reference, market.calendar()), "indices": market.index_quotes(day) if hasattr(market,"index_quotes") else market.indices(day), "breadth": _breadth(market, rows, day), "total_amount": amount, "amount_scope": "沪深京已留存A股股票成交额", "shsz_total_amount": sum(r["amount"] for r in shsz if number(r.get("amount"))), "bj_amount": sum(r["amount"] for r in three if r["instrument_id"].endswith(".BJ") and number(r.get("amount"))), "sh_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SH") and number(r.get("amount"))), "sz_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SZ") and number(r.get("amount"))), **comparison, "top_amount": top_amount, "top_amount_activity": top_amount_activity, "top_gainers": top("change_pct"), "top_losers": top("change_pct", False), "top_30d": [r for r in ranking if r.get("rank") is not None][:5], "limit_up_count": len(events["limitup"]) if "limitup" in events else None, "limit_down_count": len(events["limitdown"]) if "limitdown" in events else None, "broken_count": len(events["breakpool"]) if "breakpool" in events else None, "divergence": divergence, "largest_seals": largest, "seal_funds_top5": largest, "seal_stability": {"items": [], "needed_capability":"盘中连续封单金额与委托队列快照，带时间戳、采样间隔和覆盖率；通常需要Level-2或许可的连续盘口采样", "unavailable_reason": "当前仅留存封单金额快照，尚无连续封单序列，不能据此计算封单稳定性"}, "warnings": ["行情与技术指标为真实未复权数据；公司行动附近指标重新预热", "上涨家数为已留存可比样本；停牌与缺数尚未全部解释"], "quality": status["quality"]})
 
 
+@supplement_reader
 def market_topic_members(day=None, *, topic_id=None, source_code=None, kind=None, source_name=None):
     from app.services.market_topic_members import list_members
     market, status, day, reference, rows = panel(day)
@@ -207,6 +210,7 @@ def _sectors_from_panel(market, status, day, reference, indexed):
     return result
 
 
+@supplement_reader
 def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical'):
     if monitor_scope not in ('historical', 'latest') or (monitor_scope != 'historical' and kind != 'abnormal'):
         raise HTTPException(422, '监控名单范围仅支持监管页的historical或latest')

@@ -43,6 +43,21 @@ assert.equal(
 assert.equal("price_path" in normalizeRuleTree(old).history_event, false);
 
 const base = old.history_event;
+assert.match(
+  historyReclaimModes.find((mode) => mode.value === "close_at_or_above").label,
+  /仅看今日/,
+);
+assert.match(
+  historyReclaimModes.find((mode) => mode.value === "close_reclaim").label,
+  /昨收低于、今收不低于/,
+);
+assert.match(
+  historyRuleSummary(
+    { field: "close", op: ">", right_event_field: "close" },
+    (field) => (field === "close" ? "收盘价" : field),
+  ),
+  /观察日收盘价（日K） > 事件日收盘价/,
+);
 const guarded = withHistoryPricePart(base, "guard", defaultHistoryGuard());
 assert.deepEqual(guarded.price_path, {
   guard: { max_drawdown_pct: 5, require_pullback: true },

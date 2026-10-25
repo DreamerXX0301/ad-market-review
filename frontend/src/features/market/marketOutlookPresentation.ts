@@ -1,6 +1,7 @@
 import type { Row } from "../../lib/api";
 
 export const OUTLOOK_VERSION = "dated-market-outlook-v1";
+export const INSIGHTS_VERSION = "market-opportunity-insights-v1";
 export const outlookRows = (value: unknown): Row[] =>
   Array.isArray(value)
     ? value.filter((item) => item && typeof item === "object")
@@ -25,6 +26,106 @@ export function outlookForDate(
     value.snapshot_id === snapshot
     ? value
     : null;
+}
+
+/** Additive insights have their own date/generation boundary, including history. */
+export function outlookInsightsForDate(
+  value: Row | null | undefined,
+  date: string,
+  snapshot: unknown,
+) {
+  return value?.version === INSIGHTS_VERSION &&
+    value.date === date &&
+    typeof snapshot === "string" &&
+    snapshot &&
+    value.snapshot_id === snapshot
+    ? value
+    : null;
+}
+
+function outlookDay(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(value).toISOString().slice(0, 10) === value
+  );
+}
+
+export function outlookChanges(value: unknown, day: string): Row[] {
+  const rows = outlookRows(value);
+  return rows.filter(
+    (row) =>
+      typeof row.id === "string" &&
+      rows.filter((item) => item.id === row.id).length === 1 &&
+      row.date === day &&
+      (row.previous_date == null ||
+        (outlookDay(row.previous_date) && row.previous_date < day)),
+  );
+}
+
+export function outlookRoutes(value: unknown): Row[] {
+  const rows = outlookRows(value);
+  return ["trend", "relay", "repair"].flatMap((id) => {
+    const matches = rows.filter((row) => row.id === id);
+    return matches.length === 1 ? matches : [];
+  });
+}
+
+/** Display only the server's bounded replay through the selected observation day. */
+export function outlookCandidateTracking(
+  value: Row | null | undefined,
+  day: string,
+) {
+  if (
+    !value ||
+    value.as_of !== day ||
+    value.lookback_sessions !== 20 ||
+    value.confirmed !== false ||
+    ![
+      "candidate",
+      "continuing",
+      "diverging",
+      "failed",
+      "unknown",
+      "none",
+    ].includes(value.status) ||
+    (value.candidate_date != null &&
+      (!outlookDay(value.candidate_date) || value.candidate_date > day)) ||
+    (value.last_observed_date != null &&
+      (!outlookDay(value.last_observed_date) ||
+        value.last_observed_date > day)) ||
+    (value.window_begin != null &&
+      (!outlookDay(value.window_begin) || value.window_begin > day)) ||
+    (value.window_end != null &&
+      (!outlookDay(value.window_end) || value.window_end > day)) ||
+    (value.window_begin &&
+      value.window_end &&
+      value.window_begin > value.window_end)
+  )
+    return null;
+  const observations = outlookRows(value.observations);
+  return {
+    ...value,
+    observations: observations
+      .filter(
+        (row) =>
+          outlookDay(row.date) &&
+          row.date <= day &&
+          (!value.candidate_date || row.date >= value.candidate_date) &&
+          (!value.window_begin || row.date >= value.window_begin) &&
+          (!value.window_end || row.date <= value.window_end) &&
+          observations.filter((item) => item.date === row.date).length === 1,
+      )
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-20),
+    index_references: outlookRows(value.index_references).filter(
+      (row) =>
+        value.candidate_date &&
+        row.date === value.candidate_date &&
+        row.date <= day,
+    ),
+  };
 }
 
 export function outlookStocks(value: unknown, day: string): Row[] {

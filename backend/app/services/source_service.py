@@ -1,5 +1,6 @@
 """Source configuration and evidence-backed account capabilities."""
 from __future__ import annotations
+from app.services.supplement_access import supplement_reader
 import datetime as dt
 import json
 from fastapi import HTTPException
@@ -48,6 +49,7 @@ def list_sources(*, include_supplement=True):
     return response
 
 
+@supplement_reader
 def supplement_status():
     """Read accepted evidence only; visiting settings never starts remote requests."""
     from app.core import get_market

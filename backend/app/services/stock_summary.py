@@ -153,6 +153,20 @@ def summary_for(market, identifier, as_of=None):
         'return_scope': '年内以上年末已核验交易日收盘为基准；近30日按精确T/T-30市场交易日，公司行动需核验连续价格；本月单独以上月末为基准。',
         'limit_scope': '只统计观察日及之前逐股原始收盘核验的来源涨停事件；不完整次数保持未知，已确认次数仅为下界。'},
         master[symbol], day)
+    # Reuse this summary's existing P/T quote batch and dated pool closure.
+    # Source text is additive display evidence, never a reconstructed history.
+    from app.services.stock_board_presentation import build_board_presentation, retained_proof, source_board_events
+    from app.services.strategy_limits import quote_index
+    reference_method=getattr(market,'reference',None)
+    reference=reference_method() if callable(reference_method) else {}
+    proof=retained_proof({**reference,'_supplement':supplement},status.get('snapshot_id'))
+    source_events=source_board_events(proof,symbol,day)
+    own_quotes=quote_index(selected)
+    up=proof._state(symbol,day,quote)
+    value['board_presentation']=build_board_presentation(
+        {**(quote or {}),'instrument_id':symbol,'date':day,'snapshot_id':status.get('snapshot_id')},
+        symbol=symbol,day=day,snapshot_id=status.get('snapshot_id'),calendar=calendar,
+        quotes=own_quotes,events=source_events,up=up,board_text_events=source_events)
     if key is not None:
         with _LOCK:
             _CACHE[key] = deepcopy(value); _CACHE.move_to_end(key)

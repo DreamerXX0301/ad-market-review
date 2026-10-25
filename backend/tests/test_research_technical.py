@@ -209,6 +209,10 @@ def test_complete_cycles_and_frozen_charts_are_bounded_after_full_history_calcul
         assert chart['as_of'] == '2026-01-28'
         assert chart['price_basis'] == 'none' and chart['indicator_continuity'] == 'market_sessions'
         assert chart['calculated_before_projection'] is True
+        assert chart['trading_day_distance']['anchor_date'] == chart['as_of']
+        assert chart['trading_day_distance']['state'] == 'available'
+        for row in chart['bars']:
+            assert row['trading_days_to_as_of'] == market.days.index(chart['as_of']) - market.days.index(row['date'])
         assert all('raw' not in row for row in chart['bars'])
         assert all(row['date'] <= chart['as_of'] for row in chart['bars'])
         if name != 'D':

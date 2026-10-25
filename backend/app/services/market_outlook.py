@@ -57,7 +57,11 @@ RULES = [
     {'id': 'bottom_candidate', 'label': '短底观察',
      'rule': '严格前一交易日已观察冰点、当日广度修复且成交额显著放大，并有四指数当日低点与收盘风险参照时，仅记短底候选；不把后续确认回填候选日。'},
     {'id': 'entry_gate', 'label': '禁止开仓与解除条件',
-     'rule': '冰点、退潮或必要广度证据未知时禁止开仓；修复未满足量价门槛时不解除。放量修复候选只解除到转强确认后试错，未来触发仍未观察。'},
+     'rule': '冰点、退潮或必要广度/成交额证据未知时禁止开仓；修复路径须满足量价门槛，趋势路径独立核验。放量修复候选只解除到转强确认后试错，未来触发仍未观察。'},
+    {'id': 'entry_routes', 'label': '趋势与接力分别复核',
+     'rule': '必要广度和相邻成交额可比后，四指数偏强且广度温度≥60可复核趋势；超短接力另需昨板反馈偏强及普通10%组证据。阶段标签不单独否决同样的量价条件。'},
+    {'id': 'candidate_replay', 'label': '候选后续观察',
+     'rule': '只回放截至观察日最近20个严格市场交易日；后续任一指数收盘低于候选日低点即失效，价格齐且未破低点、广度≥60记延续，缺资料待核验；不确认底部。'},
 ]
 
 
@@ -164,9 +168,10 @@ def _temperature(day, calendar, breadth, previous, history, universe_upper_bound
                          and len(previous_history) == 1 and not _history_matches(previous, previous_history[0])))
     consistent = not current_conflict and not previous_conflict
     adjacent = bool(prior_day and previous and previous.get('date') == prior_day
-                    and previous.get('scope') == breadth.get('scope')
+                    and _breadth_scope(previous.get('scope')) == _breadth_scope(breadth.get('scope'))
+                    and previous.get('source') == breadth.get('source')
                     and len(current_history) == len(previous_history) == 1
-                    and current_history[0].get('scope') == previous_history[0].get('scope')
+                    and _breadth_scope(current_history[0].get('scope')) == _breadth_scope(previous_history[0].get('scope'))
                     and consistent
                     and prior_coverage is not None and prior_coverage >= 80)
     prior_value = prior_value if adjacent else None
@@ -485,14 +490,16 @@ def _ice_history(day, calendar, history, universe_upper_bound):
     position = calendar.index(day) if valid else -1
     requested = calendar[max(0, position - ICE_LOOKBACK_SESSIONS):position] if valid else []
     current = [row for row in history if isinstance(row, dict) and row.get('date') == day]
-    scope = current[0].get('scope') if len(current) == 1 else None
+    scope = _breadth_scope(current[0].get('scope')) if len(current) == 1 else None
+    source = current[0].get('source') if len(current) == 1 else None
     observations = []
     for target in requested:
         matches = [row for row in history if isinstance(row, dict) and row.get('date') == target]
         row = matches[0] if len(matches) == 1 else {}
         bounded = _bounded_reading(row, universe_upper_bound)
         value, coverage = bounded['value'], bounded['coverage_pct']
-        known = len(matches) == 1 and scope is not None and row.get('scope') == scope and coverage is not None and coverage >= 80
+        known = (len(matches) == 1 and scope is not None and _breadth_scope(row.get('scope')) == scope
+                 and row.get('source') == source and coverage is not None and coverage >= 80)
         ice = value <= 15 and (_count(row.get('up')) or 0) < 500 if known and value is not None else None
         observations.append({'date': target, 'temperature': value if known else None,
                              'coverage_pct': coverage if known else None, 'is_ice': ice,
@@ -540,7 +547,7 @@ def _bottom_watch(day, calendar, history, reference, stage, turnover, universe_u
     references = _index_references(reference, day)
     risk_complete = len(references) == len(INDEX_NAMES)
     prior_ice = ice['prior_ice_streak']
-    candidate = stage['code'] == 'repair' and turnover['expanded'] is True and prior_ice is not None and prior_ice >= 1 and risk_complete
+    candidate = stage['code'] in ('repair', 'climax') and turnover['expanded'] is True and prior_ice is not None and prior_ice >= 1 and risk_complete
     missing = stage['status'] == 'unknown' or turnover['state'] == 'unknown' or prior_ice is None or not risk_complete
     state = 'candidate' if candidate else 'unknown' if missing else 'unconfirmed'
     return {'status': state, 'label': {'candidate': '短底候选，待后续确认', 'unconfirmed': '短底尚未确认', 'unknown': '短底证据待核验'}[state],
@@ -556,39 +563,37 @@ def _bottom_watch(day, calendar, history, reference, stage, turnover, universe_u
 
 
 def _entry_gate(stage, axes, turnover, bottom):
-    by_id = {axis['id']: axis for axis in axes}
-    aligned = (stage['code'] == 'broad_rise' and by_id['index']['state'] == 'strong'
-               and by_id['short_term']['state'] == 'strong' and by_id['short_term']['ordinary_group_ready'])
+    from app.services.market_outlook_insights import entry_routes
+    routes = entry_routes(stage, axes, turnover, bottom)
+    aligned = routes[0]['status'] == 'conditional'
     blocked = (turnover['state'] == 'unknown' or stage['code'] in ('unknown', 'ice', 'ebb')
-               or (stage['code'] == 'repair' and bottom['status'] != 'candidate'))
+               or (stage['code'] == 'repair' and bottom['status'] != 'candidate' and not aligned))
     conditional = bottom['status'] == 'candidate' or aligned
     state = 'blocked' if blocked else 'conditional' if conditional else 'wait'
     reason = ('相邻市场交易日成交额缺失、重复或不可比，量能条件尚未核验，禁止开仓。' if turnover['state'] == 'unknown' else
               '冰点、退潮或必要证据未齐，开仓门槛未解除。' if stage['code'] in ('unknown', 'ice', 'ebb') else
               '当前修复尚未同时满足真实前日冰点、显著放量和风险参照门槛，继续禁止开仓。' if blocked else
               '已观察冰点后的量价修复，只解除到下一交易日转强确认后试错；指数中期仍弱时加仓继续等待。' if bottom['status'] == 'candidate' else
-              '观察日指数、广度及价格反馈同向，下一交易日仍需核验实际条件。' if aligned else
+              '观察日指数与广度同向，趋势条件可独立复核；普通10%资料缺口仅限制对应接力路径。' if aligned else
               '当前未形成明确同向条件，等待下一交易日确认。')
-    if stage['code'] in ('ice', 'ebb', 'repair'):
-        releases = ['严格前日有真实冰点，当日广度从低温回升至少15个百分点并越过35。',
-                    f'沪深京股票总成交额较严格前一市场交易日增加至少{EXPANSION_THRESHOLD_PCT}%，且候选日指数低点参照齐备。']
-    else:
-        releases = ['补足并核验严格相邻同口径成交额比较与当日广度，未知量能不能放行。',
-                    '普通趋势日需指数、广度和价格反馈同向；显著放量20%是冰点修复门槛，不强加给所有趋势日。']
+    releases = ['先核验必要广度及严格相邻同口径成交额比较，冰点、退潮和未知证据限制优先。',
+                '趋势路径：四指数偏强、广度多数上涨；不要求普通10%接力证据或20%放量。',
+                f'冰点修复路径：严格前日冰点、当日广度修复，成交额增加至少{EXPANSION_THRESHOLD_PCT}%并有四指数低点参照。',
+                '接力路径：趋势条件之外，再核验昨板价格反馈与普通10%制度组资料。']
     releases.append('下一交易日再人工确认广度、指数与候选方向承接及真实可成交；不把收盘条件提前视作盘中已触发。')
     return {'status': state, 'label': '禁止开仓' if state == 'blocked' else '转强确认后试错' if bottom['status'] == 'candidate' else '满足条件后复核' if state == 'conditional' else '等待确认',
             'reasons': [reason, f"显著放量门槛：较严格前一交易日同口径成交额增加至少{EXPANSION_THRESHOLD_PCT}%。"],
             'release_conditions': releases,
             'blocked_conditions': ['广度仍处冰点、退潮，或相邻同口径成交额等必要证据未知。',
-                                   '修复成交额未显著放大，或相邻成交额不可比、前日冰点/当日指数低点未核验。',
+                                   '修复路径尚未满足量价候选且趋势路径也不成立；各路径缺口分别核对。',
                                    '下一交易日广度修复失败，或主要指数跌破候选日低点且不能收回。'],
-            'trigger_state': 'unobserved'}
+            'trigger_state': 'unobserved', 'routes': routes}
 
 
 def _plan(stage, axes, entry_gate, bottom):
     by_id = {axis['id']: axis for axis in axes}
-    constructive = (stage['code'] == 'broad_rise' and by_id['index']['state'] == 'strong'
-                    and by_id['short_term']['state'] == 'strong' and by_id['short_term']['ordinary_group_ready'])
+    constructive = any(route['id'] == 'trend' and route['status'] == 'conditional'
+                       for route in entry_gate.get('routes', []))
     defensive = stage['code'] == 'ebb'
     stance = 'defensive' if defensive else 'conditional' if constructive else 'evidence_gap' if stage['code'] == 'unknown' else 'wait_confirmation'
     labels = {'defensive': '防守优先', 'conditional': '满足条件再复核',
@@ -600,7 +605,7 @@ def _plan(stage, axes, entry_gate, bottom):
         'open': ('开仓门槛未解除，继续禁止开仓；' + entry_gate['reasons'][0] if open_status == 'blocked' else
                  '冰点后已观察显著放量修复；下一交易日转强与可成交条件确认后，才重新评估试错。' if bottom['status'] == 'candidate' else
                  '广度由强转弱，先观察风险释放，不用反抽替代转强确认。' if defensive else
-                 '指数、广度和价格反馈同向，但明日触发条件仍需实际核验。' if constructive else
+                 '指数与广度同向，趋势路径可独立复核；明日触发条件仍需实际核验。' if constructive else
                  '当前仅有观察日收盘证据，先确认指数与所属方向在下一交易日同步转强。'),
         'add': ('冰点或退潮阶段不因浮亏摊薄而加仓。' if add_status == 'avoid' else
                 '仅对已有持仓单独复核：原定失效条件未触发，且市场与所属方向同步转强。'),
@@ -618,11 +623,14 @@ def _plan(stage, axes, entry_gate, bottom):
                          '候选跌回观察日收盘参照下方未能收复，或缺少可成交报价。']
         if action == 'add':
             invalidations = ['已有持仓原定失效条件已触发。', '市场或所属方向转弱；不得以摊低成本替代原定风险条件。']
-        actions.append({'id': action, 'label': label, 'status': state,
+        observation = ('冰点后放量修复候选已出现。' if bottom['status'] == 'candidate' and action != 'add' else
+                       '趋势与广度同向，已有持仓可独立复核。' if constructive and action == 'add' else
+                       '短期修复已出现，中期趋势及持仓方向仍须单独检查。' if bottom['status'] == 'candidate' else stage['summary'])
+        actions.append({'id': action, 'label': label, 'status': state, 'observation': observation,
                         'status_label': ('转强确认后试错' if action == 'open' and bottom['status'] == 'candidate' else
                                          {'blocked': '禁止开仓', 'avoid': '暂不考虑', 'wait': '等待确认', 'conditional': '满足条件后复核'}[state]),
                         'reason': reasons[action], 'triggers': triggers, 'invalidations': invalidations,
-                        'trigger_state': 'unobserved'})
+                        'trigger_state': 'unobserved', 'execution_state': 'unobserved'})
     scenarios = [
         {'id': 'strength', 'label': '转强延续', 'triggers': ['主要指数、同口径广度和候选所属方向同步转强，并有真实可成交报价。'],
          'actions': ['仅重新核对开仓清单；已有持仓另核对原定失效条件，满足后才考虑加仓。'],
@@ -753,10 +761,18 @@ def build_market_outlook(market, status, day, reference, rows, breadth, emotion,
     proof = _retained_proof(reference, status.get('snapshot_id'))
     event_counts = _verified_events(market, reference, rows, day, proof=proof)
     stage = _stage(temperature, breadth, axes, conflicts, event_counts)
+    if turnover_history is None:
+        turnover_method = getattr(market, 'turnover_history', None)
+        turnover_history = turnover_method(day) if temperature['calendar_valid'] and callable(turnover_method) else []
     turnover = _turnover(market, day, calendar, rows, turnover_history)
     bottom = _bottom_watch(day, calendar, history, reference, stage, turnover, universe_upper_bound)
     gate = _entry_gate(stage, axes, turnover, bottom)
     plan = _plan(stage, axes, gate, bottom)
+    from app.services.market_outlook_insights import build_insights
+    insights = build_insights(day=day, snapshot_id=status.get('snapshot_id'), calendar=calendar,
+                              breadth=breadth, previous=previous_breadth, history=history, temperature=temperature,
+                              stage=stage, axes=axes, turnover=turnover, turnover_history=turnover_history,
+                              reference=reference, bottom=bottom, routes=gate['routes'], universe_upper_bound=universe_upper_bound)
     if ladder is None:
         if temperature['calendar_valid'] and callable(getattr(market, 'history_for_instruments', None)):
             from app.services.market_ladder import build_ladder
@@ -774,6 +790,7 @@ def build_market_outlook(market, status, day, reference, rows, breadth, emotion,
     inputs = {'version': VERSION, 'date': day, 'snapshot_id': status.get('snapshot_id'),
               'temperature': temperature, 'axes': axes, 'stage': stage, 'event_counts': event_counts,
               'turnover': turnover, 'bottom_watch': bottom, 'entry_gate': gate,
+              'insights': insights,
               'watchlist': watchlist, 'next_session': next_session,
               'source_input_fingerprint': proof.get('input_fingerprint')}
     provenance = {'rule_version': VERSION, 'mode': 'retained_retrospective', 'label': '当前留存回看与条件预案',
@@ -785,6 +802,6 @@ def build_market_outlook(market, status, day, reference, rows, breadth, emotion,
     return {'version': VERSION, 'date': day, 'snapshot_id': status.get('snapshot_id'),
             'temperature': temperature, 'stage': stage, 'axes': axes, 'next_session': next_session,
             'plan': plan, 'watchlist': watchlist, 'event_counts': event_counts,
-            'turnover': turnover, 'bottom_watch': bottom, 'entry_gate': gate,
+            'turnover': turnover, 'bottom_watch': bottom, 'entry_gate': gate, 'insights': insights,
             'provenance': provenance, 'notice': NOTICE, 'rules': deepcopy(RULES),
             'legacy_emotion_model': emotion.get('model')}

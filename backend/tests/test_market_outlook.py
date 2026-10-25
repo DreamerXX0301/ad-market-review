@@ -129,7 +129,10 @@ def test_aligned_broad_rise_is_only_conditional_and_does_not_borrow_all_cohort_p
     assert [action['status'] for action in result['plan']['actions']] == ['conditional', 'conditional', 'avoid']
     strong['short_term']['groups'][0]['coverage_pct'] = 36
     missing_group = build(market, previous=None, sentiment=strong, turnover_history=history)
-    assert [action['status'] for action in missing_group['plan']['actions']] == ['wait', 'wait', 'avoid']
+    assert [action['status'] for action in missing_group['plan']['actions']] == ['conditional', 'conditional', 'avoid']
+    routes = {route['id']: route for route in missing_group['entry_gate']['routes']}
+    assert routes['trend']['status'] == 'conditional'
+    assert routes['relay']['status'] == 'wait'
 
 
 def test_unknown_turnover_blocks_open_and_cannot_still_offer_conditional_add(market):

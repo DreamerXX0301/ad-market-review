@@ -1,0 +1,304 @@
+/* One scroll page keeps the original details above the initial chart position. */
+.drawer-backdrop:has(.single-page-stock-frame),
+.modal-backdrop:has(.sector-chart-dialog-body) {
+  padding: 10px;
+  align-items: center;
+  justify-content: center;
+}
+.stock-drawer.single-page-stock-frame,
+.modal.wide:has(.sector-chart-dialog-body) {
+  width: min(1740px, calc(100vw - 20px));
+  height: calc(100dvh - 20px);
+  max-height: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.stock-drawer.single-page-stock-frame {
+  display: flex;
+  flex-direction: column;
+}
+.entry-page-bar {
+  flex: 0 0 auto;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  gap: 10px;
+}
+.entry-page-bar strong {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+}
+.entry-page-bar strong small {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 8px;
+  font-weight: 400;
+}
+.entry-page-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-shrink: 0;
+}
+.entry-page-bar .link {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.entry-page-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-anchor: none;
+  scroll-padding-top: 0;
+  scrollbar-gutter: stable;
+}
+.single-page-stock-frame .drawer-heading {
+  position: static;
+}
+.single-page-stock-frame .drawer-body {
+  padding: 14px;
+  gap: 16px;
+}
+.single-page-stock-frame .drawer-body > .candle-chart {
+  padding: 0 8px 8px;
+}
+.modal:has(.sector-chart-dialog-body) > .modal-title {
+  flex: 0 0 auto;
+  padding: 11px 16px;
+}
+.modal:has(.sector-chart-dialog-body) > .sector-chart-dialog-body {
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+.entry-members-link {
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+.entry-single-chart {
+  min-width: 0;
+  overflow: visible;
+}
+.entry-single-stage {
+  scroll-margin-top: 0;
+  min-width: 0;
+}
+.entry-single-stage .chart-toolbar {
+  padding: 8px 4px 5px;
+  gap: 7px 10px;
+}
+.entry-single-stage .ohlc-strip {
+  padding: 5px 5px 0;
+  gap: 4px 13px;
+  line-height: 1.6;
+  min-height: 24px;
+}
+.entry-single-stage .chart-bottom {
+  padding: 6px 4px;
+  margin-top: 0;
+}
+.entry-single-stage .source-line {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.entry-single-stage .chart-wave-selectors {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.entry-single-stage .candle-pane-value {
+  font-size: 10px;
+  line-height: 17px;
+}
+@media (max-width: 700px) {
+  .entry-page-bar {
+    padding: 6px 10px;
+    gap: 7px;
+  }
+  .entry-page-bar > div {
+    gap: 10px;
+  }
+  .entry-page-bar .link {
+    font-size: 10px;
+  }
+  .entry-single-stage .chart-bottom {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .entry-single-stage .chart-bottom > span {
+    font-size: 8px;
+  }
+  .single-page-stock-frame .drawer-body {
+    padding: 8px;
+  }
+  .single-page-stock-frame .drawer-body > .candle-chart {
+    padding: 0 3px 6px;
+  }
+  .entry-single-stage .chart-toolbar .ma-controls {
+    gap: 5px;
+  }
+  .entry-single-stage .chart-toolbar {
+    gap: 5px 7px;
+  }
+}
+
+.entry-header-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px 15px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.entry-header-board {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.entry-header-board .board-tags,
+.entry-header-board .candle-pattern-status {
+  margin: 0;
+}
+.entry-header-board:empty {
+  display: none;
+}
+
+/* Keep useful context visible while the original full summary remains above. */
+.entry-page-bar {
+  display: grid;
+  grid-template-columns: minmax(170px, 280px) minmax(360px, 1fr) auto;
+  grid-template-areas: "identity metrics actions";
+  column-gap: 18px;
+  row-gap: 8px;
+  padding-block: 8px;
+}
+.entry-header-identity {
+  grid-area: identity;
+  gap: 4px 12px;
+}
+.entry-header-identity > strong {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  user-select: text;
+}
+.entry-page-bar > .entry-header-metrics {
+  grid-area: metrics;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+  min-width: 0;
+  gap: 10px;
+}
+.entry-header-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.entry-header-metric > span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.3;
+}
+.entry-header-metric > b {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.entry-header-metric .unknown {
+  color: var(--muted);
+}
+.entry-page-bar > .entry-header-actions {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px 12px;
+}
+.entry-header-navigation {
+  gap: 4px;
+}
+.entry-header-navigation output {
+  min-width: 40px;
+  font-size: 10px;
+}
+.entry-header-navigation .btn {
+  gap: 3px;
+  padding: 4px 6px;
+  font-size: 10px;
+}
+.entry-action-short {
+  display: none;
+}
+@media (max-width: 1250px) {
+  .entry-page-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "identity actions" "metrics metrics";
+  }
+  .entry-header-identity {
+    flex-wrap: nowrap;
+  }
+  .entry-header-board {
+    gap: 4px;
+  }
+  .entry-page-bar > .entry-header-metrics {
+    padding-top: 3px;
+    border-top: 1px solid var(--border);
+  }
+}
+@media (max-width: 700px) {
+  .entry-header-identity {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .entry-header-navigation .btn > span,
+  .entry-action-text {
+    display: none;
+  }
+  .entry-header-navigation .btn {
+    padding: 4px;
+  }
+  .entry-action-short {
+    display: inline;
+  }
+  .entry-page-bar > .entry-header-actions {
+    gap: 5px 8px;
+  }
+  .entry-header-metric > b {
+    font-size: 12px;
+  }
+  .entry-page-bar > .entry-header-metrics {
+    gap: 5px;
+  }
+}
+@media (max-width: 390px) {
+  .entry-header-metric > span {
+    font-size: 9px;
+  }
+  .entry-header-metric > b {
+    font-size: 10px;
+  }
+  .entry-header-navigation output {
+    min-width: 30px;
+  }
+}
+
+.entry-header-not-applicable {
+  color: var(--muted);
+  font-size: 10px;
+  align-self: center;
+  grid-column: span 3;
+}

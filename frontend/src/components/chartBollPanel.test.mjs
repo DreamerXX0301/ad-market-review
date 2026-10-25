@@ -25,6 +25,25 @@ const { bollCandleValues } = await import(
   "data:text/javascript;base64," +
     Buffer.from(transpile(bollSource)).toString("base64")
 );
+const distanceSource = await fs.readFile(
+  new URL("./chartSessionDistance.ts", import.meta.url),
+  "utf8",
+);
+const { chartSessionDistance } = await import(
+  "data:text/javascript;base64," +
+    Buffer.from(transpile(distanceSource)).toString("base64")
+);
+const { candleExtremeChange } = await import(
+  "data:text/javascript;base64," +
+    Buffer.from(
+      transpile(
+        await fs.readFile(
+          new URL("./candleExtremeChange.ts", import.meta.url),
+          "utf8",
+        ),
+      ),
+    ).toString("base64")
+);
 for (const requested of [100, 480, 625, 650, 1000]) {
   for (let count = 0; count <= 5; count++) {
     const layout = chartPaneLayout(requested, count, true);
@@ -181,7 +200,9 @@ const formatterFactory = new Function(
   "showBoll",
   "pal",
   "candleChange",
+  "candleExtremeChange",
   "chartSinceReturn",
+  "chartSessionDistance",
   "num",
   "percent",
   "supportsLimits",
@@ -195,11 +216,20 @@ const bar = {
   low: 12,
   close: 12.9,
   ma20: 12.44,
+  trading_days_to_as_of: 0,
 };
 const args = [
   [bar],
   "D",
-  {},
+  {
+    as_of: bar.date,
+    period: "D",
+    trading_day_distance: {
+      anchor_date: bar.date,
+      basis: "market_calendar",
+      state: "available",
+    },
+  },
   points,
   [20],
   ["#1", "#2", "#3", "#4", "#5", "#6"],
@@ -207,7 +237,9 @@ const args = [
   true,
   palette,
   () => ({ value: 1, reason: "", label: "日涨跌幅" }),
+  candleExtremeChange,
   () => ({ value: 0, end: bar.date, reason: "" }),
+  chartSessionDistance,
   (value) => Number(value).toFixed(2),
   (value) => value + "%",
   false,
@@ -228,6 +260,7 @@ for (const text of [
   "BOLL副图 上轨　12.90",
   "BOLL副图 中轨　12.44",
   "BOLL副图 下轨　11.98",
+  "距行情截止日 2026-10-09 · 0个交易日",
 ])
   assert.ok(html.includes(text), text);
 assert.ok(!html.includes("999") && !html.includes("WRONG_MARKER"));

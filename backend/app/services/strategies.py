@@ -18,13 +18,28 @@ from app.services import task_service as tasks
 from app.services.workspace_deletion import require_strategy_present,strategy_visibility
 from app.services import strategy_hot_universe as hot_universe
 ENGINE_VERSION="workspace-v8-bounded-history-events"
+FORWARD_ENGINE_VERSION='workspace-v17-local-forward-prices-v1'
+PRICE_BASIS_CONTRACT='strategy-local-forward-v1'
+FORWARD_SELECTION_BATCH_SIZE=16
+
+
+def normalized_price_basis(value='none'):
+    if value not in ('none','forward'):fail('策略价格口径仅支持none（未复权）或forward（本地前复权）')
+    return value
+
+
+def definition_digest(definition,price_basis='none'):
+    # Legacy raw definitions keep their established hashes. The opt-in price
+    # convention is part of the new immutable definition, not a chart preference.
+    return digest(definition if price_basis=='none' else {'definition':definition,'price_basis':price_basis,'price_basis_contract':PRICE_BASIS_CONTRACT})
 
 
 def stored_period(period):
     return {'period':'D' if period=='M' else period,'signal_period':period}
 
 
-def evaluator_for(definition,period,trade_rules=None,hot_filter=None):
+def evaluator_for(definition,period,trade_rules=None,hot_filter=None,price_basis='none'):
+    if price_basis=='forward':return FORWARD_ENGINE_VERSION
     trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
     if any(names(tree)&{'volume_expand','volume_shrink'} for tree in trees):return 'workspace-v16-volume-comparison-v1'
     if any('boll_signal' in names(tree) for tree in trees):return 'workspace-v15-boll-signal-v1'
@@ -98,7 +113,7 @@ def strategy_view(c,sid):
     p=one(c,'SELECT * FROM tracking_policy_version WHERE strategy_id=? AND policy_version=?',(sid,r['current_policy_version']))
     latest=c.execute('SELECT run_id,business_date,status FROM selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1',(sid,)).fetchone()
     following,custom=active_policy_scope(c,sid)
-    return {**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'definition':obj(v['definition_json'],{}),'hot_universe':obj(v.get('hot_universe_json')),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid)}
+    return {**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'price_basis':v.get('price_basis','none'),'price_basis_contract':PRICE_BASIS_CONTRACT if v.get('price_basis')=='forward' else None,'definition':obj(v['definition_json'],{}),'hot_universe':obj(v.get('hot_universe_json')),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid)}
 
 def list_strategies(deleted=False,limit=None,offset=0):
     if not isinstance(deleted,bool) or (limit is not None and (isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=100)) or isinstance(offset,bool) or not isinstance(offset,int) or offset<0:fail('策略列表分页参数无效')
@@ -119,6 +134,7 @@ def get_strategy(sid):
 
 def create_strategy(payload,strategy_id=None):
     name=str(payload.get('name','')).strip();period=payload.get('period','D')
+    price_basis=normalized_price_basis(payload.get('price_basis','none'))
     if not name or len(name)>100:fail('策略名称需要1至100字')
     if period not in ('D','W','M'):fail('只支持日线/周线/月线策略')
     try:definition=validate(payload.get('definition',{}))
@@ -134,7 +150,7 @@ def create_strategy(payload,strategy_id=None):
         from .workspace_purge import was_purged
         if was_purged(c,'strategy',sid):fail('此策略标识已永久删除，请使用新的策略标识',409)
         insert(c,'strategy',dict(strategy_id=sid,name=name,created_at_ms=now_ms()))
-        insert(c,'strategy_version',dict(strategy_id=sid,version=1,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),hot_universe_json=js(hot_filter) if hot_filter else None,evaluator_version=evaluator_for(definition,period,trade_rules,hot_filter),recorded_at_ms=now_ms()))
+        insert(c,'strategy_version',dict(strategy_id=sid,version=1,**stored_period(period),price_basis=price_basis,definition_json=js(definition),definition_sha256=definition_digest(definition,price_basis),trade_rules_json=js(trade_rules),hot_universe_json=js(hot_filter) if hot_filter else None,evaluator_version=evaluator_for(definition,period,trade_rules,hot_filter,price_basis),recorded_at_ms=now_ms()))
         save_policy(c,sid,1,policy)
         c.execute('UPDATE strategy SET current_version=1,current_policy_version=1 WHERE strategy_id=?',(sid,))
         return strategy_view(c,sid)
@@ -149,6 +165,7 @@ def update_strategy(sid,payload):
         old=strategy_view(c,sid);name=str(payload.get('name',old['name'])).strip()
         if not name or len(name)>100:fail('策略名称需要1至100字')
         period=payload.get('period',old['period'])
+        price_basis=normalized_price_basis(payload.get('price_basis',old.get('price_basis','none')))
         if period not in ('D','W','M'):fail('只支持日线/周线/月线策略')
         try:definition=validate(payload.get('definition',old['definition']))
         except ValueError as e:fail(str(e))
@@ -156,9 +173,9 @@ def update_strategy(sid,payload):
         try:trade_rules=normalize_trade_rules(payload.get('trade_rules',old['trade_rules']))
         except ValueError as e:fail(str(e))
         hot_filter=hot_universe.normalize(payload.get('hot_universe',old['hot_universe']))
-        if 'definition' in payload or 'period' in payload or 'trade_rules' in payload or 'hot_universe' in payload:
+        if 'definition' in payload or 'period' in payload or 'trade_rules' in payload or 'hot_universe' in payload or 'price_basis' in payload:
             version=old['version']+1
-            insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(period),definition_json=js(definition),definition_sha256=digest(definition),trade_rules_json=js(trade_rules),hot_universe_json=js(hot_filter) if hot_filter else None,evaluator_version=evaluator_for(definition,period,trade_rules,hot_filter),recorded_at_ms=now_ms()))
+            insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(period),price_basis=price_basis,definition_json=js(definition),definition_sha256=definition_digest(definition,price_basis),trade_rules_json=js(trade_rules),hot_universe_json=js(hot_filter) if hot_filter else None,evaluator_version=evaluator_for(definition,period,trade_rules,hot_filter,price_basis),recorded_at_ms=now_ms()))
             c.execute('UPDATE strategy SET current_version=? WHERE strategy_id=?',(version,sid))
         if 'policy' in payload:
             following,custom=active_policy_scope(c,sid)
@@ -178,23 +195,24 @@ def ensure_evaluator_version(c,sid):
     require_strategy_present(c,sid)
     st=strategy_view(c,sid)
     old=one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,st['version']))
-    desired=evaluator_for(st['definition'],st['period'],st.get('trade_rules'),st.get('hot_universe'))
+    desired=evaluator_for(st['definition'],st['period'],st.get('trade_rules'),st.get('hot_universe'),st.get('price_basis','none'))
     if old['evaluator_version']!=desired:
         version=c.execute('SELECT max(version)+1 FROM strategy_version WHERE strategy_id=?',(sid,)).fetchone()[0]
-        insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(st['period']),definition_json=old['definition_json'],definition_sha256=old['definition_sha256'],trade_rules_json=old['trade_rules_json'],hot_universe_json=old.get('hot_universe_json'),evaluator_version=desired,recorded_at_ms=now_ms()))
+        insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(st['period']),price_basis=st.get('price_basis','none'),definition_json=old['definition_json'],definition_sha256=old['definition_sha256'],trade_rules_json=old['trade_rules_json'],hot_universe_json=old.get('hot_universe_json'),evaluator_version=desired,recorded_at_ms=now_ms()))
         c.execute('UPDATE strategy SET current_version=? WHERE strategy_id=?',(version,sid))
     return strategy_view(c,sid)
 
 
-def seed_workspace():
+def seed_workspace(price_basis='none'):
     """Explicit post-import bootstrap, does not select stocks or create tracking rounds."""
+    price_basis=normalized_price_basis(price_basis)
     with connect() as c:
         day=current(c);existing={r[0] for r in c.execute('SELECT strategy_id FROM strategy')}
         purged={r[0] for r in c.execute("SELECT target_id FROM workspace_purge WHERE target_kind='strategy' AND business_deleted=1")}
     defaults=[('builtin-volume-3x','三倍量观察',{'all':[{'field':'volume_ratio','op':'>=','value':3},{'field':'close_above_ma30','op':'==','value':True}]}),('builtin-ma-trend','均线趋势观察',{'all':[{'field':'close_above_ma30','op':'==','value':True},{'field':'close_above_ma60','op':'==','value':True},{'field':'change_pct','op':'>=','value':3}]}),('builtin-kd-cross','KDJ金叉观察',{'all':[{'field':'kd_cross','op':'==','value':True},{'field':'close_above_ma20','op':'==','value':True}]})]
     for sid,name,definition in defaults:
         if sid in purged:continue
-        if sid not in existing:create_strategy({'name':name,'definition':definition},strategy_id=sid)
+        if sid not in existing:create_strategy({'name':name,'definition':definition,'price_basis':price_basis},strategy_id=sid)
         else:
             with connect() as c:
                 c.execute('BEGIN IMMEDIATE')
@@ -209,6 +227,7 @@ def candidate_requirements(definition):
     """Compile sparse evidence fields once for a selection's fixed rule."""
     fields=names(definition)
     fields|={'close','change_pct','volume','amount','volume_ratio','observed_date','indicator_period','indicator_warmup_bars','signal_date','signal_close','signal_price','current_daily_close','entry_price_policy','price_basis','price_continuity','quality','_complete_topic_ids','identity_scope','identity_as_of'}
+    fields|={'requested_price_basis','anchor_date','adjustment_anchor','adjustment','price_contract','raw_open','raw_high','raw_low','raw_close','raw_volume','raw_amount'}
     for field in list(fields):
         if '_ma' in field:fields.add('ma'+field.rsplit('_ma',1)[1])
     if fields&{'macd_cross','macd_dead_cross'}:fields|={'macd_dif','macd_dea'}
@@ -247,7 +266,7 @@ def selection_history_batch(market,symbols,day):
     return method(symbols,end=day) if callable(method) else {symbol:market.bars(symbol,as_of=day) for symbol in symbols}
 
 
-def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=True,require_history=False):
+def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=True,require_history=False,price_basis='none',source_token=None,price_contexts=None,history_cached_symbols=None):
     """Read original seeds only for cache misses, with at most 32 securities.
 
     Weekly/monthly entry still uses the observation day's own raw close. A
@@ -255,11 +274,40 @@ def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=
     """
     if len(symbols)>32:raise ValueError('逐股策略历史每批最多32只证券')
     periods=[period for period in plan.periods if include_default or period!=plan.default]
-    ready={symbol:{period:cached_metrics_if_ready(day,period,instrument_id=symbol,generation=generation,request=plan.requests[period]) for period in periods} for symbol in symbols}
+    contexts=price_contexts if price_contexts is not None else {}
+    if price_basis=='forward':
+        from app.domain.strategy_prices import prepare_condition_prices,price_cache_key
+        for symbol in symbols:contexts[symbol]={'requested_price_basis':'forward','anchor_date':day,
+                                              'cache_key':price_cache_key(symbol,day,'forward',source_token)}
+    ready={symbol:{period:cached_metrics_if_ready(day,period,instrument_id=symbol,generation=generation,request=plan.requests[period],
+             **({'price_context':contexts[symbol]} if price_basis=='forward' else {})) for period in periods} for symbol in symbols}
     daily_method=getattr(market,'history_for_instruments',None)
     needs_daily=include_default and plan.default in ('W','M')
-    missing=[symbol for symbol in symbols if require_history or any(value is None for value in ready[symbol].values()) or needs_daily and not callable(daily_method)]
+    missing=[symbol for symbol in symbols if (require_history and symbol not in (history_cached_symbols or set())) or any(value is None for value in ready[symbol].values()) or needs_daily and not callable(daily_method)]
     histories=selection_history_batch(market,missing,day) if missing else {}
+    if price_basis=='forward' and missing:
+        action_method=getattr(market,'actions_for_instruments',None)
+        actions=action_method(missing) if callable(action_method) else None
+        status_method=getattr(market,'status',None);snapshot=status_method().get('snapshot_id') if callable(status_method) else None
+        expected_snapshot=generation[0] if isinstance(generation,tuple) else generation
+        for symbol in missing:
+            same_generation=expected_snapshot is None or snapshot==expected_snapshot
+            known=same_generation and source_token is not None and isinstance(actions,dict) and symbol in actions and isinstance(actions[symbol],list)
+            contexts[symbol]=prepare_condition_prices(histories.get(symbol,[]),actions.get(symbol) if isinstance(actions,dict) else None,
+                market.calendar(),day,'forward',instrument_id=symbol,
+                actions_coverage={'known':known,'source_token':source_token if same_generation else None,'snapshot_id':snapshot,
+                                  'reason':None if same_generation else '行情代际在价格准备期间变化，不能混用公司行动证据'})
+            # Historical contexts replay both lanes and benefit from sharing
+            # their normalized seeds with D/W/M summaries. A structure-only
+            # cache miss can use each lane once; extra wrappers there copy the
+            # complete seed without reducing any normalization work.
+            for lane in ('raw_rows','price_rows') if require_history else ():
+                values=contexts[symbol][lane]
+                # A quarantined legacy adapter may still carry timestamps or
+                # unconverted date aliases. Keep its original rejection path;
+                # early normalization must never turn that date into a match.
+                if all(isinstance(row.get('date'),str) and len(row['date'])==10 for row in values):
+                    contexts[symbol][lane]=prepare_metric_bars(values)
     histories={symbol:prepare_metric_bars(values) for symbol,values in histories.items()}
     daily={symbol:values for symbol,values in histories.items()}
     daily_only=[symbol for symbol in symbols if symbol not in histories] if needs_daily else []
@@ -310,19 +358,24 @@ def run_strategy(sid,payload=None,*,queued_job=None):
         current_required=current_names(st['definition']);event_nodes=history_nodes(st['definition'])
         # Structures require exact calendar-defined OHLC windows; the dated
         # display panel intentionally does not carry these strict summaries.
-        fast=st['period']=='D' and not required&{'higher_lows','boll_signal'}
+        price_basis=st.get('price_basis','none')
+        fast=price_basis=='none' and st['period']=='D' and not required&{'higher_lows','boll_signal'}
         metric_plan=compile_metric_plan(st['definition'],st['period'])
         candidate_fields=candidate_requirements(st['definition'])
         status_method=getattr(market,'status',None)
         generation=status_method().get('snapshot_id') if callable(status_method) else None
         verify_sources=getattr(market,'verify_condition_sources',None)
         source_token=verify_sources() if callable(verify_sources) else None
-        summary_generation=(generation,source_token) if generation and source_token is not None else generation
+        if price_basis=='forward':
+            from app.domain.strategy_prices import compact_source_token
+            source_token=compact_source_token(source_token)
+        summary_source=(source_token['verified_closure_sha256'] if price_basis=='forward' and source_token is not None else source_token)
+        summary_generation=(generation,summary_source) if generation and summary_source is not None else generation
         # Legacy adapters still verify their sources through the original
         # bounded history read. Only a verified immutable closure can skip it.
         probe_generation=summary_generation if source_token is not None else None
         extra_periods=set(metric_plan.periods)-{st['period']}
-        panel_rows={x['instrument_id']:x for x in market_panel(day)} if fast or 'limit_up' in required else {}
+        panel_rows={x['instrument_id']:x for x in market_panel(day)} if fast or ('limit_up' in required and price_basis!='forward') else {}
         fast=fast and all('indicator_warmup_bars' in x for x in panel_rows.values())
         previous_panel={}
         if fast and any(field.startswith('cross_above_ma') for field in current_required):
@@ -335,33 +388,43 @@ def run_strategy(sid,payload=None,*,queued_job=None):
         count_values=limit_evidence.batch_count_metrics(market,sorted(master),day,calendar,include_daily=bool(required & DAILY_LIMIT_FIELDS)) if needs_count else {}
         limit_quotes=batch_quote_indexes(market,sorted(master),day,calendar) if fast and limit_evidence and not needs_count else {}
         check_task()
-        ordered=sorted(master);event_contexts={};history_batch=(history_batch_size([st['definition']]) if event_nodes else 256) if fast else 32
+        ordered=sorted(master);event_contexts={};metric_batch=FORWARD_SELECTION_BATCH_SIZE if price_basis=='forward' and event_nodes else 32
+        history_batch=(history_batch_size([st['definition']]) if event_nodes else 256) if fast else metric_batch
         report('核验个股条件',0,f'准备核验 {len(ordered)} 只证券',{'actual_completed_batches':0,'actual_total_batches':len(ordered)})
-        history_shared=prepare_shared(market,ordered,[st['definition']],calendar,day) if event_nodes else None
-        batch_bars={};batch_ready={};batch_daily={}
+        history_shared=prepare_shared(market,ordered,[st['definition']],calendar,day,**({'price_basis':price_basis} if price_basis=='forward' else {})) if event_nodes else None
+        batch_bars={};batch_ready={};batch_daily={};batch_price_contexts={};batch_history_contexts={}
         for sequence,ident in enumerate(ordered):
             if sequence%128==0:check_task()
-            if (not fast or extra_periods) and sequence%32==0:
-                selected=ordered[sequence:sequence+32]
-                batch_bars,batch_ready,batch_daily=selection_metric_batch(market,selected,day,metric_plan,probe_generation,include_default=not fast,require_history=bool(event_nodes and history_shared is None and not fast))
+            if (not fast or extra_periods) and sequence%metric_batch==0:
+                selected=ordered[sequence:sequence+metric_batch]
+                batch_price_contexts={}
+                batch_history_contexts={}
+                if price_basis=='forward' and event_nodes:
+                    from app.services.history_events import cached_forward_contexts
+                    batch_history_contexts=cached_forward_contexts(selected,[st['definition']],calendar,day,generation,source_token)
+                batch_bars,batch_ready,batch_daily=selection_metric_batch(market,selected,day,metric_plan,probe_generation,include_default=not fast,require_history=bool(event_nodes and history_shared is None and not fast),
+                    **({'price_basis':price_basis,'source_token':source_token,'price_contexts':batch_price_contexts,'history_cached_symbols':set(batch_history_contexts)} if price_basis=='forward' else {}))
                 if limit_evidence and not needs_count:
                     limit_quotes=batch_quote_indexes(market,selected,day,calendar,batch_bars if len(batch_bars)==len(selected) else None)
             if event_nodes and sequence%history_batch==0:
-                event_contexts=contexts_for_batch(market,ordered[sequence:sequence+history_batch],[st['definition']],calendar,day,batch_bars if not fast else None,shared=history_shared,limit_evidence=limit_evidence)
+                event_contexts=contexts_for_batch(market,ordered[sequence:sequence+history_batch],[st['definition']],calendar,day,batch_bars if not fast else None,shared=history_shared,limit_evidence=limit_evidence,
+                    **({'price_basis':price_basis,'price_contexts':batch_price_contexts,'prepared_contexts':batch_history_contexts} if price_basis=='forward' else {}))
             item=master[ident]
             if item.get('kind',item.get('asset_type','stock')) not in ('stock','equity','a_share','A'):continue
             topic_ids=[x['topic_id'] for x in topics.get(ident,[])]
             if fast:ms=metrics_from_enriched(panel_rows.get(ident),previous_panel.get(ident),topics=topic_ids)
             else:
                 ms=batch_ready.get(ident,{}).get(st['period'])
-                if ms is None:ms=cached_metrics(batch_bars.get(ident,[]),day,calendar,st['period'],instrument_id=ident,generation=summary_generation,request=metric_plan.requests[st['period']])
+                if ms is None:ms=cached_metrics(batch_bars.get(ident,[]),day,calendar,st['period'],instrument_id=ident,generation=summary_generation,request=metric_plan.requests[st['period']],
+                    **({'price_context':batch_price_contexts.get(ident)} if price_basis=='forward' else {}))
                 ms['topic_ids']=topic_ids
             if breakout_values is not None:ms.update(breakout_values.get(ident,{'breakout_valid':False}))
             ms.update(identity_flags(item,day))
             ms['indicator_period']=st['period']
             if extra_periods:
                 ms=add_period_metrics(ms,batch_bars.get(ident,[]),day,calendar,st['definition'],st['period'],
-                                      instrument_id=ident,generation=summary_generation,plan=metric_plan,ready=batch_ready.get(ident))
+                                      instrument_id=ident,generation=summary_generation,plan=metric_plan,ready=batch_ready.get(ident),
+                                      **({'price_context':batch_price_contexts.get(ident)} if price_basis=='forward' else {}))
             if topic_dependencies_:ms['_complete_topic_ids']=complete_topics
             if needs_count:
                 ms.update(count_values[ident])
@@ -390,8 +453,11 @@ def run_strategy(sid,payload=None,*,queued_job=None):
             if freeze_inputs(c)!=(deps,primary):fail('行情或补充数据代际已更新，本次未保存混合来源结果，请重新运行策略。',409)
             if membership_signature is not None and _topic_revision_signature(c)!=membership_signature:fail('本地题材或成员已变化，本次未保存混合热点范围；请重新运行策略。',409)
             universe_definition={'scope':'currently_imported_stock_master','count':len(result),'survivorship_warning':True,'candidate_storage_contract':'sparse-nonmatches-v1'}
+            from app.domain.strategy_prices import VERSION as PRICE_CONTRACT
+            universe_definition.update(requested_price_basis=price_basis,price_contract=PRICE_CONTRACT)
             if hot_evidence is not None:universe_definition['hot_universe']=hot_evidence
             signature=[deps,st['definition'],day]+([hot_evidence] if hot_evidence is not None else [])
+            signature+=[{'price_basis':price_basis,'price_contract':PRICE_CONTRACT}]
             insert(c,'selection_run',dict(run_id=rid,job_id=job_id,strategy_id=sid,strategy_version=st['version'],business_date=day,primary_snapshot_id=primary,input_snapshots_json=js(deps),input_sha256=digest(signature),status='running',universe_definition_json=js(universe_definition),created_at_ms=now_ms()))
             for row in result:insert(c,'selection_candidate',row)
             c.execute("UPDATE selection_run SET status='completed',completed_at_ms=? WHERE run_id=?",(now_ms(),rid))
@@ -409,13 +475,13 @@ def run_strategy(sid,payload=None,*,queued_job=None):
 
 def get_run(rid,decision=None):
     with connect() as c:
-        run=one(c,'SELECT r.*,s.name strategy_name FROM selection_run r JOIN strategy s USING(strategy_id) WHERE run_id=?',(rid,),'策略运行不存在')
+        run=one(c,'SELECT r.*,s.name strategy_name,v.price_basis requested_price_basis FROM selection_run r JOIN strategy s USING(strategy_id) JOIN strategy_version v ON v.strategy_id=r.strategy_id AND v.version=r.strategy_version WHERE run_id=?',(rid,),'策略运行不存在')
         allrows=rows(c,'SELECT * FROM selection_candidate WHERE run_id=? ORDER BY decision,instrument_id',(rid,));master=identities(run['business_date'])
         return {k:v for k,v in run.items() if not k.endswith('_json')}|{'input_snapshots':obj(run['input_snapshots_json'],{}),'universe_definition':obj(run['universe_definition_json'],{}),'matched_count':sum(r['decision']=='matched' for r in allrows),'unmatched_count':sum(r['decision']=='unmatched' for r in allrows),'unknown_count':sum(r['decision']=='unknown' for r in allrows),'items':[_candidate(r,master) for r in allrows if decision is None or r['decision']==decision]}
 
 def list_runs(sid=None,limit=50):
     with connect() as c:
-        sql='SELECT r.run_id,r.strategy_id,r.strategy_version,r.business_date,r.status,r.created_at_ms,s.name strategy_name FROM selection_run r JOIN strategy s USING(strategy_id)';params=[]
+        sql='SELECT r.run_id,r.strategy_id,r.strategy_version,r.business_date,r.status,r.created_at_ms,s.name strategy_name,v.price_basis requested_price_basis FROM selection_run r JOIN strategy s USING(strategy_id) JOIN strategy_version v ON v.strategy_id=r.strategy_id AND v.version=r.strategy_version';params=[]
         if sid:sql+=' WHERE r.strategy_id=?';params.append(sid)
         sql+=' ORDER BY r.created_at_ms DESC,r.rowid DESC LIMIT ?';params.append(min(max(limit,1),200));data=rows(c,sql,params)
         for r in data:r['counts']={x['decision']:x['n'] for x in rows(c,'SELECT decision,count(*) n FROM selection_candidate WHERE run_id=? GROUP BY decision',(r['run_id'],))}

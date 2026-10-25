@@ -99,13 +99,60 @@ def valid_quote(row):
             and row['low'] <= min(row['open'], row['close'], row['high']))
 
 
+def _raw_daily_facts(row,previous,positions,previous_date):
+    """Only two raw quotes and one shared calendar map; no indicator seed."""
+    from app.analytics.indicators import intraday_high_change
+    day=row['date'];position=positions.get(day)
+    previous=(previous if valid_quote(previous) and previous.get('corporate_action_coverage_known') is True
+              and position is not None and positions.get(previous.get('date'))==position-1 else None)
+    comparable=previous is not None and not row.get('corporate_action')
+    ratio=row['volume']/previous['volume'] if comparable else None
+    change=(row['close']/previous['close']-1)*100 if comparable else None
+    ready=ratio is not None and isfinite(ratio) and ratio>0
+    volume_reason=None if ready else '当前或前一可比周期缺少有效正成交量、存在零量停牌或量能倍数不可核验，放量/缩量保持未知'
+    high,high_reason=intraday_high_change(row,previous,positions)
+    turnover=row.get('turnover_ratio_pct')
+    result={'change_pct':change,'volume':row['volume'],'amount':row.get('amount') if row.get('amount') is None or row['amount']>=0 else None,
+            'volume_ratio':ratio,'volume_expand':ratio>1 if ready else None,'volume_shrink':ratio<1 if ready else None,
+            'volume_expand_reason':volume_reason,'volume_shrink_reason':volume_reason,
+            'intraday_high_change_pct':high,'intraday_high_change_pct_reason':high_reason,'intraday_high_change_pct_date':day,
+            'turnover_ratio_pct':turnover,'turnover_ratio_pct_date':day,
+            'turnover_ratio_pct_reason':None if turnover is not None else '缺少观察日可核验的换手率；成交额不是换手率，不能用当前流通股本回填历史'}
+    for field,quote,target in (('limit_up',row,day),('prev_limit_up',previous,previous_date)):
+        value=quote.get('limit_up') if quote else None
+        result[field]=value if isinstance(value,bool) else None
+        result[field+'_date']=target
+        result[field+'_reason']=None if result[field] is not None else '缺少精确市场交易日的有效成交报价或可核验涨停来源；不回溯其他报价日'
+    return result
+
+
+def retained_indicator_rows(rows, calendar, first=None):
+    """Replay every seed but emit only the retained window and its predecessor.
+
+    EMA/KD/MA and gap resets still consume the original complete sequence. The
+    preceding valid quote is kept so the first retained event has exactly the
+    same crossing/volume context as the full materialization.
+    """
+    from app.analytics.indicators import enrich_bars
+    if first is None:return enrich_bars(rows, calendar)
+    start=next((index for index,row in enumerate(rows) if row['date']>=first),len(rows))
+    return enrich_bars(rows, calendar, tail=max(1,len(rows)-max(0,start-1)))
+
+
 class HistoryContext:
     """One security, prepared once and reusable for tracking/backtest dates.
 
     This object is ephemeral. Only evaluate()'s small, selected-event proof may
     enter a persisted result; the full daily dictionary is never serialized.
     """
-    def __init__(self, rows, calendar, as_of, snapshot_id=None, enriched=None, retain_start=None):
+    def __init__(self, rows, calendar, as_of, snapshot_id=None, enriched=None, retain_start=None,price_context=None):
+        # Explicit raw contexts are the same legacy path as no context. Only
+        # an opted-in forward context may add anchored adjustment evidence.
+        self.price_context=price_context if price_context and price_context.get('requested_price_basis')=='forward' else None
+        self.price_basis='none'
+        if price_context and price_context.get('requested_price_basis')=='forward':
+            self._init_forward(rows,calendar,as_of,snapshot_id,retain_start,price_context)
+            return
         from app.domain.conditions import normalized_bar, metrics_from_enriched
         from app.analytics.indicators import enrich_bars
         self.calendar = calendar
@@ -121,7 +168,7 @@ class HistoryContext:
         valid = [row for _, row in sorted(self.quotes.items()) if valid_quote(row) and row.get('corporate_action_coverage_known') is True]
         valid_dates = {row['date'] for row in valid}
         self.invalid_dates = [day for day in calendar if day <= as_of and day not in valid_dates]
-        values = enrich_bars(valid, calendar) if enriched is None else enriched
+        values = retained_indicator_rows(valid, calendar, retain_start) if enriched is None else enriched
         self.daily = {}; previous = None
         for row in values:
             day = row['date']; raw = self.quotes.get(day)
@@ -138,7 +185,53 @@ class HistoryContext:
         self.action_dates = sorted(day for day, row in self.quotes.items() if row and row.get('corporate_action'))
         self.unknown_action_dates = sorted(day for day, row in self.quotes.items() if row and row.get('corporate_action_coverage_known') is not True)
         if retain_start is not None: self.quotes = {day: row for day, row in self.quotes.items() if day >= retain_start}
+        self.raw_quotes=self.quotes
         self.event_cache = {}
+
+    def _init_forward(self,rows,calendar,as_of,snapshot_id,retain_start,context):
+        from app.domain.conditions import normalized_bar,metrics_from_enriched,FIELDS,_PreparedMetricBars
+        from app.analytics.indicators import enrich_bars
+        self.calendar=calendar;self.positions={day:index for index,day in enumerate(calendar)}
+        self.as_of=as_of;self.snapshot_id=snapshot_id;self.price_basis=context.get('price_basis','unavailable')
+        self.raw_quotes={};self.quotes={};self.daily={};self.event_cache={}
+        raw_rows=context.get('raw_rows',rows);prepared_raw=isinstance(raw_rows,_PreparedMetricBars)
+        for source in raw_rows.normalized() if prepared_raw else raw_rows:
+            day=source.get('date',source.get('trade_date'))
+            if not isinstance(day,str) or day>as_of or day not in self.positions:continue
+            self.raw_quotes[day]=None if day in self.raw_quotes else dict(source) if prepared_raw else normalized_bar(source)
+        usable=self.price_basis=='forward_event_affine' and context.get('anchor_date')==as_of
+        price_rows=context.get('price_rows',[]) if usable else [];prepared_prices=isinstance(price_rows,_PreparedMetricBars)
+        for source in price_rows.normalized() if prepared_prices else price_rows:
+            day=source.get('date')
+            if day in self.raw_quotes:self.quotes[day]=None if day in self.quotes else dict(source) if prepared_prices else normalized_bar(source)
+        valid=[row for row in self.raw_quotes.values() if valid_quote(row) and row.get('corporate_action_coverage_known') is True]
+        valid_dates={row['date'] for row in valid}
+        self.invalid_dates=[day for day in calendar if day<=as_of and day not in valid_dates]
+        self.unknown_action_dates=sorted(day for day,row in self.raw_quotes.items() if row and row.get('corporate_action_coverage_known') is not True)
+        self.action_dates=[]  # Only the verified price lane crosses known actions.
+        values=retained_indicator_rows([row for day,row in sorted(self.quotes.items()) if day in valid_dates and valid_quote(row)],calendar,retain_start)
+        enriched_by_date={row['date']:row for row in values};previous_by_date={row['date']:values[i-1] if i else None for i,row in enumerate(values)}
+        facts={'change_pct','volume','amount','volume_ratio','volume_expand','volume_shrink','intraday_high_change_pct','limit_up','prev_limit_up','turnover_ratio_pct'}
+        for raw in valid:
+            day=raw['date']
+            if retain_start is not None and day<retain_start:continue
+            row=enriched_by_date.get(day);metrics=metrics_from_enriched(row,previous_by_date.get(day))
+            position=self.positions[day];before=self.raw_quotes.get(calendar[position-1]) if position else None
+            source=_raw_daily_facts(raw,before,self.positions,calendar[position-1] if position else None)
+            for field in facts:
+                for suffix in ('','_reason','_date','_status','_evidence'):
+                    if field+suffix in source:metrics[field+suffix]=source[field+suffix]
+            if not usable:
+                reason=('复权锚与当前观察日不一致，不能使用未来锚价格' if context.get('anchor_date')!=as_of else context.get('adjustment',{}).get('reason') or '本地前复权价格不可用')
+                for field in set(FIELDS)-facts:
+                    if metrics.get(field) is None:metrics[field+'_reason']=reason
+                self.quotes[day]={**raw,**dict.fromkeys(('open','high','low','close'))}
+            metrics.update(observed_date=day,price_basis=self.price_basis,adjustment_anchor=as_of)
+            metrics.update(limit_up=None,limit_up_reason='历史涨停尚未核验同日来源收盘池与原始成交报价')
+            self.daily[day]=metrics
+        if retain_start is not None:
+            self.quotes={day:row for day,row in self.quotes.items() if day>=retain_start}
+            self.raw_quotes={day:row for day,row in self.raw_quotes.items() if day>=retain_start}
 
     @classmethod
     def from_prepared(cls, prepared, symbol):
@@ -147,6 +240,7 @@ class HistoryContext:
         import numpy as np
 
         context = object.__new__(cls)
+        context.price_context=None;context.price_basis='none'
         context.calendar = prepared['calendar']
         context.positions = prepared['positions']
         context.as_of = prepared['as_of']
@@ -154,6 +248,7 @@ class HistoryContext:
         context.quotes = {}; context.daily = {}; context.invalid_dates = []
         context.action_dates = []; context.unknown_action_dates = []
         context.event_cache = {}
+        context.raw_quotes=context.quotes
         index = prepared['symbol_index'].get(symbol)
         if index is None or prepared.get('unavailable'):
             return context
@@ -184,7 +279,7 @@ class HistoryContext:
             metrics = metrics_from_enriched(row, previous)
             if metrics.get('amount') is not None and metrics['amount'] < 0: metrics['amount'] = None
             if day >= prepared['retain_start']:
-                kept = fields | {key + '_reason' for key in fields} | {'observed_date', 'indicator_warmup_bars'}
+                kept = fields | {key + suffix for key in fields for suffix in ('_reason','_evidence')} | {'observed_date', 'indicator_warmup_bars'}
                 if 'close_breakout_high' in fields:
                     kept |= {'breakout_valid', 'breakout_previous_sessions', 'breakout_blocking_distance', 'new_high_current_close'}
                 context.daily[day] = {key: value for key, value in metrics.items() if key in kept}
@@ -195,9 +290,14 @@ class HistoryContext:
 
     def at(self, as_of):
         # Do not copy or re-enrich the security's history for replay dates.
+        if self.price_context and self.price_context.get('requested_price_basis')=='forward' and self.price_context.get('anchor_date')!=as_of:
+            return {'context':None,'as_of':as_of,'price_reason':'复权锚与当前观察日不一致，不能使用未来锚价格'}
         return {'context': self, 'as_of': as_of}
 
     def price_binding(self, event, day):
+        if self.price_context and self.price_context.get('requested_price_basis')=='forward':
+            if self.price_basis!='forward_event_affine' or self.price_context.get('anchor_date')!=self.as_of:
+                return None,self.price_context.get('adjustment',{}).get('reason') or '本地前复权价格与观察日锚未核验'
         current = self.quotes.get(day)
         if not valid_quote(current): return None, '观察日缺少唯一有效日K成交报价，事件价比较保持未知'
         start = event['date']
@@ -227,7 +327,11 @@ def _bind_candidate(result, spec, metrics, history, context, day, target, offset
     from app.domain.conditions import evaluate
     event = context.quotes[target]
     result['selected_event'] = {field: event.get(field) for field in ('date', 'open', 'high', 'low', 'close')}
-    result['selected_event'].update(offset=offset, price_basis='none')
+    result['selected_event'].update(offset=offset, price_basis=context.price_basis)
+    if context.price_context:
+        raw_event=context.raw_quotes.get(target) or {}
+        result['selected_event'].update(anchor_date=context.price_context.get('anchor_date'),
+            **{'raw_'+key:raw_event.get(key) for key in ('open','high','low','close')})
     result['event_checks'] = check
     current_price, price_reason = context.price_binding(event, day)
     bound = {**history, 'event': event, 'current_price': current_price, 'price_reason': price_reason}
@@ -334,9 +438,11 @@ def evaluate_event(tree, metrics, history):
     offsets = range(window['from'], window['to']+1)
     if spec['match'] == 'earliest': offsets = reversed(offsets)
     evidence = {'model': ANY_VERSION if spec['match']=='any' else VERSION, 'snapshot_id': context.snapshot_id if context else None,
-                'as_of': day, 'event_period': 'D', 'price_basis': 'none',
+                'as_of': day, 'event_period': 'D', 'price_basis': context.price_basis if context else 'none',
                 'current_observation_date': metrics.get('observed_date'),
                 'current_condition_period': metrics.get('indicator_period', 'D')}
+    if context and context.price_context:
+        evidence.update(requested_price_basis='forward',anchor_date=context.price_context.get('anchor_date'))
     actual_window = {**window, 'requested_sessions': window['to']-window['from']+1,
                      'calendar_sessions': sum(position is not None and position >= offset for offset in range(window['from'], window['to']+1)),
                      'available_sessions': sum(position is not None and position >= offset and context.calendar[position-offset] in context.daily for offset in range(window['from'], window['to']+1)),
@@ -344,7 +450,7 @@ def evaluate_event(tree, metrics, history):
                      'end': context.calendar[position-window['from']] if position is not None and position >= window['from'] else None}
     result = {**tree, 'type': 'history_event', 'result': None, 'selected_event': None,
               'event_checks': None, 'checks': [], 'window': actual_window, 'evidence': evidence,
-              'reason': '没有准备历史日行情上下文，保持未知'}
+              'reason': (history.get('price_reason') if isinstance(history,dict) else None) or '没有准备历史日行情上下文，保持未知'}
     if 'price_path' in spec:
         result['price_path_checks'] = None
     if spec['match'] == 'any':

@@ -31,6 +31,10 @@ import {
   watchlistPerformance,
 } from "./watchlistPresentation";
 import "./Watchlist.css";
+import HotBrowseFilter, {
+  HotBrowseBadge,
+  useHotBrowseFilter,
+} from "../../components/HotBrowseFilter";
 
 function MembershipChips({
   tags,
@@ -130,7 +134,13 @@ export default function Watchlist({
     return () => window.removeEventListener("hashchange", closeOnLeave);
   }, []);
   const allRows = list(result.data);
-  const rows = filterWatchlistRows(allRows, query, source);
+  const sourceRows = filterWatchlistRows(allRows, query, source);
+  const hotFilter = useHotBrowseFilter(
+    sourceRows,
+    result.data?.hot_filter_scope,
+    view === "stocks",
+  );
+  const rows = hotFilter.rows;
   return (
     <div className="watchlist-page">
       <div className="watchlist-intro">
@@ -167,6 +177,7 @@ export default function Watchlist({
               className="btn small"
               onClick={() => {
                 result.reload();
+                if (hotFilter.enabled) hotFilter.result.reload();
                 alerts.result.reload();
               }}
             >
@@ -298,7 +309,7 @@ export default function Watchlist({
                 <option value="stock">个股详情 / 划线提醒</option>
               </select>
               <span className="watchlist-result-count">
-                {query.trim() || source !== "all" ? (
+                {query.trim() || source !== "all" || hotFilter.enabled ? (
                   <>
                     匹配 <strong>{rows.length}</strong> / {allRows.length} 只
                   </>
@@ -309,6 +320,9 @@ export default function Watchlist({
                 )}
               </span>
             </div>
+          )}
+          {view === "stocks" && (
+            <HotBrowseFilter model={hotFilter} onRefreshList={result.reload} />
           )}
           {result.error && (
             <ErrorBox message={result.error} retry={result.reload} />
@@ -357,7 +371,19 @@ export default function Watchlist({
                     })),
                     {
                       source: "watchlist",
-                      scopeKey: "personal-watchlist",
+                      scopeKey: JSON.stringify({
+                        source: "personal-watchlist",
+                        query,
+                        sourceFilter: source,
+                        hot: hotFilter.enabled
+                          ? {
+                              config: hotFilter.applied,
+                              mode: hotFilter.mode,
+                              includeUnknown: hotFilter.includeUnknown,
+                              scope: result.data?.hot_filter_scope,
+                            }
+                          : null,
+                      }),
                       label: "我的自选",
                       asOf: day,
                     },
@@ -435,14 +461,17 @@ export default function Watchlist({
                       ?.map((tag: Row) => tag.name)
                       .join("、") || null,
                   render: (value, row) => (
-                    <MembershipChips
-                      tags={Array.isArray(value) ? value : []}
-                      industries={
-                        Array.isArray(row.current_industries)
-                          ? row.current_industries
-                          : []
-                      }
-                    />
+                    <div>
+                      <MembershipChips
+                        tags={Array.isArray(value) ? value : []}
+                        industries={
+                          Array.isArray(row.current_industries)
+                            ? row.current_industries
+                            : []
+                        }
+                      />
+                      <HotBrowseBadge row={row} />
+                    </div>
                   ),
                 },
                 { key: "added_business_date", title: "加入自选日" },

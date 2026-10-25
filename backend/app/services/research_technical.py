@@ -455,7 +455,7 @@ def _charts(prepared, instrument, snapshot):
             warnings.append(f"本图仅保留历史有效报价；最近应完成{item['label']}周期{item['expected_period']}未核验，不能把旧价当最新观察")
         if period != 'D':
             warnings.append('仅画完整可比周期；形成中、缺报价和未复权公司行动聚合柱仅在报告周期预览说明')
-        charts[period] = {'instrument': dict(instrument), 'period': period, 'as_of': end,
+        chart = {'instrument': dict(instrument), 'period': period, 'as_of': end,
                           'bars': bars, 'snapshot_id': snapshot, 'requested_price_basis': 'none',
                           'price_basis': 'none', 'requested_indicator_continuity': 'market_sessions',
                           'indicator_continuity': 'market_sessions', 'indicator_version': INDICATOR_VERSION + '+' + VERSION,
@@ -467,6 +467,8 @@ def _charts(prepared, instrument, snapshot):
                           'volume_unit': '股', 'amount_unit': 'CNY', 'price_unit': 'CNY',
                           'warnings': warnings, 'frozen_research_chart': True,
                           'projection_limit': CHART_LIMITS[period], 'calculated_before_projection': True}
+        from app.analytics.chart_session_distance import attach_chart_session_distance
+        charts[period] = attach_chart_session_distance(chart, prepared['calendar'])
     return charts
 
 
