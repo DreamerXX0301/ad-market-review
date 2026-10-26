@@ -6,7 +6,7 @@ import json
 from fastapi import HTTPException
 from app.core import connect, dumps, new_id, now_ms, setting, set_setting
 from app.infrastructure.credentials import CredentialStore
-from app.adapters.providers import ProviderClient, ProviderError
+from app.adapters.providers import ProviderClient, ProviderError, provider_connection_scope
 
 CAPABILITIES = {"daily": "个股日K", "index": "指数日K", "adjustment": "复权与除权", "topics": "题材与行业", "realtime": "行情快照", "minutes": "分钟K", "level2": "五档盘口", "financial": "财务", "bulk": "全市场批量"}
 CATALOG = {
@@ -94,6 +94,7 @@ def client(identifier=None):
     return ProviderClient(identifier, None if identifier == "tickflow-public" else CredentialStore().get(identifier))
 
 
+@provider_connection_scope()
 def verify(identifier):
     revision=setting('source-credential-revision:'+identifier,'legacy')
     adapter = client(identifier)

@@ -101,7 +101,20 @@ import {
   ChartAnnotationPanel,
   useChartAnnotations,
 } from "./ChartDrawingTools";
-import { annotationColors, lineLabel } from "./chartAnnotations";
+import {
+  annotationColors,
+  lineLabel,
+  savedLineSettings,
+  levelOriginLabel,
+} from "./chartAnnotations";
+import type { ChartLine } from "./chartAnnotations";
+import { ChartLineControls, ChartLineRail } from "./ChartLineLabels";
+import {
+  chartLineRailWidth,
+  readableChartWindow,
+  visibleChartLineLabels,
+} from "./chartLineLabelLayout";
+import type { ChartLineLabel } from "./chartLineLabelLayout";
 import {
   stockNavigationPosition,
   stockPayloadMatches,
@@ -118,7 +131,7 @@ import {
 } from "./chartPreferences";
 import type { ChartPanel } from "./chartPreferences";
 import { useChartPreferences } from "./useChartPreferences";
-import { defaultChartWindow, projectEventBaseline } from "./chartDisplay";
+import { projectEventBaseline } from "./chartDisplay";
 import { candleChartEndpoint } from "./chartEndpoint";
 import {
   chartIndicatorAvailability,
@@ -166,6 +179,7 @@ const maColors = [
   "#47cbb0",
   "#d48548",
 ];
+const EMPTY_LINE_IDS = new Set<string>();
 function chartPalette() {
   const light = document.documentElement.dataset.theme === "light";
   return {
@@ -252,6 +266,16 @@ export function CandleChart({
   onBoardPresentation?: (value: { row: Row; date: string } | null) => void;
 }) {
   const { preferences, persistent, update, reset } = useChartPreferences();
+  const plotRoot = useRef<HTMLDivElement>(null);
+  const [plotWidth, setPlotWidth] = useState(0);
+  const [railChart, setRailChart] = useState<echarts.ECharts | null>(null);
+  const [lineControlsOpen, setLineControlsOpen] = useState(false);
+  const [hiddenLineState, setHiddenLineState] = useState<{
+    scope: string;
+    ids: Set<string>;
+  }>({ scope: "", ids: new Set() });
+  const defaultAdapted = useRef(false);
+  const userZoomed = useRef(false);
   const entryRoot = useRef<HTMLDivElement>(null);
   const entryStage = useRef<HTMLElement>(null);
   const [entryCanvasReadyKey, setEntryCanvasReadyKey] = useState("");
@@ -319,6 +343,7 @@ export function CandleChart({
   const zoomWindow = useRef({ start: 0, end: 100 });
   const zoomContext = useRef("");
   function zoomTo(start: number, end: number) {
+    userZoomed.current = true;
     zoomWindow.current = { start, end };
     instance.current?.dispatchAction({ type: "dataZoom", start, end });
   }
@@ -348,6 +373,15 @@ export function CandleChart({
   const result = useApi<Row>(chartRequestPath);
   const data = frozenMode ? frozenChartsByPeriod[period] || null : result.data;
   const bars = useMemo<Row[]>(() => data?.bars || [], [data]);
+  useEffect(() => {
+    const node = plotRoot.current;
+    if (!node) return;
+    const measure = () => setPlotWidth(node.getBoundingClientRect().width);
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    measure();
+    return () => observer.disconnect();
+  }, [!!bars.length, result.loading, result.error, frozenMode]);
   const entryHeight = useSinglePageEntry(
     entryRoot,
     entryStage,
@@ -379,12 +413,6 @@ export function CandleChart({
     dataEndpoint || null,
     data?.as_of || null,
   ]);
-  if (bars.length && zoomContext.current !== nextZoomContext) {
-    zoomWindow.current = entryFocus
-      ? { start: entryWindow.start, end: entryWindow.end }
-      : defaultChartWindow(period, bars.length);
-    zoomContext.current = nextZoomContext;
-  }
   const baselineView = projectEventBaseline(
     isIndex ? undefined : eventBaseline,
     data,
@@ -400,6 +428,150 @@ export function CandleChart({
       historyEvents.map((event) => projectHistoricalChartEvent(event, data)),
     [historyEvents, data],
   );
+  const lineScope = `${instrumentId}|${dataEndpoint || ""}|${frozenMode ? "frozen" : "live"}`;
+  useEffect(() => setLineControlsOpen(false), [lineScope]);
+  const hiddenLineIds =
+    hiddenLineState.scope === lineScope ? hiddenLineState.ids : EMPTY_LINE_IDS;
+  const allAnnotationViews = useMemo(
+    () => [
+      ...annotations.views.filter((view) => view.price != null),
+      ...(annotations.preview?.items || [])
+        .filter(
+          (item: Row) =>
+            !item.saved &&
+            annotations.selectedCandidates.includes(item.candidate_id),
+        )
+        .map((item: Row) => ({
+          line: {
+            ...item,
+            annotation_id: `preview:${item.candidate_id}`,
+            instrument_id: instrumentId,
+            label: item.line_type === "support" ? "候选支撑" : "候选压力",
+            color: item.line_type === "support" ? "green" : "red",
+          } as ChartLine,
+          price: item.price,
+          converted: false,
+          anchor: item.anchor_date,
+          reason: "尚未保存的本次候选",
+        })),
+    ],
+    [
+      annotations.views,
+      annotations.preview,
+      annotations.selectedCandidates,
+      instrumentId,
+    ],
+  );
+  const allLineLabels = useMemo<ChartLineLabel[]>(() => {
+    const lines: ChartLineLabel[] = allAnnotationViews
+      .filter((view) => Number.isFinite(view.price) && view.price! > 0)
+      .map((view) => ({
+        id: `annotation:${view.line.annotation_id}`,
+        kind: savedLineSettings(view.line).line_type,
+        group: "annotation",
+        price: view.price!,
+        color: annotationColors[view.line.color] || "#79a9ff",
+        enabled: annotations.show,
+        detail: `${lineLabel(view.line, view.price!)} · ${levelOriginLabel(view.line)} · ${view.reason}`,
+      }));
+    if (baselineView.price != null)
+      lines.push({
+        id: `baseline:${eventBaseline?.date}:${eventBaseline?.roundId || baselineLabel}`,
+        kind: "event",
+        group: "baseline",
+        price: baselineView.price,
+        color: "#c79136",
+        enabled: showEventBaseline,
+        detail: `${baselineLabel} · ${eventBaseline?.date} · 本图 ${num(baselineView.price, 4)} · 原始收盘 ${num(eventBaseline?.rawClose, 4)} · ${baselineView.reason}`,
+      });
+    historyViews.forEach((view, index) => {
+      if (view.price == null || view.closePrice == null || !view.slot) return;
+      lines.push({
+        id: `history:${view.event.key}:${view.event.date}`,
+        kind: "event",
+        group: "history",
+        price: view.price,
+        color: ["#bd96f3", "#4cbbe3", "#e8c16b"][index % 3],
+        enabled: showHistoricalEvents,
+        detail: `${view.event.label} · ${view.event.date} ${eventPriceNames[view.event.priceField]} · 本图 ${num(view.price, 4)} · 原价 ${num(view.event.rawPrice, 4)} · ${view.event.match} · 绑定观察日 ${view.event.observed}${view.converted ? " · 已按本图复权锚换算，原始事件保持不变" : ""}`,
+      });
+    });
+    return lines;
+  }, [
+    allAnnotationViews,
+    annotations.show,
+    baselineView.price,
+    baselineView.reason,
+    baselineLabel,
+    eventBaseline,
+    showEventBaseline,
+    historyViews,
+    showHistoricalEvents,
+  ]);
+  const visibleLineLabels = useMemo(
+    () => visibleChartLineLabels(allLineLabels, hiddenLineIds),
+    [allLineLabels, hiddenLineIds],
+  );
+  const visibleLineIds = new Set(visibleLineLabels.map((line) => line.id));
+  const lineRailWidth = visibleLineLabels.length
+    ? chartLineRailWidth(plotWidth)
+    : 0;
+  const plotRight = lineRailWidth ? lineRailWidth + 8 : 20;
+  const readableWindow = readableChartWindow(
+    entryWindow,
+    period,
+    bars,
+    plotWidth - 62 - plotRight,
+  );
+  if (bars.length && zoomContext.current !== nextZoomContext) {
+    zoomWindow.current = {
+      start: readableWindow.start,
+      end: readableWindow.end,
+    };
+    zoomContext.current = nextZoomContext;
+    defaultAdapted.current = plotWidth > 0 && !annotations.result.loading;
+    userZoomed.current = false;
+  } else if (
+    bars.length &&
+    plotWidth > 0 &&
+    !defaultAdapted.current &&
+    !userZoomed.current
+  ) {
+    zoomWindow.current = {
+      start: readableWindow.start,
+      end: readableWindow.end,
+    };
+    defaultAdapted.current = !annotations.result.loading;
+  }
+  const toggleLine = (id: string, checked: boolean) => {
+    const line = allLineLabels.find((item) => item.id === id);
+    if (!line) return;
+    setHiddenLineState((old) => {
+      const ids = new Set(old.scope === lineScope ? old.ids : []);
+      if (checked && !line.enabled)
+        allLineLabels
+          .filter((item) => item.group === line.group)
+          .forEach((item) => ids.add(item.id));
+      checked ? ids.delete(id) : ids.add(id);
+      return { scope: lineScope, ids };
+    });
+    if (checked && !line.enabled) {
+      if (line.group === "annotation") annotations.setShow(true);
+      else if (line.group === "baseline") update({ showEventBaseline: true });
+      else setShowHistoricalEvents(true);
+    }
+  };
+  const toggleAllLines = (show: boolean) => {
+    setHiddenLineState({
+      scope: lineScope,
+      ids: show ? new Set() : new Set(allLineLabels.map((line) => line.id)),
+    });
+    if (show) {
+      annotations.setShow(true);
+      update({ showEventBaseline: true });
+      setShowHistoricalEvents(true);
+    }
+  };
   const latestBars = useRef(bars);
   latestBars.current = bars;
   useEffect(() => setActiveDate(null), [instrumentId, asOf, period]);
@@ -532,14 +704,16 @@ export function CandleChart({
   const option = useMemo(() => {
     const pal = chartPalette(),
       dates = bars.map((b) => b.date);
-    const grids: any[] = [{ left: 62, right: 20, top: 24, height: mainHeight }],
+    const grids: any[] = [
+        { left: 62, right: plotRight, top: 24, height: mainHeight },
+      ],
       xaxes: any[] = [],
       yaxes: any[] = [],
       series: any[] = [];
     chosen.forEach((k, i) =>
       grids.push({
         left: 62,
-        right: 20,
+        right: plotRight,
         top: paneTops[i],
         height: paneHeights[i],
       }),
@@ -593,82 +767,15 @@ export function CandleChart({
         borderColor0: "#39bd9b",
       },
       barMaxWidth: 12,
-      ...(baselinePrice != null
-        ? {
-            markLine: {
-              symbol: "none",
-              silent: true,
-              lineStyle: { color: "#c79136", width: 1.4, type: "dashed" },
-              label: {
-                show: true,
-                formatter: `${baselineLabel} ${eventBaseline?.date} · ${num(baselinePrice)}`,
-                position: "insideEndTop",
-                color: "#c79136",
-                backgroundColor: pal.bg,
-                padding: [3, 5],
-                fontSize: 10,
-              },
-              data: [{ yAxis: baselinePrice, name: baselineLabel }],
-            },
-          }
-        : {}),
     });
-    if (showHistoricalEvents)
-      historyViews.forEach((view, index) => {
-        if (view.price == null || view.closePrice == null || !view.slot) return;
-        const color = ["#bd96f3", "#4cbbe3", "#e8c16b"][index % 3];
-        const event = view.event;
-        series.push({
-          name: `${event.label} ${event.date}`,
-          type: "line",
-          data: [],
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-          silent: true,
-          tooltip: { show: false },
-          markLine: {
-            silent: true,
-            symbol: "none",
-            animation: false,
-            lineStyle: { color, width: 1.3, type: "dashed" },
-            label: {
-              show: true,
-              color,
-              backgroundColor: pal.bg,
-              padding: [2, 4],
-              fontSize: 10,
-            },
-            data: [
-              {
-                yAxis: view.price,
-                label: {
-                  formatter: `${event.label} ${event.date} ${eventPriceNames[event.priceField]} · ${num(view.price)}`,
-                  position: "insideEndTop",
-                },
-              },
-              {
-                xAxis: view.slot,
-                lineStyle: { opacity: 0.45, type: "dotted" },
-                label: {
-                  formatter: `事件 ${event.date}`,
-                  position: "insideStartTop",
-                },
-              },
-            ],
-          },
-          markPoint: {
-            silent: true,
-            symbol: "pin",
-            symbolSize: 24,
-            itemStyle: { color },
-            label: { show: true, formatter: "事", color: pal.bg, fontSize: 9 },
-            data: [{ coord: [view.slot, view.closePrice], name: event.label }],
-          },
-        });
-      });
-    if (annotations.visible.length)
+    historyViews.forEach((view, index) => {
+      if (view.price == null || view.closePrice == null || !view.slot) return;
+      if (!visibleLineIds.has(`history:${view.event.key}:${view.event.date}`))
+        return;
+      const color = ["#bd96f3", "#4cbbe3", "#e8c16b"][index % 3];
+      const event = view.event;
       series.push({
-        name: "我的水平线",
+        name: `${event.label} ${event.date}`,
         type: "line",
         data: [],
         xAxisIndex: 0,
@@ -679,25 +786,50 @@ export function CandleChart({
           silent: true,
           symbol: "none",
           animation: false,
-          label: {
-            show: true,
-            position: "insideEndTop",
-            fontSize: 10,
-            backgroundColor: pal.bg,
-            padding: [2, 4],
-          },
-          data: annotations.visible.map(({ line, price }) => ({
-            name: line.label || "水平线",
-            yAxis: price!,
+          lineStyle: { color, width: 1, type: "dashed" },
+          label: { show: false },
+          data: [
+            {
+              xAxis: view.slot,
+              lineStyle: { opacity: 0.45, type: "dotted" },
+              label: { show: false },
+            },
+          ],
+        },
+        markPoint: {
+          silent: true,
+          symbol: "pin",
+          symbolSize: 24,
+          itemStyle: { color },
+          label: { show: true, formatter: "事", color: pal.bg, fontSize: 9 },
+          data: [{ coord: [view.slot, view.closePrice], name: event.label }],
+        },
+      });
+    });
+    if (visibleLineLabels.length)
+      series.push({
+        name: "支撑压力与事件参照",
+        type: "line",
+        data: [],
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        silent: true,
+        tooltip: { show: false },
+        markLine: {
+          silent: true,
+          symbol: "none",
+          animation: false,
+          label: { show: false },
+          data: visibleLineLabels.map((line) => ({
+            name: line.detail,
+            yAxis: line.price,
             lineStyle: {
-              color: annotationColors[line.color],
-              width: 1.4,
+              color: line.color,
+              width: 1,
               type: "dashed",
+              opacity: 0.75,
             },
-            label: {
-              formatter: lineLabel(line, price!),
-              color: annotationColors[line.color],
-            },
+            label: { show: false },
           })),
         },
       });
@@ -1040,12 +1172,15 @@ export function CandleChart({
     historyViews,
     showHistoricalEvents,
     annotations.visible,
+    visibleLineLabels,
+    plotRight,
+    plotWidth,
   ]);
   return (
     <div
       ref={entryRoot}
       data-default-window-start={
-        entryFocus ? entryWindow.firstDate || undefined : undefined
+        entryFocus ? readableWindow.firstDate || undefined : undefined
       }
       data-default-window-sessions={
         entryFocus ? entryWindow.sessions : undefined
@@ -1199,24 +1334,14 @@ export function CandleChart({
             图表偏好
           </button>
           <ChartAnnotationButton state={annotations} />
-          {!isIndex && eventBaseline && (
-            <ChartToggle
-              label="事件基准线"
-              title={baselineView.reason}
-              color="#c79136"
-              checked={showEventBaseline}
-              onChange={(value) => update({ showEventBaseline: value })}
-            />
-          )}
-          {!!historyEvents.length && (
-            <ChartToggle
-              label="历史事件标记"
-              title="显示本次选股或所选跟踪轮次实际绑定的历史事件日与事件价；不重新选择事件"
-              checked={showHistoricalEvents}
-              color="#bd96f3"
-              onChange={setShowHistoricalEvents}
-            />
-          )}
+          <ChartLineControls
+            lines={allLineLabels}
+            visible={visibleLineLabels}
+            open={lineControlsOpen}
+            onOpen={setLineControlsOpen}
+            onToggle={toggleLine}
+            onAll={toggleAllLines}
+          />
           <div className="chart-zoom">
             <button
               className="icon-btn"
@@ -1234,14 +1359,45 @@ export function CandleChart({
             </button>
             <button
               className="icon-btn"
-              title="显示全部"
-              onClick={() => zoomTo(0, 100)}
+              title="恢复默认可读范围"
+              onClick={() => zoomTo(readableWindow.start, readableWindow.end)}
             >
               <RotateCcw size={13} />
             </button>
+            <button
+              className="icon-btn"
+              title="显示全部"
+              onClick={() => zoomTo(0, 100)}
+            >
+              <Maximize2 size={13} />
+            </button>
           </div>
         </div>
-        <ChartAnnotationPanel state={annotations} />
+        <ChartAnnotationPanel
+          state={annotations}
+          displayedIds={
+            new Set(
+              visibleLineLabels
+                .filter((line) => line.group === "annotation")
+                .map((line) => line.id.slice("annotation:".length)),
+            )
+          }
+          onDisplayChange={(id, checked) =>
+            toggleLine(`annotation:${id}`, checked)
+          }
+          onDisplayAllChange={(show) => {
+            setHiddenLineState((old) => {
+              const ids = new Set(old.scope === lineScope ? old.ids : []);
+              allLineLabels
+                .filter((line) => line.group === "annotation")
+                .forEach((line) =>
+                  show ? ids.delete(line.id) : ids.add(line.id),
+                );
+              return { scope: lineScope, ids };
+            });
+            annotations.setShow(show);
+          }}
+        />
         {waves && showWaves && (
           <div className="chart-wave-selectors">
             <label>
@@ -1424,6 +1580,7 @@ export function CandleChart({
           />
         ) : (
           <div
+            ref={plotRoot}
             className={`candle-plot${annotations.drawing ? " drawing-line" : ""}`}
           >
             <EChart
@@ -1432,6 +1589,7 @@ export function CandleChart({
               height={actualHeight}
               onReady={(c) => {
                 instance.current = c;
+                setRailChart(c);
                 if (entryFocus) {
                   setEntryCanvasReadyKey(entryCanvasKey);
                   if (entryStage.current) {
@@ -1454,6 +1612,7 @@ export function CandleChart({
                   if (Array.isArray(value)) pick(value[1]);
                 });
                 c.on("datazoom", () => {
+                  userZoomed.current = true;
                   const current = (c.getOption().dataZoom as any[])?.[0];
                   if (current)
                     zoomWindow.current = {
@@ -1484,12 +1643,22 @@ export function CandleChart({
                 });
               }}
             />
+            <ChartLineRail
+              key={lineScope}
+              chart={railChart}
+              lines={visibleLineLabels}
+              top={24}
+              height={mainHeight}
+              width={lineRailWidth}
+              onMore={() => setLineControlsOpen(true)}
+            />
             {chosen.map((key, i) => (
               <div
                 key={key}
                 className={`candle-pane-value${key === "boll" ? " candle-pane-boll" : ""}`}
                 style={{
                   top: paneTops[i] - 18,
+                  right: plotRight,
                 }}
                 aria-label={key + "副图当前值"}
               >
@@ -1627,11 +1796,11 @@ export function CandleChart({
             ))}
           </div>
           <span>
-            {entryFocus
-              ? entryWindow.label + " · "
-              : period === "D"
-                ? "默认最近100根 · "
-                : "默认全范围 · "}
+            {entryWindow.label}
+            {readableWindow.widthAdapted
+              ? ` · 依绘图区宽度初始收窄至${readableWindow.visibleBars}根`
+              : ""}{" "}
+            ·{" "}
             {entryFocus
               ? "图内滚轮 / 双指缩放 · 图外滚动页面"
               : "滚轮 / 双指缩放"}
@@ -1660,7 +1829,7 @@ export function CandleChart({
               <span>
                 {view.price == null
                   ? view.reason
-                  : `${view.converted ? "同图前复权" : "同图未复权"} ${num(view.price)} 元 · ${showHistoricalEvents ? "事件日与横线已显示" : "标记已隐藏"}`}
+                  : `${view.converted ? "同图前复权" : "同图未复权"} ${num(view.price)} 元 · ${visibleLineIds.has(`history:${view.event.key}:${view.event.date}`) ? "事件日与横线已显示" : "标记已隐藏"}`}
               </span>
               {view.price != null && (
                 <button
@@ -1708,7 +1877,10 @@ export function CandleChart({
               {baselineView.converted
                 ? `同图前复权 ${num(baselineView.price)} 元 · 锚定日 ${baselineView.anchor}`
                 : "同图未复权价"}{" "}
-              · {showEventBaseline ? "横线已显示" : "横线已隐藏"}
+              ·{" "}
+              {visibleLineLabels.some((line) => line.group === "baseline")
+                ? "横线已显示"
+                : "横线已隐藏"}
             </span>
           ) : (
             <span>{baselineView.reason}</span>

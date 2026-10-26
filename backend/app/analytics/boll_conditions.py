@@ -5,12 +5,12 @@ corporate actions reset the series; display chart continuity is never reused.
 """
 from bisect import bisect_left, insort
 from collections import defaultdict, deque
-from datetime import date, timedelta
+from datetime import date
 from hashlib import sha256
 from math import fsum, isclose, isfinite, sqrt
 import json
 
-from .period_dates import latest_closed_date
+from .strict_period_layout import canonical_quote_day, period_layout
 
 VERSION = 'boll-signal-v1'
 FIELD = 'boll_signal'
@@ -130,38 +130,25 @@ def _period_key(day, period):
 
 def _period_rows(rows, calendar, as_of, period):
     """Keep missing calendar slots, including wholly absent weeks/months."""
-    sessions = sorted(set(calendar))
-    closed = latest_closed_date(sessions, as_of, period)
+    layout = period_layout(calendar, as_of, period)
+    closed = layout.closed
     if closed is None:
         return []
     by_day = defaultdict(list)
     for row in rows:
         day = row.get('date')
-        try:
-            valid_day = isinstance(day, str) and date.fromisoformat(day).isoformat() == day
-        except ValueError:
-            valid_day = False
+        valid_day = canonical_quote_day(day, layout)
         if valid_day and day <= closed:
             by_day[day].append(row)
-    groups = defaultdict(list)
-    for day in sessions:
-        if day <= closed:
-            groups[_period_key(day, period)].append(day)
-    session_set = set(sessions)
-    unexpected = {_period_key(day, period) for day in by_day if day not in session_set}
+    unexpected = {_period_key(day, period) for day in by_day if day not in layout.session_set}
     result = []
-    for key, days in groups.items():
+    for key, days, boundary_known in layout.groups:
         values = [by_day[day][0] for day in days if len(by_day[day]) == 1]
         missing = [day for day in days if not by_day[day]]
         duplicates = [day for day in days if len(by_day[day]) > 1]
         uncovered = [row['date'] for row in values if not _covered(row)]
         actions = [row['date'] for row in values if row.get('corporate_action') is True]
         invalid = [row['date'] for row in values if not _valid(row)]
-        boundary_known = True
-        if period != 'D':
-            first = date.fromisoformat(days[0])
-            boundary = (first-timedelta(days=first.weekday())).isoformat() if period == 'W' else days[0][:7]+'-01'
-            boundary_known = sessions[0] <= boundary
         complete = not (missing or duplicates or invalid or key in unexpected) and boundary_known
         blocker = None
         if not complete:

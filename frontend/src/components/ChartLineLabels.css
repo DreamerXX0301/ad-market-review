@@ -1,0 +1,155 @@
+.chart-line-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.chart-line-controls.open {
+  flex-basis: 100%;
+}
+.chart-line-master {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--subtle);
+  font-size: 10px;
+  white-space: nowrap;
+  min-height: 30px;
+}
+.chart-line-display-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.chart-line-options {
+  flex-basis: 100%;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--surface2);
+}
+.chart-line-options > label {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 2px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.chart-line-options > label > span {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.chart-line-options small {
+  min-width: 0;
+  flex: 1;
+}
+.chart-line-options small,
+.chart-line-options p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+  margin: 5px 0 0;
+}
+.chart-line-option-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+.chart-line-rail {
+  position: absolute;
+  right: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-left: 1px solid var(--border-soft);
+}
+.chart-line-leaders {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  fill: none;
+  stroke-width: 1;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.chart-line-short-label {
+  position: absolute;
+  left: 13px;
+  right: 2px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--surface);
+  padding: 1px 2px;
+  text-align: left;
+  font-size: 11px;
+  line-height: 19px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.chart-line-short-label:hover,
+.chart-line-short-label:focus-visible {
+  outline: 1px solid currentColor;
+  background: var(--surface2);
+}
+.chart-line-more {
+  position: absolute;
+  left: 8px;
+  right: 2px;
+  pointer-events: auto;
+  font-size: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--subtle);
+  height: 21px;
+}
+.chart-line-detail {
+  position: absolute;
+  top: 4px;
+  width: 260px;
+  max-width: calc(100vw - 150px);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--subtle);
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+  box-shadow: 0 4px 18px #0003;
+}
+.chart-line-detail .icon-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+}
+@media (max-width: 560px) {
+  .chart-line-options > label {
+    flex-wrap: wrap;
+  }
+  .chart-line-options small {
+    flex-basis: 100%;
+    padding-left: 20px;
+  }
+  .chart-line-short-label {
+    left: 10px;
+    font-size: 11px;
+  }
+  .chart-line-detail {
+    width: 220px;
+  }
+}

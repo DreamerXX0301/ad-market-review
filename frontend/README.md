@@ -4,9 +4,9 @@ React、TypeScript、Vite 与 ECharts 实现盘面研究、个股/板块策略�
 
 产品入口和首次配置见[项目 README](../README.md)，部署与更新见[版本升级与回滚](../docs/版本升级与回滚.md)。
 
-0.1.5发行源码以 [v0.1.5 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.5)为准，已实现范围见[版本记录](../CHANGELOG.md#v015)。构建成功不证明镜像已可用，实际镜像可用性与摘要以[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.5)、[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)及本版 `release-image.json` 为准；核对其中完整 `git_commit`，不沿用旧版回执。
+0.1.7发行源码以 [v0.1.7 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.7)为准，已实现范围见[版本记录](../CHANGELOG.md#v017)。构建成功不证明镜像已可用，实际镜像可用性与摘要以[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.7)、[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)及本版 `release-image.json` 为准；核对其中完整 `git_commit`，不沿用旧版回执。
 
-本版沿用个股背景市场页重绘优化、已启用的BOLL与波浪叠加计算和监管页精简展示；本轮选股、板块预热与增量本地计算优化位于后端，前端与API及唯一worker仍按同一冻结提交发布。自动主线、最新/历史监管、板块成员日期与原反馈配色保持既有语义；缺档保留未知。schema仍为023，已有安装使用独立恢复副本验收后切换。
+本版增加K线右侧短标签、单条和全部显隐，以及按绘图区宽度调整的日/周/月默认展示范围；完整历史、手动缩放和信号口径保持原值。已保存选股结果按分类读取并在返回时核对版本、最新运行与删除状态；盘后增量整链锁由服务端恢复，进度分开展示阶段、已用时及有依据的预计剩余。前端与API及唯一worker按同一冻结提交发布；本版不新增迁移，schema仍为025，已有安装使用独立恢复副本验收后切换。
 
 ## 本地开发
 

@@ -372,6 +372,7 @@ export default function App() {
       )}
       <IncrementProgressDialog
         onFinished={() => {
+          window.dispatchEvent(new Event("workbench-increment-unlocked"));
           bootstrap.reload();
           window.dispatchEvent(
             new CustomEvent("workbench-route", { detail: "data" }),

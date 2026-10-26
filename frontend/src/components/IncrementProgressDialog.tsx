@@ -6,7 +6,7 @@ import {
   LoaderCircle,
   RefreshCw,
 } from "lucide-react";
-import { api } from "../lib/api";
+import { api, post } from "../lib/api";
 import type { Row } from "../lib/api";
 import { dateTime, duration, statusText } from "../lib/format";
 import {
@@ -14,6 +14,7 @@ import {
   INCREMENT_SESSION_EVENT,
   INCREMENT_SESSION_KEY,
   readIncrementSession,
+  restoreIncrementSession,
 } from "./incrementSession";
 import type { IncrementSession } from "./incrementSession";
 import {
@@ -35,15 +36,57 @@ export default function IncrementProgressDialog({
     missing: boolean;
   } | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [checking, setChecking] = useState(true);
+  const [discoveryError, setDiscoveryError] = useState("");
+  const [actionBusy, setActionBusy] = useState("");
   const [, tick] = useState(0);
   const clock = useRef({ received: performance.now(), elapsed: 0 });
   const dialog = useRef<HTMLDivElement>(null);
+  const finished = useRef(onFinished);
+  finished.current = onFinished;
+  const previousSession = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (session) previousSession.current = session.requestKey;
+    else if (!checking && previousSession.current) {
+      previousSession.current = undefined;
+      finished.current();
+    }
+  }, [session?.requestKey, checking]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function discover() {
+      try {
+        const value = await api<Row>("/sync/session", {
+          signal: controller.signal,
+        });
+        if (stopped) return;
+        if (value.active) restoreIncrementSession(value.active);
+        setDiscoveryError("");
+        setChecking(false);
+      } catch (cause: any) {
+        if (stopped || cause.name === "AbortError") return;
+        setDiscoveryError(`暂时无法确认工作台状态：${cause.message}`);
+      }
+      if (!stopped)
+        timer = setTimeout(discover, document.hidden ? 10000 : 3000);
+    }
+    void discover();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, []);
   useEffect(() => {
     const changed = (event: Event) =>
       setSession((event as CustomEvent<IncrementSession | null>).detail);
     const storage = (event: StorageEvent) => {
-      if (event.key === INCREMENT_SESSION_KEY)
+      if (event.key === INCREMENT_SESSION_KEY || event.key === null) {
+        if (!readIncrementSession()) setChecking(true);
         setSession(readIncrementSession());
+      }
     };
     window.addEventListener(INCREMENT_SESSION_EVENT, changed);
     window.addEventListener("storage", storage);
@@ -79,12 +122,16 @@ export default function IncrementProgressDialog({
         if (!incrementReceiptForSession(value, session))
           throw new Error("进度返回的任务标识不一致，请重新读取");
         setData(value);
+        if (value.acknowledged === true && value.locked === false) {
+          acknowledgeIncrementSession(session!.requestKey);
+          return;
+        }
+        if (value.locked === true) restoreIncrementSession(value);
         setFailure(null);
         clock.current = {
           received: performance.now(),
           elapsed: value.elapsed_ms || 0,
         };
-        if (value.can_acknowledge === true) return;
       } catch (cause: any) {
         if (stopped || cause.name === "AbortError") return;
         setFailure({
@@ -105,17 +152,41 @@ export default function IncrementProgressDialog({
       controller.abort();
     };
   }, [identifier, refresh, session?.requestKey, session?.rejection]);
+  const blocked = !!session || checking;
   useEffect(() => {
-    if (!session) return;
+    if (!blocked) return;
     const interval = setInterval(() => tick((value) => value + 1), 1000);
     const root = document.getElementById("root");
     const previousInert = root?.inert;
     const previousOverflow = document.body.style.overflow;
     const previousFocus = document.activeElement as HTMLElement | null;
     if (root) root.inert = true;
+    // Business dialogs also use document.body portals. Guard those siblings,
+    // including portals mounted after this overlay, rather than only #root.
+    const previous = new Map<HTMLElement, boolean>();
+    const guardPortals = () => {
+      for (const element of document.body.children) {
+        if (
+          !(element instanceof HTMLElement) ||
+          element.contains(dialog.current)
+        )
+          continue;
+        if (!previous.has(element)) previous.set(element, element.inert);
+        element.inert = true;
+      }
+    };
+    guardPortals();
+    const observer = new MutationObserver(guardPortals);
+    observer.observe(document.body, { childList: true });
     document.body.style.overflow = "hidden";
     dialog.current?.focus();
     const keys = (event: KeyboardEvent) => {
+      if (!dialog.current?.contains(event.target as Node)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        dialog.current?.focus();
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -150,21 +221,69 @@ export default function IncrementProgressDialog({
     return () => {
       clearInterval(interval);
       document.removeEventListener("keydown", keys, true);
+      observer.disconnect();
+      for (const [element, inert] of previous)
+        if (element.isConnected) element.inert = inert;
       if (root) root.inert = previousInert || false;
       document.body.style.overflow = previousOverflow;
       if (previousFocus?.isConnected) previousFocus.focus();
     };
-  }, [!!session]);
-  if (!session) return null;
+  }, [blocked]);
+  useEffect(() => {
+    if (!blocked || !dialog.current) return;
+    const active = document.activeElement;
+    if (
+      !dialog.current.contains(active) ||
+      (active instanceof HTMLButtonElement && active.disabled)
+    )
+      dialog.current.focus();
+  }, [blocked, data?.status, actionBusy]);
+  if (!session && !checking) return null;
   const view = incrementProgressView(data);
   const elapsed = data
     ? clock.current.elapsed +
       (view.done ? 0 : Math.max(0, performance.now() - clock.current.received))
-    : Math.max(0, Date.now() - session.createdAt);
-  const unconfirmed =
-    missing && (!!session.rejection || !!session.taskId || elapsed >= 30000);
-  const acknowledge = () => {
-    if (acknowledgeIncrementSession(session.requestKey)) onFinished();
+    : session
+      ? Math.max(0, Date.now() - session.createdAt)
+      : 0;
+  const unconfirmed = !!session && missing;
+  const acknowledge = async () => {
+    if (!session || actionBusy) return;
+    setActionBusy("acknowledge");
+    try {
+      const result = await post<Row>("/sync/session/acknowledge", {
+        request_key: session.requestKey,
+        task_id: session.taskId,
+        session_epoch: session.epoch,
+      });
+      if (result.acknowledged === true)
+        acknowledgeIncrementSession(session.requestKey);
+    } catch (cause: any) {
+      setFailure({ identifier: identifier!, missing, error: cause.message });
+      setRefresh((value) => value + 1);
+    } finally {
+      setActionBusy("");
+    }
+  };
+  const control = async (action: "pause" | "cancel") => {
+    if (!session?.taskId || actionBusy) return;
+    setActionBusy(action);
+    try {
+      await post("/sync/session/control", {
+        task_id: session.taskId,
+        action,
+        session_epoch: session.epoch,
+      });
+      setRefresh((value) => value + 1);
+    } catch (cause: any) {
+      setFailure({
+        identifier: identifier!,
+        missing: false,
+        error: cause.message,
+      });
+    } finally {
+      setActionBusy("");
+    }
   };
   return createPortal(
     <div className="increment-progress-backdrop">
@@ -188,7 +307,13 @@ export default function IncrementProgressDialog({
           )}
           <div>
             <h2 id="increment-progress-title">
-              {unconfirmed ? "本次请求尚未确认" : view.title}
+              {!session
+                ? "正在确认工作台状态"
+                : unconfirmed
+                  ? "本次请求尚未确认"
+                  : data?.status === "stopping"
+                    ? "正在安全停止本次更新"
+                    : view.title}
             </h2>
             <p>
               {view.done
@@ -200,12 +325,16 @@ export default function IncrementProgressDialog({
         <div className="increment-progress-time">
           <strong>已耗时 {duration(elapsed)}</strong>
           <span>
-            开始于 {dateTime(data?.created_at_ms || session.createdAt)}
+            {session
+              ? `开始于 ${dateTime(data?.created_at_ms || session.createdAt)}`
+              : "正在读取服务端增量会话"}
           </span>
         </div>
         {!view.done && (
           <div className="increment-progress-estimate">
-            {view.estimate ? (
+            {error || discoveryError ? (
+              "进度连接暂时中断，任务可能仍在后台执行；连接恢复后更新预计时间"
+            ) : view.estimate ? (
               <>
                 预计还需 {duration(view.estimate.remaining_min_ms)}～
                 {duration(view.estimate.remaining_max_ms)}
@@ -219,9 +348,9 @@ export default function IncrementProgressDialog({
             )}
           </div>
         )}
-        {error && (
+        {(error || discoveryError) && (
           <div className="increment-progress-error" role="alert">
-            {error}
+            {error || discoveryError}
             <button
               className="btn small"
               onClick={() => setRefresh((value) => value + 1)}
@@ -232,9 +361,12 @@ export default function IncrementProgressDialog({
           </div>
         )}
         <div className="increment-progress-current" aria-live="polite">
-          <strong>
-            {view.active?.title || data?.message || "正在提交增量请求"}
-          </strong>
+          <div className="increment-progress-stage-heading">
+            <strong>
+              {view.active?.title || data?.message || "正在确认本次增量请求"}
+            </strong>
+            {!view.done && view.progress !== null && <b>{view.progress}%</b>}
+          </div>
           <span>{view.active?.message || ""}</span>
         </div>
         {!view.done && (
@@ -246,8 +378,14 @@ export default function IncrementProgressDialog({
         )}
         {!!view.tasks.length && (
           <>
+            <p className="increment-progress-plan">
+              {data?.attempt_task_id
+                ? "本次仅处理所选重试步骤及其已授权后续分支；原链其它未完成阶段仍保留。"
+                : "个股与指数行情 → 行业与题材板块K线 → 盘面补充 → 核验、发布与滚动清理"}
+            </p>
             <small>
-              {view.completedLabel}；后续阶段尚未排队时，分母会继续增加
+              {view.completedLabel}
+              ；百分比只表示当前实际阶段，后续阶段尚未排队时继续等待
             </small>
             <ol className="increment-progress-tasks">
               {view.tasks.map((task) => (
@@ -255,6 +393,7 @@ export default function IncrementProgressDialog({
                   <div>
                     <strong>{task.title}</strong>
                     <span>
+                      {task.historical_attempt ? "历史尝试 · " : ""}
                       {statusText[task.status] || task.status}
                       {typeof task.progress === "number"
                         ? ` · ${task.progress}%`
@@ -274,24 +413,53 @@ export default function IncrementProgressDialog({
         )}
         {view.done && (
           <p className="increment-progress-result">
-            {data?.status === "partial"
-              ? "已发布的行情可以使用，来源缺口仍保留；详情可在数据中心查看。"
-              : ["failed", "blocked", "cancelled", "paused"].includes(
-                    data?.status,
-                  )
-                ? "已发布数据保留。确认后可到数据中心查看原因并手动处理，系统不会自动重启暂停或取消的任务。"
-                : "本次主行情及已授权后续任务均已结束。"}
+            {data?.attempt_task_id
+              ? "本次仅反映重试步骤及其已授权分支的结果；原增量的历史失败与其它未完成阶段仍保留。"
+              : data?.status === "partial"
+                ? "已发布的行情可以使用，来源缺口仍保留；详情可在数据中心查看。"
+                : ["failed", "blocked", "cancelled", "paused"].includes(
+                      data?.status,
+                    )
+                  ? "已发布数据保留。确认后可到数据中心查看原因并手动处理，系统不会自动重启暂停或取消的任务。"
+                  : "本次主行情及已授权后续任务均已结束。"}
           </p>
         )}
         {unconfirmed && (
           <p className="increment-progress-result">
-            未将请求标记为完成，也未重新提交任务。确认后请在数据中心核对任务记录。
+            没有把失联或404当作完成，也不会重复提交。可以请服务端核查并关闭未接收的请求；若原请求迟到，将被服务端拒绝，不会另建任务。已有任务仍在执行时保持锁定。
           </p>
+        )}
+        {!view.done && session?.taskId && data?.locked && (
+          <footer className="increment-progress-controls">
+            <span>已发布数据保留；安全停止后需确认结果。</span>
+            <button
+              className="btn"
+              disabled={!!actionBusy || data?.status === "stopping"}
+              onClick={() => control("pause")}
+            >
+              {actionBusy === "pause" ? "请求安全暂停…" : "暂停本次更新"}
+            </button>
+            <button
+              className="btn"
+              disabled={!!actionBusy || data?.status === "stopping"}
+              onClick={() => control("cancel")}
+            >
+              {actionBusy === "cancel" ? "请求安全取消…" : "取消本次更新"}
+            </button>
+          </footer>
         )}
         {(view.done || unconfirmed) && (
           <footer>
-            <button className="btn primary" onClick={acknowledge}>
-              {unconfirmed ? "确认并核对任务记录" : "确认结果，继续使用"}
+            <button
+              className="btn primary"
+              disabled={!!actionBusy}
+              onClick={acknowledge}
+            >
+              {actionBusy === "acknowledge"
+                ? "服务端确认中…"
+                : unconfirmed
+                  ? "核查并关闭未接收请求"
+                  : "确认结果，继续使用"}
             </button>
           </footer>
         )}

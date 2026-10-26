@@ -106,7 +106,7 @@ def test_volume_comparison_contract_cannot_reuse_old_bool_and_new_scope_survives
     # Leave the old in-memory entry as well as both old disk files in place.
     # The current contract must miss both, then read the same verified source.
     scope, (_, content, receipt) = paths(workspace)
-    assert scope['contract'] == 'sector-strategy-metrics-volume-comparison-v3'
+    assert scope['contract'] == 'sector-strategy-metrics-verified-pair-v4'
     assert scope != old_scope and content != old_content and not content.exists()
     assert scope['evaluator'] == old_scope['evaluator']
     assert scope['indicators'] == old_scope['indicators']

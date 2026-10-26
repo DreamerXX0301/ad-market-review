@@ -13,10 +13,11 @@ from app.services.strategy_limits import LIMIT_FIELDS, DAILY_LIMIT_FIELDS, COUNT
 from app.domain.trade_rules import normalize_trade_rules
 from app.domain.history_events import nodes as history_nodes, current_names
 from app.services.history_events import contexts_for_batch, prepare_shared, batch_size as history_batch_size
-from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics,compile_metric_plan,cached_metrics_if_ready
+from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics,compile_metric_plan,cached_metrics_if_ready,ordinary_metrics_ready,complete_from_basis
 from app.services import task_service as tasks
 from app.services.workspace_deletion import require_strategy_present,strategy_visibility
 from app.services import strategy_hot_universe as hot_universe
+from app.services.condition_basis_cache import disk_session
 ENGINE_VERSION="workspace-v8-bounded-history-events"
 FORWARD_ENGINE_VERSION='workspace-v17-local-forward-prices-v1'
 PRICE_BASIS_CONTRACT='strategy-local-forward-v1'
@@ -88,7 +89,7 @@ def active_policy_scope(c,sid):
     scope. Thus an older entry default is still eligible after a future-only
     update, while a round with manually chosen rules is preserved.
     """
-    active=rows(c,"SELECT * FROM tracking_round WHERE strategy_id=? AND status='tracking'",(sid,))
+    active=rows(c,"SELECT round_id,strategy_id,current_policy_version,entry_snapshot_id,entry_business_date FROM tracking_round WHERE strategy_id=? AND status='tracking'",(sid,))
     applications=rows(c,'SELECT a.* FROM tracking_policy_application a JOIN tracking_round r USING(round_id) WHERE r.strategy_id=? AND r.status=\'tracking\' ORDER BY a.effective_business_date,a.recorded_at_ms,a.rowid',(sid,))
     latest={row['round_id']:row for row in applications}
     default_applications={obj(row['evidence_json'],{}).get('application_id') for row in rows(c,"SELECT e.evidence_json FROM tracking_event e JOIN tracking_round r USING(round_id) WHERE r.strategy_id=? AND r.status='tracking' AND e.event_type='policy_change'",(sid,)) if obj(row['evidence_json'],{}).get('scope')=='strategy_default'}
@@ -284,47 +285,83 @@ def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=
     daily_method=getattr(market,'history_for_instruments',None)
     needs_daily=include_default and plan.default in ('W','M')
     missing=[symbol for symbol in symbols if (require_history and symbol not in (history_cached_symbols or set())) or any(value is None for value in ready[symbol].values()) or needs_daily and not callable(daily_method)]
-    histories=selection_history_batch(market,missing,day) if missing else {}
+    # Ordinary D/W/M proofs and rule-specific structure proofs have separate
+    # lifetimes. A new BOLL parameter or history window may miss its proof
+    # without invalidating the already verified quotation/adjustment seed.
+    basis_keys={};restored={}
     if price_basis=='forward' and missing:
+        from app.services import condition_basis_cache as basis_cache
+        for symbol in missing:
+            key=basis_cache.key_for(symbol,day,generation,source_token)
+            basis_keys[symbol]=key
+            history_ready=not require_history or symbol in (history_cached_symbols or set())
+            can_project=(history_ready and (not needs_daily or callable(daily_method))
+                and all(ordinary_metrics_ready(day,period,instrument_id=symbol,generation=generation,
+                    price_context=contexts[symbol]) for period in periods))
+            if can_project:
+                projected=basis_cache.restore_structure(key)
+                if projected is not None:
+                    for period in periods:
+                        if ready[symbol][period] is None:
+                            ready[symbol][period]=complete_from_basis(day,market.calendar(),period,
+                                instrument_id=symbol,generation=generation,request=plan.requests[period],price_context=projected)
+                    if all(value is not None for value in ready[symbol].values()):continue
+            saved=basis_cache.restore(key)
+            if saved is not None:
+                restored[symbol]=saved
+                contexts[symbol]=saved
+    missing=[symbol for symbol in missing if ((require_history and symbol not in (history_cached_symbols or set()))
+        or any(value is None for value in ready[symbol].values()) or needs_daily and not callable(daily_method))]
+    cold=[symbol for symbol in missing if symbol not in restored]
+    histories=selection_history_batch(market,cold,day) if cold else {}
+    histories.update({symbol:context['raw_rows'] for symbol,context in restored.items()})
+    if price_basis=='forward' and cold:
         action_method=getattr(market,'actions_for_instruments',None)
-        actions=action_method(missing) if callable(action_method) else None
+        actions=action_method(cold) if callable(action_method) else None
         status_method=getattr(market,'status',None);snapshot=status_method().get('snapshot_id') if callable(status_method) else None
         expected_snapshot=generation[0] if isinstance(generation,tuple) else generation
-        for symbol in missing:
+        for symbol in cold:
             same_generation=expected_snapshot is None or snapshot==expected_snapshot
             known=same_generation and source_token is not None and isinstance(actions,dict) and symbol in actions and isinstance(actions[symbol],list)
             contexts[symbol]=prepare_condition_prices(histories.get(symbol,[]),actions.get(symbol) if isinstance(actions,dict) else None,
                 market.calendar(),day,'forward',instrument_id=symbol,
                 actions_coverage={'known':known,'source_token':source_token if same_generation else None,'snapshot_id':snapshot,
                                   'reason':None if same_generation else '行情代际在价格准备期间变化，不能混用公司行动证据'})
-            # Historical contexts replay both lanes and benefit from sharing
-            # their normalized seeds with D/W/M summaries. A structure-only
-            # cache miss can use each lane once; extra wrappers there copy the
-            # complete seed without reducing any normalization work.
-            for lane in ('raw_rows','price_rows') if require_history else ():
+            shared_seed=(basis_keys.get(symbol) is not None
+                         and contexts[symbol].get('price_basis')=='forward_event_affine')
+            # A reusable seed keeps both original quotations and their pristine
+            # normalization. It is captured before attaching any rule/pool
+            # decisions and never changes an earlier run's immutable evidence.
+            for lane in ('raw_rows','price_rows') if require_history or shared_seed else ():
                 values=contexts[symbol][lane]
                 # A quarantined legacy adapter may still carry timestamps or
                 # unconverted date aliases. Keep its original rejection path;
                 # early normalization must never turn that date into a match.
                 if all(isinstance(row.get('date'),str) and len(row['date'])==10 for row in values):
                     contexts[symbol][lane]=prepare_metric_bars(values)
+            if shared_seed:
+                basis_cache.remember(basis_keys[symbol],contexts[symbol])
     histories={symbol:prepare_metric_bars(values) for symbol,values in histories.items()}
     daily={symbol:values for symbol,values in histories.items()}
     daily_only=[symbol for symbol in symbols if symbol not in histories] if needs_daily else []
     if daily_only:daily.update(daily_method(daily_only,start=day,end=day))
     return histories,ready,daily
 
-def run_strategy(sid,payload=None,*,queued_job=None):
+@disk_session()
+def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
+    if response_decision not in (None,'matched','unmatched','unknown'):fail('结果筛选无效')
     payload=payload or {};key=str(payload.get('request_key') or new_id('selection-request'))
     if len(key)>200:fail('request_key过长')
     job_id=queued_job['job_id'] if queued_job else new_id('job');rid=new_id('run');owner=queued_job['lease_owner'] if queued_job else api_lease_owner()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
+        from .increment_access import require_business_unlocked
+        require_business_unlocked(c)
         require_strategy_present(c,sid)
         found=c.execute('SELECT r.run_id,r.strategy_id FROM selection_run r JOIN job j USING(job_id) WHERE j.request_key=?',(key,)).fetchone()
         if found:
             if found['strategy_id']!=sid:fail('request_key已用于其他策略，不能复用。',409)
-            return get_run(found['run_id'])
+            return get_run(found['run_id'],response_decision)
         day=current(c);st=ensure_evaluator_version(c,sid)
         if st['archived']:fail('策略已归档，不能运行')
         deps,primary=freeze_inputs(c);topics=topic_map(c,day);topic_dependencies_=topic_dependencies(st['definition']);complete_topics=complete_topic_ids(c,topic_dependencies_)
@@ -464,7 +501,7 @@ def run_strategy(sid,payload=None,*,queued_job=None):
             for snap in set(deps.values()):pin(c,snap,'selection',rid)
             c.execute("UPDATE job SET status='succeeded',phase='completed',finished_at_ms=?,accepted_batches=100,planned_batches=100,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?",(now_ms(),job_id))
             counts={k:sum(r['decision']==k for r in result) for k in ('matched','unmatched','unknown')};log(c,job_id,'info','completed','策略运行完成',counts)
-        return get_run(rid)
+        return get_run(rid,response_decision)
     except Exception as e:
         with connect() as c:
             c.execute("UPDATE job SET status='failed',phase='failed',finished_at_ms=?,error_summary=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=? AND status='running' AND lease_owner=?",(now_ms(),str(getattr(e,'detail',e))[:500],job_id,owner))
@@ -474,10 +511,13 @@ def run_strategy(sid,payload=None,*,queued_job=None):
         stop_lease()
 
 def get_run(rid,decision=None):
+    if decision not in (None,'matched','unmatched','unknown'):fail('结果筛选无效')
     with connect() as c:
         run=one(c,'SELECT r.*,s.name strategy_name,v.price_basis requested_price_basis FROM selection_run r JOIN strategy s USING(strategy_id) JOIN strategy_version v ON v.strategy_id=r.strategy_id AND v.version=r.strategy_version WHERE run_id=?',(rid,),'策略运行不存在')
-        allrows=rows(c,'SELECT * FROM selection_candidate WHERE run_id=? ORDER BY decision,instrument_id',(rid,));master=identities(run['business_date'])
-        return {k:v for k,v in run.items() if not k.endswith('_json')}|{'input_snapshots':obj(run['input_snapshots_json'],{}),'universe_definition':obj(run['universe_definition_json'],{}),'matched_count':sum(r['decision']=='matched' for r in allrows),'unmatched_count':sum(r['decision']=='unmatched' for r in allrows),'unknown_count':sum(r['decision']=='unknown' for r in allrows),'items':[_candidate(r,master) for r in allrows if decision is None or r['decision']==decision]}
+        counts={r['decision']:r['n'] for r in rows(c,'SELECT decision,count(*) n FROM selection_candidate WHERE run_id=? GROUP BY decision',(rid,))}
+        selected=rows(c,'SELECT * FROM selection_candidate WHERE run_id=?'+(' AND decision=?' if decision is not None else '')+' ORDER BY decision,instrument_id',(rid,decision) if decision is not None else (rid,))
+        master=identities(run['business_date'])
+        return {k:v for k,v in run.items() if not k.endswith('_json')}|{'input_snapshots':obj(run['input_snapshots_json'],{}),'universe_definition':obj(run['universe_definition_json'],{}),'matched_count':counts.get('matched',0),'unmatched_count':counts.get('unmatched',0),'unknown_count':counts.get('unknown',0),'items':[_candidate(r,master) for r in selected]}
 
 def list_runs(sid=None,limit=50):
     with connect() as c:

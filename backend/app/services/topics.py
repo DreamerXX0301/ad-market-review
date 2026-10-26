@@ -54,17 +54,34 @@ def _members(c,topic,day=None,catalog=None,overrides=None):
         else:members.discard(ident);origins.pop(ident,None)
     return members,origins
 
-def topic_view(c,r,with_members=False,catalog=None,known_master=None):
+
+def _override_batch(c,selected,day):
+    """One fresh, bounded topic batch; preserve every effective override tie.
+
+    Callers consume one 128-topic block at a time, rather than retaining an
+    entire page's override history. No business state survives this request.
+    """
+    grouped={topic['topic_id']:[] for topic in selected}
+    if not grouped:return grouped
+    ids=list(grouped)
+    for row in rows(c,'SELECT *,rowid AS _order FROM topic_override WHERE topic_id IN ('+','.join('?' for _ in ids)+') AND effective_business_date<=? ORDER BY effective_business_date,recorded_at_ms,rowid',ids+[day]):
+        grouped[row['topic_id']].append(row)
+    return grouped
+
+
+def topic_view(c,r,with_members=False,catalog=None,known_master=None,day=None,overrides=None):
+    day=day or current(c)
     catalog=_catalog_map() if catalog is None else catalog
+    if overrides is None:overrides=_override_batch(c,[r],day)[r['topic_id']]
     meta=catalog.get(r.get('provider_topic_key'),{})
     result={k:v for k,v in r.items() if k!='aliases_json'};result['aliases']=obj(r.get('aliases_json'),[])
     result.update(kind='manual' if r['origin']=='manual' else meta.get('kind','concept'),source_observed_date=meta.get('observed_date'),historical_membership=False,members_complete=True if r['origin']=='manual' else meta.get('members_complete',False))
-    members,origin=_members(c,r,catalog=catalog)
+    members,origin=_members(c,r,day=day,catalog=catalog,overrides=overrides)
     result['observed_member_count']=len(members)
     result['member_count']=len(members) if result['members_complete'] else None
     if with_members:
-        day=current(c);master=known_master if known_master is not None else identities(day);provider=_provider_members(r,catalog)
-        latest={v['instrument_id']:v for v in rows(c,'SELECT * FROM topic_override WHERE topic_id=? AND effective_business_date<=? ORDER BY effective_business_date,recorded_at_ms,rowid',(r['topic_id'],day))}
+        master=known_master if known_master is not None else identities(day);provider=_provider_members(r,catalog)
+        latest={v['instrument_id']:v for v in sorted((v for v in overrides if v['topic_id']==r['topic_id'] and v['effective_business_date']<=day),key=lambda v:(v['effective_business_date'],v['recorded_at_ms'],v.get('_order',0)))}
         def member(ident,action):
             override=latest.get(ident,{}).get('action')
             return {**code_info(ident,master),'origin':origin.get(ident,'manual'),'action':action,'provider_member':ident in provider,'manual_override':override if override in ('include','exclude') else None}
@@ -77,9 +94,13 @@ def list_topics(q='',include_archived=False,kind=None):
     with connect() as c:
         catalog=_catalog_map()
         data=rows(c,'''SELECT t.*,r.name,r.description,r.aliases_json,r.archived,r.revision,r.effective_business_date FROM topic t JOIN topic_revision r ON r.topic_id=t.topic_id AND r.revision=(SELECT max(revision) FROM topic_revision WHERE topic_id=t.topic_id) ORDER BY r.name''')
-        data=[topic_view(c,r,catalog=catalog) for r in data if (include_archived or not r['archived']) and (not q or q.lower() in (r['name']+r['description']+' '.join(obj(r['aliases_json'],[]))).lower())]
-        if kind and kind!='all':data=[r for r in data if r['kind']==kind]
-        return {'items':data,'total':len(data)}
+        selected=[r for r in data if (include_archived or not r['archived']) and (not q or q.lower() in (r['name']+r['description']+' '.join(obj(r['aliases_json'],[]))).lower())]
+        output=[];day=current(c) if selected else None
+        for offset in range(0,len(selected),128):
+            batch=selected[offset:offset+128];overrides=_override_batch(c,batch,day)
+            output.extend(topic_view(c,r,catalog=catalog,day=day,overrides=overrides[r['topic_id']]) for r in batch)
+        if kind and kind!='all':output=[r for r in output if r['kind']==kind]
+        return {'items':output,'total':len(output)}
 
 def get_topic(topic_id):
     with connect() as c:return topic_view(c,_topic(c,topic_id),True)
@@ -142,10 +163,13 @@ def topic_map(c,day):
     # This is a current business-day map. Historical backtests must use PIT, never this helper.
     result={};provider_catalog=_catalog_map()
     catalog=rows(c,'''SELECT t.*,r.name,r.archived FROM topic t JOIN topic_revision r ON r.topic_id=t.topic_id AND r.revision=(SELECT max(revision) FROM topic_revision WHERE topic_id=t.topic_id)''')
-    for topic in catalog:
-        if topic['archived']:continue
-        members,_=_members(c,topic,day,catalog=provider_catalog)
-        for ident in members:result.setdefault(ident,[]).append({'topic_id':topic['topic_id'],'name':topic['name']})
+    selected=[topic for topic in catalog if not topic['archived']]
+    day=(day or current(c)) if selected else day
+    for offset in range(0,len(selected),128):
+        batch=selected[offset:offset+128];overrides=_override_batch(c,batch,day)
+        for topic in batch:
+            members,_=_members(c,topic,day,catalog=provider_catalog,overrides=overrides[topic['topic_id']])
+            for ident in members:result.setdefault(ident,[]).append({'topic_id':topic['topic_id'],'name':topic['name']})
     return result
 
 def complete_topic_ids(c,requested):

@@ -374,6 +374,7 @@ def test_closed_request_cannot_enter_ensure_ready_or_open_database(ws, monkeypat
     ('GET', '/api/v1/watchlist', True), ('GET', '/api/v1/research/jobs/one', True),
     ('GET', '/api/v1/tasks/one', False), ('GET', '/api/v1/sync/session', False),
     ('POST', '/api/v1/tasks/one/pause', False), ('POST', '/api/v1/tasks/one/cancel', False),
+    ('POST', '/api/v1/sync/session/control', False), ('POST', '/api/v1/sync/session/acknowledge', True),
     ('POST', '/api/v1/tasks/one/pause/extra', True), ('POST', '/api/v1/tasks/one/not-cancel', True),
 ])
 def test_http_lock_classification_and_original_response(method, path, protected, tmp_path, monkeypatch):

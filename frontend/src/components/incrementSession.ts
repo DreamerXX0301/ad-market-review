@@ -6,6 +6,7 @@ export type IncrementSession = {
   taskId?: string;
   createdAt: number;
   rejection?: string;
+  epoch?: string;
 };
 let volatileSession: IncrementSession | null = null;
 let storageWritable = true;
@@ -28,7 +29,9 @@ export function readIncrementSession(): IncrementSession | null {
           value.taskId.length <= 200)) &&
       (value.rejection === undefined ||
         (typeof value.rejection === "string" &&
-          value.rejection.length <= 2000));
+          value.rejection.length <= 2000)) &&
+      (value.epoch === undefined ||
+        (typeof value.epoch === "string" && value.epoch.length <= 200));
     if (!storageWritable) return volatileSession;
     return valid
       ? {
@@ -36,6 +39,7 @@ export function readIncrementSession(): IncrementSession | null {
           createdAt: value.createdAt,
           ...(value.taskId ? { taskId: value.taskId } : {}),
           ...(value.rejection ? { rejection: value.rejection } : {}),
+          ...(value.epoch ? { epoch: value.epoch } : {}),
         }
       : null;
   } catch (error) {
@@ -84,6 +88,38 @@ export function rejectIncrementSession(
 ) {
   if (readIncrementSession()?.requestKey !== value.requestKey) return;
   update({ ...value, rejection: message });
+}
+/** Adopt only opaque, validated identities from the server's durable gate. */
+export function restoreIncrementSession(value: Record<string, any>) {
+  if (
+    typeof value?.request_key !== "string" ||
+    !value.request_key ||
+    value.request_key.length > 200 ||
+    typeof value.root_task_id !== "string" ||
+    !value.root_task_id ||
+    value.root_task_id.length > 200 ||
+    !Number.isFinite(value.created_at_ms) ||
+    value.created_at_ms < 0
+  )
+    return false;
+  const next: IncrementSession = {
+    requestKey: value.request_key,
+    taskId: value.root_task_id,
+    createdAt: value.created_at_ms,
+    ...(typeof (value.session_epoch || value.epoch) === "string"
+      ? { epoch: value.session_epoch || value.epoch }
+      : {}),
+  };
+  const current = readIncrementSession();
+  if (
+    current?.requestKey !== next.requestKey ||
+    current?.taskId !== next.taskId ||
+    current?.createdAt !== next.createdAt ||
+    current?.epoch !== next.epoch ||
+    current?.rejection
+  )
+    update(next);
+  return true;
 }
 export function acknowledgeIncrementSession(requestKey: string) {
   if (readIncrementSession()?.requestKey !== requestKey) return false;

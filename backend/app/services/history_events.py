@@ -10,12 +10,17 @@ def cached_forward_contexts(symbols,trees,calendar,day,snapshot,source_token):
     """Probe only after the run has verified its immutable source closure."""
     if source_token is None:return {}
     from app.domain.strategy_prices import price_cache_key
-    from app.services.forward_history_cache import window_scope,key_for,restore
+    from app.services.forward_history_cache import window_scope,key_for,restore,shared_window_scope,restore_shared,remember
     scope=window_scope(trees,calendar,day);positions={value:index for index,value in enumerate(calendar)}
+    wider=shared_window_scope(calendar,day,scope)
     result={}
     for symbol in symbols:
         key=key_for(symbol,day,snapshot,price_cache_key(symbol,day,'forward',source_token),scope)
         context=restore(key,calendar,positions)
+        if context is None and wider is not None:
+            shared_key=key_for(symbol,day,snapshot,price_cache_key(symbol,day,'forward',source_token),wider)
+            context=restore_shared(shared_key,scope,calendar,positions)
+            if context is not None:remember(key,context,scope)
         if context is not None:result[symbol]=context
     return result
 
@@ -70,7 +75,10 @@ def contexts_for_batch(market, symbols, trees, calendar, day, histories=None, sh
     actions = action_method(symbols) if missing_flags and callable(action_method) else None
     status_method = getattr(market, 'status', None)
     snapshot = status_method().get('snapshot_id') if callable(status_method) else None
-    cache_scope=None
+    cache_scope=None;shared_scope=None
+    if price_basis=='forward':
+        from app.services.forward_history_cache import window_scope,shared_window_scope
+        cache_scope=window_scope(trees,calendar,day);shared_scope=shared_window_scope(calendar,day,cache_scope)
     for symbol in symbols:
         values = []
         known = isinstance(actions, dict) and isinstance(actions.get(symbol), list)
@@ -96,10 +104,14 @@ def contexts_for_batch(market, symbols, trees, calendar, day, histories=None, sh
         if price_basis=='forward' and price_context is None:
             from app.domain.strategy_prices import condition_prices_for
             price_context=condition_prices_for(market,symbol,values,calendar,day,price_basis)
-        context=HistoryContext(values, calendar, day, snapshot, retain_start=retain_start(trees, calendar, day),price_context=price_context)
+        context=HistoryContext(values, calendar, day, snapshot,
+            retain_start=shared_scope['first'] if shared_scope else retain_start(trees, calendar, day),price_context=price_context)
         if price_basis=='forward':
-            from app.services.forward_history_cache import window_scope,key_for,remember
-            if cache_scope is None:cache_scope=window_scope(trees,calendar,day)
+            from app.services.forward_history_cache import key_for,remember,remember_shared,project_context
+            if shared_scope is not None and context.price_basis=='forward_event_affine':
+                shared_key=key_for(symbol,day,snapshot,(price_context or {}).get('cache_key'),shared_scope)
+                remember_shared(shared_key,context,shared_scope)
+                context=project_context(context,cache_scope,calendar,{value:index for index,value in enumerate(calendar)})
             key=key_for(symbol,day,snapshot,(price_context or {}).get('cache_key'),cache_scope)
             remember(key,context,cache_scope)
         result[symbol] = attach_limit_events(context,symbol,trees,limit_evidence)

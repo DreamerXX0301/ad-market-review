@@ -172,10 +172,15 @@ def full_sector_pair_from_cache(market, topic, target, previous):
     if any(topic.get(key) != instrument[value] for key, value in
            (('topic_id', 'topic_id'), ('name', 'name'), ('kind', 'sector_kind'))):
         raise ValueError('完整板块K线与日行情所用当前目录身份不符')
-    cached = _read_cached(plan, market.calendar())
-    if cached is None: return None
-    record, pointer = cached
-    pair = [row for row in record['bars'] if row['date'] in (previous, target)]
+    from app.services.sector_strategies import verified_recent_pair
+    prepared = verified_recent_pair(market, topic['topic_code'], target, previous)
+    if prepared is not None:
+        record = prepared; pointer = prepared['pointer']; pair = prepared['bars']
+    else:
+        cached = _read_cached(plan, market.calendar())
+        if cached is None: return None
+        record, pointer = cached
+        pair = [row for row in record['bars'] if row['date'] in (previous, target)]
     if len(pair) != 2 or {row['date'] for row in pair} != {previous, target}:
         return None
     # Convert the raw-revalidated daily prices back to the existing pair
@@ -219,62 +224,71 @@ def collect_sector_history(market, target, cache, adapter, progress=None, guard=
     if not previous:
         failures.append({'stage': 'calendar', 'date': target, 'reason': '留存日历缺少目标日前一交易日，无法核验日涨幅'})
     else:
-        for done, topic in enumerate(selected, 1):
-            if guard: guard()
-            code = topic['topic_code']; signature = request_signature(code, target, previous)
-            try:
-                cached = cache.reuse('fuyao', 'sector-index', target+'-'+code, signature)
-                if cached is not None:
-                    if cached.get('date') != target or cached.get('topic_code') != code:
-                        raise ValueError('板块历史缓存日期或证券代码与请求不符')
-                    row = normalize_sector_history(_raw_cache(cache, cached), topic, target, previous)
-                    row.update(fetched_at=cached.get('fetched_at'),
-                               raw_artifact=cached.get('raw_artifact'), raw_sha256=cached.get('raw_sha256'))
-                    items.append(row); cached_count += 1
+        from contextlib import nullcontext
+        from .sector_read_context import planning_scope
+        status = market.status()
+        # Older readers without a full-chart scope retain their pair-only path.
+        scope = (planning_scope(market, target,
+                 catalog={topic['topic_code']: topic for topic in selected},
+                 calendar=calendar, status=status)
+                 if status.get('data_begin') and status.get('snapshot_id') else nullcontext())
+        with scope:
+            for done, topic in enumerate(selected, 1):
+                if guard: guard()
+                code = topic['topic_code']; signature = request_signature(code, target, previous)
+                try:
+                    cached = cache.reuse('fuyao', 'sector-index', target+'-'+code, signature)
+                    if cached is not None:
+                        if cached.get('date') != target or cached.get('topic_code') != code:
+                            raise ValueError('板块历史缓存日期或证券代码与请求不符')
+                        row = normalize_sector_history(_raw_cache(cache, cached), topic, target, previous)
+                        row.update(fetched_at=cached.get('fetched_at'),
+                                   raw_artifact=cached.get('raw_artifact'), raw_sha256=cached.get('raw_sha256'))
+                        items.append(row); cached_count += 1
+                        if progress: progress(done, len(entries), code)
+                        continue
+                    full = full_sector_pair_from_cache(market, topic, target, previous)
+                    if full is not None:
+                        if guard: guard()
+                        items.append(full); cached_count += 1; full_chart_cached_count += 1
+                        if progress: progress(done, len(entries), code)
+                        continue
+                except (ValueError, TypeError, OSError, ProviderError) as error:
+                    failures.append({'stage': 'cache_validation', 'topic_code': code, 'reason': str(error)})
                     if progress: progress(done, len(entries), code)
                     continue
-                full = full_sector_pair_from_cache(market, topic, target, previous)
-                if full is not None:
-                    if guard: guard()
-                    items.append(full); cached_count += 1; full_chart_cached_count += 1
+                if source_blocked is not None:
+                    blocked_count += 1
+                    failures.append({'stage': 'source_blocked', 'topic_code': code,
+                                     'reason': source_blocked})
                     if progress: progress(done, len(entries), code)
                     continue
-            except (ValueError, TypeError, OSError, ProviderError) as error:
-                failures.append({'stage': 'cache_validation', 'topic_code': code, 'reason': str(error)})
+                if last_request is not None:
+                    delay = REQUEST_INTERVAL - (time.monotonic()-last_request)
+                    if delay > 0: time.sleep(delay)
+                if guard: guard()
+                last_request = time.monotonic(); requests += 1
+                try:
+                    payload = adapter.request(HISTORY_PATH, {'thscode': code, 'interval': '1d',
+                        'start': _midnight(previous), 'end': _midnight(target)+86400000-1})
+                    row = normalize_sector_history(payload, topic, target, previous)
+                except (ValueError, TypeError, OSError, ProviderError) as error:
+                    failures.append({'stage': 'daily_history', 'topic_code': code, 'reason': str(error)})
+                    if isinstance(error, ProviderError) and (error.status in (401, 403, 429) or error.code == 2001):
+                        source_blocked = '来源认证、权限或限流已拒绝后续远程请求；保持未知：'+str(error)
+                    if progress: progress(done, len(entries), code)
+                    continue
+                if guard: guard()
+                try:
+                    accepted = cache.accept('fuyao', 'sector-index', target+'-'+code, signature,
+                        {'date': target, 'topic_code': code, 'complete': True,
+                         'normalization_version': NORMALIZATION_VERSION, 'items': [row]}, payload)
+                    row.update(fetched_at=accepted.get('fetched_at'),
+                               raw_artifact=accepted.get('raw_artifact'), raw_sha256=accepted.get('raw_sha256'))
+                    items.append(row)
+                except (ValueError, TypeError, OSError, ProviderError) as error:
+                    failures.append({'stage': 'cache_accept', 'topic_code': code, 'reason': str(error)})
                 if progress: progress(done, len(entries), code)
-                continue
-            if source_blocked is not None:
-                blocked_count += 1
-                failures.append({'stage': 'source_blocked', 'topic_code': code,
-                                 'reason': source_blocked})
-                if progress: progress(done, len(entries), code)
-                continue
-            if last_request is not None:
-                delay = REQUEST_INTERVAL - (time.monotonic()-last_request)
-                if delay > 0: time.sleep(delay)
-            if guard: guard()
-            last_request = time.monotonic(); requests += 1
-            try:
-                payload = adapter.request(HISTORY_PATH, {'thscode': code, 'interval': '1d',
-                    'start': _midnight(previous), 'end': _midnight(target)+86400000-1})
-                row = normalize_sector_history(payload, topic, target, previous)
-            except (ValueError, TypeError, OSError, ProviderError) as error:
-                failures.append({'stage': 'daily_history', 'topic_code': code, 'reason': str(error)})
-                if isinstance(error, ProviderError) and (error.status in (401, 403, 429) or error.code == 2001):
-                    source_blocked = '来源认证、权限或限流已拒绝后续远程请求；保持未知：'+str(error)
-                if progress: progress(done, len(entries), code)
-                continue
-            if guard: guard()
-            try:
-                accepted = cache.accept('fuyao', 'sector-index', target+'-'+code, signature,
-                    {'date': target, 'topic_code': code, 'complete': True,
-                     'normalization_version': NORMALIZATION_VERSION, 'items': [row]}, payload)
-                row.update(fetched_at=accepted.get('fetched_at'),
-                           raw_artifact=accepted.get('raw_artifact'), raw_sha256=accepted.get('raw_sha256'))
-                items.append(row)
-            except (ValueError, TypeError, OSError, ProviderError) as error:
-                failures.append({'stage': 'cache_accept', 'topic_code': code, 'reason': str(error)})
-            if progress: progress(done, len(entries), code)
     if guard: guard()
     amount_available = sum(row['amount'] is not None for row in items)
     complete = bool(entries) and not failures and len(items) == len(entries) and amount_available == len(items)

@@ -12,6 +12,7 @@ import time
 from app.core import connect,data_dir,work_dir,ensure_ready,now_ms,set_setting
 from app.services import task_service as tasks
 from app.adapters.providers import ProviderError
+from app.adapters.providers import provider_connection_scope
 
 logger=logging.getLogger('shixu.worker')
 
@@ -79,7 +80,7 @@ def _chain_target(job,completed_result=None):
     return target
 
 
-def _supplement_child(parameters, target, request_key):
+def _supplement_child(parameters, target, request_key, *, chain_parent_id=None):
     """New chains include board quotes; already frozen children keep their scope."""
     with connect() as connection:
         saved=connection.execute('SELECT * FROM job WHERE request_key=?',(request_key,)).fetchone()
@@ -88,7 +89,7 @@ def _supplement_child(parameters, target, request_key):
         legacy={key:value for key,value in parameters.items() if key!='sector_history'}
         if old==legacy or old=={**legacy,'recent_days':20}:
             return tasks.task_view(saved['job_id'])
-    return tasks.create_task('source_check',parameters,target_date=target,request_key=request_key)
+    return tasks.create_task('source_check',parameters,target_date=target,request_key=request_key,chain_parent_id=chain_parent_id)
 
 
 def _queue_followup_once(job,completed_result=None):
@@ -97,6 +98,8 @@ def _queue_followup_once(job,completed_result=None):
         row=connection.execute('SELECT * FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
         if not row:return None
         job=dict(row)
+        from app.services.sync_progress import chain_stop_action
+        if chain_stop_action(connection,job):return None
         if job['status'] not in ('succeeded','partial','no_change') or not _chain_authorized(connection,job):return None
         if connection.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='followup_queued'",(job['job_id'],)).fetchone():return None
         if connection.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='chain_blocked'",(job['job_id'],)).fetchone():return None
@@ -141,7 +144,7 @@ def _queue_followup_once(job,completed_result=None):
         message='完整题材已发布，行业概念历史K线全库补齐已排队；逐板块缓存后接续盘面补充'
     elif _increment_chart_chain(parameters):
         child=_supplement_child({'operation':'market_supplement','year_history':False,'sector_history':True,
-            'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,**fund_policy},target,'supplement-after-sync:'+parent)
+            'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,**fund_policy},target,'supplement-after-sync:'+parent,chain_parent_id=job['job_id'])
         message='板块K线尾部增量已核验，目标日封板、资金及板块日行情补充已排队；历史缺口继续保留'
     else:
         request_key='full-supplement-after-initialise:'+parent
@@ -200,6 +203,9 @@ def recover_followups(limit=20):
 def _queue_local_sync_checks(job, completed_result=None):
     """Queue short local checks before the sector chain, without changing FIFO."""
     if job['kind'] not in ('initialise','increment'):return
+    from app.services.sync_progress import chain_stop_action
+    with connect() as connection:
+        if chain_stop_action(connection,job):return
     from app.services import line_alerts,listing_status
     parameters=_parameters(job)
     if not (parameters.get('line_alert_check_version')==line_alerts.VERSION
@@ -224,8 +230,15 @@ def _queue_local_sync_checks(job, completed_result=None):
                         {'check':name,'reason_code':type(error).__name__})
 
 
+@provider_connection_scope()
 def dispatch(job):
-    with connect() as connection:state=connection.execute('SELECT status FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
+    with connect() as connection:
+        state=connection.execute('SELECT status FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
+        from app.services.sync_progress import chain_stop_action
+        stop_action=chain_stop_action(connection,job)
+    if state and state[0] in ('queued','running') and stop_action:
+        tasks.change_task(job['job_id'],stop_action)
+        return
     if not state or state[0] in tasks.TERMINAL:
         if state and state[0] in ('succeeded','partial','no_change'):
             _queue_local_sync_checks(job)
@@ -310,6 +323,10 @@ def run(once=False):
     with lock_path.open('a+b') as lock:
         try:fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise SystemExit('已有工作进程运行，拒绝第二个分析写入者')
+        from app.services.sync_progress import worker_released
+        # Holding this existing EX worker lock proves an earlier execution
+        # cannot still write, including a process that died before finally.
+        worker_released(recovered=True)
         for signum in (signal.SIGTERM,signal.SIGINT):
             signal.signal(signum,lambda *_:stop.set())
         next_research_cleanup=0
@@ -352,6 +369,7 @@ def run(once=False):
                 tasks.finish(job['job_id'],'failed',message,message,lease_owner=job['lease_owner'])
             finally:
                 heartbeat_stop.set();thread.join(timeout=2)
+                worker_released(job['job_id'])
             if once:return
 
 

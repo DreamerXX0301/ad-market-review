@@ -55,6 +55,8 @@ def create_batch(payload):
     signature = digest({**request, 'auto_add': True, 'plan_version': PLAN_VERSION})
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
+        from .increment_access import require_business_unlocked
+        require_business_unlocked(connection)
         previous = connection.execute('SELECT * FROM job WHERE request_key=?', (key,)).fetchone()
         if previous:
             previous_parameters = _parameters(previous)
@@ -251,7 +253,8 @@ def execute_item(job):
             from .sector_strategies import run_strategy
         else:
             from .strategies import run_strategy
-        return run_strategy(parameters['strategy_id'], {'request_key': job['request_key']}, queued_job=job)
+        return run_strategy(parameters['strategy_id'], {'request_key': job['request_key']},
+                            queued_job=job, response_decision='matched')
     except Exception as error:
         reason = str(getattr(error, 'detail', error))[:500]
         tasks.finish(job['job_id'], 'failed', '本项策略失败，其他项继续', reason, lease_owner=job['lease_owner'])
@@ -357,6 +360,9 @@ def change_batch(identifier, action):
     if action == 'retry': raise HTTPException(422, '请在策略页重新执行所选或全部，以冻结新的规则和行情；已完成结果不会自动重跑')
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
+        if action == 'resume':
+            from .increment_access import require_business_unlocked
+            require_business_unlocked(connection)
         parent = connection.execute('SELECT * FROM job WHERE job_id=?', (identifier,)).fetchone()
         if not parent: raise HTTPException(404, '策略批次不存在')
         parameters = _parameters(parent); stamp = now_ms()

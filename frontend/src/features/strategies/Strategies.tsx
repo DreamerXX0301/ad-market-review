@@ -446,7 +446,7 @@ function StockStrategies({
   );
   const chosen =
     strategies.find((s) => s.strategy_id === selectedId) || strategies[0];
-  const saved = useSavedStrategyRun("stock", chosen);
+  const saved = useSavedStrategyRun("stock", chosen, decision, dataDate);
   const { run, setRun } = saved;
   const taskActivity = useTaskActivity();
   const runningChosen = strategyTaskBusy(taskActivity, chosen?.strategy_id);
@@ -471,33 +471,15 @@ function StockStrategies({
   useEffect(() => {
     setSelected(new Set());
     setError("");
-  }, [selectedId]);
+  }, [chosen?.strategy_id, run?.run_id, decision]);
   useEffect(() => {
     if (!batchRunRequest || chosen?.strategy_id !== batchRunRequest.strategy_id)
       return;
-    const request = new AbortController();
-    setBusy("history");
-    api<Row>(`/strategy-runs/${encodeURIComponent(batchRunRequest.run_id)}`, {
-      signal: request.signal,
-    })
-      .then((data) => {
-        if (!request.signal.aborted) {
-          setRun(data);
-          setDecision("matched");
-          setSelected(new Set());
-        }
-      })
-      .catch((problem) => {
-        if (!request.signal.aborted) setError(problem.message);
-      })
-      .finally(() => {
-        if (!request.signal.aborted) {
-          setBusy("");
-          setBatchRunRequest(null);
-        }
-      });
-    return () => request.abort();
-  }, [batchRunRequest, chosen?.strategy_id, setRun]);
+    saved.loadRun(batchRunRequest.run_id);
+    setDecision("matched");
+    setSelected(new Set());
+    setBatchRunRequest(null);
+  }, [batchRunRequest, chosen?.strategy_id, saved.loadRun]);
   async function recycleStrategy(item: Row, restore = false) {
     if (recycleBusy) return;
     const id = item.strategy_id;
@@ -573,9 +555,12 @@ function StockStrategies({
       strategy_name: chosen.name,
     });
     try {
-      const data = await post(`/strategies/${strategyId}/runs`, {
-        request_key: key,
-      });
+      const data = await post(
+        `/strategies/${strategyId}/runs?response_decision=matched`,
+        {
+          request_key: key,
+        },
+      );
       setRun(data);
       setDecision("matched");
       setSelected(new Set());
@@ -611,16 +596,10 @@ function StockStrategies({
       setBusy("");
     }
   }
-  async function loadRun(id: string) {
-    setBusy("history");
-    try {
-      setRun(await api(`/strategy-runs/${id}`));
-      setSelected(new Set());
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy("");
-    }
+  function loadRun(id: string) {
+    saved.loadRun(id);
+    setDecision("matched");
+    setSelected(new Set());
   }
   const candidates = (run?.items || run?.candidates || []).filter(
     (r: Row) => r.decision === decision,
@@ -913,6 +892,7 @@ function StockStrategies({
                     <div className="button-group">
                       <button
                         className="btn small"
+                        disabled={saved.restoring || !saved.candidatesReady}
                         onClick={() =>
                           setSelected(
                             new Set(
@@ -925,7 +905,12 @@ function StockStrategies({
                       </button>
                       <button
                         className="btn primary"
-                        disabled={!selected.size || !!busy}
+                        disabled={
+                          !selected.size ||
+                          !!busy ||
+                          saved.restoring ||
+                          !saved.candidatesReady
+                        }
                         onClick={join}
                       >
                         {busy === "join" ? <Spinner /> : <Plus size={14} />}
@@ -934,72 +919,84 @@ function StockStrategies({
                     </div>
                   )}
                 </div>
-                <Table
-                  rows={candidates.map((r: Row) => ({
-                    ...r,
-                    close: r.close_price ?? r.close,
-                    volume_ratio: r.metrics?.volume_ratio,
-                    change_pct: r.metrics?.change_pct,
-                    signal_date:
-                      r.metrics?.signal_date ?? r.metrics?.observed_date,
-                  }))}
-                  columns={[
-                    { key: "name" },
-                    { key: "close" },
-                    { key: "signal_date", title: "默认周期信号日" },
-                    { key: "change_pct", title: "默认周期涨幅" },
-                    { key: "volume_ratio", title: "默认周期量能倍数" },
-                    {
-                      key: "actual_price_basis",
-                      title: "本股实际价格口径",
-                      sortValue: (row) => row.metrics?.price_basis || null,
-                      render: (_value, row) => (
-                        <CandidatePriceBasis row={row} run={run} />
-                      ),
-                    },
-                    {
-                      key: "topics",
-                      sortValue: (row) =>
-                        Array.isArray(row.topics) && row.topics.length
-                          ? textValue(row.topics)
-                          : null,
-                    },
-                    {
-                      key: "checks",
-                      title: "命中依据",
-                      render: (v) => <RuleEvidence value={v} />,
-                    },
-                  ]}
-                  onStock={onStock}
-                  onStockNavigate={(id, orderedRows) =>
-                    onStock(
-                      id,
-                      createStockNavigation(orderedRows, {
-                        scopeKey: `${run.run_id}:${decision}`,
-                        label: `${chosen?.name || "选股结果"} · ${decision === "matched" ? "满足条件" : decision === "unknown" ? "待核验" : "未满足"}`,
-                        asOf: run.business_date || undefined,
-                      }),
-                    )
-                  }
-                  selection={selected}
-                  onSelect={
-                    decision === "matched"
-                      ? (id) =>
-                          setSelected((v) => {
-                            const n = new Set(v);
-                            n.has(id) ? n.delete(id) : n.add(id);
-                            return n;
-                          })
-                      : undefined
-                  }
-                  emptyTitle={
-                    decision === "matched"
-                      ? "本次没有满足条件的标的"
-                      : decision === "unknown"
-                        ? "无待核验标的"
-                        : "无未满足标的"
-                  }
-                />
+                {saved.restoring ? (
+                  <div className="saved-run-loading" role="status">
+                    <Spinner />
+                    <span>正在读取当前分类的已保存结果</span>
+                  </div>
+                ) : saved.candidatesReady ? (
+                  <Table
+                    rows={candidates.map((r: Row) => ({
+                      ...r,
+                      close: r.close_price ?? r.close,
+                      volume_ratio: r.metrics?.volume_ratio,
+                      change_pct: r.metrics?.change_pct,
+                      signal_date:
+                        r.metrics?.signal_date ?? r.metrics?.observed_date,
+                    }))}
+                    columns={[
+                      { key: "name" },
+                      { key: "close" },
+                      { key: "signal_date", title: "默认周期信号日" },
+                      { key: "change_pct", title: "默认周期涨幅" },
+                      { key: "volume_ratio", title: "默认周期量能倍数" },
+                      {
+                        key: "actual_price_basis",
+                        title: "本股实际价格口径",
+                        sortValue: (row) => row.metrics?.price_basis || null,
+                        render: (_value, row) => (
+                          <CandidatePriceBasis row={row} run={run} />
+                        ),
+                      },
+                      {
+                        key: "topics",
+                        sortValue: (row) =>
+                          Array.isArray(row.topics) && row.topics.length
+                            ? textValue(row.topics)
+                            : null,
+                      },
+                      {
+                        key: "checks",
+                        title: "命中依据",
+                        render: (v) => <RuleEvidence value={v} />,
+                      },
+                    ]}
+                    onStock={onStock}
+                    onStockNavigate={(id, orderedRows) =>
+                      onStock(
+                        id,
+                        createStockNavigation(orderedRows, {
+                          scopeKey: `${run.run_id}:${decision}`,
+                          label: `${chosen?.name || "选股结果"} · ${decision === "matched" ? "满足条件" : decision === "unknown" ? "待核验" : "未满足"}`,
+                          asOf: run.business_date || undefined,
+                        }),
+                      )
+                    }
+                    selection={selected}
+                    onSelect={
+                      decision === "matched"
+                        ? (id) =>
+                            setSelected((v) => {
+                              const n = new Set(v);
+                              n.has(id) ? n.delete(id) : n.add(id);
+                              return n;
+                            })
+                        : undefined
+                    }
+                    emptyTitle={
+                      decision === "matched"
+                        ? "本次没有满足条件的标的"
+                        : decision === "unknown"
+                          ? "无待核验标的"
+                          : "无未满足标的"
+                    }
+                  />
+                ) : (
+                  <Empty
+                    title="当前分类的已保存结果暂未读出"
+                    description="请重试读取，已有运行不会因此改变。"
+                  />
+                )}
               </>
             ) : result.loading ||
               saved.restoring ||

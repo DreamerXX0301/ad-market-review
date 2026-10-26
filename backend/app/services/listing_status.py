@@ -277,6 +277,8 @@ def after_sync(job):
         db.execute('BEGIN IMMEDIATE')
         saved=db.execute('SELECT * FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
         if not saved or saved['status'] not in ('succeeded','partial','no_change') or db.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='listing_status_check_queued'",(job['job_id'],)).fetchone():return None
+        from .sync_progress import chain_stop_action
+        if chain_stop_action(db,saved):return None
         publication=db.execute("SELECT data_end FROM dataset_snapshot WHERE job_id=? AND module='daily_raw' AND state='published' ORDER BY published_at_ms DESC LIMIT 1",(job['job_id'],)).fetchone()
         frozen=db.execute("SELECT details_json FROM job_event WHERE job_id=? AND stage='chain_target_frozen' ORDER BY seq LIMIT 1",(job['job_id'],)).fetchone()
         target=publication[0] if publication else saved['target_date'] or (json.loads(frozen[0]).get('target_date') if frozen else None)

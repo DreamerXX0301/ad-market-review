@@ -143,7 +143,9 @@ class HistoryContext:
     """One security, prepared once and reusable for tracking/backtest dates.
 
     This object is ephemeral. Only evaluate()'s small, selected-event proof may
-    enter a persisted result; the full daily dictionary is never serialized.
+    enter a persisted business result. Disposable input caches may retain a
+    bounded pure technical tail; event decisions and source-pool proofs never
+    enter that shared tail.
     """
     def __init__(self, rows, calendar, as_of, snapshot_id=None, enriched=None, retain_start=None,price_context=None):
         # Explicit raw contexts are the same legacy path as no context. Only

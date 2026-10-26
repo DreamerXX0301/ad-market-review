@@ -50,11 +50,20 @@ def append_event(connection, job_id: str, stage: str, message: str, level="info"
     connection.execute("INSERT INTO job_event(job_id,seq,occurred_at_ms,level,stage,message,details_json) VALUES(?,?,?,?,?,?,?)", (job_id, seq, now_ms(), level, stage, message, dumps(details or {})))
 
 
-def create_task(kind: str, parameters: dict, target_date: str | None = None, request_key: str | None = None, retry_of: str | None = None) -> dict:
+def create_task(kind: str, parameters: dict, target_date: str | None = None, request_key: str | None = None, retry_of: str | None = None, *, chain_parent_id: str | None = None) -> dict:
     request_key = request_key or new_id("request")
+    if not isinstance(request_key,str) or not 1<=len(request_key)<=200:
+        raise HTTPException(422,'请求标识须为1至200字符')
     logical_key = digest({"kind": kind, "target_date": target_date, "parameters": parameters})
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
+        from .increment_access import business_http_request
+        from . import sync_progress
+        locked = sync_progress.lock_record(connection)
+        if business_http_request.get() and locked and (kind != 'increment' or locked['request_key'] != request_key):
+            sync_progress.require_unlocked(connection)
+        if kind == 'increment' and connection.execute('SELECT 1 FROM platform_setting WHERE key=?', ('increment-abandoned:' + request_key,)).fetchone():
+            raise HTTPException(409, '本次请求已在服务端确认放弃；迟到的提交不会创建任务，请使用新的请求标识')
         if kind in ('selection','backtest') and parameters.get('strategy_id'):
             from .workspace_deletion import require_strategy_present
             require_strategy_present(connection,parameters['strategy_id'])
@@ -71,10 +80,25 @@ def create_task(kind: str, parameters: dict, target_date: str | None = None, req
                     raise HTTPException(409, '已有首次初始化任务，请查看、继续或取消原任务后再操作')
             active = connection.execute("SELECT job_id FROM job WHERE logical_key=? AND status IN ('queued','running','paused')", (logical_key,)).fetchone()
             if active:
+                if kind == 'increment' and parameters.get('increment_session_version') == sync_progress.LOCK_VERSION:
+                    sync_progress.bind_session(connection, connection.execute('SELECT * FROM job WHERE job_id=?', (active[0],)).fetchone())
                 return task_view(active[0])
             identifier = new_id("job")
             connection.execute("INSERT INTO job(job_id,request_key,logical_key,kind,target_date,parameters_json,parameters_hash,status,planned_batches,retry_of_job_id,created_at_ms) VALUES(?,?,?,?,?,?,?,'queued',100,?,?)", (identifier, request_key, logical_key, kind, target_date, dumps(parameters), digest(parameters), retry_of, now_ms()))
             append_event(connection, identifier, "queued", "任务已提交，等待工作进程", details={"kind": kind, "target_date": target_date})
+            if kind == 'increment' and parameters.get('increment_session_version') == sync_progress.LOCK_VERSION:
+                sync_progress.bind_session(connection, connection.execute('SELECT * FROM job WHERE job_id=?', (identifier,)).fetchone())
+            elif parameters.get('parent_sync_job_id') and not (retry_of and business_http_request.get()) and (stop_action := sync_progress.chain_stop_action(connection, connection.execute('SELECT * FROM job WHERE job_id=?', (identifier,)).fetchone(),parent_task_id=chain_parent_id)):
+                # A stop can arrive between worker planning and committing a
+                # child. Freeze that late child stopped before it is runnable.
+                stopped = 'paused' if stop_action == 'pause' else 'cancelled'
+                connection.execute('UPDATE job SET status=?,finished_at_ms=? WHERE job_id=?', (stopped, now_ms() if stopped == 'cancelled' else None, identifier))
+                append_event(connection, identifier, stopped, '本次数据链已请求停止，后续步骤未开始执行')
+            if retry_of and business_http_request.get() and kind != 'increment':
+                root = sync_progress.root_for_task(connection, retry_of)
+                if root is not None:
+                    sync_progress.bind_session(connection, root, attempt_task_id=identifier)
+                    append_event(connection, retry_of, 'increment_retry_queued', '用户手动重试本步骤，重新锁定完整增量结果', details={'next_task_id': identifier})
     return task_view(identifier)
 
 
@@ -276,15 +300,29 @@ def change_task(identifier: str, action: str):
         row = connection.execute("SELECT * FROM job WHERE job_id=?", (identifier,)).fetchone()
         if not row:
             raise HTTPException(404, "任务不存在")
+        from .increment_access import business_http_request
+        if business_http_request.get() and action in ('resume','retry'):
+            from .sync_progress import require_unlocked
+            require_unlocked(connection)
         if row['kind'] in ('selection','tracking_review') and action in ('pause','resume','retry'):
             raise HTTPException(422,'本地即时计算支持取消；请在策略或跟踪页面重新运行')
         if action == "cancel" and row["status"] not in TERMINAL:
+            from .sync_progress import mark_stop
+            mark_stop(connection, identifier, row['status'] == 'running')
             connection.execute("UPDATE job SET status='cancelled',finished_at_ms=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (now_ms(), identifier))
             append_event(connection, identifier, "cancelled", "用户取消任务，已发布数据保持有效")
         elif action == "pause" and row["status"] in {"queued", "running"}:
+            from .sync_progress import mark_stop
+            mark_stop(connection, identifier, row['status'] == 'running')
             connection.execute("UPDATE job SET status='paused',lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (identifier,))
             append_event(connection, identifier, "paused", "用户暂停任务，需手动继续")
         elif action == "resume" and row["status"] == "paused":
+            from .increment_access import business_http_request
+            if business_http_request.get():
+                from .sync_progress import root_for_task, bind_session
+                root = root_for_task(connection, identifier)
+                if root is not None:
+                    bind_session(connection, root, attempt_task_id=identifier)
             _guard_initialization(connection, row['kind'])
             if row['kind']=='increment':
                 from .sync_clock import require_resume
@@ -304,6 +342,10 @@ def change_task(identifier: str, action: str):
         else:
             return task_view(identifier)
     if action == "retry":
+        from .increment_access import business_http_request
+        if business_http_request.get() and kind == 'increment':
+            from .sync_progress import LOCK_VERSION
+            parameters = {**parameters, 'increment_session_version': LOCK_VERSION}
         return create_task(kind, parameters, target, retry_of=identifier)
     return task_view(identifier)
 

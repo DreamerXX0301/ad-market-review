@@ -845,6 +845,30 @@ class MarketData:
         from .chart_session_distance import attach_chart_session_distance
         return attach_chart_session_distance(result, calendar, same_snapshot=same_snapshot)
 
+    def detail_chart(self,instrument_id,as_of=None):
+        """Project the detail quote without building an unused full chart.
+
+        The complete unadjusted history still seeds every strict recurrence.
+        Only materialization is limited: detail consumes the last bar and its
+        selected-day pattern proof, not forward prices, swings or gap lists.
+        """
+        from .chart_indicators import display_indicators
+        from .chart_session_distance import attach_chart_session_distance
+        status=self.status();as_of=as_of or status.get('data_end')
+        calendar=self.calendar();raw=self.bars(instrument_id,as_of)
+        bars=enrich_bars(raw,calendar,tail=2,include_chart_extremes=True)
+        bars,_=display_indicators(bars,raw,'market_sessions','D')
+        if canonical(instrument_id)=='000001.SH':
+            dates={bar['date'] for bar in bars}
+            breadth={row['date']:row for row in self.breadth_history(as_of) if row['date'] in dates}
+            for bar in bars:
+                row=breadth.get(bar['date'])
+                bar['advancers']=row['up'] if row and row['up']+row['down']+row['flat']>0 else None
+        same_snapshot=self.status().get('snapshot_id')==status.get('snapshot_id')
+        result={'instrument':self.instrument(instrument_id),'period':'D','as_of':as_of,
+                'bars':bars,'snapshot_id':status.get('snapshot_id'),'price_basis':'none'}
+        return attach_chart_session_distance(result,calendar,same_snapshot=same_snapshot)
+
     def indices(self,as_of=None):
         rows=[]
         for symbol in INDEX_NAMES:

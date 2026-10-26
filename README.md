@@ -23,9 +23,11 @@
 | -------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | 在同一观察日查看指数、市场广度、行业题材和涨停梯队 | 个股与板块分别配置日 / 周 / 月规则，组合历史事件与今日条件 | 把候选加入跟踪或自选，复查触发事件、加入基准和后续涨幅 |
 
-> **版本说明**：本页介绍[0.1.6 的已实现功能](CHANGELOG.md#v016)，发行源码以 [v0.1.6 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.6)为准。下方 **v0.1.6** 安装命令须在核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.6)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)后使用；完整源码 SHA、镜像摘要和平台结果以本版 `release-image.json` 为准，不能沿用旧版回执。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
+> **版本说明**：本页介绍[0.1.7 的已实现功能](CHANGELOG.md#v017)，发行源码以 [v0.1.7 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.7)为准。下方 **v0.1.7** 安装命令须在核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.7)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)后使用；完整源码 SHA、镜像摘要和平台结果以本版 `release-image.json` 为准，不能沿用旧版回执。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
 
-0.1.6统一图表与选股的明确价格口径，补齐单页K线、紧凑行情头部和高低涨幅；策略跟踪、自选支持按已观察热点归属或完整核验范围筛选。单个及连续选股减少重复计算，盘面补充按250个市场交易日滚动管理，主行情与板块K线保持五年活动窗口和必要的来源、递推种子。数据库依次增加024策略价格口径、025补充清理回执；历史策略、运行和跟踪不自动改写。[0.1.5及更早的发行记录](CHANGELOG.md#v015)继续保留。
+0.1.7增加分层技术缓存及完整递推后的64交易日技术尾部，减少跨策略的重复准备；已存结果按分类读取，跟踪批读，个股资料只物化所需末端报价。K线支持右侧短标签、单条或全部显隐，默认展示范围按绘图区宽度调整；盘后增量由服务端锁定整条任务链。首次空缓存与简单阈值场景仍可能更慢，不能将连续运行的累计收益视为全场景提速；边界与验证见[选股与浏览性能](docs/日期切换与选股性能.md)及[盘后增量优化](docs/存储与盘后增量优化.md)。本版不新增迁移，终点仍为025，源码变更不表示正式服务或镜像已更新。
+
+既有明确价格口径、单页K线、紧凑行情头部、高低涨幅和热点浏览筛选继续沿用。盘面补充按250个市场交易日滚动管理，主行情与板块K线保持五年活动窗口和必要的来源、递推种子；历史策略、运行和跟踪不自动改写。[0.1.6及更早的发行记录](CHANGELOG.md#v016)继续保留。
 
 市场情绪新增今日变化、机会与风险、分层执行提示及历史候选延续；趋势持仓与超短接力各自核验，缺档和失效有明确说明。它仍是基于已留存盘后证据的研究提示，未来执行状态保持未观察；现有手动情绪快照仍保存原三轴，详见[市场温度与下一交易日计划](docs/市场温度与下一交易日计划.md)。
 
@@ -141,26 +143,26 @@ flowchart LR
 
 ## Docker 安装
 
-需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.6`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.7`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
 
-镜像本身允许匿名拉取，无需GitHub登录；本项目的源码仓库和[0.1.6 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.6)为私有资源，需要仓库读权限。下面的附件下载命令要求已安装GitHub CLI（`gh`）并已完成授权登录，不使用匿名raw下载。已持有配套源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录并命名为 `docker-compose.yml`，跳过下面的附件下载命令；下载命令不覆盖已有同名文件。
+镜像本身允许匿名拉取，无需GitHub登录；本项目的源码仓库和[0.1.7 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.7)为私有资源，需要仓库读权限。下面的附件下载命令要求已安装GitHub CLI（`gh`）并已完成授权登录，不使用匿名raw下载。已持有配套源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录并命名为 `docker-compose.yml`，跳过下面的附件下载命令；下载命令不覆盖已有同名文件。
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
 
-gh release download v0.1.6 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.6
+gh release download v0.1.7 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.7
 
 umask 077
 key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.6 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.7 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
-export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.6
+export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.7
 export SHIXU_HTTP_PORT=8788
 
 docker compose -p ad-market-review -f docker-compose.yml pull

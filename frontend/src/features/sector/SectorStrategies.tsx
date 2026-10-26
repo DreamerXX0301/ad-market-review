@@ -208,7 +208,7 @@ export default function SectorStrategies({
   const [batchRunRequest, setBatchRunRequest] = useState<Row | null>(null);
   const chosen =
     strategies.find((item) => item.strategy_id === selectedId) || strategies[0];
-  const saved = useSavedStrategyRun("sector", chosen);
+  const saved = useSavedStrategyRun("sector", chosen, decision, dataDate);
   const { run, setRun } = saved;
   const taskActivity = useTaskActivity();
   const runningChosen = strategyTaskBusy(
@@ -240,37 +240,27 @@ export default function SectorStrategies({
   }, [strategies, selectedId]);
   useEffect(() => {
     generation.current++;
-    setSelected(new Set());
     setError("");
-  }, [selectedId]);
+    setBusy("");
+  }, [chosen?.strategy_id]);
+  useEffect(() => {
+    setSelected(new Set());
+  }, [chosen?.strategy_id, run?.run_id, decision]);
   useEffect(() => {
     if (!batchRunRequest || chosen?.strategy_id !== batchRunRequest.strategy_id)
       return;
-    const request = new AbortController();
-    setBusy("history");
-    api<Row>(
-      `/sector-strategy-runs/${encodeURIComponent(batchRunRequest.run_id)}`,
-      { signal: request.signal },
-    )
-      .then((data) => {
-        if (!request.signal.aborted) {
-          setRun(data);
-          setDecision("matched");
-          setSelected(new Set());
-        }
-      })
-      .catch((problem) => {
-        if (!request.signal.aborted) setError(problem.message);
-      })
-      .finally(() => {
-        if (!request.signal.aborted) {
-          setBusy("");
-          setBatchRunRequest(null);
-        }
-      });
-    return () => request.abort();
-  }, [batchRunRequest, chosen?.strategy_id, setRun]);
+    saved.loadRun(batchRunRequest.run_id);
+    setDecision("matched");
+    setSelected(new Set());
+    setBatchRunRequest(null);
+  }, [batchRunRequest, chosen?.strategy_id, saved.loadRun]);
   async function execute(id?: string) {
+    if (id) {
+      saved.loadRun(id);
+      setDecision("matched");
+      setSelected(new Set());
+      return;
+    }
     if (
       !chosen ||
       busy ||
@@ -291,11 +281,12 @@ export default function SectorStrategies({
       });
     setError("");
     try {
-      const data = id
-        ? await api(`/sector-strategy-runs/${encodeURIComponent(id)}`)
-        : await post(`/sector-strategies/${chosen.strategy_id}/runs`, {
-            request_key: key,
-          });
+      const data = await post(
+        `/sector-strategies/${chosen.strategy_id}/runs?response_decision=matched`,
+        {
+          request_key: key,
+        },
+      );
       if (token !== generation.current) return;
       setRun(data);
       setDecision("matched");
@@ -537,7 +528,12 @@ export default function SectorStrategies({
                     <div className="button-group">
                       <button
                         className="btn small"
-                        disabled={!!busy || !rows.length}
+                        disabled={
+                          !!busy ||
+                          !rows.length ||
+                          saved.restoring ||
+                          !saved.candidatesReady
+                        }
                         onClick={() =>
                           setSelected(new Set(rows.map((row) => row.target_id)))
                         }
@@ -546,14 +542,24 @@ export default function SectorStrategies({
                       </button>
                       <button
                         className="btn small"
-                        disabled={!!busy || !selected.size}
+                        disabled={
+                          !!busy ||
+                          !selected.size ||
+                          saved.restoring ||
+                          !saved.candidatesReady
+                        }
                         onClick={() => setSelected(new Set())}
                       >
                         清空选择
                       </button>
                       <button
                         className="btn primary"
-                        disabled={!!busy || !selected.size}
+                        disabled={
+                          !!busy ||
+                          !selected.size ||
+                          saved.restoring ||
+                          !saved.candidatesReady
+                        }
                         onClick={join}
                       >
                         {busy === "join" && <Spinner />}加入板块跟踪（
@@ -562,64 +568,79 @@ export default function SectorStrategies({
                     </div>
                   )}
                 </div>
-                <Table
-                  key={`${run.run_id}-${decision}`}
-                  rows={rows}
-                  rowKey="target_id"
-                  selection={decision === "matched" ? selected : undefined}
-                  onSelect={(id) =>
-                    setSelected((old) => {
-                      const next = new Set(old);
-                      next.has(id) ? next.delete(id) : next.add(id);
-                      return next;
-                    })
-                  }
-                  columns={[
-                    {
-                      key: "name",
-                      title: "板块",
-                      render: (_, row) => (
-                        <button
-                          className="table-link sector-asset-name"
-                          onClick={() =>
-                            setChart({ ...row, date: run.business_date })
-                          }
-                        >
-                          <strong>{row.name}</strong>
-                          <small>
-                            {row.topic_code} ·{" "}
-                            {sectorKindLabel(row.sector_kind)}
-                          </small>
-                        </button>
-                      ),
-                    },
-                    {
-                      key: "close_price",
-                      title: "观察日指数点位",
-                      render: (value) => num(value),
-                    },
-                    {
-                      key: "_day_change",
-                      title: "观察日日涨幅",
-                      sortValue: (row) => row.metrics_by_period?.D?.change_pct,
-                      render: (_, row) => (
-                        <span
-                          className={tone(row.metrics_by_period?.D?.change_pct)}
-                        >
-                          {percent(row.metrics_by_period?.D?.change_pct)}
-                        </span>
-                      ),
-                    },
-                    {
-                      key: "checks",
-                      title: "多周期判断依据",
-                      sortable: false,
-                      render: (value) => (
-                        <SectorEvidence checks={value} fields={fields} />
-                      ),
-                    },
-                  ]}
-                />
+                {saved.restoring ? (
+                  <div className="saved-run-loading" role="status">
+                    <Spinner />
+                    <span>正在读取当前分类的已保存结果</span>
+                  </div>
+                ) : saved.candidatesReady ? (
+                  <Table
+                    key={`${run.run_id}-${decision}`}
+                    rows={rows}
+                    rowKey="target_id"
+                    selection={decision === "matched" ? selected : undefined}
+                    onSelect={(id) =>
+                      setSelected((old) => {
+                        const next = new Set(old);
+                        next.has(id) ? next.delete(id) : next.add(id);
+                        return next;
+                      })
+                    }
+                    columns={[
+                      {
+                        key: "name",
+                        title: "板块",
+                        render: (_, row) => (
+                          <button
+                            className="table-link sector-asset-name"
+                            onClick={() =>
+                              setChart({ ...row, date: run.business_date })
+                            }
+                          >
+                            <strong>{row.name}</strong>
+                            <small>
+                              {row.topic_code} ·{" "}
+                              {sectorKindLabel(row.sector_kind)}
+                            </small>
+                          </button>
+                        ),
+                      },
+                      {
+                        key: "close_price",
+                        title: "观察日指数点位",
+                        render: (value) => num(value),
+                      },
+                      {
+                        key: "_day_change",
+                        title: "观察日日涨幅",
+                        sortValue: (row) =>
+                          row.metrics_by_period?.D?.change_pct,
+                        render: (_, row) => (
+                          <span
+                            className={tone(
+                              row.metrics_by_period?.D?.change_pct,
+                            )}
+                          >
+                            {percent(row.metrics_by_period?.D?.change_pct)}
+                          </span>
+                        ),
+                      },
+                      {
+                        key: "checks",
+                        title: "多周期判断依据",
+                        sortable: false,
+                        render: (value) => (
+                          <SectorEvidence checks={value} fields={fields} />
+                        ),
+                      },
+                    ]}
+                  />
+                ) : (
+                  <Empty
+                    title="当前分类的已保存结果暂未读出"
+                    description="请重试读取，已有运行不会因此改变。"
+                  />
+                )}
               </>
             ) : result.loading ||
               saved.restoring ||

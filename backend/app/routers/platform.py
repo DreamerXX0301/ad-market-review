@@ -94,7 +94,8 @@ def instrument_detail(instrument_id:str,as_of:str|None=None):
     from app.services.stock_chart_patterns import stock_pattern_fields
     market,status,day=market_service.context(as_of)
     symbol=market.instrument(instrument_id)['instrument_id']
-    chart=market.chart(symbol,as_of=day)
+    detail_chart=getattr(market,'detail_chart',None)
+    chart=detail_chart(symbol,as_of=day) if callable(detail_chart) else market.chart(symbol,as_of=day)
     row=chart['bars'][-1] if chart['bars'] else {}
     patterns=stock_pattern_fields(market,chart,day)
     current=day==status['data_end']
@@ -157,6 +158,16 @@ def sync_session(task_id:str|None=Query(None,max_length=200),request_key:str|Non
     from app.services.sync_progress import session
     return json_clean(session(task_id=task_id,request_key=request_key))
 
+@router.post('/sync/session/acknowledge')
+def sync_session_acknowledge(payload:dict=Body(...)):
+    from app.services.sync_progress import acknowledge
+    return json_clean(acknowledge(request_key=payload.get('request_key'),task_id=payload.get('task_id'),epoch=payload.get('session_epoch')))
+
+@router.post('/sync/session/control')
+def sync_session_control(payload:dict=Body(...)):
+    from app.services.sync_progress import control
+    return json_clean(control(task_id=payload.get('task_id'),action=payload.get('action'),epoch=payload.get('session_epoch')))
+
 @router.get('/tasks/{task_id}')
 def task(task_id:str,after_seq:int=Query(0,ge=0)):
     result=task_service.task_view(task_id,after_seq)
@@ -176,6 +187,14 @@ def task_action(task_id:str,action:str):
 def sync(payload:dict=Body(...)):
     mode=payload.get('mode')
     if mode not in ('initialise','increment'):raise HTTPException(422,'请选择首次初始化或盘后增量')
+    from app.core import connect
+    from app.services.sync_progress import lock_record,require_unlocked,LOCK_VERSION
+    with connect() as connection:
+        locked=lock_record(connection)
+        if locked:
+            if mode=='increment' and payload.get('request_key')==locked['request_key']:
+                return task_service.task_view(locked['root_task_id'])
+            require_unlocked(connection)
     if mode=='increment':
         from app.services.sync_clock import require_new_increment
         try:require_new_increment()
@@ -186,7 +205,7 @@ def sync(payload:dict=Body(...)):
     from app.services.history_window import resolve_initial_window
     window=resolve_initial_window(payload,for_new_task=True)['window'] if mode=='initialise' else None
     from app.services.retention_policy import VERSION as retention_version
-    parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1'})}
+    parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1','increment_session_version':LOCK_VERSION})}
     return task_service.create_task(mode,parameters,request_key=payload.get('request_key'))
 
 @router.post('/sync/sector-charts')

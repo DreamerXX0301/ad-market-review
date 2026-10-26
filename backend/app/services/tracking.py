@@ -17,9 +17,10 @@ from app.services.tracking_quotes import tracking_quotes
 from app.services.strategy_periods import add_period_metrics
 
 
-def _signal_price_basis(round_):
+def _signal_price_basis(round_, basis=None):
     """A round keeps its entry version's signal basis, independently of policies."""
-    return 'forward' if obj(round_.get('entry_basis_json'), {}).get('signal_price_basis') == 'forward' else 'none'
+    basis=obj(round_.get('entry_basis_json'), {}) if basis is None else basis
+    return 'forward' if basis.get('signal_price_basis') == 'forward' else 'none'
 
 
 def _comparison_metrics(round_, day, price, price_context, generation):
@@ -95,14 +96,84 @@ def _policy_at(c,r,day):
     version=application[0] if application else r['entry_policy_version']
     return policy_view(one(c,'SELECT * FROM tracking_policy_version WHERE strategy_id=? AND policy_version=?',(r['strategy_id'],version)))
 
+
+def _browse_inputs(connection, selected, day, *, with_events=False):
+    """Fresh request-local policy/event projection, never a page cache.
+
+    Windows rank narrow SQLite row identities before fetching event JSON. A
+    list reads only latest/current evidence; a detail still returns its full
+    selected round history. No unrelated/history JSON collection enters Python.
+    """
+    result={row['round_id']:{'latest':None,'latest_review':None,'saved_review':None,'alerts':[],
+                             'events':[] if with_events else None} for row in selected}
+    policies={};payloads={}
+    for offset in range(0,len(selected),128):
+        batch=selected[offset:offset+128]
+        args=[value for row in batch for value in (row['round_id'],row['strategy_id'],
+              row['end_business_date'] if row['status']!='tracking' else day,row['entry_policy_version'])]
+        wanted=','.join('(?,?,?,?)' for _ in batch)
+        sql=f'''WITH wanted(round_id,strategy_id,valuation_date,entry_policy_version) AS (VALUES {wanted}),
+          ranked AS (SELECT a.round_id,a.policy_version,
+            row_number() OVER(PARTITION BY a.round_id ORDER BY a.effective_business_date DESC,a.recorded_at_ms DESC,a.rowid DESC) AS ordinal
+            FROM tracking_policy_application a JOIN wanted w ON w.round_id=a.round_id
+            WHERE a.effective_business_date<=w.valuation_date)
+          SELECT w.round_id AS _browse_round,p.* FROM wanted w
+          LEFT JOIN ranked a ON a.round_id=w.round_id AND a.ordinal=1
+          JOIN tracking_policy_version p ON p.strategy_id=w.strategy_id
+            AND p.policy_version=coalesce(a.policy_version,w.entry_policy_version)'''
+        for raw in rows(connection,sql,args):
+            rid=raw.pop('_browse_round');key=(raw['strategy_id'],raw['policy_version'])
+            if key not in policies:policies[key]=policy_view(raw)
+            result[rid]['policy']=policies[key]
+        required_ids={row['round_id'] for row in batch}
+        if any('policy' not in result[rid] for rid in required_ids):fail('记录不存在',404)
+        ids=[row['round_id'] for row in batch]
+        if with_events:
+            events=rows(connection,'SELECT * FROM tracking_event WHERE round_id IN ('+','.join('?' for _ in ids)+') ORDER BY business_date,recorded_at_ms,rowid',ids)
+        else:
+            wanted=','.join('(?,?)' for _ in batch)
+            args=[value for row in batch for value in (row['round_id'],row['end_business_date'] if row['status']!='tracking' else day)]
+            sql=f'''WITH wanted(round_id,valuation_date) AS (VALUES {wanted}),
+              ranked AS (SELECT e.rowid AS event_rowid,e.event_type,e.business_date,w.valuation_date,
+                row_number() OVER(PARTITION BY e.round_id ORDER BY e.business_date DESC,e.recorded_at_ms DESC,e.rowid DESC) AS latest_order,
+                row_number() OVER(PARTITION BY e.round_id,e.event_type ORDER BY e.business_date DESC,e.recorded_at_ms DESC,e.rowid DESC) AS type_order,
+                row_number() OVER(PARTITION BY e.round_id,e.event_type,e.business_date ORDER BY e.recorded_at_ms DESC,e.rowid DESC) AS date_order
+                FROM tracking_event e JOIN wanted w ON w.round_id=e.round_id)
+              SELECT e.* FROM ranked k JOIN tracking_event e ON e.rowid=k.event_rowid
+              WHERE k.latest_order=1 OR (k.event_type='review' AND (k.type_order=1 OR (k.business_date=k.valuation_date AND k.date_order=1)))
+                OR (k.event_type='alert' AND k.business_date=?)
+              ORDER BY e.business_date,e.recorded_at_ms,e.rowid'''
+            events=rows(connection,sql,args+[day])
+        valuations={row['round_id']:row['end_business_date'] if row['status']!='tracking' else day for row in batch}
+        for event in events:
+            item=result[event['round_id']];item['latest']=event
+            if with_events:item['events'].append(event)
+            if event['event_type']=='review':
+                item['latest_review']=event
+                if event['business_date']==valuations[event['round_id']]:item['saved_review']=event
+            if event['event_type']=='alert' and event['business_date']==day:item['alerts'].append(event)
+        for rid in ids:
+            # The original alert query's stable tie order is ascending rowid;
+            # only recorded_at is descending. Preserve that exact order.
+            result[rid]['alerts'].sort(key=lambda event:event['recorded_at_ms'],reverse=True)
+            result[rid]['payloads']=payloads
+    return result
+
+
+def _browse_payload(event, memo=None):
+    if memo is None:return obj(event['evidence_json'],{})
+    key=event['event_id']
+    if key not in memo:memo[key]=obj(event['evidence_json'],{})
+    return memo[key]
+
 def _age(calendar,entry,day):
     return trading_age(calendar,entry,day)
 
-def _entry_comparison(r,day,price,market=None,price_context=None):
-    basis=obj(r['entry_basis_json'],{})
+def _entry_comparison(r,day,price,market=None,price_context=None,entry_basis=None):
+    basis=obj(r['entry_basis_json'],{}) if entry_basis is None else entry_basis
     if price is None:return None,'unknown','缺少当日收盘价'
     if basis.get('price_basis')!='none':return None,'unknown','当前实现没有经过验收的跨复权锚转换'
-    if _signal_price_basis(r)=='forward':
+    if _signal_price_basis(r,basis)=='forward':
         if day==r['entry_business_date']:return price,'verified',None
         if price_context is None:return None,'unknown','本轮使用本地前复权价格比较，需手动核对当前观察日；未借用其它日期的调整基准'
         quotes=[row for row in price_context.get('raw_rows',[]) if row.get('date')==day]
@@ -123,18 +194,21 @@ def _entry_comparison(r,day,price,market=None,price_context=None):
         return price,'not_required',None
     return None,'unknown','未验证期间公司行动，不能直接跨日比较入池基准'
 
-def _event_view(r):
-    return {k:v for k,v in r.items() if k!='evidence_json'}|{'evidence':obj(r.get('evidence_json'),{})}
+def _event_view(r, payloads=None):
+    evidence=obj(r.get('evidence_json'),{}) if payloads is None else _browse_payload(r,payloads)
+    return {k:v for k,v in r.items() if k!='evidence_json'}|{'evidence':evidence}
 
-def _round_view(c,r,master,calendar,bars,day,with_events=False,current_memberships=None,entry_high=None,entry_low=None,quote=None,market=None):
+def _round_view(c,r,master,calendar,bars,day,with_events=False,current_memberships=None,entry_high=None,entry_low=None,quote=None,market=None,browse=None):
     valuation_date=r['end_business_date'] if r['status']!='tracking' else day
-    ms=quote if quote is not None else metrics_for(bars,valuation_date,calendar);age=_age(calendar,r['entry_business_date'],valuation_date);p=_policy_at(c,r,valuation_date)
-    saved_review=c.execute("SELECT evidence_json FROM tracking_event WHERE round_id=? AND event_type='review' AND business_date=? ORDER BY recorded_at_ms DESC,rowid DESC LIMIT 1",(r['round_id'],valuation_date)).fetchone()
-    if r['status']!='tracking' and saved_review:ms=obj(saved_review[0],{}).get('metrics',ms)
-    price=ms.get('close');normalized,state,reason=_entry_comparison(r,valuation_date,price,market)
+    basis=obj(r['entry_basis_json'],{});payloads=browse['payloads'] if browse is not None else {}
+    ms=quote if quote is not None else metrics_for(bars,valuation_date,calendar);age=_age(calendar,r['entry_business_date'],valuation_date);p=browse['policy'] if browse is not None else _policy_at(c,r,valuation_date)
+    saved_review=browse['saved_review'] if browse is not None else c.execute("SELECT * FROM tracking_event WHERE round_id=? AND event_type='review' AND business_date=? ORDER BY recorded_at_ms DESC,rowid DESC LIMIT 1",(r['round_id'],valuation_date)).fetchone()
+    saved=_browse_payload(saved_review,payloads) if saved_review else None
+    if r['status']!='tracking' and saved_review:ms=saved.get('metrics',ms)
+    price=ms.get('close');normalized,state,reason=_entry_comparison(r,valuation_date,price,market,entry_basis=basis)
     frozen_comparison=None
-    if _signal_price_basis(r)=='forward' and saved_review:
-        saved=obj(saved_review[0],{});frozen=obj(saved.get('metrics'),{}) if isinstance(saved.get('metrics'),str) else saved.get('metrics',{})
+    if _signal_price_basis(r,basis)=='forward' and saved_review:
+        frozen=obj(saved.get('metrics'),{}) if isinstance(saved.get('metrics'),str) else saved.get('metrics',{})
         status=market.status() if market is not None and callable(getattr(market,'status',None)) else {}
         if (isinstance(frozen,dict) and frozen.get('tracking_comparison_anchor')==valuation_date
                 # An ended round displays its immutable ending review, including
@@ -145,12 +219,13 @@ def _round_view(c,r,master,calendar,bars,day,with_events=False,current_membershi
                 and frozen.get('tracking_reference_price_basis')=='forward_event_affine'):
             frozen_comparison=frozen
             state=saved.get('comparison_state','unknown');reason=saved.get('comparison_reason')
-    latest=c.execute('SELECT * FROM tracking_event WHERE round_id=? ORDER BY business_date DESC,recorded_at_ms DESC,rowid DESC LIMIT 1',(r['round_id'],)).fetchone()
-    alerts=rows(c,"SELECT * FROM tracking_event WHERE round_id=? AND event_type='alert' AND business_date=? ORDER BY recorded_at_ms DESC",(r['round_id'],day))
-    latest_review=c.execute("SELECT * FROM tracking_event WHERE round_id=? AND event_type='review' ORDER BY business_date DESC,recorded_at_ms DESC,rowid DESC LIMIT 1",(r['round_id'],)).fetchone()
-    topics=obj(latest_review['evidence_json'],{}).get('topics') if latest_review else None
-    if topics is None:topics=obj(r['entry_basis_json'],{}).get('entry_topics',[])
-    item={**{k:v for k,v in r.items() if k not in ('entry_basis_json','entry_price_e8')},**code_info(r['instrument_id'],master),'valuation_date':valuation_date,'entry_price':money(r['entry_price_e8']),'entry_basis':obj(r['entry_basis_json'],{}),'latest_price':price,'today_change_pct':ms.get('change_pct'),'tracking_change_pct':(normalized/money(r['entry_price_e8'])-1)*100 if normalized is not None else None,'comparison_state':state,'comparison_reason':reason,'trading_age':age,'remaining_sessions':max(0,p['duration_sessions']-age) if age is not None else None,'policy':p,'topics':topics,'latest_event':_event_view(dict(latest)) if latest else None,'alerts':[_event_view(a) for a in alerts]}
+    latest=browse['latest'] if browse is not None else c.execute('SELECT * FROM tracking_event WHERE round_id=? ORDER BY business_date DESC,recorded_at_ms DESC,rowid DESC LIMIT 1',(r['round_id'],)).fetchone()
+    alerts=browse['alerts'] if browse is not None else rows(c,"SELECT * FROM tracking_event WHERE round_id=? AND event_type='alert' AND business_date=? ORDER BY recorded_at_ms DESC",(r['round_id'],day))
+    latest_review=browse['latest_review'] if browse is not None else c.execute("SELECT * FROM tracking_event WHERE round_id=? AND event_type='review' ORDER BY business_date DESC,recorded_at_ms DESC,rowid DESC LIMIT 1",(r['round_id'],)).fetchone()
+    review_payload=_browse_payload(latest_review,payloads) if latest_review else None
+    topics=review_payload.get('topics') if latest_review else None
+    if topics is None:topics=basis.get('entry_topics',[])
+    item={**{k:v for k,v in r.items() if k not in ('entry_basis_json','entry_price_e8')},**code_info(r['instrument_id'],master),'valuation_date':valuation_date,'entry_price':money(r['entry_price_e8']),'entry_basis':basis,'latest_price':price,'today_change_pct':ms.get('change_pct'),'tracking_change_pct':(normalized/money(r['entry_price_e8'])-1)*100 if normalized is not None else None,'comparison_state':state,'comparison_reason':reason,'trading_age':age,'remaining_sessions':max(0,p['duration_sessions']-age) if age is not None else None,'policy':p,'topics':topics,'latest_event':_event_view(dict(latest),payloads) if latest else None,'alerts':[_event_view(a,payloads) for a in alerts]}
     if frozen_comparison is not None:
         item.update(tracking_change_pct=frozen_comparison.get('tracking_change_pct'),
                     tracking_reference_price=frozen_comparison.get('tracking_reference_price'),
@@ -163,11 +238,11 @@ def _round_view(c,r,master,calendar,bars,day,with_events=False,current_membershi
     # Current membership is a browsing filter only; frozen entry/review evidence
     # continues to drive historical decisions and is never overwritten by this map.
     if current_memberships is None:current_memberships=topic_map(c,day)
-    item.update(current_topics=current_memberships.get(r['instrument_id'],[]),current_topics_observed_date=day,topics_snapshot=obj(r['entry_basis_json'],{}).get('entry_topics',[]),topics_snapshot_date=r['entry_business_date'],reviewed_topics_snapshot_date=latest_review['business_date'] if latest_review else r['entry_business_date'])
-    reviewed_policy=obj(latest_review['evidence_json'],{}).get('policy_version') if latest_review and latest_review['business_date']==valuation_date else None
+    item.update(current_topics=current_memberships.get(r['instrument_id'],[]),current_topics_observed_date=day,topics_snapshot=basis.get('entry_topics',[]),topics_snapshot_date=r['entry_business_date'],reviewed_topics_snapshot_date=latest_review['business_date'] if latest_review else r['entry_business_date'])
+    reviewed_policy=review_payload.get('policy_version') if latest_review and latest_review['business_date']==valuation_date else None
     item['policy_review_pending']=r['status']=='tracking' and reviewed_policy!=p['policy_version']
     item['duration_reached']=r['status']=='tracking' and age is not None and age>0 and age>=p['duration_sessions']
-    if with_events:item['events']=[_event_view(x) for x in rows(c,'SELECT * FROM tracking_event WHERE round_id=? ORDER BY business_date,recorded_at_ms,rowid',(r['round_id'],))]
+    if with_events:item['events']=[_event_view(x,payloads) for x in (browse['events'] if browse is not None else rows(c,'SELECT * FROM tracking_event WHERE round_id=? ORDER BY business_date,recorded_at_ms,rowid',(r['round_id'],)))]
     return item
 
 def list_tracking(strategy_id=None,status='tracking',triggered_only=False):
@@ -186,9 +261,10 @@ def list_tracking(strategy_id=None,status='tracking',triggered_only=False):
     entry_lows=load_entry_lows(data)
     quotes=tracking_quotes(market,data,calendar,day)
     with connect() as c:
+        prepared=_browse_inputs(c,data,day)
         for r in data:
             valuation_date=r['end_business_date'] if r['status']!='tracking' else day
-            item=_round_view(c,r,master,calendar,[],day,current_memberships=current_memberships,entry_high=entry_high_for(r,entry_highs),entry_low=entry_low_for(r,entry_lows),quote=quotes[(r['instrument_id'],valuation_date)],market=market)
+            item=_round_view(c,r,master,calendar,[],day,current_memberships=current_memberships,entry_high=entry_high_for(r,entry_highs),entry_low=entry_low_for(r,entry_lows),quote=quotes[(r['instrument_id'],valuation_date)],market=market,browse=prepared[r['round_id']])
             if not triggered_only or item['alerts']:items.append(item)
     require_scope(hot_scope,market)
     return {'items':items,'total':len(items),'counts':counts,'business_date':day,'hot_filter_scope':hot_scope,'current_topics_scope':'当前业务日有效的本地来源成员与人工修改；不是历史归属，未完整分类的缺席不能判为不属于。'}
@@ -198,7 +274,9 @@ def get_tracking(tid):
         day=current(c);r=one(c,'SELECT r.*,s.name strategy_name FROM tracking_round r JOIN strategy s USING(strategy_id) WHERE round_id=?',(tid,),'跟踪轮次不存在')
     entry_highs=load_entry_highs([r]);entry_lows=load_entry_lows([r]);market=get_market();master=identities(day);calendar=market.calendar();quotes=tracking_quotes(market,[r],calendar,day)
     valuation_date=r['end_business_date'] if r['status']!='tracking' else day
-    with connect() as c:return _round_view(c,r,master,calendar,[],day,True,entry_high=entry_high_for(r,entry_highs),entry_low=entry_low_for(r,entry_lows),quote=quotes[(r['instrument_id'],valuation_date)],market=market)
+    with connect() as c:
+        prepared=_browse_inputs(c,[r],day,with_events=True)
+        return _round_view(c,r,master,calendar,[],day,True,entry_high=entry_high_for(r,entry_highs),entry_low=entry_low_for(r,entry_lows),quote=quotes[(r['instrument_id'],valuation_date)],market=market,browse=prepared[r['round_id']])
 
 def change_tracking_policy(tid,payload):
     with connect() as c:

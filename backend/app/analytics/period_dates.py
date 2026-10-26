@@ -33,6 +33,9 @@ def completed_indicator_bars(rows,calendar,as_of,period,*,tail=None,source_facts
         periods=aggregate_monthly(rows,calendar,as_of)
         for row in periods:
             if key(row['date']) in invalid:row.update(complete=False,monthly_continuity_reset_reason='月内存在缺失或零成交量报价，指标重新预热')
+        if source_facts_only and tail==2:
+            from .monthly import _latest_monthly_source_facts
+            return _latest_monthly_source_facts(periods)
         result=[row for row in enrich_monthly_bars(periods) if row.get('monthly_indicator_eligible') is True]
         return result[-tail:] if tail is not None else result
     expected={}

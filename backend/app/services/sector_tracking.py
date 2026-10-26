@@ -171,8 +171,15 @@ def _event(connection, row, kind, day, age, state, outcome, evidence, key=None, 
         'outcome': outcome, 'trading_age': age, 'evidence_json': js(evidence), 'recorded_at_ms': now_ms()})
 
 
-def _event_view(row):
-    return {key: value for key, value in row.items() if key != 'evidence_json'} | {'evidence': obj(row['evidence_json'], {})}
+def _event_payload(row, payloads=None):
+    if payloads is None:return obj(row['evidence_json'], {})
+    key=row['event_id']
+    if key not in payloads:payloads[key]=obj(row['evidence_json'], {})
+    return payloads[key]
+
+
+def _event_view(row, payloads=None):
+    return {key: value for key, value in row.items() if key != 'evidence_json'} | {'evidence': _event_payload(row,payloads)}
 
 
 def _policy_at(connection, row, day):
@@ -182,8 +189,56 @@ def _policy_at(connection, row, day):
     return obj(row['entry_policy_json'], {}), 1
 
 
-def _with_anchors(row, info, day, age):
-    by_period = deepcopy(info.get('metrics_by_period', {})); daily = by_period.setdefault('D', {})
+def _browse_inputs(connection, selected, day, *, with_events=False):
+    """Project only each requested round's current/latest event identities.
+
+    SQL ranks narrow keys first, so list browsing never materializes every
+    historic evidence JSON. Details retain their complete selected history.
+    Policies and events are re-read for every request; no page result is cached.
+    """
+    result={row['round_id']:{'events':[]} for row in selected};payloads={}
+    for offset in range(0,len(selected),128):
+        batch=selected[offset:offset+128]
+        if with_events:
+            ids=[row['round_id'] for row in batch]
+            events=rows(connection,'SELECT *,rowid AS _order FROM sector_tracking_event WHERE round_id IN ('+','.join('?' for _ in ids)+') ORDER BY business_date,recorded_at_ms,rowid',ids)
+        else:
+            wanted=','.join('(?,?,?)' for _ in batch)
+            args=[value for row in batch for value in (row['round_id'],row['end_business_date'] or day,int(row['status']!='tracking'))]
+            sql=f'''WITH wanted(round_id,valuation_date,ended) AS (VALUES {wanted}),
+              ranked AS (SELECT e.rowid AS event_rowid,e.event_type,e.business_date,w.valuation_date,
+                row_number() OVER(PARTITION BY e.round_id ORDER BY e.business_date DESC,e.recorded_at_ms DESC,e.rowid DESC) AS latest_order,
+                row_number() OVER(PARTITION BY e.round_id,e.event_type,e.business_date ORDER BY e.recorded_at_ms DESC,e.rowid DESC) AS date_order,
+                row_number() OVER(PARTITION BY e.round_id,e.event_type ORDER BY
+                  CASE WHEN e.business_date<=w.valuation_date THEN 0 ELSE 1 END,e.business_date DESC,e.recorded_at_ms DESC,e.rowid DESC) AS eligible_order
+                FROM sector_tracking_event e JOIN wanted w ON w.round_id=e.round_id),
+              frozen AS (SELECT e.rowid AS event_rowid,
+                row_number() OVER(PARTITION BY e.round_id ORDER BY e.recorded_at_ms DESC,e.rowid DESC) AS ordinal
+                FROM sector_tracking_event e JOIN wanted w ON w.round_id=e.round_id
+                WHERE w.ended=1 AND e.event_type='review' AND e.business_date=w.valuation_date
+                  AND json_type(e.evidence_json,'$.market_info')='object'),
+              selected AS (SELECT k.event_rowid FROM ranked k
+                WHERE k.latest_order=1 OR (k.event_type='review' AND k.business_date=k.valuation_date AND k.date_order=1)
+                  OR (k.event_type='policy_change' AND k.business_date<=k.valuation_date AND k.eligible_order=1)
+                  OR (k.event_type='alert' AND k.business_date=k.valuation_date)
+                UNION SELECT event_rowid FROM frozen WHERE ordinal=1)
+              SELECT e.*,e.rowid AS _order FROM selected k JOIN sector_tracking_event e ON e.rowid=k.event_rowid
+              ORDER BY e.business_date,e.recorded_at_ms,e.rowid'''
+            events=rows(connection,sql,args)
+        for event in events:result[event['round_id']]['events'].append(event)
+        for row in batch:
+            item=result[row['round_id']];valuation=row['end_business_date'] or day
+            change=next((event for event in reversed(item['events']) if event['event_type']=='policy_change' and event['business_date']<=valuation),None)
+            item['policy']=_event_payload(change,payloads)['policy'] if change else obj(row['entry_policy_json'],{})
+            item['payloads']=payloads
+    return result
+
+
+def _with_anchors(row, info, day, age, *, browse_only=False, basis=None, cache_refs=None):
+    # A view exposes only D price/change and fixed entry proofs. Avoid copying
+    # unused W/M technical trees; review still receives its full independent map.
+    by_period = {'D':dict(info.get('metrics_by_period',{}).get('D',{}))} if browse_only else deepcopy(info.get('metrics_by_period', {}))
+    daily = by_period.setdefault('D', {})
     price = _price(info, day); entry = money(row['entry_price_e8'])
     high = money(row['entry_high_e8']); low = money(row['entry_low_e8'])
     values = {'tracking_change_pct': (price/entry-1)*100 if price is not None else None,
@@ -191,12 +246,13 @@ def _with_anchors(row, info, day, age):
               'close_above_entry_high': price > high if price is not None and high is not None else None,
               'close_below_entry_low': price < low if price is not None and low is not None else None}
     daily.update(values)
-    basis = obj(row['entry_basis_json'], {})
+    basis = obj(row['entry_basis_json'], {}) if basis is None else basis
+    cache_refs = obj(row['entry_cache_refs_json'], {}) if cache_refs is None else cache_refs
     for key in values:
         daily[key+'_reason'] = None if values[key] is not None else '缺少当日有效点位、市场日历或本轮入池日高低点位'
         daily[key+'_evidence'] = {'date': row['entry_business_date'], 'entry_price': entry,
             'entry_high': high, 'entry_low': low, 'price_basis': 'none', 'unit': '指数点位',
-            'entry_cache_refs': obj(row['entry_cache_refs_json'], {}), 'anchor_state': basis.get('anchor_state')}
+            'entry_cache_refs': cache_refs, 'anchor_state': basis.get('anchor_state')}
     return by_period, price
 
 
@@ -205,30 +261,30 @@ def _group(conditions, logic, metrics, period):
     return evaluate({'all' if logic == 'ALL' else 'any': conditions}, metrics, period)
 
 
-def _view(row, day, calendar, info, policy, events):
+def _view(row, day, calendar, info, policy, events, payloads=None):
     valuation = row['end_business_date'] or day
     age = trading_age(calendar, row['entry_business_date'], valuation)
-    by_period, price = _with_anchors(row, info, valuation, age)
-    alerts = [_event_view(event) for event in events if event['event_type'] == 'alert' and event['business_date'] == valuation]
+    basis = obj(row['entry_basis_json'], {});cache_refs=obj(row['entry_cache_refs_json'], {})
+    by_period, price = _with_anchors(row, info, valuation, age,browse_only=True,basis=basis,cache_refs=cache_refs)
+    alerts = [_event_view(event,payloads) for event in events if event['event_type'] == 'alert' and event['business_date'] == valuation]
     last = max(events, key=lambda event: (event['business_date'], event['recorded_at_ms'], event.get('_order', 0))) if events else None
     latest_review = next((event for event in reversed(events) if event['event_type'] == 'review' and event['business_date'] == valuation), None)
-    basis = obj(row['entry_basis_json'], {})
     public = {key: value for key, value in row.items() if key not in
               ('entry_price_e8','entry_high_e8','entry_low_e8','entry_cache_refs_json','entry_basis_json','entry_policy_json','policy_json')}
     public.update(target_type='sector', valuation_date=valuation, entry_price=money(row['entry_price_e8']),
         current_price=price, latest_price=price, today_change_pct=by_period.get('D', {}).get('change_pct'),
         tracking_change_pct=by_period['D']['tracking_change_pct'], trading_age=age, policy=policy,
         duration_sessions=policy['duration_sessions'], remaining_sessions=max(0, policy['duration_sessions']-age) if age is not None else None,
-        latest_event=_event_view(last) if last else None, alerts=alerts,
+        latest_event=_event_view(last,payloads) if last else None, alerts=alerts,
         policy_review_pending=row['status']=='tracking' and (not latest_review or latest_review['policy_revision'] != row['policy_revision']),
-        entry_basis=basis, entry_cache_refs=obj(row['entry_cache_refs_json'], {}),
+        entry_basis=basis, entry_cache_refs=cache_refs,
         coverage=info.get('coverage', {}), comparison_state='ready' if price is not None else 'unknown',
         comparison_reason=None if price is not None else '该日没有有效板块指数报价，不回退旧价，不结束跟踪')
     for label in ('high', 'low'):
         value = money(row['entry_'+label+'_e8'])
         proof = {'state': 'ready' if value is not None else 'unknown', 'date': row['entry_business_date'],
                  'raw_'+label: value, 'unit': '指数点位', 'price_basis': 'none',
-                 'cache_refs': obj(row['entry_cache_refs_json'], {}),
+                 'cache_refs': cache_refs,
                  'reason': None if value is not None else basis.get('anchor_reason')}
         public.update({f'entry_{label}': value, f'entry_{label}_date': proof['date'],
             f'entry_{label}_state': proof['state'], f'entry_{label}_reason': proof['reason'], f'entry_{label}_basis': proof})
@@ -246,16 +302,16 @@ def list_tracking(strategy_id=None, status='tracking', triggered_only=False):
         if status == 'ended': sql += " AND r.status<>'tracking'"
         elif status and status != 'all': sql += ' AND r.status=?'; args.append(status)
         data = rows(connection, sql+' ORDER BY r.created_at_ms DESC,r.round_id', args)
-        prepared = [(row, _policy_at(connection, row, row['end_business_date'] or context['day'])[0],
-                     rows(connection, 'SELECT *,rowid AS _order FROM sector_tracking_event WHERE round_id=? ORDER BY business_date,recorded_at_ms,rowid', (row['round_id'],))) for row in data]
+        prepared = _browse_inputs(connection,data,context['day'])
     output = []; cached = {}
-    for row, policy, events in prepared:
+    for row in data:
+        browse=prepared[row['round_id']];policy=browse['policy'];events=browse['events']
         valuation = row['end_business_date'] or context['day']; periods = _periods(policy, row['entry_period'])
         structured=_has_structure(policy);boll_options=_boll_options(policy,row['entry_period'])
         key = (row['target_id'], valuation, periods,structured,_boll_key(boll_options))
-        frozen = _ended_info(row, events, valuation)
+        frozen = _ended_info(row, events, valuation,browse['payloads'])
         if frozen is None and key not in cached: cached[key] = _metrics_for(context['market'], row['target_id'], valuation, periods,**({'include_higher_lows':True} if structured else {}),**boll_options)
-        item = _view(row, context['day'], context['calendar'], frozen if frozen is not None else cached[key], policy, events)
+        item = _view(row, context['day'], context['calendar'], frozen if frozen is not None else cached[key], policy, events,browse['payloads'])
         if not triggered_only or item['alerts']: output.append(item)
     return {'items': output, 'total': len(output), 'counts': counts, 'business_date': context['day'], 'target_type': 'sector'}
 
@@ -264,18 +320,18 @@ def get_tracking(identifier):
     context = _context()
     with connect() as connection:
         row = one(connection, 'SELECT r.*,s.name strategy_name FROM sector_tracking_round r JOIN sector_strategy s USING(strategy_id) WHERE round_id=?', (identifier,), '板块跟踪轮次不存在')
-        day = row['end_business_date'] or context['day']; policy, _ = _policy_at(connection, row, day)
-        events = rows(connection, 'SELECT *,rowid AS _order FROM sector_tracking_event WHERE round_id=? ORDER BY business_date,recorded_at_ms,rowid', (identifier,))
-    info = _ended_info(row, events, day)
+        day = row['end_business_date'] or context['day'];browse=_browse_inputs(connection,[row],context['day'],with_events=True)[row['round_id']]
+        policy=browse['policy'];events=browse['events']
+    info = _ended_info(row, events, day,browse['payloads'])
     if info is None: info = _metrics_for(context['market'], row['target_id'], day, _periods(policy, row['entry_period']),**({'include_higher_lows':True} if _has_structure(policy) else {}),**_boll_options(policy,row['entry_period']))
-    return {**_view(row, context['day'], context['calendar'], info, policy, events), 'events': [_event_view(event) for event in events]}
+    return {**_view(row, context['day'], context['calendar'], info, policy, events,browse['payloads']), 'events': [_event_view(event,browse['payloads']) for event in events]}
 
 
-def _ended_info(row, events, day):
+def _ended_info(row, events, day, payloads=None):
     if row['status'] == 'tracking': return None
     for event in reversed(events):
         if event['event_type'] == 'review' and event['business_date'] == day:
-            info = obj(event['evidence_json'], {}).get('market_info')
+            info = _event_payload(event,payloads).get('market_info')
             if isinstance(info, dict): return info
     return None
 

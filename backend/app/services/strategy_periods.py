@@ -7,7 +7,10 @@ from threading import RLock
 from app.core import data_dir
 from app.domain.conditions import DAILY_ONLY_FIELDS, metrics_for, names, normalized_metric_rows
 
-MAX_SUMMARIES = 16384
+# One complete same-day D/W/M cohort must fit together. 5578 securities need
+# 16734 summaries; a 16384-entry LRU would otherwise evict itself during an
+# ordered full-market scan even when the quotation generation has not changed.
+MAX_SUMMARIES = 32768
 # Ordinary summaries carry many indicator fields; structural proofs are small
 # and are bounded separately so changing a rule does not evict the same D/W
 # calculations from another rule. No histories or user policies are retained.
@@ -127,6 +130,13 @@ def _get(cache,key):
 def _put(cache,key,value,capacity):
     cache[key]=deepcopy(value);cache.move_to_end(key)
     while len(cache)>capacity:cache.popitem(last=False)
+    # A single execution can live in the API process or in the worker. Both
+    # consume the same bounded, verified technical store instead of losing all
+    # ordinary/structure reuse at that process boundary.
+    from app.services import condition_proof_cache as disk
+    if cache is _cache:disk.store(key,'ordinary',value)
+    elif cache is _higher_lows_cache:disk.store(key[:-1],'higher_lows',value,key[-1])
+    elif cache is _boll_cache:disk.store(key[:-2],'boll',value,key[-2:])
 
 
 def _saved_parts(key,request):
@@ -136,6 +146,21 @@ def _saved_parts(key,request):
         ordinary=_get(_cache,key)
         higher=_get(_higher_lows_cache,key+(higher_lows_version,)) if request.include_higher_lows else None
         bands={config:_get(_boll_cache,key+(boll_version,config)) for config in request.boll_keys}
+    from app.services import condition_proof_cache as disk
+    wanted=[(_cache,key,'ordinary',None,ordinary,MAX_SUMMARIES)]
+    if request.include_higher_lows:wanted.append((_higher_lows_cache,key+(higher_lows_version,),'higher_lows',higher_lows_version,higher,MAX_STRUCTURE_SUMMARIES))
+    wanted.extend((_boll_cache,key+(boll_version,config),'boll',(boll_version,config),value,MAX_STRUCTURE_SUMMARIES)
+                  for config,value in bands.items())
+    for cache,stored_key,kind,parameter,existing,capacity in wanted:
+        if existing is not None:continue
+        value=disk.load(key,kind,parameter)
+        if value is None:continue
+        with _lock:
+            cache[stored_key]=deepcopy(value);cache.move_to_end(stored_key)
+            while len(cache)>capacity:cache.popitem(last=False)
+        if kind=='ordinary':ordinary=value
+        elif kind=='higher_lows':higher=value
+        else:bands[parameter[1]]=value
     return ordinary,higher,bands
 
 
@@ -155,6 +180,43 @@ def cached_metrics_if_ready(day,period,*,instrument_id=None,generation=None,topi
     ordinary,higher,bands=_saved_parts(_summary_key(day,period,instrument_id,generation,price_context),request)
     if ordinary is None or request.include_higher_lows and higher is None or any(value is None for value in bands.values()):return None
     return _compose(ordinary,higher,bands,request,topics)
+
+
+def ordinary_metrics_ready(day,period,*,instrument_id=None,generation=None,price_context=None):
+    """A small probe only; callers must tolerate eviction before composition."""
+    if not generation or not instrument_id:return False
+    if price_context and price_context.get('requested_price_basis')=='forward' and not price_context.get('cache_key'):return False
+    with _lock:return _summary_key(day,period,instrument_id,generation,price_context) in _cache
+
+
+def complete_from_basis(day,calendar,period,*,instrument_id,generation,request,price_context):
+    """Add a new structure to an existing ordinary proof using private inputs.
+
+    A structure-only quotation projection has no raw source-facts lane and is
+    never valid for rebuilding ordinary indicators or historical events. Hold
+    the already fetched ordinary value across computation; concurrent LRU
+    eviction can then only force a future miss, not change this result.
+    """
+    if not generation or not instrument_id:return None
+    if (not price_context or price_context.get('requested_price_basis')!='forward'
+            or price_context.get('price_basis')!='forward_event_affine'
+            or price_context.get('anchor_date')!=day or not price_context.get('cache_key')):return None
+    key=_summary_key(day,period,instrument_id,generation,price_context)
+    ordinary,higher,bands=_saved_parts(key,request)
+    if ordinary is None:return None
+    missing={config for config,value in bands.items() if value is None}
+    configs=[config for config,identifier in zip(request.boll_configs,request.boll_keys) if identifier in missing]
+    need_higher=request.include_higher_lows and higher is None
+    if need_higher or configs:
+        from app.analytics.higher_lows import VERSION as higher_version,latest
+        from app.analytics.boll_conditions import VERSION as boll_version,latest_states
+        rows=normalized_metric_rows(price_context.get('price_rows',[]),day)
+        if need_higher:higher=latest(rows,calendar,day,period)
+        if configs:bands.update(latest_states(rows,calendar,day,period,configs))
+        with _lock:
+            if need_higher:_put(_higher_lows_cache,key+(higher_version,),higher,MAX_STRUCTURE_SUMMARIES)
+            for identifier in missing:_put(_boll_cache,key+(boll_version,identifier),bands[identifier],MAX_STRUCTURE_SUMMARIES)
+    return _compose(ordinary,higher,bands,request,None)
 
 
 def cached_metrics(bars,day,calendar,period,*,instrument_id=None,generation=None,topics=None,include_higher_lows=False,boll_configs=None,request=None,price_context=None):

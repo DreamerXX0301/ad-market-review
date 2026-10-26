@@ -5,10 +5,10 @@ must have one valid traded quote; missing periods are retained as invalid slots.
 Only two confirmed local lows and a bounded validity count enter the summary.
 """
 from collections import defaultdict, deque
-from datetime import date, timedelta
+from datetime import date
 from math import isfinite
 
-from .period_dates import latest_closed_date
+from .strict_period_layout import period_layout
 
 VERSION = 'higher-lows-v1'
 FIELD = 'higher_lows'
@@ -36,8 +36,8 @@ def _key(day, period):
 
 def _period_rows(rows, calendar, as_of, period):
     """Calendar-defined slots, including entirely missing weeks/months."""
-    sessions = sorted(set(calendar))
-    closed = latest_closed_date(sessions, as_of, period)
+    layout = period_layout(calendar, as_of, period)
+    closed = layout.closed
     if closed is None:
         return []
     by_date = defaultdict(list)
@@ -45,21 +45,12 @@ def _period_rows(rows, calendar, as_of, period):
         day = row.get('date')
         if isinstance(day, str) and day <= closed:
             by_date[day].append(row)
-    groups = defaultdict(list)
-    for day in sessions:
-        if day <= closed:
-            groups[_key(day, period)].append(day)
-    session_set = set(sessions)
-    unexpected = {_key(day, period) for day in by_date if day not in session_set}
+    unexpected = {_key(day, period) for day in by_date if day not in layout.session_set}
     result = []
-    for key, days in groups.items():
+    for key, days, boundary_known in layout.groups:
         values = [by_date[day][0] for day in days if len(by_date[day]) == 1]
         complete = len(values) == len(days) and all(_valid(row) for row in values) and key not in unexpected
-        boundary_known = True
         if period != 'D':
-            first = date.fromisoformat(days[0])
-            boundary = (first-timedelta(days=first.weekday())).isoformat() if period == 'W' else days[0][:7]+'-01'
-            boundary_known = sessions[0] <= boundary
             complete = complete and boundary_known
         blocker = None
         if not complete:
@@ -85,7 +76,7 @@ def _period_rows(rows, calendar, as_of, period):
     return result
 
 
-def _states(rows, calendar, as_of, period):
+def _states(rows, calendar, as_of, period, *, latest_only=False):
     if period not in ('D', 'W', 'M'):
         raise ValueError('底部抬高仅支持日/完整周/完整月')
     recent = deque(maxlen=5)
@@ -93,7 +84,8 @@ def _states(rows, calendar, as_of, period):
     covered = 0
     minimum = None
     blocker = None
-    for position, row in enumerate(_period_rows(rows, calendar, as_of, period)):
+    periods = _period_rows(rows, calendar, as_of, period)
+    for position, row in enumerate(periods):
         if not row['valid']:
             blocker = row['blocker']
             covered = 0
@@ -111,6 +103,10 @@ def _states(rows, calendar, as_of, period):
                     minimum = row['close']
             if lows:
                 minimum = min(minimum, row['close']) if minimum is not None else row['close']
+        # Every original period still advances the state. A latest-only
+        # consumer needs no discarded public dictionaries for earlier dates.
+        if latest_only and position != len(periods)-1:
+            continue
         yield row['date'], {'version': VERSION, 'period': period, 'observed_date': row['date'],
             'covered_periods': covered, 'available_periods': position+1,
             'recent_lows': [{**{key: value for key, value in low.items() if key != '_position'},
@@ -130,7 +126,7 @@ def latest(rows, calendar, as_of, period='D'):
         'covered_periods': 0, 'available_periods': 0, 'recent_lows': [],
         'minimum_close_since_l2_confirmation': None, 'last_blocker':None,
         'reason': '尚无已完整结束并可核验的市场周期'}
-    for _,value in _states(rows,calendar,as_of,period):pass
+    for _,value in _states(rows,calendar,as_of,period,latest_only=True):pass
     return value
 
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { restoreIncrementSession } from "../components/incrementSession";
 export type Row = Record<string, any>;
 export async function api<T = any>(
   path: string,
@@ -27,6 +28,7 @@ export async function api<T = any>(
   }
   if (!response.ok) {
     const d = data?.detail;
+    if (d?.increment_session) restoreIncrementSession(d.increment_session);
     throw Object.assign(
       new Error(
         typeof d === "string"
@@ -37,7 +39,7 @@ export async function api<T = any>(
               ? d.map((x: any) => x.msg || JSON.stringify(x)).join("；")
               : JSON.stringify(d || data || "请求失败"),
       ),
-      { status: response.status },
+      { status: response.status, incrementLocked: !!d?.increment_session },
     );
   }
   return data;
@@ -53,6 +55,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     [key, setKey] = useState(0);
   const previousPath = useRef<string | null>(null);
   const resolvedPath = useRef<string | null>(null);
+  const incrementBlocked = useRef(false);
   const reload = useCallback(() => setKey((x) => x + 1), []);
   useEffect(() => {
     if (!path) {
@@ -69,13 +72,16 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     api<T>(path, { signal: abort.signal })
       .then((value) => {
         if (!abort.signal.aborted) {
+          incrementBlocked.current = false;
           resolvedPath.current = path;
           setData(value);
         }
       })
       .catch((e) => {
-        if (!abort.signal.aborted && e.name !== "AbortError")
+        if (!abort.signal.aborted && e.name !== "AbortError") {
+          if (e.incrementLocked) incrementBlocked.current = true;
           setError(e.message);
+        }
       })
       .finally(() => {
         if (!abort.signal.aborted) setLoading(false);
@@ -120,10 +126,24 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
       )
         reload();
     };
+    const onIncrementUnlocked = () => {
+      if (incrementBlocked.current) {
+        incrementBlocked.current = false;
+        reload();
+      }
+    };
+    window.addEventListener(
+      "workbench-increment-unlocked",
+      onIncrementUnlocked,
+    );
     window.addEventListener("workbench-topics-changed", onTopicsChanged);
     return () => {
       window.removeEventListener("workbench-route", onRoute);
       window.removeEventListener("workbench-topics-changed", onTopicsChanged);
+      window.removeEventListener(
+        "workbench-increment-unlocked",
+        onIncrementUnlocked,
+      );
     };
   }, [path, reload]);
   // A changed URL must never render the old date/security response for even one frame.

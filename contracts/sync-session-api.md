@@ -1,6 +1,6 @@
 # 手动盘后增量的阻塞进度
 
-`GET /api/v1/sync/session?task_id=...` 或 `?request_key=...` 只读查询用户已经提交的一次 `increment`。不创建、恢复、重试或取消任务，不取行情。缺少标识422，尚未找到404，非increment任务422。
+`GET /api/v1/sync/session?task_id=...` 或 `?request_key=...` 只读查询用户已经提交的一次 `increment`。不创建、恢复、重试或取消任务，不取行情。尚未找到404，非increment任务422。不带标识时返回 `{active: null|receipt}`，供首次挂载、新标签页、清空浏览器存储后的全局恢复；只读查询一个持久会话指针，不扫描行情目录。
 
 响应包含 `root_task_id/request_key/status/can_acknowledge/created_at_ms/observed_at_ms/finished_at_ms/elapsed_ms/tasks/waiting_followup/issues/estimate`。`tasks` 是至多32个去重任务的小型回执，不包含完整参数、凭据和日志。通过持久化的 `followup_queued/line_alert_check_queued/listing_status_check_queued` 事件追踪已授权子任务；主行情成功而后续尚未排队时保持 `awaiting_followup`，不能提前称整个增量成功。主行情发布后的本地策略核对仍包含在等待后续阶段内。
 
@@ -11,3 +11,17 @@
 前端在提交前开启阻塞层，使用相同幂等请求标识。仅保存不含个人设置的请求/任务ID和界面状态；刷新及同源标签页恢复该层，仅GET轮询，不重发POST。背景工作台 `inert`，锁定页面滚动、焦点和Escape；任务结束后须明确点击确认。服务端拒绝或请求持续未确认有独立核查出口，不将其标作成功，不悄悄重试任务。关闭浏览器不取消服务端任务。普通页面浏览不自动启动增量。
 
 活动查询每2秒一次，不重叠；隐藏页面降低频率。估计样本在API进程有界缓存30秒，不扫描行情文件。实际取数预算、来源限速、唯一worker与人工启动约束保持原有契约。
+
+## 服务端锁定与确认
+
+响应另含 `locked/session_epoch/acknowledged/draining_task_ids`。会话标识、确认和安全停止存于业务SQLite的 `platform_setting/job_event`，不新增schema、不保存凭据。
+
+`POST /api/v1/sync/session/acknowledge` 接受 `request_key/task_id/session_epoch`。短写事务重新核对当前根、会话轮次和整条链的实际结束状态，通过后持久记录确认并移除锁。旧根或旧轮次不能解锁新会话；链仍运行、仍等待已冻结后续阶段或工作进程尚未安全释放时返回409。另一个标签页确认后，原具体会话查询返回 `acknowledged=true, locked=false`，浏览器同步收敛。
+
+`POST /api/v1/sync/session/control` 接受 `task_id/session_epoch/action`，action仅支持 `pause/cancel`。停止本条已有数据链，不新建、恢复或重试取数；尚未排队的后续阶段不再派发，停止竞态中迟到的子任务在创建事务内直接保持停止。运行步骤先显示 `stopping`，等真实worker finally回执才允许确认。worker异常退出时，只能由新worker取得既有唯一执行锁后证明旧执行已退出并补记释放，不能用清空lease或超时猜测停止。queued步骤可直接停止；显式resume/retry重新建立同链锁，不自动继续。
+
+整根increment重试创建新increment任务与独立根。单个子步骤的手动恢复/重试以 `attempt_task_id` 冻结本次分支：历史根仅保留来源身份，`historical_attempt=true` 的旧失败不参与本次进度和结果；UI明确称“本次重试步骤/分支”，不能称原整链已完整成功。后续权限依赖原持久链接及内部派发父步骤，子分支的新epoch只解除该分支的停止；原根、兄弟步骤的显式停止继续有效，不能因重试本地核验便自动启动未建的板块阶段。
+
+若本地仅持有请求标识且尚无已接收task_id，404或等待30秒都不能解锁。用户可显式调用确认接口核查并关闭未接收请求：事务证明无对应job、无当前会话后写该request_key的放弃墓碑；迟到的原POST必须在创建任务的事务内核对墓碑并拒绝，确认成功后才清本地层。已知task_id却真实缺失时保持未知，要求核查服务端存档；断网或确认请求失败保持锁定。
+
+API中间件在锁定时拒绝所有新的业务GET/写请求并返回409与当前会话身份。静态资源、SPA、health、会话进度/确认/停止和同链任务读取及pause/cancel保持可达；`POST /sync/tasks`只允许相同已接收request_key的幂等重读。统一任务创建在 `BEGIN IMMEDIATE` 内再次校验HTTP会话锁，防止提前通过中间件的选股或批量请求趁并发窗口新排队。worker不处于HTTP上下文，不会锁死自己的授权链或心跳；不强杀已接收任务，增量沿原唯一worker规则排队。开始锁定前已接收的HTTP读取可能正常完成，此门禁不追溯取消它们。

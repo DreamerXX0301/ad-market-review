@@ -27,7 +27,7 @@ MAX_SUMMARIES = 1024
 MAX_SUMMARY_FILE_REFS = 16384
 _SUMMARIES = OrderedDict()
 _SUMMARY_LOCK = RLock()
-SUMMARY_CONTRACT = 'sector-strategy-metrics-volume-comparison-v3'
+SUMMARY_CONTRACT = 'sector-strategy-metrics-verified-pair-v4'
 MAX_PERSISTED_SUMMARY_BYTES = 256*1024
 MAX_PERSISTED_CACHE_BYTES = 512*1024*1024
 _PERSIST_LOCK = RLock()
@@ -387,6 +387,77 @@ def _indicators(record, calendar, day, include_higher_lows=False, boll_configs_b
     return result, current
 
 
+def _entry_from_record(record, pointer, plan, calendar, include_higher_lows=False,
+                       boll_configs_by_period=None, proofs=None):
+    """One canonical indicator projection; private entry may also keep two rows."""
+    day = plan['as_of']; code = plan['topic_code']
+    proofs = {**(_proofs(pointer, code, day) if proofs is None else proofs),
+        'normalization_version': charts.NORMALIZATION_VERSION,
+        'source_request': record.get('cache_source_request', record.get('source_request')),
+        'cache_as_of': record.get('cache_as_of', day), 'raw_lineage': record.get('raw_lineage')}
+    metrics, current_row = _indicators(record, calendar, day, include_higher_lows, boll_configs_by_period)
+    value = {'metrics_by_period': metrics, 'close_price': finite(current_row.get('close')) if current_row else None,
+        'cache_refs': proofs, 'coverage': {**record['coverage'], 'available': True,
+            'observation_date': day, 'price_basis': 'none', 'membership_independent': True,
+            'notice': '只用已核验板块指数点位；日窗严格交易日，周/月取最后完整周期，不代表历史成员或资金净流入。'}}
+    cache_as_of = record.get('cache_as_of', day)
+    receipt = charts._root()/'accepted/fuyao/sector-chart'/(cache_as_of+'-'+code+'.json')
+    entry = {'value': deepcopy(value), 'cache_as_of': cache_as_of,
+             'pointer_sha256': sha256(receipt.read_bytes()).hexdigest()}
+    position = calendar.index(day) if day in calendar else 0
+    previous = calendar[position-1] if position else None
+    pair = [dict(row) for row in record['bars'] if row['date'] in (previous, day)]
+    if cache_as_of == day and previous and len(pair) == 2 and {row['date'] for row in pair} == {previous, day}:
+        # Derivative only: public metrics, coverage and source refs stay exact.
+        entry['recent_pair'] = pair
+        entry['recent_pair_sha256'] = charts.digest(pair)
+        entry['recent_pair_source'] = {key: record.get(key) for key in
+                                       ('fetched_at', 'raw_artifact', 'raw_sha256')}
+    return entry
+
+
+def prewarm_collected_sector(market, plan, result, guard=None):
+    """Worker-only one-record derivative; no provider calls or source writes."""
+    if guard: guard()
+    calendar = market.calendar()
+    prepared = charts.verified_collected_input(result, plan, calendar)
+    if prepared is None:
+        return None  # Old/stub collectors retain the ordinary post-batch path.
+    if market.status().get('snapshot_id') != plan['snapshot_id']:
+        raise ValueError('板块预热期间行情代际变化')
+    record, pointer, proofs = prepared
+    entry = _entry_from_record(record, pointer, plan, calendar, proofs=proofs)
+    scope = _summary_scope(plan, calendar); key = (str(work_dir().resolve()), digest(scope))
+    if guard: guard()
+    _remember_summary(key, entry)
+    persisted = _save_summary(scope, entry)
+    if guard: guard()
+    return {'topic_code': plan['topic_code'], 'available': entry['value']['coverage'].get('available') is True,
+            'persistent': persisted}
+
+
+def verified_recent_pair(market, topic_code, day, previous):
+    """Return only a same-day derivative after actual source SHA revalidation."""
+    try:
+        plan = charts.plan_sector_chart(market, topic_code, day)
+        scope = _summary_scope(plan, market.calendar()); key = (str(work_dir().resolve()), digest(scope))
+        with _SUMMARY_LOCK: entry = _SUMMARIES.get(key)
+        if entry is None or not _receipt_matches(entry, plan):
+            entry = _load_summary(scope, plan)
+            if entry is not None: _remember_summary(key, entry)
+        if entry is None or entry.get('cache_as_of') != day:
+            return None
+        pair = entry.get('recent_pair')
+        if (not isinstance(pair, list) or len(pair) != 2
+                or {row.get('date') for row in pair if isinstance(row, dict)} != {previous, day}
+                or charts.digest(pair) != entry.get('recent_pair_sha256')):
+            return None
+        return {'bars': deepcopy(pair), **deepcopy(entry['recent_pair_source']),
+                'pointer': {key: entry['value']['cache_refs'][key] for key in ('artifact', 'sha256')}}
+    except (ValueError, OSError, TypeError, AttributeError, KeyError):
+        return None  # Recompute from original raw chain; never hide source damage.
+
+
 def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_higher_lows=False, boll_configs_by_period=None):
     """One verified daily input, all-period summaries, bounded warm reuse.
 
@@ -417,22 +488,10 @@ def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_highe
         cached = charts._read_chart_cache(market, plan, market.calendar())
         if cached is None: raise ValueError('板块所选日日K尚未留存，请先在数据中心补齐')
         record, pointer = cached
-        proofs = {**_proofs(pointer, plan['topic_code'], day),
-            'normalization_version': charts.NORMALIZATION_VERSION,
-            'source_request': record.get('cache_source_request', record.get('source_request')),
-            'cache_as_of': record.get('cache_as_of', day), 'raw_lineage': record.get('raw_lineage')}
-        metrics, current_row = _indicators(record, market.calendar(), day,include_higher_lows,boll_configs_by_period)
-        value = {'metrics_by_period': metrics, 'close_price': finite(current_row.get('close')) if current_row else None,
-            'cache_refs': proofs, 'coverage': {**record['coverage'], 'available': True,
-                'observation_date': day, 'price_basis': 'none', 'membership_independent': True,
-                'notice': '只用已核验板块指数点位；日窗严格交易日，周/月取最后完整周期，不代表历史成员或资金净流入。'}}
-        cache_as_of = record.get('cache_as_of', day)
-        receipt = charts._root()/'accepted/fuyao/sector-chart'/(cache_as_of+'-'+plan['topic_code']+'.json')
-        pointer_hash = sha256(receipt.read_bytes()).hexdigest()
-        entry = {'value': deepcopy(value), 'cache_as_of': cache_as_of, 'pointer_sha256': pointer_hash}
+        entry = _entry_from_record(record, pointer, plan, market.calendar(), include_higher_lows, boll_configs_by_period)
         _remember_summary(key, entry)
         _save_summary(scope, entry)
-        return {**value, **identity}
+        return {**deepcopy(entry['value']), **identity}
     except (ValueError, OSError, TypeError, AttributeError) as error:
         reason = str(error) or '板块缓存或来源依据未通过核验'
         return {**identity, 'metrics_by_period': {p: _raw_metrics(period=p, reason=reason) for p in PERIODS},
@@ -456,22 +515,24 @@ def prewarm_sector_metrics(market, topic_codes=None, day=None, guard=None, progr
     if day not in market.calendar() or day > market.status().get('data_end', ''):
         raise ValueError('板块指标预热日期不是已发布的市场交易日')
     failures = []; available = 0; persistent_available = 0; persistent_failures = []
-    for count, code in enumerate(codes, 1):
-        if guard: guard()
-        value = metrics_for_sector(market, code, day, PERIODS)
-        if guard: guard()
-        if value['coverage'].get('available') is True:
-            available += 1
-            plan = charts.plan_sector_chart(market, code, day)
-            scope = _summary_scope(plan, market.calendar())
-            if _load_summary(scope, plan) is not None:
-                persistent_available += 1
-            else:
-                persistent_failures.append({'topic_code': code,
-                    'reason': '派生指标摘要未持久留存或复验未通过，使用时可从已留存行情重新计算'})
-        else: failures.append({'topic_code': code, 'reason': value['coverage'].get('reason')})
-        if guard: guard()
-        if progress: progress(count, len(codes), code)
+    from .sector_read_context import planning_scope
+    with planning_scope(market, day, catalog={code: catalog[code] for code in codes}):
+        for count, code in enumerate(codes, 1):
+            if guard: guard()
+            value = metrics_for_sector(market, code, day, PERIODS)
+            if guard: guard()
+            if value['coverage'].get('available') is True:
+                available += 1
+                plan = charts.plan_sector_chart(market, code, day)
+                scope = _summary_scope(plan, market.calendar())
+                if _load_summary(scope, plan) is not None:
+                    persistent_available += 1
+                else:
+                    persistent_failures.append({'topic_code': code,
+                        'reason': '派生指标摘要未持久留存或复验未通过，使用时可从已留存行情重新计算'})
+            else: failures.append({'topic_code': code, 'reason': value['coverage'].get('reason')})
+            if guard: guard()
+            if progress: progress(count, len(codes), code)
     if guard: guard()
     return {'date': day, 'snapshot_id': market.status().get('snapshot_id'),
         'total_count': len(codes), 'available_count': available,
@@ -494,15 +555,19 @@ def get_run(rid, decision=None):
     if decision not in (None, 'matched', 'unmatched', 'unknown'): fail('板块结果筛选无效')
     with connect() as connection:
         run = one(connection, 'SELECT r.*,s.name strategy_name FROM sector_selection_run r JOIN sector_strategy s USING(strategy_id) WHERE run_id=?', (rid,), '选板运行不存在')
-        records = rows(connection, 'SELECT * FROM sector_selection_candidate WHERE run_id=? ORDER BY topic_code', (rid,))
+        counts = {key: 0 for key in ('matched', 'unmatched', 'unknown')}
+        counts.update({row['decision']: row['n'] for row in rows(connection,
+            'SELECT decision,count(*) n FROM sector_selection_candidate WHERE run_id=? GROUP BY decision', (rid,))})
+        records = rows(connection, 'SELECT * FROM sector_selection_candidate WHERE run_id=?'+
+            (' AND decision=?' if decision is not None else '')+' ORDER BY topic_code',
+            (rid, decision) if decision is not None else (rid,))
         version = one(connection, 'SELECT * FROM sector_strategy_version WHERE strategy_id=? AND version=?', (run['strategy_id'], run['strategy_version']))
-    counts = {key: sum(record['decision'] == key for record in records) for key in ('matched', 'unmatched', 'unknown')}
     return {**{key: value for key, value in run.items() if not key.endswith('_json')},
         'target_type': 'sector', 'period': version['period'], 'sector_kind': version['sector_kind'],
         'definition': obj(version['definition_json'], {}), 'policy': obj(version['policy_json'], {}),
         'evaluator_version': version['evaluator_version'], 'cache_refs': obj(run['cache_refs_json'], {}),
         'counts': counts, **{key+'_count': value for key, value in counts.items()},
-        'total': len(records), 'items': [_candidate(record) for record in records if decision is None or record['decision'] == decision]}
+        'total': sum(counts.values()), 'items': [_candidate(record) for record in records]}
 
 
 def list_runs(sid=None, limit=50):
@@ -518,7 +583,8 @@ def list_runs(sid=None, limit=50):
     return {'items': data, 'total': len(data), 'target_type': 'sector'}
 
 
-def run_strategy(sid, payload=None, *, queued_job=None):
+def run_strategy(sid, payload=None, *, queued_job=None, response_decision=None):
+    if response_decision not in (None, 'matched', 'unmatched', 'unknown'): fail('板块结果筛选无效')
     payload = payload or {}
     if not isinstance(payload, dict) or set(payload)-{'request_key', 'date', 'business_date'}: fail('选板只接受请求标识和当前业务日')
     request_key = payload.get('request_key') or new_id('sector-selection-request')
@@ -527,10 +593,12 @@ def run_strategy(sid, payload=None, *, queued_job=None):
     market = get_market(); state = market.status()
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
+        from .increment_access import require_business_unlocked
+        require_business_unlocked(connection)
         old_job = connection.execute('SELECT * FROM job WHERE request_key=?', (request_key,)).fetchone()
         if old_job and not queued_job:
             old = connection.execute('SELECT run_id,strategy_id FROM sector_selection_run WHERE job_id=?', (old_job['job_id'],)).fetchone()
-            if old and old['strategy_id'] == sid: return get_run(old['run_id'])
+            if old and old['strategy_id'] == sid: return get_run(old['run_id'], response_decision)
             fail('请求标识已使用或选板仍在运行，请查看原任务', 409)
         st = _view(connection, sid)
         if st['archived']: fail('板块策略已归档，不能运行', 409)
@@ -601,7 +669,7 @@ def run_strategy(sid, payload=None, *, queued_job=None):
             connection.execute("UPDATE job SET status='succeeded',phase='completed',finished_at_ms=?,accepted_batches=100,planned_batches=100 WHERE job_id=?", (now_ms(), job_id))
             log(connection, job_id, 'info', 'completed', '板块策略已完成；缺少缓存或预热的结果保持待核验',
                 {key: sum(item['decision'] == key for item in candidates) for key in ('matched', 'unmatched', 'unknown')})
-        return get_run(rid)
+        return get_run(rid, response_decision)
     except Exception as error:
         message = str(getattr(error, 'detail', error))[:500]
         with connect() as connection:

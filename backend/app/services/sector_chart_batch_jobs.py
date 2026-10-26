@@ -110,8 +110,31 @@ def execute_batch_job(job_id, progress=None):
             progress(stage, round(max(0, min(100, percentage))*85/100), message,
                      {**(details or {}), 'phase': 'sector_chart_collection'})
 
-    result = collect_sector_chart_batch(market, params, client('fuyao'), guard=guard,
-                                       progress=collection_progress if progress else None)
+    from app.services.sector_read_context import verified_consumer
+    from app.services.sector_strategies import prewarm_collected_sector
+    inline_guard_failure = None
+
+    def inline_guard():
+        nonlocal inline_guard_failure
+        try:
+            guard()
+        except Exception as error:
+            inline_guard_failure = error
+            raise
+
+    def prepare_one(board, collected):
+        # Prepare only this verified record while the serial request limiter
+        # is idle. Source quality and the later persistence check stay separate.
+        try:
+            prewarm_collected_sector(market, board, collected, guard=inline_guard)
+        except Exception as error:
+            if error is inline_guard_failure or isinstance(error, (tasks.TaskPaused, tasks.TaskCancelled)):
+                raise
+            guard()  # Cache failures are optional; user stop controls are not.
+
+    with verified_consumer(prepare_one):
+        result = collect_sector_chart_batch(market, params, client('fuyao'), guard=guard,
+                                           progress=collection_progress if progress else None)
     guard()
     coverage = result['coverage']
     boards = params.get('boards') or []

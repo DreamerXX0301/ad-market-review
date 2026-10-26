@@ -295,12 +295,34 @@ export function ChartAnnotationButton({
 
 export function ChartAnnotationPanel({
   state,
+  displayedIds,
+  onDisplayChange,
+  onDisplayAllChange,
 }: {
   state: AnnotationController;
+  displayedIds?: ReadonlySet<string>;
+  onDisplayChange?: (annotationId: string, visible: boolean) => void;
+  onDisplayAllChange?: (visible: boolean) => void;
 }) {
   const typeGroup = useId();
   if (!state.enabled || !state.open) return null;
   const activeScope = state.editing || state.scope;
+  const available = state.views.filter((view) => view.price != null);
+  const availableIds = [
+    ...available.map((view) => view.line.annotation_id),
+    ...(state.preview?.items || [])
+      .filter(
+        (item: Row) =>
+          !item.saved && state.selectedCandidates.includes(item.candidate_id),
+      )
+      .map((item: Row) => `preview:${item.candidate_id}`),
+  ];
+  const anyDisplayed = displayedIds
+    ? availableIds.some((id) => displayedIds.has(id))
+    : state.show;
+  const allDisplayed = displayedIds
+    ? anyDisplayed && availableIds.every((id) => displayedIds.has(id))
+    : state.show;
   return (
     <section className="chart-annotations" aria-label="支撑压力与水平线工具">
       <div className="chart-annotation-heading">
@@ -315,10 +337,15 @@ export function ChartAnnotationPanel({
         <label>
           <input
             type="checkbox"
-            checked={state.show}
-            onChange={(e) => state.setShow(e.target.checked)}
+            checked={allDisplayed}
+            aria-checked={
+              anyDisplayed && !allDisplayed ? "mixed" : allDisplayed
+            }
+            onChange={(e) =>
+              (onDisplayAllChange || state.setShow)(e.target.checked)
+            }
           />
-          显示标记
+          显示本图划线
         </label>
         <button
           className="icon-btn"
@@ -703,13 +730,42 @@ export function ChartAnnotationPanel({
                 </span>
                 <small title={view.reason}>
                   {view.price != null
-                    ? state.show
+                    ? (
+                        displayedIds
+                          ? displayedIds.has(line.annotation_id)
+                          : state.show
+                      )
                       ? view.converted
                         ? `本图 ${num(view.price, 4)} · 已换算`
                         : "本图可见"
                       : "已隐藏"
                     : view.reason}
                 </small>
+                {onDisplayChange && (
+                  <label
+                    className="chart-line-display-control"
+                    title="只切换本图显示，不删除原线或更改提醒"
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`显示水平线 ${line.label || num(line.price)}`}
+                      checked={
+                        view.price != null &&
+                        (displayedIds
+                          ? displayedIds.has(line.annotation_id)
+                          : state.show)
+                      }
+                      disabled={view.price == null}
+                      onChange={(event) =>
+                        onDisplayChange(
+                          line.annotation_id,
+                          event.target.checked,
+                        )
+                      }
+                    />
+                    显示
+                  </label>
+                )}
                 <button
                   className="icon-btn"
                   aria-label={`编辑水平线 ${line.label || num(line.price)}`}

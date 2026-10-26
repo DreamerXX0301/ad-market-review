@@ -1,7 +1,10 @@
 """Small bounded HTTP adapters, with sanitized errors and no credential logging."""
 from __future__ import annotations
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 import re
+from threading import RLock
 import time
 from urllib.parse import urlparse
 import httpx
@@ -11,6 +14,77 @@ class ProviderError(ValueError):
     def __init__(self, message, status=None, code=None):
         super().__init__(message)
         self.status, self.code = status, code
+
+
+_CONNECTION_SCOPE = ContextVar('provider_connection_scope', default=None)
+
+
+def _http_client():
+    return httpx.Client(timeout=httpx.Timeout(45, connect=12), follow_redirects=False,
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=1, keepalive_expiry=30))
+
+
+class _ConnectionScope:
+    """Task-owned transport reuse, never a process-wide credential cache."""
+    def __init__(self):
+        self.entries = {}
+        self.lock = RLock()
+        self.closed = False
+
+    def connection(self, adapter):
+        if self.closed:
+            raise ProviderError('本次任务的数据源连接范围已结束')
+        identity = (adapter.source_id, adapter.key)
+        if identity not in self.entries:
+            if len(self.entries) >= 8:
+                raise ProviderError('本次任务的数据源连接范围超出限制')
+            self.entries[identity] = (_http_client(), {'last_request': adapter.last_request})
+        return self.entries[identity]
+
+    def close(self):
+        # A failed close must not retain the other connections or replace the
+        # task's original exception. There are no durable cookies or secrets.
+        with self.lock:
+            self.closed = True
+            for client, _ in self.entries.values():
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            self.entries.clear()
+
+
+@contextmanager
+def provider_connection_scope():
+    """Reuse bounded HTTP connections until one explicit task finishes.
+
+    Nested helpers share the current task's scope; all success, cancellation
+    and error exits close its transports. A later task starts a fresh scope.
+    """
+    existing = _CONNECTION_SCOPE.get()
+    if existing is not None:
+        yield
+        return
+    scope = _ConnectionScope()
+    token = _CONNECTION_SCOPE.set(scope)
+    try:
+        yield
+    finally:
+        _CONNECTION_SCOPE.reset(token)
+        scope.close()
+
+
+@contextmanager
+def _request_connection(adapter):
+    scope = _CONNECTION_SCOPE.get()
+    if scope is None:
+        with _http_client() as client:
+            yield client, {'last_request': adapter.last_request}
+    else:
+        # The sole worker is sequential. This also makes copied contexts safe
+        # if a caller introduces threads: sharing a scope does not add requests.
+        with scope.lock:
+            yield scope.connection(adapter)
 
 
 class ProviderClient:
@@ -25,40 +99,45 @@ class ProviderClient:
     def request(self, path, params=None):
         if self.source_id != "tickflow-public" and not self.key:
             raise ProviderError("请先配置该来源的Key；注册免费Key不等于付费会员", 401)
-        delay = (1.2 if self.source_id == "fuyao" else 6.2) - (time.monotonic() - self.last_request)
-        if delay > 0:
-            time.sleep(delay)
         headers = {"User-Agent": "ShixuWorkbench/0.1", "Accept": "application/json"}
         if self.key:
             headers["X-api-key"] = self.key
         params = {k: str(v).lower() if isinstance(v, bool) else v for k, v in (params or {}).items()}
-        for attempt in range(3):
-            try:
-                with httpx.Client(timeout=httpx.Timeout(45, connect=12), follow_redirects=False) as client:
-                    response = client.get(self.BASES[self.source_id] + path, params=params, headers=headers)
-                self.last_request = time.monotonic()
-                if response.status_code == 429 or response.status_code >= 500:
-                    if attempt < 2:
-                        time.sleep(2 ** attempt * 2)
-                        continue
-                if response.status_code != 200:
-                    raise ProviderError("来源返回HTTP " + str(response.status_code), response.status_code)
-                body = response.json()
-                if self.source_id == "fuyao" and body.get("code") != 0:
-                    code = body.get("code")
-                    if (code == 4001 or str(code).startswith("5")) and attempt < 2:
-                        time.sleep(2 ** attempt * 2)
-                        continue
-                    raise ProviderError("来源业务响应未通过（code=" + str(code) + "）", code=code)
-                if body.get("data") is None:
-                    raise ProviderError("来源暂无数据，不能当作完整空结果")
-                return body
-            except (httpx.HTTPError, ValueError) as error:
-                if isinstance(error, ProviderError):
-                    raise
-                if attempt == 2:
-                    raise ProviderError("来源连接或数据格式异常，已有限重试；请稍后再试") from None
-                time.sleep(2 ** attempt)
+        with _request_connection(self) as (client, state):
+            for attempt in range(3):
+                delay = (1.2 if self.source_id == "fuyao" else 6.2) - (time.monotonic() - state['last_request'])
+                if delay > 0:
+                    time.sleep(delay)
+                try:
+                    try:
+                        response = client.get(self.BASES[self.source_id] + path, params=params, headers=headers)
+                    finally:
+                        # Transport failures also consume the request interval.
+                        self.last_request = state['last_request'] = time.monotonic()
+                    if response.status_code == 429 or response.status_code >= 500:
+                        if attempt < 2:
+                            time.sleep(2 ** attempt * 2)
+                            continue
+                    if response.status_code != 200:
+                        raise ProviderError("来源返回HTTP " + str(response.status_code), response.status_code)
+                    body = response.json()
+                    if not isinstance(body, dict):
+                        raise ValueError('来源响应格式异常')
+                    if self.source_id == "fuyao" and body.get("code") != 0:
+                        code = body.get("code")
+                        if (code == 4001 or str(code).startswith("5")) and attempt < 2:
+                            time.sleep(2 ** attempt * 2)
+                            continue
+                        raise ProviderError("来源业务响应未通过（code=" + str(code) + "）", code=code)
+                    if body.get("data") is None:
+                        raise ProviderError("来源暂无数据，不能当作完整空结果")
+                    return body
+                except (httpx.HTTPError, ValueError) as error:
+                    if isinstance(error, ProviderError):
+                        raise
+                    if attempt == 2:
+                        raise ProviderError("来源连接或数据格式异常，已有限重试；请稍后再试") from None
+                    time.sleep(2 ** attempt)
         raise ProviderError("来源请求未完成")
 
     def download(self, kind, target: Path, progress=None):

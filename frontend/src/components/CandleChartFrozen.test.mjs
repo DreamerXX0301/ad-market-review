@@ -22,7 +22,8 @@ async function helper(name) {
 }
 const preferences = await helper("./chartPreferences.ts");
 const { chartBoll, bollCandleValues } = await helper("./chartBoll.ts");
-const { annotationColors, lineLabel } = await helper("./chartAnnotations.ts");
+const { annotationColors, lineLabel, savedLineSettings, levelOriginLabel } = await helper("./chartAnnotations.ts");
+const lineLabels = await helper("./chartLineLabelLayout.ts");
 const { chartPaneLayout } = await helper("./chartPaneLayout.ts");
 const { candleChartEndpoint } = await helper("./chartEndpoint.ts");
 const { candleExtremeChange } = await helper("./candleExtremeChange.ts");
@@ -89,6 +90,10 @@ const scopeValues = {
   bollCandleValues,
   annotationColors,
   lineLabel,
+  savedLineSettings,
+  levelOriginLabel,
+  ...lineLabels,
+  EMPTY_LINE_IDS: new Set(),
   chartPaneLayout,
   candleChartEndpoint,
   candleExtremeChange,
@@ -112,7 +117,7 @@ const scopeValues = {
   },
   useChartAnnotations: (_id, _data, enabled) => {
     annotations.push(enabled);
-    return { enabled, visible: enabled ? annotationViews : [], drawing: false };
+    return { enabled, visible: enabled ? annotationViews : [], views: enabled ? annotationViews : [], selectedCandidates: [], preview: null, show: true, result: { loading: false }, drawing: false };
   },
   chartPalette: () => ({
     text: "#fff",
@@ -126,6 +131,7 @@ const scopeValues = {
   }),
   maColors: ["#1", "#2", "#3", "#4", "#5", "#6"],
   defaultChartWindow: () => ({ start: 0, end: 100 }),
+  singlePageDefaultWindow: (_period, bars) => ({ start: 0, end: 100, firstDate: bars[0]?.date || null, sessions: 120, label: "测试冻结显示范围" }),
   projectEventBaseline: () => ({ price: null, reason: "" }),
   historicalChartEvents: () => [],
   projectHistoricalChartEvent: () => null,
@@ -315,10 +321,13 @@ renderToStaticMarkup(
     showDataNotes: false,
   }),
 );
-const plotted = option.series.find((row) => row.name === "我的水平线").markLine
+const plotted = option.series.find((row) => row.name === "支撑压力与事件参照").markLine
   .data[0];
 assert.equal(plotted.yAxis, 9.84);
-assert.match(plotted.label.formatter, /9\.84/);
+assert.equal(plotted.label.show, false, "full descriptions belong in the independent label rail");
+assert.match(plotted.name, /9\.84/);
+assert.ok(option.grid[0].right >= 100, "right rail never covers the last candles");
+assert.ok(option.grid.every((grid) => grid.right === option.grid[0].right));
 assert.equal(
   savedLine.price,
   12.5,

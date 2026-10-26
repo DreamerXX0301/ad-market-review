@@ -7,6 +7,7 @@ constituent membership and individual-stock adjustments are never consulted.
 from __future__ import annotations
 
 from datetime import datetime
+from contextvars import ContextVar
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -27,6 +28,28 @@ MAX_PROJECTION_CANDIDATES = 8
 INCREMENT_CONTRACT = 'fuyao-sector-chart-increment-v1'
 MAX_LINEAGE_SEGMENTS = 1600
 SCOPE = '当前同花顺目录板块的来源历史指数点位；按正式留存窗口截取，不依赖或证明历史成分股'
+_read_files = ContextVar('sector_chart_verified_files', default=None)
+
+
+class _VerifiedRead(tuple):
+    """Private two-item read result, with the actual verified source closure."""
+    def __new__(cls, record, pointer, files, pointer_path, pointer_bytes, calendar):
+        value = super().__new__(cls, (record, pointer))
+        value.files = tuple(sorted(files))
+        value.root = str(_root().resolve())
+        value.pointer_path = str(pointer_path.relative_to(_root().resolve()))
+        value.pointer_sha256 = sha256(pointer_bytes).hexdigest()
+        value.pointer_value_sha256 = digest(pointer)
+        value.record_sha256 = digest(record)
+        value.calendar_sha256 = digest(calendar)
+        return value
+
+
+class _Collected(dict):
+    """Source result JSON stays unchanged; no histories escape as extra keys."""
+    def __init__(self, value, verified=None):
+        super().__init__(value)
+        self.verified = verified
 
 
 def _root():
@@ -86,6 +109,10 @@ def _plan_from_inputs(status, calendar, catalog, topic_code, as_of):
 
 def plan_sector_chart(market, topic_code, as_of):
     """Freeze one explicit board's actual published window before queueing."""
+    from .sector_read_context import prepared_plan
+    prepared = prepared_plan(market, topic_code, as_of)
+    if prepared is not None:
+        return prepared
     return _plan_from_inputs(market.status(), set(market.calendar()),
                              _catalog(market.reference())[0], topic_code, as_of)
 
@@ -177,7 +204,7 @@ def _cache_key(plan):
     return plan['as_of']+'-'+plan['topic_code']
 
 
-def _verified_json(relative, expected_sha):
+def _verified_bytes(relative, expected_sha):
     root = _root().resolve()
     if not isinstance(relative, str): raise ValueError('板块K线缓存缺少文件依据')
     value = Path(relative)
@@ -187,7 +214,48 @@ def _verified_json(relative, expected_sha):
         raise ValueError('板块K线缓存缺失或超出范围')
     raw = path.read_bytes()
     if sha256(raw).hexdigest() != expected_sha: raise ValueError('板块K线缓存SHA校验失败')
+    return raw
+
+
+def _verified_json(relative, expected_sha):
+    raw = _verified_bytes(relative, expected_sha)
+    captured = _read_files.get()
+    if captured is not None:
+        captured.add((relative, expected_sha))
+        if len(captured) > MAX_LINEAGE_SEGMENTS*4:
+            raise ValueError('板块来源链超出保护范围')
     return json.loads(raw)
+
+
+def verified_collected_input(result, plan, calendar):
+    """Reuse normalization only after rehashing every actual input file.
+
+    The token was issued by _read_cached after raw-chain replay. It is never
+    persisted or accepted from an API request, and mutable record edits reject
+    reuse. Derivatives still bind the same pointer and source file SHA list.
+    """
+    value = getattr(result, 'verified', None)
+    if not isinstance(value, _VerifiedRead):
+        return None
+    record, pointer = value
+    if (value.root != str(_root().resolve()) or digest(record) != value.record_sha256
+            or digest(pointer) != value.pointer_value_sha256
+            or digest(calendar) != value.calendar_sha256
+            or result.get('record') is not record
+            or any(record.get(key) != plan.get(key) for key in
+                   ('topic_code', 'as_of', 'start', 'end', 'request_signature'))):
+        raise ValueError('板块已核验记录或读取作用域发生变化')
+    pointer_path = (_root().resolve()/value.pointer_path).resolve()
+    if (not pointer_path.is_relative_to(_root().resolve()) or not pointer_path.is_file()
+            or pointer_path.stat().st_size > 64*1024
+            or sha256(pointer_path.read_bytes()).hexdigest() != value.pointer_sha256):
+        raise ValueError('板块已核验记录指针发生变化')
+    for relative, checksum in value.files:
+        _verified_bytes(relative, checksum)
+    proofs = {'topic_code': plan['topic_code'], 'as_of': plan['as_of'], 'source': 'fuyao',
+              'price_basis': 'none', 'artifact': pointer['artifact'], 'sha256': pointer['sha256'],
+              'files': [{'artifact': relative, 'sha256': checksum} for relative, checksum in value.files]}
+    return record, pointer, proofs
 
 
 def _origin_plan(record, code):
@@ -286,16 +354,21 @@ def _read_cached(plan, calendar, capability='sector-chart', cache_key=None, proj
     if not pointer.is_file(): return None
     if not pointer.resolve().is_relative_to(root) or pointer.stat().st_size > 64*1024:
         raise ValueError('板块K线缓存指针路径或大小异常')
-    saved = json.loads(pointer.read_text())
+    pointer_bytes = pointer.read_bytes()
+    saved = json.loads(pointer_bytes)
     if (not isinstance(saved, dict) or saved.get('version') != 'market-supplement-v1'
             or saved.get('signature') != plan['request_signature']):
         raise ValueError('板块K线缓存请求签名与所选窗口不符')
-    accepted = _verified_json(saved.get('artifact'), saved.get('sha256'))
-    if (not isinstance(accepted, dict) or accepted.get('date') != plan['as_of'] or accepted.get('topic_code') != plan['topic_code']
-            or accepted.get('request_signature') != plan['request_signature']):
-        raise ValueError('板块K线缓存日期、代码或请求依据不符')
-    record = _replay_record(accepted, plan, calendar, projection_plan)
-    return record, saved
+    files = set(); token = _read_files.set(files)
+    try:
+        accepted = _verified_json(saved.get('artifact'), saved.get('sha256'))
+        if (not isinstance(accepted, dict) or accepted.get('date') != plan['as_of'] or accepted.get('topic_code') != plan['topic_code']
+                or accepted.get('request_signature') != plan['request_signature']):
+            raise ValueError('板块K线缓存日期、代码或请求依据不符')
+        record = _replay_record(accepted, plan, calendar, projection_plan)
+        return _VerifiedRead(record, saved, files, pointer, pointer_bytes, calendar)
+    finally:
+        _read_files.reset(token)
 
 
 def _read_chart_cache(market, plan, calendar):
@@ -362,10 +435,10 @@ def collect_sector_chart(market, plan, adapter, guard=None, progress=None):
         record, pointer = cached
         if guard: guard()
         if progress: progress('板块K线已核验', 100, '已核验本地原始响应，未新增请求')
-        return {'available': True, 'record': record, 'cache_hit': True,
+        return _Collected({'available': True, 'record': record, 'cache_hit': True,
                 'artifact': pointer['artifact'], 'sha256': pointer['sha256'],
                 'coverage': record['coverage'], 'quality': 'complete' if record['complete'] else 'partial',
-                'message': '指定板块K线已从原始SHA缓存复验'}
+                'message': '指定板块K线已从原始SHA缓存复验'}, cached)
     if guard: guard()
     source_request = _source_request(frozen)
     message = source_request['start']+' 至 '+source_request['end']
@@ -388,10 +461,10 @@ def collect_sector_chart(market, plan, adapter, guard=None, progress=None):
     pointer_path = cache.root/'accepted/fuyao/sector-chart'/(_cache_key(frozen)+'.json')
     pointer = json.loads(pointer_path.read_text())
     if progress: progress('板块K线已保存', 100, '仅保存指定板块，日周月指标读取时本地计算')
-    return {'available': True, 'record': accepted, 'cache_hit': False,
+    return _Collected({'available': True, 'record': accepted, 'cache_hit': False,
             'artifact': pointer['artifact'], 'sha256': pointer['sha256'],
             'coverage': record['coverage'], 'quality': 'complete' if record['complete'] else 'partial',
-            'message': '指定板块历史日K已校验并保存'}
+            'message': '指定板块历史日K已校验并保存'})
 
 
 def _previous_cache(plan, calendar):
@@ -429,16 +502,17 @@ def collect_sector_chart_incremental(market, plan, adapter, guard=None, progress
     if exact is not None:
         record, pointer = exact
         if guard: guard()
-        return {'available': True, 'record': record, 'coverage': record['coverage'], 'cache_hit': True,
+        return _Collected({'available': True, 'record': record, 'coverage': record['coverage'], 'cache_hit': True,
                 'artifact': pointer['artifact'], 'sha256': pointer['sha256'],
                 'quality': 'complete' if record['complete'] else 'partial', 'request_kind': 'cache',
                 'reused_rows': len(record['bars']), 'downloaded_rows': 0,
-                'message': '该目标日板块K线已从原始链复验，未新增请求'}
+                'message': '该目标日板块K线已从原始链复验，未新增请求'}, exact)
     previous = _previous_cache(frozen, calendar)
     if previous is None:
         result = collect_sector_chart(market, frozen, adapter, guard, progress)
-        return {**result, 'request_kind': 'cache' if result['cache_hit'] else 'full',
-                'reused_rows': 0, 'downloaded_rows': 0 if result['cache_hit'] else len(result['record']['bars'])}
+        return _Collected({**result, 'request_kind': 'cache' if result['cache_hit'] else 'full',
+                'reused_rows': 0, 'downloaded_rows': 0 if result['cache_hit'] else len(result['record']['bars'])},
+                getattr(result, 'verified', None))
     base, base_pointer = previous
     following = next((day for day in calendar if day > base['as_of']), None)
     if following is None or following > frozen['as_of']:
@@ -482,17 +556,18 @@ def collect_sector_chart_incremental(market, plan, adapter, guard=None, progress
     cache = SupplementCache(_root())
     cache.accept('fuyao', 'sector-chart', _cache_key(frozen), frozen['request_signature'], compact, raw_manifest)
     if guard: guard()
-    verified, pointer = _read_cached(frozen, calendar)
+    cached = _read_cached(frozen, calendar)
+    verified, pointer = cached
     if guard: guard()
     if progress: progress('板块增量已保存', 100, '仅保存新增日线及小型原始链证明，旧内部缺口保留')
-    return {'available': True, 'record': verified, 'coverage': verified['coverage'],
+    return _Collected({'available': True, 'record': verified, 'coverage': verified['coverage'],
             'artifact': pointer['artifact'], 'sha256': pointer['sha256'],
             'cache_hit': tail_cache_hit,
             'request_kind': 'cache' if tail_cache_hit else 'tail',
             'reused_rows': sum(row['date'] >= frozen['start'] for row in base['bars']),
             'downloaded_rows': 0 if tail_cache_hit else len(tail['bars']),
             'quality': 'complete' if verified['complete'] else 'partial',
-            'message': '板块K线已以尾部原始报价增量更新；完整原始SHA链可复验'}
+            'message': '板块K线已以尾部原始报价增量更新；完整原始SHA链可复验'}, cached)
 
 
 def _indicator_gaps(bars):

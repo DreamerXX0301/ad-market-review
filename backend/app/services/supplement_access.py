@@ -203,7 +203,7 @@ class SupplementWriteMiddleware:
         # These exact controls only stop an existing task; they cannot acquire
         # new inputs, pins or file references. They must reach the worker guard
         # while EX is held. Resume/retry/create retain the normal SH boundary.
-        stopping_task = method == 'POST' and re.fullmatch(r'/api/v1/tasks/[^/]+/(?:pause|cancel)', path) is not None
+        stopping_task = method == 'POST' and (re.fullmatch(r'/api/v1/tasks/[^/]+/(?:pause|cancel)', path) is not None or path == '/api/v1/sync/session/control')
         mutates_on_get = method in ('GET', 'HEAD') and (path == '/api/v1/watchlist' or path.startswith('/api/v1/research/jobs/'))
         if stopping_task or method not in ('POST', 'PUT', 'PATCH', 'DELETE') and not mutates_on_get:
             return await self.app(scope, receive, send)

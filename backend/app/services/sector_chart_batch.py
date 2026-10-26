@@ -13,6 +13,7 @@ from app.core import digest
 from app.services.sector_charts import (collect_sector_chart, collect_sector_chart_incremental,
     _plan_from_inputs, _root, _verified_json)
 from app.services.sector_history import _catalog, _day
+from app.services.sector_read_context import planning_scope, consume_verified
 
 NORMALIZATION_VERSION = 'fuyao-sector-chart-batch-v1'
 MAX_CODES = 800
@@ -185,30 +186,39 @@ def collect_sector_chart_batch(market, plan, adapter, guard=None, progress=None)
         bounded = _BoundedAdapter(adapter, checked)
         items = []; failures = list(frozen['catalog_failures'])
         failed = 0; unrequested = 0; cache_hits = 0; total = len(frozen['boards'])
-        for done, board in enumerate(frozen['boards'], 1):
-            checked()
-            prior_requests = bounded.requests
-            try:
-                collector = collect_sector_chart_incremental if frozen.get('mode') == 'increment' else collect_sector_chart
-                result = collector(market, board, bounded, guard=checked)
-                items.append(_item_summary(board, result))
-                cache_hits += bool(result['cache_hit'])
-            except _SourceStopped as error:
-                unrequested += 1
-                failures.append({'topic_code': board['topic_code'], 'stage': 'source_blocked',
-                                 'reason': str(error), 'requested': False})
-            except (ProviderError, ValueError, TypeError, OSError) as error:
-                failed += 1
-                failures.append({'topic_code': board['topic_code'], 'stage': 'chart_collection',
-                                 'reason': str(error), 'requested': bounded.requests > prior_requests})
-            checked()
-            if progress:
-                progress('同步行业概念历史K线', round(done/total*99), board['instrument']['name'],
-                         {'completed_count': done, 'total_count': total,
-                          'available_count': len(items), 'request_count': bounded.requests,
-                          'full_request_count': bounded.full_requests, 'tail_request_count': bounded.tail_requests,
-                          'cache_hit_count': cache_hits, 'failed_count': failed,
-                          'unrequested_count': unrequested})
+        with planning_scope(market, frozen['as_of'], plans=frozen['boards']):
+            for done, board in enumerate(frozen['boards'], 1):
+                checked()
+                prior_requests = bounded.requests; result = None
+                try:
+                    collector = collect_sector_chart_incremental if frozen.get('mode') == 'increment' else collect_sector_chart
+                    result = collector(market, board, bounded, guard=checked)
+                    items.append(_item_summary(board, result))
+                    cache_hits += bool(result['cache_hit'])
+                except _SourceStopped as error:
+                    result = None
+                    unrequested += 1
+                    failures.append({'topic_code': board['topic_code'], 'stage': 'source_blocked',
+                                     'reason': str(error), 'requested': False})
+                except (ProviderError, ValueError, TypeError, OSError) as error:
+                    result = None
+                    failed += 1
+                    failures.append({'topic_code': board['topic_code'], 'stage': 'chart_collection',
+                                     'reason': str(error), 'requested': bounded.requests > prior_requests})
+                if result is not None:
+                    try:
+                        consume_verified(board, result)
+                    except Exception:
+                        checked()
+                        raise
+                checked()
+                if progress:
+                    progress('同步行业概念历史K线', round(done/total*99), board['instrument']['name'],
+                             {'completed_count': done, 'total_count': total,
+                              'available_count': len(items), 'request_count': bounded.requests,
+                              'full_request_count': bounded.full_requests, 'tail_request_count': bounded.tail_requests,
+                              'cache_hit_count': cache_hits, 'failed_count': failed,
+                              'unrequested_count': unrequested})
         checked()
         complete_count = sum(item['quality'] == 'complete' for item in items)
         collection_complete = len(items) == total and not failures

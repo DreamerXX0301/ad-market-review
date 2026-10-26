@@ -7,6 +7,7 @@ comparable observation merely to make a long-period indicator appear.
 from __future__ import annotations
 
 from calendar import monthrange
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from datetime import date
 
@@ -32,9 +33,11 @@ def aggregate_monthly(rows, calendar=None, as_of=None):
     date.fromisoformat(horizon)
     sessions = sorted(set(calendar or []))
     expected_by_month = defaultdict(list)
+    all_by_month = defaultdict(list)
     for day in sessions:
         if day <= horizon:
             expected_by_month[day[:7]].append(day)
+        all_by_month[day[:7]].append(day)
     groups = defaultdict(dict)
     duplicates = defaultdict(set)
     for source in rows:
@@ -59,13 +62,14 @@ def aggregate_monthly(rows, calendar=None, as_of=None):
         partial_begin = not calendar_start_known or bool(expected and first > expected[0])
         missing_within = [day for day in expected if day not in observed]
         previous = result[-1] if result else None
-        missing_between = [day for day in sessions if previous and previous['date'] < day < first and day <= horizon and day not in observed]
+        between = sessions[bisect_right(sessions, previous['date']):bisect_left(sessions, first)] if previous else ()
+        missing_between = [day for day in between if day <= horizon and day not in observed]
         missing_dates = sorted(set(missing_within + missing_between))
         unexpected = sorted(observed - set(expected)) if sessions else []
         quote_complete = False if missing_within or duplicates[month] or unexpected else True if expected and calendar_start_known else None
         year, number = map(int, month.split('-'))
         month_end = date(year, number, monthrange(year, number)[1]).isoformat()
-        known_month_sessions = [day for day in sessions if day[:7] == month]
+        known_month_sessions = all_by_month[month]
         calendar_spans_month_end = bool(sessions and sessions[-1] > month_end)
         month_closed = month < horizon[:7] or horizon >= month_end or bool(calendar_spans_month_end and known_month_sessions and known_month_sessions[-1] <= horizon)
         complete = bool(month_closed and quote_complete is True and not partial_begin)
@@ -105,13 +109,8 @@ def aggregate_monthly(rows, calendar=None, as_of=None):
     return result
 
 
-def enrich_monthly_bars(rows, *, include_chart_extremes=False):
-    """Keep preview candles, but warm indicators only on comparable full months.
-
-    An unadjusted action month can contain prices from both sides of the action,
-    so it is excluded as a comparable monthly observation. Verified forward
-    input has already cleared the action flag and remains eligible.
-    """
+def _monthly_comparable_inputs(rows):
+    """Classify the full sequence before projecting prices or raw facts."""
     rows = list(rows)
     eligible = []
     pending_reason = None
@@ -132,6 +131,26 @@ def enrich_monthly_bars(rows, *, include_chart_extremes=False):
             row['weekly_continuity_reset_reason'] = row.get('monthly_continuity_reset_reason') or pending_reason
         eligible.append(row)
         pending_reason = None
+    return eligible, reasons
+
+
+def _latest_monthly_source_facts(rows):
+    """Raw two-month changes need full eligibility, but no raw EMA seed.
+
+    Only the private facts-only caller uses this projection. Technical/chart
+    indicators retain their full original monthly recurrence below.
+    """
+    eligible, _ = _monthly_comparable_inputs(rows)
+    result = enrich_bars(eligible[-2:])
+    for row in result:
+        row.update(monthly_indicator_eligible=True, monthly_price_comparable=True)
+    return result
+
+
+def enrich_monthly_bars(rows, *, include_chart_extremes=False):
+    """Keep previews and all original seeds for comparable monthly indicators."""
+    rows = list(rows)
+    eligible, reasons = _monthly_comparable_inputs(rows)
     computed = {row['date']: row for row in enrich_bars(eligible, include_chart_extremes=include_chart_extremes)}
     indicator_fields = [*(f'ma{window}' for window in WINDOWS), 'change_pct', 'pct_change',
                         'volume_ratio', 'volume_multiple_prev', 'return_30d', 'macd_cross', 'kd_cross',

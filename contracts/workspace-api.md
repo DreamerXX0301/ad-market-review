@@ -229,7 +229,7 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 | 接口 | 作用 |
 | --- | --- |
-| `POST /strategies/{id}/runs {request_key?}` | 实际求值，返回冻结 run 与候选/计数 |
+| `POST /strategies/{id}/runs?response_decision= {request_key?}` | 实际求值并保存全部候选，可选仅返回一个分类 |
 | `GET /strategy-runs?strategy_id=&limit=`、`GET /strategy-runs/{run_id}?decision=` | 运行列表及 matched/unmatched/unknown 证据 |
 | `GET/PUT /strategies/{id}/automation` | refresh_after_sync、auto_track；默认关闭，auto_track 需 refresh |
 | `POST /tracking-rounds {run_id,instrument_ids}` | 仅当前版本/当前业务日 matched 入池；重复与忽略项跳过 |
@@ -254,7 +254,9 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 `GET /tasks?limit=200&summary=true`供数据中心历史轮询，最多200条小回执，单个SQLite只读事务完成。兼容的默认`GET /tasks`及服务`list_tasks()`仍返回原完整内容；选中某任务继续`GET /tasks/{id}`读取完整日志，不删除或截断审计事实。summary行保留身份、状态、真实进度、日期、duration_ms、摘要和显示用parameters白名单（operation/mode/target_type/strategy_id/window/data_chain_version、明确链标记、来源/板块代码、单板块名称等标量；不含任务冻结大计划、成员或SHA全集）。logs只带chain_authorized/followup_queued/chain_blocked每种最新一条，按真实seq排序，details仅next_task_id/原因；足够恢复待排队/已排队/阻断状态，不能把缺失后续误显示完成。不存在的记录数保持null。完整批次子项不在历史列表展开，精细进度仍从activity与选中详情读取。
 
-策略列表的 `latest_run` 用于 GET 恢复最近已保存运行；返回页面、刷新浏览器或读取旧结果不创建任务。旧日期、旧规则版本保持原值，不能冒充当前结果；手动刷新失败或尚在运行时保留上次成功结果。浏览器仅记住个股/板块目标和各自策略ID偏好，候选与证据始终读取服务端。
+策略列表的 `latest_run` 用于 GET 恢复最近已保存运行；返回页面、刷新浏览器或读取旧结果不创建任务。旧日期、旧规则版本保持原值，不能冒充当前结果；手动刷新失败或尚在运行时保留上次成功结果。浏览器持久设置仅记住个股/板块目标和各自策略ID偏好。
+
+个股与板块的 `GET /...strategy-runs/{id}?decision=` 及 `POST /...strategies/{id}/runs?response_decision=` 仅接受 `matched|unknown|unmatched`，省略保留兼容的全部候选。SQL只物化所选分类；返回计数以及板块的total仍覆盖整个冻结运行，不因筛选缩小。POST的筛选只影响响应，不影响已保存候选或之后读取其它分类；相同request_key幂等回读也应用本次响应筛选，不重新执行。前端默认命中分类，切组获取该分类全部记录，保留完整排序和导航；只在模块内存保留最多24片、8MiB估算载荷、30000候选且60秒过期，切策略复用前重新GET元数据核对版本/最新运行/删除状态。候选证据不写入localStorage。
 
 ## 本地盘面证据重验
 
@@ -277,7 +279,7 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 板块指标摘要绑定固定来源及算法，命中仍核验 raw/规范化 SHA；缺本地 K 或预热为 unknown，不自动远程加载。板块没有回测或自动交易接口。
 
-板块派生摘要使用 `sector-strategy-metrics-volume-comparison-v3` 契约，隔离放量/缩量修正前的磁盘及内存scope；旧摘要保留但不命中，新摘要仅从同一已核验本地来源重算并留存回执。来源、行情规范化及板块策略evaluator不变，不创建取数任务或重写旧运行结果。
+板块派生摘要使用 `sector-strategy-metrics-verified-pair-v4` 契约，隔离旧磁盘及内存scope，保留放量/缩量修正并增加仅供盘面补充复用的精确T/T−1两行私有投影。每次消费仍核验完整实际来源SHA；损坏摘要回退原始链，实际来源损坏保持失败或未知。旧摘要保留但不命中，新摘要仅从同一已核验本地来源重算并留存回执。公开指标、coverage与cache_refs结构、行情规范化及板块策略evaluator不变，不创建取数任务或重写旧运行结果。
 
 ## 研究与个股回测
 

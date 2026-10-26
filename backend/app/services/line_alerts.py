@@ -293,6 +293,8 @@ def after_sync(job):
         connection.execute('BEGIN IMMEDIATE')
         saved=connection.execute('SELECT * FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
         if not saved or saved['status'] not in ('succeeded','partial','no_change'):return None
+        from .sync_progress import chain_stop_action
+        if chain_stop_action(connection,saved):return None
         if connection.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='line_alert_check_queued'",(job['job_id'],)).fetchone():return None
         publication=connection.execute("SELECT data_end FROM dataset_snapshot WHERE job_id=? AND module='daily_raw' AND state='published' ORDER BY published_at_ms DESC LIMIT 1",(job['job_id'],)).fetchone()
         target=publication[0] if publication else saved['target_date']

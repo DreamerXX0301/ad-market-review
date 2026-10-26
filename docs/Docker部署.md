@@ -1,20 +1,20 @@
 # Docker部署
 
-本文对应冒险的梦想家0.1.6发行，源码以 [v0.1.6 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.6)为准，镜像为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.6`，目标平台为 Linux amd64、arm64。使用安装命令前，须核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.6)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)的实际结果；完整源码 SHA、镜像摘要及平台检查以本版 `release-image.json` 为准，不沿用旧版提交或成功记录。无需在安装机器构建前后端。
+本文对应冒险的梦想家0.1.7发行，源码以 [v0.1.7 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.7)为准，镜像为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.7`，目标平台为 Linux amd64、arm64。使用安装命令前，须核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.7)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)的实际结果；完整源码 SHA、镜像摘要及平台检查以本版 `release-image.json` 为准，不沿用旧版提交或成功记录。无需在安装机器构建前后端。
 
-[0.1.6](../CHANGELOG.md#v016)包含单页图表、策略前复权口径、热点浏览筛选、选股计算优化与250交易日补充保留。迁移终点为025，新增024、025必须在独立恢复副本依次执行，旧策略、运行和跟踪记录不改写。合入或推送 `master` 不会更新既有镜像；已有安装按[版本升级与回滚](版本升级与回滚.md)验收后维护切换。[0.1.5历史发行](../CHANGELOG.md#v015)及更早标签保留，不重新覆盖。
+[0.1.7](../CHANGELOG.md#v017)包含分层技术缓存与64交易日技术尾部、结果分类读取、跟踪批读、个股资料末端投影、K线标签显隐及自适应默认展示、盘后增量整链锁和来源连接复用。本版不新增迁移，终点仍为025；025实例无需新增迁移，更早实例须在独立恢复副本按顺序补齐已有迁移。首次空缓存与简单阈值场景仍可能更慢，不能承诺全场景提速。合入或推送 `master` 不会更新既有镜像；已有安装按[版本升级与回滚](版本升级与回滚.md)验收后维护切换。[0.1.6历史发行](../CHANGELOG.md#v016)及更早标签保留，不重新覆盖。
 
 ## 全新安装
 
 需要 Docker Engine 或 Docker Desktop，以及 Docker Compose v2；`curl`仅用于可选健康检查。以下命令面向全新安装；已有实例应先阅读[版本升级与回滚](版本升级与回滚.md)，不要直接复用旧实例的卷。默认只绑定本机 `127.0.0.1:8788`；已有服务占用时先设置 `export SHIXU_HTTP_PORT=8789`。
 
-镜像允许匿名拉取，不要求GitHub登录；源码仓库和Release附件则为私有资源，需要授权。下载独立Compose文件须安装GitHub CLI（`gh`），使用已有的授权登录并具备仓库读权限，再从[0.1.6 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.6)获取，不必克隆仓库。匿名raw链接不能用于取得这些私有文件。
+镜像允许匿名拉取，不要求GitHub登录；源码仓库和Release附件则为私有资源，需要授权。下载独立Compose文件须安装GitHub CLI（`gh`），使用已有的授权登录并具备仓库读权限，再从[0.1.7 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.7)获取，不必克隆仓库。匿名raw链接不能用于取得这些私有文件。
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
-gh release download v0.1.6 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.6
+gh release download v0.1.7 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.7
 ```
 
 下载命令不覆盖已有同名文件；若文件已存在，先核对其版本，或使用新的安装目录。已持有对应发行源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录并命名为 `docker-compose.yml`，跳过附件下载命令，再继续后续步骤。GitHub授权只用于私有源码或附件访问，不需要把该授权配置为镜像登录。
@@ -27,7 +27,7 @@ key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.6 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.7 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
 
@@ -68,7 +68,7 @@ docker compose config
 
 `.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签及配套Release附件也应绑定同一审核提交，私有附件的下载仍需仓库读权限。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
-已有 `v0.1.5` 及更早版本不能用于重新发布当前新增功能，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.6`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
+已有 `v0.1.6` 及更早版本不能用于重新发布当前新增功能，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.7`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
 
 ```bash
 gh workflow run publish-image.yml --repo DreamerXX0301/ad-market-review --ref master -f version="$(cat VERSION)" -F confirm=true

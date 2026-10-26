@@ -81,7 +81,7 @@ def test_queue_zero_never_becomes_fabricated_whole_chain_percent(isolated):
     assert view['tasks'][0]['progress'] == 0 and not view['can_acknowledge']
     assert view['estimate']['remaining_max_ms'] is None
     assert 'private-fixture' not in response.text and 'parameters' not in response.text
-    assert client.get('/api/v1/sync/session').status_code == 422
+    assert client.get('/api/v1/sync/session').json() == {'active': None}
     assert client.get('/api/v1/sync/session?request_key=missing').status_code == 404
     other = tasks.create_task('research', {})
     assert client.get('/api/v1/sync/session', params={'task_id': other['job_id']}).status_code == 422
