@@ -1,23 +1,25 @@
 # Docker部署
 
-本文对应冒险的梦想家0.1.7发行，源码以 [v0.1.7 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.7)为准，镜像为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.7`，目标平台为 Linux amd64、arm64。使用安装命令前，须核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.7)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)的实际结果；完整源码 SHA、镜像摘要及平台检查以本版 `release-image.json` 为准，不沿用旧版提交或成功记录。无需在安装机器构建前后端。
+本文对应冒险的梦想家0.1.8发行，源码以 [v0.1.8 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.8)为准，镜像为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.8`，目标平台为 Linux amd64、arm64。使用安装命令前，须核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.8)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)的实际结果；完整源码 SHA、镜像摘要及平台检查以本版 `release-image.json` 为准，不沿用旧版提交或成功记录。无需在安装机器构建前后端。
 
-[0.1.7](../CHANGELOG.md#v017)包含分层技术缓存与64交易日技术尾部、结果分类读取、跟踪批读、个股资料末端投影、K线标签显隐及自适应默认展示、盘后增量整链锁和来源连接复用。本版不新增迁移，终点仍为025；025实例无需新增迁移，更早实例须在独立恢复副本按顺序补齐已有迁移。首次空缓存与简单阈值场景仍可能更慢，不能承诺全场景提速。合入或推送 `master` 不会更新既有镜像；已有安装按[版本升级与回滚](版本升级与回滚.md)验收后维护切换。[0.1.6历史发行](../CHANGELOG.md#v016)及更早标签保留，不重新覆盖。
+[0.1.8](../CHANGELOG.md#v018)仅修复增量合并Parquet写出阶段的内存问题，不引入其它性能优化。迁移终点仍为025；025实例无需新增迁移，更早实例仍在独立恢复副本顺序补齐已有迁移。合入或推送 `master` 不会更新既有镜像，须按本页手工发行，再按[升级与回滚](版本升级与回滚.md)验收后维护切换。[0.1.7历史发行](../CHANGELOG.md#v017)及更早标签保留，不重新覆盖。合法的失败锁定会话不能为通过部署检查而清空或确认；升级完成后的授权确认与重试另行记录。
 
 ## 全新安装
 
 需要 Docker Engine 或 Docker Desktop，以及 Docker Compose v2；`curl`仅用于可选健康检查。以下命令面向全新安装；已有实例应先阅读[版本升级与回滚](版本升级与回滚.md)，不要直接复用旧实例的卷。默认只绑定本机 `127.0.0.1:8788`；已有服务占用时先设置 `export SHIXU_HTTP_PORT=8789`。
 
-镜像允许匿名拉取，不要求GitHub登录；源码仓库和Release附件则为私有资源，需要授权。下载独立Compose文件须安装GitHub CLI（`gh`），使用已有的授权登录并具备仓库读权限，再从[0.1.7 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.7)获取，不必克隆仓库。匿名raw链接不能用于取得这些私有文件。
+源码仓库及已公开的Release附件可以匿名下载，镜像也允许匿名拉取，不要求GitHub登录。独立Compose文件从对应[0.1.8 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.8)获取；须先核对本版正式发行状态，不必克隆仓库或安装GitHub CLI。
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
-gh release download v0.1.7 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.7
+test ! -e docker-compose.yml && test ! -L docker-compose.yml && \
+  curl --fail --location --output docker-compose.yml \
+  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.8/docker-compose.yml'
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.8
 ```
 
-下载命令不覆盖已有同名文件；若文件已存在，先核对其版本，或使用新的安装目录。已持有对应发行源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录并命名为 `docker-compose.yml`，跳过附件下载命令，再继续后续步骤。GitHub授权只用于私有源码或附件访问，不需要把该授权配置为镜像登录。
+上面的下载前置检查会拒绝已有同名文件；已有文件时先核对版本或使用新目录。已持有配套源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录；已安装并配置 `gh` 时可选用 `gh release download v0.1.8 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml`。这些是可选的公开下载方式，不需要将GitHub凭据或数据源Key配置为镜像登录。
 
 创建一个新的、独立保存的主密钥。镜像中自带生成脚本，不要求宿主安装 Python；脚本遇到已有文件会拒绝覆盖。Docker Desktop 需允许挂载此目录。
 
@@ -27,7 +29,7 @@ key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.7 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.8 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
 
@@ -58,7 +60,7 @@ export SHIXU_IMAGE_REF='ghcr.io/dreamerxx0301/ad-market-review@sha256:实际发�
 docker compose config
 ```
 
-此行包含占位说明，须替换成真实摘要后执行。Compose 会按机器选择 amd64 或 arm64，无需强制 `platform`。GHCR镜像允许匿名访问，拉取镜像不要求GitHub登录；这不代表私有源码和Release附件也能匿名下载。每次新发行须独立核验精确摘要的匿名访问；索引、配置读取或层HEAD检查不能代替完整镜像拉取，回执应分别记录实际完成范围。若镜像返回拒绝访问，先核对版本与包权限，不应把数据源 Key 用作镜像登录密码。[GitHub Container Registry 权限与匿名拉取](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+此行包含占位说明，须替换成真实摘要后执行。Compose 会按机器选择 amd64 或 arm64，无需强制 `platform`。GHCR镜像允许匿名访问，拉取镜像不要求GitHub登录；源码仓库及公开Release附件也可匿名下载，但版本附件仍须与实际镜像提交核对。每次新发行须独立核验精确摘要的匿名访问；索引、配置读取或层HEAD检查不能代替完整镜像拉取，回执应分别记录实际完成范围。若镜像返回拒绝访问，先核对版本与包权限，不应把数据源 Key 用作镜像登录密码。[GitHub Container Registry 权限与匿名拉取](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
 业务、已发布行情、原始响应、worker 工作文件和密文凭据分别放在命名卷。API 对已发布行情只读，使用独立可丢弃 tmpfs 计算派生缓存，不打开 worker 的活动 DuckDB。`docker compose down` 保留数据；**不要加 `-v`、执行卷清理或覆盖原主密钥**。生产备份、迁移与回滚参见[版本升级与回滚](版本升级与回滚.md)。当前入口只监听本机，远程访问需要自行配置认证与反向代理。
 
@@ -66,9 +68,9 @@ docker compose config
 
 ## 维护者发行流程
 
-`.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签及配套Release附件也应绑定同一审核提交，私有附件的下载仍需仓库读权限。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
+`.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签及配套Release附件也应绑定同一审核提交，已公开的源码与Release附件可匿名下载；发行写入仍由有权限的维护者执行。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
-已有 `v0.1.6` 及更早版本不能用于重新发布当前新增功能，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.7`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
+已有 `v0.1.7` 及更早版本不能用于重新发布本次热修复，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.8`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
 
 ```bash
 gh workflow run publish-image.yml --repo DreamerXX0301/ad-market-review --ref master -f version="$(cat VERSION)" -F confirm=true
@@ -78,7 +80,7 @@ gh workflow run publish-image.yml --repo DreamerXX0301/ad-market-review --ref ma
 
 只在需要上传的 job 授予 `packages: write`，用仓库的 `GITHUB_TOKEN` 登录，不要求用户提供新的个人包 Token。OCI labels 和发行 artifact 留存版本、提交、平台摘要与总摘要；Actions 绑定完整提交。首次创建的 GHCR 包可能是 private，仓库维护者须明确设为 public，再独立验证匿名拉取，不能仅凭 workflow 上传成功宣称匿名可用。[GHCR 发布与可见性](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
-workflow 不创建 Git 源码标签或 GitHub Release。维护者需另外核对固定版本源码标签与 `release-image.json` 的 `git_commit` 完全一致，再将该提交的配套Compose文件及本版 `release-image.json` 作为Release附件交付；源码完整SHA也须与镜像OCI revision一致。私有附件通过有仓库读权限的GitHub CLI下载，也可直接交付经核对的文件。不要将 `master` 上的 Compose 当成某个旧镜像的发行配套文件，也不要为公开镜像提供无法匿名访问的raw安装命令。
+workflow 不创建 Git 源码标签或 GitHub Release。维护者需另外核对固定版本源码标签与 `release-image.json` 的 `git_commit` 完全一致，再将该提交的配套Compose文件及本版 `release-image.json` 作为Release附件交付；源码完整SHA也须与镜像OCI revision一致。公开Release附件可匿名下载，GitHub CLI只是可选的便利工具，也可直接交付经核对的文件。不要将 `master` 上的 Compose 当成某个旧镜像的发行配套文件，安装文档应指向本版公开附件，不能把尚未发行的地址写成已可用。
 
 CI 本身不部署、不开来源取数，也不操作现用数据。发行检查不能代替真实升级演练；schema 变化后的回滚需要旧镜像、切换前备份和独立恢复卷。
 

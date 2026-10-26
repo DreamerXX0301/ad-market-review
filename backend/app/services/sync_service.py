@@ -177,7 +177,21 @@ def merge_daily(incoming,previous,output,start,end,calendar,master,*,unchanged_r
         missing=con.execute("SELECT count(*) FROM master_rows m CROSS JOIN calendar_rows c LEFT JOIN (SELECT b.thscode,d.date FROM merged b JOIN merged_dates d USING(date_ms)) b ON b.thscode=m.thscode AND b.date=c.date WHERE m.list_date IS NOT NULL AND CAST(m.list_date AS VARCHAR)<=c.date AND (m.end_date IS NULL OR CAST(m.end_date AS VARCHAR)>=c.date) AND b.thscode IS NULL").fetchone()[0]
         output.parent.mkdir(parents=True,exist_ok=True)
         write_output = not (unchanged_rows is not None and previous and changed == 0 and count == unchanged_rows)
-        if write_output:con.execute('COPY (SELECT * FROM merged ORDER BY thscode,date_ms) TO ? (FORMAT PARQUET,COMPRESSION ZSTD)',[str(output)])
+        if write_output:
+            # Parallel Parquet row-group buffers can exhaust the sort budget.
+            # Keep the same 512MB, SQL and encoding; serialize only this write.
+            write_threads=con.execute("SELECT current_setting('threads')").fetchone()[0]
+            con.execute('SET threads=1')
+            copy_failed=False
+            try:
+                con.execute('COPY (SELECT * FROM merged ORDER BY thscode,date_ms) TO ? (FORMAT PARQUET,COMPRESSION ZSTD)',[str(output)])
+            except BaseException:
+                copy_failed=True
+                raise
+            finally:
+                try:con.execute('SET threads='+str(write_threads))
+                except Exception:
+                    if not copy_failed:raise
         unknown_identity=[r['thscode'] for r in master if not r.get('list_date')]
         return {'rows':count,'unexplained_missing':None if unknown_identity else missing,'confirmed_missing_lower_bound':missing,'identity_unknown_count':len(unknown_identity),'identity_unknown_symbols':unknown_identity,'expected_coverage_state':'unknown' if unknown_identity else 'partial','overlap_rows':overlap,'revised_overlap_rows':changed,'derived_file_written':write_output,'missing_classification':'上市日期未知时总缺口不可核验；已知身份中的缺口尚未区分停牌/数据缺失，不填0'}
     finally:con.close()
