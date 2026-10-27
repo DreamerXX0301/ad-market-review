@@ -66,13 +66,13 @@ docker compose config
 
 250交易日补充清理的依赖图写入worker工作卷的私有临时目录，完成或中断后丢弃。worker另设置 `SQLITE_TMPDIR=/var/lib/shixu/work`，让SQLite排序等临时文件也使用工作磁盘；不能改到 `/tmp` 的内存盘，否则大规模规划仍会消耗容器内存。API的可丢弃缓存与worker工作卷保持隔离。清理预算、来源保护及容量边界见[补充数据250交易日保留](补充数据250交易日保留.md)。
 
-尚未发行的选股性能候选另支持 `SHIXU_SELECTION_CPU_WORKERS=0..4`，三份源码Compose入口向API及worker共同透传，缺省为4；0关闭纯计算子进程，资源较少时可用0或1，1仍有进程传输开销。此配置不会自动识别容器资源限制，不改变唯一行情worker数量；非法值降为串行并给出配置警告。详见[候选选股CPU预算](部署与运维.md#候选选股-cpu-预算尚未发行或部署)。当前0.1.9镜像尚不支持该候选功能，增加环境变量或复制新版Compose不会使旧镜像自动获得新算法。
+0.1.9支持 `SHIXU_SELECTION_CPU_WORKERS=0..4`，三份Compose入口向API及worker共同透传，缺省为4；0关闭纯计算子进程，资源较少时推荐0，1仍有进程传输开销。此配置不会自动识别容器资源限制，不改变唯一行情worker数量；非法值降为串行并给出配置警告。详见[选股CPU预算](部署与运维.md)。该能力从0.1.9开始提供；给旧镜像增加环境变量或复制新版Compose不会自动升级算法。
 
 ## 维护者发行流程
 
 `.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签及配套Release附件也应绑定同一审核提交，已公开的源码与Release附件可匿名下载；发行写入仍由有权限的维护者执行。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
-已有 `v0.1.7` 及更早版本不能用于重新发布本次热修复，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.9`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
+已有 `v0.1.8` 及更早版本不能用于重新发布本次性能改动，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.9`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，审核后合入 `master`。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
 
 ```bash
 gh workflow run publish-image.yml --repo DreamerXX0301/ad-market-review --ref master -f version="$(cat VERSION)" -F confirm=true
