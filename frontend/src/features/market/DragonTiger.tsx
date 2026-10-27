@@ -18,7 +18,9 @@ import { integer, percent, tone } from "../../lib/format";
 import { marketMoney } from "./marketPresentation";
 import DragonTigerTable from "./DragonTigerTable";
 import {
+  dragonTigerBoardAvailable,
   dragonTigerDisclosure,
+  dragonTigerHotStatistics,
   dragonTigerJobId,
   dragonTigerLabels,
   dragonTigerNumber,
@@ -171,12 +173,9 @@ export default function DragonTiger({
     Math.min(page, Math.max(1, Math.ceil(rows.length / 25))),
   );
   const boardSource = data?.boards?.[board];
-  const summary = dragonTigerSummary(
-    rows,
-    board,
-    label,
-    boardSource?.state === "ready",
-  );
+  const boardAvailable = dragonTigerBoardAvailable(data, board);
+  const hotStatistics = dragonTigerHotStatistics(data);
+  const summary = dragonTigerSummary(rows, board, label, boardAvailable);
   const seatRequest =
     seatOpen && selected?.instrument_id
       ? `/market/dragon-tiger/${encodeURIComponent(selected.instrument_id)}?date=${encodeURIComponent(date)}&range_days=${period}`
@@ -331,7 +330,7 @@ export default function DragonTiger({
     }
   }
   const taskRunning = !!job && !finished.has(taskData?.status);
-  const boardUnavailable = !rows.length && boardSource?.state !== "ready";
+  const boardUnavailable = !boardAvailable;
   return (
     <div className="dragon-tiger-page">
       <div className="scopebar">
@@ -359,7 +358,7 @@ export default function DragonTiger({
               {busy
                 ? "正在创建任务…"
                 : coverage.complete === true
-                  ? "近30日已完整留存"
+                  ? "近30日响应已留存"
                   : "补齐最近30个交易日"}
             </button>
           </div>
@@ -479,7 +478,7 @@ export default function DragonTiger({
           <div className="dragon-tiger-grid">
             <Panel
               title={`${names[board]} · ${period === 1 ? "单日榜" : "三日榜"}`}
-              subtitle={`${rows.length}条已返回记录 · ${board === "hot_money" ? label || "全部标签" : "当前筛选"}`}
+              subtitle={`${boardAvailable ? `${rows.length}条当前筛选记录` : "该日响应未留存"} · ${board === "hot_money" ? label || "全部标签" : "当前筛选"}`}
             >
               {rows.length ? (
                 <DragonTigerTable
@@ -509,18 +508,33 @@ export default function DragonTiger({
                       : "当前筛选无匹配记录"
                   }
                   description={
-                    boardSource?.reason ||
-                    data?.availability?.reason ||
-                    (boardUnavailable
-                      ? "未取得或尚未留存的数据保持未知；可在最新行情日手动补齐。"
-                      : "可清除搜索或取消游资标签筛选。")
+                    boardUnavailable
+                      ? boardSource?.reason ||
+                        data?.availability?.reason ||
+                        "未取得或尚未留存的数据保持未知；可在最新行情日手动补齐。"
+                      : "可清除搜索或取消游资标签筛选。"
                   }
                 />
               )}
               <p className="panel-footnote">
-                源标的{boardSource?.source_stock_count ?? "—"}个 / 原始记录
-                {boardSource?.source_count ?? "—"}
-                条；仅纳入本地名录已核验A股。来源概念资料不等同当日上涨归因。
+                {board === "hot_money" ? (
+                  <>
+                    来源统计 count={hotStatistics.sourceCount ?? "—"} /
+                    stock_count=
+                    {hotStatistics.sourceStockCount ?? "—"}（口径未核验）；
+                    实际已观察{hotStatistics.labelCount ?? "—"}个标签、
+                    {hotStatistics.rowCount ?? "—"}条标签记录、
+                    {hotStatistics.stockCount ?? "—"}个来源代码去重标的、
+                    {hotStatistics.stockRangeCount ?? "—"}
+                    个标的×区间（所选日全部来源区间，含未匹配名录的来源标的；其他区间另行留存，不混入单日或三日榜）。
+                  </>
+                ) : (
+                  <>
+                    源标的{boardSource?.source_stock_count ?? "—"}个 / 原始记录
+                    {boardSource?.source_count ?? "—"}条；
+                  </>
+                )}
+                表格与顶部统计仅纳入本地名录已核验A股，按当前区间与筛选计算。来源概念资料不等同当日上涨归因。
                 {excluded.length > 0 &&
                   ` 当前区间另有${excluded.length}条未匹配记录：${excluded.map((row) => row.name || row.code || "标识未知").join("、")}。`}
               </p>

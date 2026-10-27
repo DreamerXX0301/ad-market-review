@@ -23,9 +23,9 @@
 | -------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | 在同一观察日查看指数、市场广度、行业题材和涨停梯队 | 个股与板块分别配置日 / 周 / 月规则，组合历史事件与今日条件 | 把候选加入跟踪或自选，复查触发事件、加入基准和后续涨幅 |
 
-> **版本说明**：本页介绍[0.1.11 的已实现功能](CHANGELOG.md#v0111)，发行源码以 [v0.1.11 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.11)为准。下方 **v0.1.11** 安装命令须在核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.11)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)后使用；完整源码 SHA、镜像摘要和平台结果以本版 `release-image.json` 为准，不能沿用旧版回执。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
+> **版本说明**：本页介绍[0.1.12 的已实现功能](CHANGELOG.md#v0112)，发行源码以 [v0.1.12 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.12)为准。下方 **v0.1.12** 安装命令须在核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.12)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)后使用；完整源码 SHA、镜像摘要和平台结果以本版 `release-image.json` 为准，不能沿用旧版回执。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
 
-0.1.11增加本地留存的龙虎榜与买卖席位、题材查股上市板块筛选和个股策略复制，并修复盘后更新闪屏、重复操作、K线悬停抖动和预热提示。近30日榜搜索可查未排名股票及缺口原因；资金轮动旧入口归并至行业与题材。龙虎榜保留30个市场交易日，只有新手动初始化、增量或补齐任务取数；读取页面不联网，旧冻结任务保持原范围。迁移终点仍为026、54张业务表，无新增迁移。详见[本轮使用与核验](docs/盘面使用与数据核验.md)、[龙虎榜](docs/龙虎榜设计方案.md)和[版本记录](CHANGELOG.md#v0111)。
+0.1.12修正龙虎榜多日游资统计与标签列表不能等同的兼容问题，来源汇总数保留为未核验信息，列表数量按实际返回记录独立统计；累计区间单独保留，冲突净额保持未知。继续包含本地留存的龙虎榜与买卖席位、题材查股上市板块筛选和个股策略复制，并修复盘后更新闪屏、重复操作、K线悬停抖动和预热提示。近30日榜搜索可查未排名股票及缺口原因；资金轮动旧入口归并至行业与题材。龙虎榜保留30个市场交易日，只有新手动初始化、增量或补齐任务取数；读取页面不联网，旧冻结任务保持原范围。迁移终点仍为026、54张业务表，无新增迁移。详见[本轮使用与核验](docs/盘面使用与数据核验.md)、[龙虎榜](docs/龙虎榜设计方案.md)和[版本记录](CHANGELOG.md#v0112)。
 
 既有明确价格口径、单页K线、紧凑行情头部、高低涨幅和热点浏览筛选继续沿用。盘面补充按250个市场交易日滚动管理，主行情与板块K线保持五年活动窗口和必要的来源、递推种子；历史策略、运行和跟踪不自动改写。[0.1.6及更早的发行记录](CHANGELOG.md#v016)继续保留。
 
@@ -143,9 +143,9 @@ flowchart LR
 
 ## Docker 安装
 
-需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.11`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.12`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
 
-源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.11 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.11)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.11 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
+源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.12 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.12)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.12 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
 
 ```bash
 mkdir ad-market-review
@@ -153,18 +153,18 @@ cd ad-market-review
 
 test ! -e docker-compose.yml && test ! -L docker-compose.yml && \
   curl --fail --location --output docker-compose.yml \
-  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.11/docker-compose.yml'
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.11
+  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.12/docker-compose.yml'
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.12
 
 umask 077
 key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.11 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.12 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
-export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.11
+export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.12
 export SHIXU_HTTP_PORT=8788
 
 docker compose -p ad-market-review -f docker-compose.yml pull

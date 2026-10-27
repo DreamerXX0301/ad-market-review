@@ -32,6 +32,65 @@ const text = (value: unknown) =>
 export const dragonTigerNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
+/** A retained response can be usable while its upstream statistics stay unverified. */
+export function dragonTigerBoardAvailable(
+  payload: unknown,
+  board: DragonTigerBoard,
+) {
+  const data =
+    payload && typeof payload === "object" ? (payload as SourceRow) : {};
+  const source = data.boards?.[board];
+  if (data.availability?.available === false || !Array.isArray(source?.items))
+    return false;
+  return (
+    source.state === "ready" ||
+    (source.state === "partial" && data.availability?.available === true)
+  );
+}
+
+/** Counts here cover the returned source labels, including unmatched source codes. */
+export function dragonTigerHotStatistics(payload: unknown) {
+  const data =
+    payload && typeof payload === "object" ? (payload as SourceRow) : {};
+  const source = data.boards?.hot_money ?? {};
+  const count = (value: unknown) => {
+    const number = dragonTigerNumber(value);
+    return number != null && Number.isInteger(number) && number >= 0
+      ? number
+      : null;
+  };
+  const available = dragonTigerBoardAvailable(data, "hot_money");
+  const groups = records(source.items);
+  const rows = groups.flatMap((group) => records(group.rows));
+  const codes = new Set(
+    rows.flatMap((row) => (text(row.code) ? [text(row.code)!] : [])),
+  );
+  const ranges = new Set(
+    rows.flatMap((row) => {
+      const range = count(row.source_range_days ?? row.range_days);
+      return text(row.code) && range != null && range > 0
+        ? [JSON.stringify([text(row.code), range])]
+        : [];
+    }),
+  );
+  return {
+    sourceCount: count(source.source_count),
+    sourceStockCount: count(source.source_stock_count),
+    labelCount: available
+      ? (count(source.observed_label_count) ?? groups.length)
+      : null,
+    rowCount: available
+      ? (count(source.observed_label_row_count) ?? rows.length)
+      : null,
+    stockCount: available
+      ? (count(source.observed_stock_count) ?? codes.size)
+      : null,
+    stockRangeCount: available
+      ? (count(source.observed_stock_range_count) ?? ranges.size)
+      : null,
+  };
+}
+
 export function dragonTigerRows(
   payload: unknown,
   board: DragonTigerBoard,

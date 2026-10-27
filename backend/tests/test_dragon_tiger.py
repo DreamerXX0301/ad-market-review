@@ -102,13 +102,110 @@ def test_board_exact_date_count_fraction_identity_and_scope():
     value['data']['stock_items'][0]['thscode']='000678.SH'
     assert adapter.normalize_board(value,DAY,'all',MASTER)['items'][0]['instrument_id'] is None
     for modify in [lambda v:v['data'].update(trade_date='2026-10-26'),lambda v:v['data'].update(count=99),
-                   lambda v:v['data']['stock_items'][0].update(range_days=2),lambda v:v['data']['stock_items'][0].update(net_value=99.),
+                   lambda v:v['data']['stock_items'][0].update(range_days=0),
                    lambda v:v['data']['stock_items'][0].update(change=float('nan'))]:
         bad=board();modify(bad)
         with pytest.raises(ProviderError):adapter.normalize_board(bad,DAY,'all',MASTER)
 
 
 from app.adapters.providers import ProviderError
+
+
+@pytest.mark.parametrize('declared,source_stock_count',[(52,52),(10,3),(0,0),(0,52),(999,0)])
+def test_hot_metadata_is_not_expanded_label_or_distinct_stock_count(declared,source_stock_count):
+    value=board(kind='hot_money');value['data'].update(count=declared,stock_count=source_stock_count)
+    normalized=adapter.normalize_board(value,DAY,'hot_money',MASTER)
+    assert normalized['source_count']==declared and normalized['source_stock_count']==source_stock_count
+    assert normalized['observed_label_count']==2 and normalized['observed_label_row_count']==3
+    assert normalized['observed_stock_count']==2 and normalized['observed_stock_range_count']==2
+    assert normalized['statistics_state']=='unverified' and normalized['state']=='partial'
+    assert normalized['warnings']==[adapter.HOT_COUNT_WARNING]
+    assert normalized['items'][0]['rows'][0]['change_pct']==pytest.approx(2.3)
+    assert normalized['items'][0]['rows'][0]['buy_value']==100.
+
+
+@pytest.mark.parametrize('day,labels,length,distinct,declared,source_stock_count',[
+    ('2026-09-08',15,47,31,52,52),('2026-10-27',18,71,45,71,65)])
+def test_hot_multi_day_observed_shape_uses_returned_rows_only(day,labels,length,distinct,declared,source_stock_count):
+    # Synthetic rows reproduce two observed response shapes, not real stocks.
+    value=board(day,'hot_money');groups=[];position=0
+    for index in range(labels):
+        size=length//labels+int(index<length%labels);rows=[]
+        for _ in range(size):
+            code=f'{700000+position%distinct:06d}';position+=1
+            rows.append(dict(value['data']['hot_money_items'][0]['rows'][0],ticker=code,thscode=code+'.SH',name='fixture stock'))
+        groups.append({'name':'fixture label '+str(index),'rows':rows})
+    value['data'].update(count=declared,stock_count=source_stock_count,hot_money_items=groups)
+    result=adapter.normalize_board(value,day,'hot_money',MASTER)
+    assert result['date']==day and result['source_count']==declared
+    assert result['observed_label_count']==labels and result['observed_label_row_count']==length
+    assert result['observed_stock_count']==result['observed_stock_range_count']==distinct
+    assert sum(len(group['rows']) for group in result['items'])==length
+
+
+@pytest.mark.parametrize('damage',[
+    lambda data:data.update(count='52'),lambda data:data.update(count=True),lambda data:data.update(stock_count=-1),
+    lambda data:data.update(trade_date='2026-09-08'),lambda data:data.update(board_type='all'),
+    lambda data:data['hot_money_items'][0]['rows'][0].update(buy_value=-1.),
+    lambda data:data['hot_money_items'][0]['rows'][0].update(change=float('inf')),
+    lambda data:data['hot_money_items'][0]['rows'].append(dict(data['hot_money_items'][0]['rows'][0])),
+    lambda data:data['hot_money_items'].append(deepcopy(data['hot_money_items'][0])),
+])
+def test_hot_unverified_statistics_never_relax_date_type_money_or_duplicates(damage):
+    value=board(kind='hot_money');damage(value['data'])
+    with pytest.raises(ProviderError):adapter.normalize_board(value,DAY,'hot_money',MASTER)
+
+
+@pytest.mark.parametrize('source_period',[2,10,20,30])
+def test_legal_other_source_periods_are_preserved_but_not_mixed_with_single_or_three(source_period):
+    value=board();value['data']['stock_items'][0]['range_days']=source_period
+    result=adapter.normalize_board(value,DAY,'all',MASTER);row=result['items'][0]
+    assert row['range_days'] is None and row['source_range_days']==source_period and row['range_state']=='excluded'
+    assert result['excluded_range_row_count']==1 and result['state']=='partial'
+    assert result['observed_stock_range_count']==3 and result['source_count']==3
+    assert row['buy_value']==100. and row['sell_value']==50. and row['net_value']==50.
+
+
+@pytest.mark.parametrize('source_period',[None,0,-1,True,'10',1.5])
+def test_malformed_source_periods_still_rejected(source_period):
+    value=board();value['data']['stock_items'][0]['range_days']=source_period
+    with pytest.raises(ProviderError):adapter.normalize_board(value,DAY,'all',MASTER)
+
+
+@pytest.mark.parametrize('kind',['all','hot_money'])
+def test_same_stock_other_periods_do_not_collide_after_unknown_projection(kind):
+    value=board(kind=kind)
+    template=value['data']['hot_money_items'][0]['rows'][0] if kind=='hot_money' else value['data']['stock_items'][0]
+    rows=[dict(template,range_days=period) for period in (1,3,10,30)]
+    value['data'].update(count=4,stock_count=1)
+    if kind=='hot_money':value['data']['hot_money_items']=[{'name':'fixture label','rows':rows}]
+    else:value['data']['stock_items']=rows
+    result=adapter.normalize_board(value,DAY,kind,MASTER)
+    observed=result['items'][0]['rows'] if kind=='hot_money' else result['items']
+    assert [row['range_days'] for row in observed]==[1,3,None,None]
+    assert [row['source_range_days'] for row in observed]==[1,3,10,30]
+    assert result['observed_stock_count']==1 and result['observed_stock_range_count']==4
+    assert result['excluded_range_row_count']==2
+
+
+@pytest.mark.parametrize('reason',[
+    '严重异常期间日收盘价格涨幅偏离值累计达到100%的证券',
+    '连续十个交易日内日收盘价格涨幅偏离值累计达到100%的证券',
+    '连续30个交易日内日收盘价格涨幅偏离值累计达到200%的证券',
+])
+def test_cumulative_seat_reason_is_unknown_not_single_day(reason):
+    value=reports()
+    for report in value.values():
+        for row in report['rows']:
+            if row['SECUCODE']=='000678.SZ':row['EXPLANATION']=reason
+    stock=board();stock['data']['stock_items'][0]['range_days']=10
+    result=adapter.normalize_seats(value,DAY,MASTER,adapter.normalize_board(stock,DAY,'all',MASTER))
+    periods=result['instruments']['000678.SZ']['periods']
+    assert not periods['1'] and not periods['3'] and len(periods['unknown'])==1
+    record=periods['unknown'][0]
+    assert record['reason']==reason and record['range_days'] is None and record['reconciliation']['matched'] is None
+    assert record['summary']['buy_value']==100. and record['buy'][0]['buy']==60.
+    assert result['coverage']['unclassified_disclosures']==1 and result['coverage']['excluded_source_period_rows']==1
 
 
 def test_seat_rows_keep_anonymous_duplicates_and_unknown_opposing_amounts():
@@ -122,7 +219,36 @@ def test_seat_rows_keep_anonymous_duplicates_and_unknown_opposing_amounts():
     assert all(r['buy'] is None and r['net'] is None for r in sh['sell'])
     assert all(g['reconciliation']['matched'] for i in result['instruments'].values() for gs in i['periods'].values() for g in gs)
     bad=reports();bad['sell']['rows'][0]['NET']=999.
-    with pytest.raises(ProviderError):adapter.normalize_seats(bad,DAY,MASTER,adapter.normalize_board(board(),DAY,'all',MASTER))
+    conflicted=adapter.normalize_seats(bad,DAY,MASTER,adapter.normalize_board(board(),DAY,'all',MASTER))
+    seat=next(row for row in conflicted['instruments']['000678.SZ']['periods']['1'][0]['sell'] if row['raw_net']==999.)
+    assert seat['net'] is None and seat['amount_check']=='conflict' and not seat['amounts_complete']
+    assert conflicted['coverage']['conflicting_amount_rows']==1
+
+
+@pytest.mark.parametrize('kind',['all','org','hot_money'])
+def test_source_stock_net_conflict_preserves_raw_and_never_repairs_or_zeroes(kind):
+    value=board(kind=kind)
+    raw=value['data']['hot_money_items'][0]['rows'][0] if kind=='hot_money' else value['data']['stock_items'][0]
+    raw['net_value']=99.
+    result=adapter.normalize_board(value,DAY,kind,MASTER)
+    row=result['items'][0]['rows'][0] if kind=='hot_money' else result['items'][0]
+    assert row['buy_value']==100. and row['sell_value']==50. and row['raw_net_value']==99.
+    assert row['net_value'] is None and row['amount_check']=='conflict'
+    assert row['amount_check_evidence']['buy_minus_sell_minus_reported_net']=='-49.0'
+    assert result['amount_conflict_row_count']==1 and result['state']=='partial'
+    assert any('净额' in warning and '冲突' in warning for warning in result['warnings'])
+
+
+def test_public_summary_real_shape_conflict_retains_unknown_without_widening_tolerance():
+    value=reports();raw=value['disclosures']['rows'][0]
+    raw.update(BILLBOARD_BUY_AMT=11697284100,BILLBOARD_SELL_AMT=11697284200,BILLBOARD_NET_AMT=0)
+    result=adapter.normalize_seats(value,DAY,MASTER,adapter.normalize_board(board(),DAY,'all',MASTER))
+    record=result['instruments']['000678.SZ']['periods']['1'][0];summary=record['summary']
+    assert summary['buy_value']==11697284100 and summary['sell_value']==11697284200
+    assert summary['net_value'] is None and summary['raw_net_value']==0 and summary['amount_check']=='conflict'
+    assert summary['amount_check_evidence']=={'buy_minus_sell_minus_reported_net':'-100','unit':'CNY','tolerance':'0.011'}
+    assert result['coverage']['conflicting_amount_summaries']==1 and len(record['buy'])==5
+    assert any('不凑平' in warning for warning in result['warnings'])
 
 
 def test_single_three_and_multiple_disclosures_are_not_collapsed():
@@ -200,6 +326,83 @@ def test_failed_day_keeps_old_anchor_and_successful_components_for_manual_retry(
     repaired=service.collect_for_market(market,DAY,adapter=provider,public=public)
     assert repaired['quality']=='complete' and len(provider.calls)==count
     assert service.Store().index()['anchor_date']==DAY
+
+
+def test_hot_failure_keeps_successful_components_retryable_without_false_complete(local):
+    market,provider,public=local;original=provider.request
+    def broken(path,params):
+        result=original(path,params)
+        if params['board_type']=='hot_money':result['data']['trade_date']='2026-09-08'
+        return result
+    provider.request=broken
+    failed=service.collect_for_market(market,DAY,adapter=provider,public=public)
+    assert failed['quality']=='partial' and failed['accepted_days']==0 and not public.calls
+    assert not service.Store().index()['days'] and service.Store().index()['anchor_date'] is None
+    assert service.read_view(DAY)['coverage']['can_backfill']
+    assert (service._root()/'parts/fuyao-all'/f'{DAY}.json').is_file()
+    assert (service._root()/'parts/fuyao-org'/f'{DAY}.json').is_file()
+    previous=len(provider.calls);provider.request=original
+    repaired=service.collect_for_market(market,DAY,adapter=provider,public=public)
+    assert repaired['quality']=='complete' and repaired['cached_components']==2
+    assert len(provider.calls)-previous==1 and len(public.calls)==3
+    assert service.read_view(DAY)['warnings'][0]==adapter.HOT_COUNT_WARNING
+
+
+def test_complete_coverage_means_retained_responses_not_verified_source_statistics(local):
+    market,provider,public=local
+    service.collect_for_market(market,DAY,dates=market.days[-30:],adapter=provider,public=public)
+    view=service.read_view(DAY)
+    assert view['coverage']['complete'] and not view['coverage']['can_backfill']
+    assert '响应已留存' in view['coverage']['reason'] and '未知' in view['coverage']['reason']
+    assert view['boards']['hot_money']['statistics_state']=='unverified'
+    assert view['boards']['all']['state']=='ready' and service.read_seats('000678.SZ',DAY)['records']
+
+
+def test_old_accepted_cas_projects_unverified_statistics_without_rewriting_or_requests(local):
+    market,provider,public=local;store=service.Store()
+    boards={kind:adapter.normalize_board(board(kind=kind),DAY,kind,MASTER) for kind in ('all','org','hot_money')}
+    hot=boards['hot_money']
+    for key in list(hot):
+        if key.startswith('observed_') or key in ('statistics_state','source_count_basis','source_stock_count_basis'):del hot[key]
+    hot.update(state='ready',warnings=[])
+    record={'version':adapter.VERSION,'accepted':True,'date':DAY,'snapshot_id':'fixture-market','source_objects':[],
+            'boards':boards,'seats':adapter.normalize_seats(reports(),DAY,MASTER,boards['all']),'warnings':[]}
+    store.accept(record,market.days);pointer=store.index()['days'][DAY];path=service._root()/pointer['record_ref'];before=path.read_bytes()
+    view=service.read_view(DAY)
+    assert view['boards']['hot_money']['statistics_state']=='unverified' and view['boards']['hot_money']['observed_label_row_count']==3
+    assert view['boards']['hot_money']['state']=='partial' and adapter.HOT_COUNT_WARNING in view['warnings']
+    assert store.day(store.index(),DAY)['boards']['hot_money']['state']=='ready' and path.read_bytes()==before
+    reuse=service.collect_for_market(market,DAY,adapter=provider,public=public)
+    assert reuse['reused_days']==1 and not provider.calls and not public.calls
+    assert store.index()['days'][DAY]==pointer and path.read_bytes()==before
+
+
+def test_old_accepted_severe_reason_isolated_by_readonly_range_projection(local):
+    market,provider,public=local;store=service.Store()
+    service.collect_for_market(market,DAY,adapter=provider,public=public)
+    record=deepcopy(store.day(store.index(),DAY))
+    old=record['seats']['instruments']['000678.SZ']['periods']['1'][0]
+    old['reason']='严重异常期间日收盘价格涨幅偏离值累计达到100%的证券'
+    assert old['range_days']==1
+    store.accept(record,market.days);pointer=store.index()['days'][DAY];path=service._root()/pointer['record_ref'];before=path.read_bytes()
+    result=service.read_seats('000678.SZ',DAY,1)
+    assert not result['records'] and result['unclassified_record_count']==1 and result['state']=='partial'
+    assert '累计或其他区间' in result['availability']['reason'] and any('只读隔离' in v for v in result['warnings'])
+    assert path.read_bytes()==before and store.day(store.index(),DAY)['seats']['instruments']['000678.SZ']['periods']['1'][0]['range_days']==1
+
+
+def test_read_seats_explains_cumulative_disclosure_without_mixing_requested_range(local):
+    market,provider,public=local
+    def response(day,kind,**kwargs):
+        report=reports(day)[kind]
+        for row in report['rows']:
+            if row['SECUCODE']=='000678.SZ':row['EXPLANATION']='严重异常期间日收盘价格涨幅偏离值累计达到100%的证券'
+        return report
+    public.report=response
+    service.collect_for_market(market,DAY,adapter=provider,public=public)
+    result=service.read_seats('000678.SZ',DAY,1)
+    assert not result['records'] and result['state']=='partial' and result['unclassified_record_count']==1
+    assert '累计或其他区间' in result['availability']['reason']
 
 
 def test_30_market_session_boundary_publication_before_gc_and_failed_day_no_deletion(local):

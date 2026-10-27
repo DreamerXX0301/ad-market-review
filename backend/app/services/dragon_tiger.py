@@ -11,7 +11,7 @@ import re
 
 from fastapi import HTTPException
 from app.core import atomic_json,connect,digest,dumps,get_market,hash_file,now_ms,published_dir
-from app.adapters.dragon_tiger import VERSION,FUYAO_PATH,REPORTS,DragonTigerPublicClient,normalize_board,normalize_seats
+from app.adapters.dragon_tiger import VERSION,FUYAO_PATH,REPORTS,DragonTigerPublicClient,normalize_board,normalize_seats,project_hot_statistics,project_seat_ranges
 from app.adapters.providers import ProviderError
 from .supplement_access import supplement_access
 from .supplement_storage import _read_object
@@ -164,7 +164,7 @@ def _coverage(index,calendar,target,selected):
     expected=window(calendar,target);retained=sorted(index.get('days',{}));missing=[day for day in expected if day not in index.get('days',{})];complete=not missing
     return {'anchor_date':index.get('anchor_date'),'retained_dates':retained,'expected_dates':expected,'missing_dates':missing,'retained_trading_days':WINDOW,
             'complete':complete,'can_backfill':selected==target and not complete,'available':bool(retained),'state':'ready' if complete else 'partial' if retained else 'unknown',
-            'reason':'请切换至最新行情日，再补齐当前30个交易日窗口' if selected!=target else '最近30个已发布市场交易日的龙虎榜已完整留存' if complete else '窗口内尚有龙虎榜缺口，可手动补齐；旧日期不重设滚动锚',
+            'reason':'请切换至最新行情日，再补齐当前30个交易日窗口' if selected!=target else '最近30个已发布市场交易日的龙虎榜响应已留存；来源统计口径与未披露字段仍可能未知' if complete else '窗口内尚有龙虎榜响应缺口，可手动补齐；旧日期不重设滚动锚',
             'failures':list(index.get('failures',{}).values()),'latest_market_date':target}
 
 
@@ -177,10 +177,10 @@ def read_view(day=None):
     if record is None:
         reason=reason or index.get('failures',{}).get(day,{}).get('reason') or '该日龙虎榜尚未留存；请在最新行情日手动补齐最近30个交易日'
         return {'date':day,'snapshot_id':status['snapshot_id'],'state':'unknown','availability':{'available':False,'reason':reason},'boards':{},'labels':[],'coverage':coverage,'warnings':[reason]}
-    boards=record['boards'];labels=[]
+    boards={**record['boards'],'hot_money':project_hot_statistics(record['boards']['hot_money'])};labels=[]
     for group in boards['hot_money']['items']:
         labels.append({'name':group['name'],'stock_count_by_range':{str(period):len({r['instrument_id'] for r in group['rows'] if r.get('instrument_id') and r['range_days']==period}) for period in (1,3)}})
-    warnings=record.get('warnings',[])
+    warnings=list(dict.fromkeys([*record.get('warnings',[]),*boards['hot_money'].get('warnings',[])]))
     return {'date':day,'snapshot_id':status['snapshot_id'],'collection_snapshot_id':record.get('snapshot_id'),'state':'partial' if warnings else 'ready',
         'availability':{'available':True,'reason':None,'sources':['fuyao','eastmoney'],'date':day},'boards':boards,'labels':labels,'coverage':coverage,'warnings':warnings}
 
@@ -195,15 +195,17 @@ def read_seats(symbol,day=None,range_days=1):
         except (OSError,ValueError,TypeError,KeyError):record=None
     base={'date':day,'snapshot_id':status['snapshot_id'],'instrument_id':symbol,'name':identity.get('name'),'range_days':range_days}
     if record is None:return {**base,'state':'unknown','records':[],'availability':{'available':False,'reason':'该日龙虎榜尚未留存或对象校验失败'}}
-    item=record['seats']['instruments'].get(symbol);records=item['periods'][str(range_days)] if item else []
+    seats=project_seat_ranges(record['seats']);item=seats['instruments'].get(symbol);records=item['periods'][str(range_days)] if item else []
     known_in_stock=any(row['instrument_id']==symbol and row['range_days']==range_days for row in record['boards']['all']['items'])
-    reason=None if records else '该股票区间在已留存榜单中没有对应席位，保持未知' if known_in_stock else '该股票未出现在该日该区间的已留存榜单'
+    unclassified_count=len(item['periods'].get('unknown',[])) if item else 0
+    other_range=unclassified_count or any(row['instrument_id']==symbol and row['range_days'] is None for row in record['boards']['all']['items'])
+    reason=None if records else '该股票另有累计或其他区间披露，当前单日/三日未取得对应席位；原始记录已留存，未混入当前榜' if other_range else '该股票区间在已留存榜单中没有对应席位，保持未知' if known_in_stock else '该股票未出现在该日该区间的已留存榜单'
     for row in records:
         reconciliation=row.get('reconciliation',{})
-        if not reconciliation.get('matched'):
+        if not reconciliation.get('matched') and not reconciliation.get('reason'):
             reconciliation['reason']='席位披露汇总与扶摇股票区间汇总存在差异；分别保留来源原值'
-    return {**base,'state':'ready' if records or not known_in_stock else 'partial','records':records,
-            'availability':{'available':bool(records),'reason':reason,'source':'eastmoney'},'warnings':record['seats'].get('warnings',[])}
+    return {**base,'state':'ready' if records or not (known_in_stock or other_range) else 'partial','records':records,'unclassified_record_count':unclassified_count,
+            'availability':{'available':bool(records),'reason':reason,'source':'eastmoney'},'warnings':seats.get('warnings',[])}
 
 
 def create_job(payload):
@@ -265,7 +267,10 @@ def collect_for_market(market,target,*,dates=None,backfill=False,progress=None,g
                     tick(day,{'all':'全部榜','org':'机构榜','hot_money':'游资榜'}[board_type])
                     raw,pointer=component('fuyao-'+board_type,day,lambda b=board_type:adapter.request(FUYAO_PATH,{'date':day,'board_type':b}),lambda p,b=board_type:normalize_board(p,day,b,master))
                     boards[board_type]=normalize_board(raw,day,board_type,master);refs.append(pointer)
-                empty=all(board['source_count']==0 for board in boards.values());reports={}
+                # Hot-money metadata has an unverified upstream count basis.
+                # Only actual empty labels together with its zero metadata and
+                # the two verified empty stock boards may corroborate emptiness.
+                empty=all(board['source_count']==0 and board['source_stock_count']==0 for board in boards.values()) and not boards['hot_money']['items'];reports={}
                 for kind in ('buy','sell','disclosures'):
                     tick(day,'买卖席位 · '+kind)
                     def valid(report,k=kind):
@@ -275,7 +280,8 @@ def collect_for_market(market,target,*,dates=None,backfill=False,progress=None,g
                     reports[kind]=raw;refs.append(pointer)
                 seats=normalize_seats(reports,day,master,boards['all'])
                 record={'version':VERSION,'accepted':True,'date':day,'snapshot_id':status['snapshot_id'],'job_id':job_id,'captured_at_ms':now_ms(),
-                        'boards':boards,'seats':seats,'source_objects':refs,'warnings':list(seats.get('warnings',[]))}
+                        'boards':boards,'seats':seats,'source_objects':refs,
+                        'warnings':[warning for board in boards.values() for warning in board.get('warnings',[])]+list(seats.get('warnings',[]))}
                 check();store.accept(record,calendar,guard=guard);statistics['accepted_days']+=1;consecutive_failures=0
             except TaskError:raise
             except (ValueError,ProviderError) as error:
@@ -290,7 +296,7 @@ def collect_for_market(market,target,*,dates=None,backfill=False,progress=None,g
     finally:
         if owned:public.__exit__(None,None,None)
     statistics['quality']='partial' if statistics['failures'] else 'complete'
-    statistics['message']='龙虎榜 '+str(statistics['accepted_days'])+'/'+str(len(dates))+' 个交易日已验收；仅保留30个市场交易日，失败日期保持未知'
+    statistics['message']='龙虎榜 '+str(statistics['accepted_days'])+'/'+str(len(dates))+' 个交易日响应已留存；仅保留30个市场交易日，来源统计与未披露字段可保持未知'
     return statistics
 
 

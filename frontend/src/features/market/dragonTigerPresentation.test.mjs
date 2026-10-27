@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import ts from "typescript";
 const source = ts.transpileModule(await fs.readFile(new URL("./dragonTigerPresentation.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
 const helpers = await import("data:text/javascript;base64," + Buffer.from(source).toString("base64"));
-const { dragonTigerRows, filterDragonTigerRows, sortDragonTigerRows, dragonTigerSummary, dragonTigerLabels, uniqueDragonTigerStocks, dragonTigerDisclosure, dragonTigerJobId } = helpers;
+const { dragonTigerRows, filterDragonTigerRows, sortDragonTigerRows, dragonTigerSummary, dragonTigerLabels, uniqueDragonTigerStocks, dragonTigerDisclosure, dragonTigerJobId, dragonTigerBoardAvailable, dragonTigerHotStatistics } = helpers;
 // Synthetic data is limited to tests; no real collected response is embedded.
 const stock = (id, name, fields = {}) => ({ instrument_id: id, code: id.slice(0, 6), name, range_days: 1, change_pct: 2.35, net_value: 100, buy_value: 150, sell_value: 50, org_net_value: 10, source_concepts: [{ name: "合成概念" }], ...fields });
 const a = stock("600001.SH", "合成甲"), b = stock("600002.SH", "合成乙", { net_value: -50, buy_value: 20, sell_value: 70, org_net_value: null });
@@ -34,6 +34,39 @@ const conflict = hot.map(row => ({ ...row })); conflict[2].buy_value = 151;
 assert.equal(dragonTigerSummary(conflict, "hot_money", null).buy, null, "inconsistent repeated stock values are not silently selected or summed");
 assert.deepEqual(dragonTigerSummary([], "all", null, false), { count: null, net: null, netLabel: "龙虎榜净买额", buy: null, sell: null });
 assert.deepEqual(dragonTigerSummary([], "all", null, true), { count: 0, net: 0, netLabel: "龙虎榜净买额", buy: 0, sell: 0 }, "verified empty results differ from unavailable data");
+
+const retainedHot = {
+  availability: { available: true },
+  boards: { hot_money: { state: "partial", statistics_state: "unverified", items: [
+    { name: "合成标签A", rows: [a, { ...a, range_days: 3 }, { ...b, instrument_id: null }] },
+    { name: "合成标签B", rows: [a] },
+  ] } },
+};
+for (const sourceCount of [0, 1, 52, 999]) for (const sourceStockCount of [0, 1, 52, 999]) {
+  const legacy = structuredClone(retainedHot);
+  Object.assign(legacy.boards.hot_money, { source_count: sourceCount, source_stock_count: sourceStockCount });
+  assert.deepEqual(dragonTigerHotStatistics(legacy), { sourceCount, sourceStockCount, labelCount: 2, rowCount: 4, stockCount: 2, stockRangeCount: 3 }, "legacy observations come from returned labels and source codes, never upstream count metadata; unmatched stock identity still counts in source observations");
+}
+assert.equal(dragonTigerBoardAvailable(retainedHot, "hot_money"), true, "unverified aggregate statistics do not invalidate an already retained response");
+const filteredEmpty = filterDragonTigerRows(dragonTigerRows(retainedHot, "hot_money"), 1, "无匹配合成查询", null);
+assert.equal(filteredEmpty.length, 0);
+assert.deepEqual(dragonTigerSummary(filteredEmpty, "hot_money", null, dragonTigerBoardAvailable(retainedHot, "hot_money")), { count: 0, net: 0, netLabel: "股票龙虎榜净额（去重）", buy: 0, sell: 0 }, "a valid partial response filtered to zero has actual current-filter zeros");
+const retainedEmpty = { availability: { available: true }, boards: { hot_money: { state: "partial", items: [], source_count: 999, source_stock_count: 52, observed_label_count: 0, observed_label_row_count: 0, observed_stock_count: 0, observed_stock_range_count: 0 } } };
+assert.equal(dragonTigerBoardAvailable(retainedEmpty, "hot_money"), true);
+assert.deepEqual(dragonTigerHotStatistics(retainedEmpty), { sourceCount: 999, sourceStockCount: 52, labelCount: 0, rowCount: 0, stockCount: 0, stockRangeCount: 0 }, "explicit observed zero survives nonzero unverified upstream counts");
+for (const unavailable of [null, { availability: { available: false }, boards: { hot_money: { state: "ready", items: [] } } }, { availability: { available: true }, boards: { hot_money: { state: "unknown", items: [] } } }, { boards: { hot_money: { state: "partial", items: [] } } }, { availability: { available: true }, boards: { hot_money: { state: "partial" } } }]) {
+  const available = dragonTigerBoardAvailable(unavailable, "hot_money");
+  assert.equal(available, false, "unknown, missing or explicitly unavailable sources cannot become an empty retained response");
+  assert.equal(dragonTigerHotStatistics(unavailable).rowCount, null);
+  assert.equal(dragonTigerSummary([], "hot_money", null, available).count, null);
+}
+assert.equal(dragonTigerBoardAvailable(packet, "all"), true, "legacy ready all/org board remains usable");
+const otherRanges = structuredClone(retainedHot);
+otherRanges.boards.hot_money.items[0].rows.push({ ...a, range_days: null, source_range_days: 10 }, { ...a, range_days: null, source_range_days: 30 });
+assert.equal(dragonTigerHotStatistics(otherRanges).stockRangeCount, 5, "other retained source ranges remain distinct in legacy observations instead of both collapsing to null");
+const otherRangeRows = dragonTigerRows(otherRanges, "hot_money");
+assert.equal(filterDragonTigerRows(otherRangeRows, 1, "", null).length, 2, "nonstandard source ranges never enter single-day selection");
+assert.equal(filterDragonTigerRows(otherRangeRows, 3, "", null).length, 1, "nonstandard source ranges never enter three-day selection");
 
 const sortable = dragonTigerRows({ boards: { all: { items: [stock("600001.SH", "合成2", { net_value: 2, buy_value: 2 }), stock("600002.SH", "合成10", { net_value: -1, buy_value: 0 }), stock("600003.SH", null, { net_value: null, buy_value: NaN }), stock("600004.SH", "合成3", { net_value: 5, buy_value: 5 })] } } }, "all");
 for (const key of ["name", "net", "buy", "org", "sell", "change"]) for (const order of ["asc", "desc"]) {
