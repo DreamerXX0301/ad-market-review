@@ -705,7 +705,7 @@
   flex-wrap: wrap;
   gap: 7px;
 }
-.outlook-stock-title button {
+.outlook-stock-title > button {
   display: flex;
   gap: 4px;
   align-items: center;
@@ -716,14 +716,14 @@
   cursor: pointer;
   font-size: 13px;
 }
-.outlook-stock-title button:hover {
+.outlook-stock-title > button:hover {
   color: var(--blue);
 }
 .outlook-stock-title code {
   font-size: 10px;
   color: var(--muted);
 }
-.outlook-stock-title > span {
+.outlook-stock-title > .outlook-stock-change {
   font-size: 12px;
   margin-left: auto;
 }

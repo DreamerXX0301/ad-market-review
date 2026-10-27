@@ -58,7 +58,7 @@ const modules = {
 for (const [name, url] of Object.entries(modules))
   code = code.replaceAll('from "' + name + '"', "from " + JSON.stringify(url));
 code = code.replace(/^import ["'][^"']+\.css["'];?$/gm, "");
-const { default: Dashboard, ShortTermFeedback } = await import(encode(code));
+const { default: Dashboard, ShortTermFeedback, IndexEnvironment, EmotionSources } = await import(encode(code));
 const metric = (key, value, label = key) => ({ key, label, value, unit: "%" });
 const sentiment = {
   date: "2026-10-21",
@@ -123,10 +123,11 @@ const sentiment = {
 };
 const before = structuredClone(sentiment);
 const markup = renderToStaticMarkup(
-  createElement(Dashboard, {
-    sentiment,
-    observation: createElement("p", null, "旧版广度"),
-  }),
+  createElement("div", null,
+    createElement(IndexEnvironment, { dimension: sentiment.index_environment }),
+    createElement(Dashboard, { sentiment, observation: createElement("p", null, "旧版广度") }),
+    createElement(EmotionSources, { sentiment }),
+  ),
 );
 for (const text of [
   "指数环境",
@@ -157,8 +158,9 @@ assert.deepEqual(sentiment, before);
 const missing = renderToStaticMarkup(
   createElement(Dashboard, { sentiment: {} }),
 );
-assert.ok(missing.includes("尚无可核验的指数窗口"));
-assert.ok(missing.includes("历史首次可知"));
+assert.ok(renderToStaticMarkup(createElement(IndexEnvironment, { dimension: {} })).includes("尚无可核验的指数窗口"));
+assert.ok(renderToStaticMarkup(createElement(EmotionSources, { sentiment: {} })).includes("历史首次可知"));
+assert.ok(!missing.includes('id="emotion-indices"')&&!missing.includes('id="emotion-sources"'), "summary no longer nests the relocated index or bottom source anchors");
 assert.ok(!missing.includes("NaN"));
 const partialGroup = {
   id: "ordinary_10",

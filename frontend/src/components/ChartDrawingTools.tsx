@@ -6,6 +6,7 @@ import { useToast } from "./UI";
 import { num } from "../lib/format";
 import { refreshTaskActivity } from "./taskActivity";
 import { useWatchlistMembership } from "../features/watchlist/watchlistStore";
+import { LINE_ALERT_CHECK_FINISHED } from "../lib/workbenchEvents";
 import {
   annotationColors,
   annotationScope,
@@ -81,8 +82,12 @@ export function useChartAnnotations(
       if ((event as CustomEvent).detail === instrumentId) result.reload();
     };
     window.addEventListener("chart-annotations-changed", refresh);
-    return () =>
+    const afterCheck = () => result.reload();
+    window.addEventListener(LINE_ALERT_CHECK_FINISHED, afterCheck);
+    return () => {
       window.removeEventListener("chart-annotations-changed", refresh);
+      window.removeEventListener(LINE_ALERT_CHECK_FINISHED, afterCheck);
+    };
   }, [instrumentId, result.reload]);
   const lines = useMemo<ChartLine[]>(
     () =>
@@ -727,6 +732,11 @@ export function ChartAnnotationPanel({
                   savedLineSettings(line).alert_modes.length > 0
                     ? " · 触发入自选"
                     : ""}
+                  {line.first_alert_date
+                    ? ` · 首次提醒 ${line.first_alert_date}，此后继续60个交易日`
+                    : savedLineSettings(line).alert_modes.length > 0
+                      ? " · 未提醒，持续监控"
+                      : ""}
                 </span>
                 <small title={view.reason}>
                   {view.price != null

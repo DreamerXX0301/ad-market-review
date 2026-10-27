@@ -5,8 +5,9 @@ import {
   Thermometer,
   Crosshair,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { Row } from "../../lib/api";
-import { amount, num, percent, tone } from "../../lib/format";
+import { num, percent, tone } from "../../lib/format";
 import {
   outlookAction,
   outlookAxisEvidence,
@@ -22,6 +23,11 @@ import {
 } from "./marketOutlookPresentation";
 import "./MarketOutlook.css";
 import BoardTags from "./BoardTags";
+import CopyStockCode from "../../components/CopyStockCode";
+
+function turnoverAmount(value: number | null) {
+  return value == null ? "—" : `${num(value / 1e8)}亿元`;
+}
 
 function Lines({
   items,
@@ -61,8 +67,8 @@ function Candidate({
           <strong>{stock.name || stock.code || stock.instrument_id}</strong>
           <ArrowUpRight size={13} />
         </button>
-        <code>{stock.code || stock.instrument_id.slice(0, 6)}</code>
-        <span className={tone(stock.change_pct)}>
+        <CopyStockCode code={stock.code} instrumentId={stock.instrument_id} />
+        <span className={`outlook-stock-change ${tone(stock.change_pct)}`}>
           {percent(outlookNumber(stock.change_pct))}
         </span>
       </div>
@@ -88,6 +94,10 @@ function Change({ change }: { change: Row }) {
   const value = outlookNumber(change.value);
   const previous = outlookNumber(change.previous_value);
   const delta = outlookNumber(change.delta);
+  const amountDifference =
+    change.unit === "CNY" && value != null && previous != null
+      ? value - previous
+      : null;
   const deltaUnit =
     change.delta_unit || (change.unit === "%" ? "个百分点" : change.unit) || "";
   const explanation = outlookLines([
@@ -97,7 +107,7 @@ function Change({ change }: { change: Row }) {
   ])[0];
   const readingText = (reading: number) =>
     change.unit === "CNY"
-      ? amount(reading)
+      ? turnoverAmount(reading)
       : `${num(reading, 1)}${change.unit || ""}`;
   return (
     <article
@@ -105,13 +115,21 @@ function Change({ change }: { change: Row }) {
     >
       <span>{change.label || "当日变化"}</span>
       <strong>{value == null ? "待核验" : readingText(value)}</strong>
-      {delta != null && (
+      {amountDifference != null ? (
+        <small className={tone(amountDifference)}>
+          较前日 {amountDifference > 0 ? "+" : ""}
+          {turnoverAmount(amountDifference)}
+          {delta != null
+            ? `（${delta > 0 ? "+" : ""}${num(delta, 1)}${deltaUnit}）`
+            : ""}
+        </small>
+      ) : delta != null ? (
         <small className={tone(delta)}>
           较前日 {delta > 0 ? "+" : ""}
           {num(delta, 1)}
           {deltaUnit}
         </small>
-      )}
+      ) : null}
       <p>{explanation || "变化依据待核验"}</p>
       {typeof change.interpretation === "string" &&
         change.interpretation !== explanation && (
@@ -259,8 +277,10 @@ export default function MarketOutlook({
   date,
   snapshotId,
   onStock,
+  indexEnvironment,
 }: {
   data?: Row;
+  indexEnvironment?: ReactNode;
   date: string;
   snapshotId: unknown;
   onStock: (id: string) => void;
@@ -268,16 +288,19 @@ export default function MarketOutlook({
   const current = outlookForDate(data, date, snapshotId);
   if (!current)
     return (
-      <section
-        className="market-outlook outlook-pending"
-        aria-label="市场温度与下一交易日计划"
-      >
-        <Thermometer size={19} />
-        <div>
-          <strong>市场温度与下一交易日计划</strong>
-          <p>正在核对 {date || "所选日期"} 的盘面依据…</p>
-        </div>
-      </section>
+      <>
+        <section
+          className="market-outlook outlook-pending"
+          aria-label="市场温度与下一交易日计划"
+        >
+          <Thermometer size={19} />
+          <div>
+            <strong>市场温度与下一交易日计划</strong>
+            <p>正在核对 {date || "所选日期"} 的盘面依据…</p>
+          </div>
+        </section>
+        {indexEnvironment}
+      </>
     );
   const stage = current.stage || {};
   const temperature = current.temperature || {};
@@ -403,6 +426,8 @@ export default function MarketOutlook({
           </div>
         )}
       </section>
+
+      {indexEnvironment}
 
       <section className="outlook-insights" aria-label="今日变化与机会风险资料">
         <header className="outlook-section-head">
@@ -574,7 +599,7 @@ export default function MarketOutlook({
         </article>
         <article className="outlook-turnover">
           <span>成交活跃度 · 与盘面总览同口径</span>
-          <h3>{amount(outlookNumber(turnover.amount))}</h3>
+          <h3>{turnoverAmount(outlookNumber(turnover.amount))}</h3>
           <p className={tone(turnover.change_pct)}>
             较前日 {percent(outlookNumber(turnover.change_pct))}
           </p>
@@ -700,7 +725,7 @@ export default function MarketOutlook({
           </p>
         )}
         {!!stocks.length && (
-          <details className="outlook-independent-stocks" open={!topics.length}>
+          <details className="outlook-independent-stocks" open>
             <summary>
               个股观察名单 · {stocks.length}只 <ChevronDown size={14} />
             </summary>

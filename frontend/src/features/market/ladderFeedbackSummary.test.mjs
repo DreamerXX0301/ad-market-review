@@ -115,7 +115,6 @@ assert.deepEqual(feedbackRows, unchanged, "UI mapping must not overwrite raw pay
 const view = await fs.readFile(new URL("./LadderFeedback.tsx", import.meta.url), "utf8");
 assert.match(view, /defaultSort=\{\{ key: "feedback_height", order: "desc" \}\}/);
 assert.match(view, /rows=\{tableRows\}/);
-assert.match(view, /summarizeLadderFeedback\(rows, date, snapshotId\)/);
 console.log(
   "Ladder feedback: finite returns, shared confirmed dated heights, legacy compatibility, unknown-last sorting and unchanged source rows passed",
 );

@@ -53,6 +53,8 @@ API 根路径 `/api/v1`，snake_case；成功直接返回业务对象，列表�
 
 ## 条件编辑、运行与跟踪
 
+连板反馈从资金轮动移到市场情绪（明细与概览）和盘面总览（紧凑概览及跳转）。市场读数之后先看指数环境，再看执行计划与核心方向；目录与实际布局一致，来源与留存移出统计折叠区，单独放页底。完整统计和个股名单默认展开；题材候选与独立名单统一使用CopyStockCode，复制不打开个股。概览含核验通过的昨日首板；明细只展示昨日二板及以上，首板不进入明细导航。概览按全部已返回样本统计，不能受明细分页/排序影响，首板来源缺失不显示为零。
+
 ### 个股划线与自选提醒
 
 - 划线类型 `reference/support/resistance` 与名字分开；已有无类型标记按 `reference`、空提醒、关闭自动入自选显示，不根据“支撑”等旧名字猜用途。新线默认支撑、仅 `support_reclaim`，`support_breakdown` 为另勾的失守风险项；压力使用 `pressure_close_breakout/pressure_touch`，不能提交 `resistance_*` 模式键。
@@ -61,6 +63,7 @@ API 根路径 `/api/v1`，snake_case；成功直接返回业务对象，列表�
 - 自选页分“自选股票 / 划线提醒”，冷加载数量显示 `—` 而非假空0。`GET /watchlist` 每股的 `latest_line_alert` 为按当前观察日批量返回的完整最近事件或 null，不从只加载最近100条的全局提醒页推断每股无事件。提醒列表使用 `GET /watchlist/line-alerts?as_of=&limit=100`，记录日期不晚于观察日，显示加载范围与持久总数；筛选仅限已加载记录。
 - 事件证据优先用 `comparison_line_price` 作实际判定线价，单列原保存 `line_price`、原 `price_basis/anchor_date` 与 `comparison_evidence.comparison_anchor`，避免公司行动转换后把原保存价与原始日线混比。前收盘、开高低收、划线版本与记录时间使用保存证据，不拼最新报价。缺失证据不补0。
 - 自动入池显示 added/already_present/disabled/capacity_reached/not_eligible/missing_current_quote 的真实结果；容量满、缺当前报价或已移出时提供手动自选星标。补跑历史命中显示触发交易日与实际加入自选业务日，后者独立冻结加入价；不使用历史触发价替代。移出自选不等于停用独立划线提醒，停用需取消全部模式；同事件重复检查不自动加回。
+- 未实际触发线持续监控；首次实际成功或失守风险提醒后继续60个市场交易日，重复提醒不延长。图表管理列表显示首次提醒日期和固定规则；不增加延期或期限配置。下一次新盘后增量清理超期线及关联提醒，自选和策略跟踪保留。清理完成通知复用 LINE_ALERT_CHECK_FINISHED，重新读取当前线与自选。
 - 手动“检查划线提醒”以 request_key 幂等提交，未确认响应可同键重试，确认已接受后下一次显式检查用新键。复用全局 activity 的真实 operation/进度，隐藏路由关闭本页 GET，终态读取持久结果并刷新 membership；compact activity 中已过期的手动任务按精确 job_id 恢复状态。`latest_check.stale/is_current/stale_reason` 将旧规则/旧行情核验与当前结果分开，不能把旧完成当当前已核验。
 - 全局 activity 按已完成划线检查的 job_id/finished_at_ms 及最后已知快照去重通知共享自选 IDs；不依赖访问自选页，所以搜索打开个股并保存线后自动入自选，当前星标也更新。最近5条之外已过期的先前活动检查只触发一次有界 IDs 读取；隐藏浏览器停用既有 activity 轮询，不查全历史。并发中的旧 IDs 请求需先结束再读取完成后的版本，多个完成顺序合并，不能把旧响应当新自选状态。
 

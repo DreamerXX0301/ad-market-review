@@ -68,6 +68,9 @@ def list_annotations(identifier):
     with connect() as c:
         items = [line_alerts.annotation_view(row) for row in c.execute(
             'SELECT * FROM chart_annotation WHERE instrument_id=? ORDER BY created_at_ms,annotation_id', (symbol,))]
+        dates=line_alerts.retention.first_alerts(c,[item['annotation_id'] for item in items])
+        for item in items:
+            item.update(first_alert_date=dates.get(item['annotation_id']),post_alert_tracking_sessions=line_alerts.retention.SESSIONS)
     return {'instrument_id': symbol, 'items': items, 'total': len(items), 'limit': MAX_LINES}
 
 
@@ -93,7 +96,8 @@ def create_annotation(identifier, payload):
     stamp = now_ms()
     item = {'annotation_id': new_id('line'), 'instrument_id': symbol, 'price': price,
             'label': label, 'color': color, 'price_basis': basis, 'anchor_date': anchor,
-            'created_at_ms': stamp, 'updated_at_ms': stamp,'line_type':kind,'alert_modes':modes,'auto_watchlist':automatic,'revision':1,'origin':{}}
+            'created_at_ms': stamp, 'updated_at_ms': stamp,'line_type':kind,'alert_modes':modes,'auto_watchlist':automatic,'revision':1,'origin':{},
+            'first_alert_date':None,'post_alert_tracking_sessions':line_alerts.retention.SESSIONS}
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         count = c.execute('SELECT COUNT(*) FROM chart_annotation WHERE instrument_id=?', (symbol,)).fetchone()[0]
@@ -116,6 +120,7 @@ def update_annotation(identifier, annotation_id, payload):
         row = c.execute('SELECT * FROM chart_annotation WHERE instrument_id=? AND annotation_id=?', (symbol, annotation_id)).fetchone()
         if row is None: fail('水平线不存在或不属于此股票', 404)
         previous=line_alerts.annotation_view(row)
+        previous['first_alert_date']=line_alerts.retention.first_alerts(c,[annotation_id]).get(annotation_id)
         price,label,color=_style(payload,previous);kind,modes,automatic=_rule_config(payload,previous)
         _index_rules(index, previous['price_basis'], modes, automatic)
         material=(price,kind,modes,automatic)!=(previous['price'],previous['line_type'],previous['alert_modes'],previous['auto_watchlist'])

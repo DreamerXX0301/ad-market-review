@@ -183,7 +183,9 @@ export default function WatchlistLineAlerts({
         <BellRing size={19} />
         <div>
           <strong>划线触发记录</strong>
-          <p>包含搜索打开个股后设置的提醒；触发后移出自选，历史记录仍保留。</p>
+          <p>
+            未提醒的线持续监控；首次提醒后继续60个交易日，到期随盘后增量删除线和关联提醒。移出自选不会提前停用划线。
+          </p>
         </div>
         <span>{data?.total ?? "—"} 条已保存</span>
       </div>

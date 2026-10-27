@@ -247,6 +247,7 @@ const chartURL = await compile("../../components/ChartDrawingTools.tsx", {
   "../lib/format": format,
   "./chartAnnotations": annotationURL,
   "./taskActivity": encoded("export const refreshTaskActivity=()=>{};"),
+  "../lib/workbenchEvents": await compile("../../lib/workbenchEvents.ts"),
   "../features/watchlist/watchlistStore": encoded(
     "export const useWatchlistMembership=()=>({ids:new Set()});",
   ),
@@ -434,6 +435,19 @@ assert.match(projectedPanel, /value="12.5"/);
 assert.match(projectedPanel, /保存不更换原锚/);
 assert.equal(originalLine.price, 12.5);
 assert.equal(originalLine.anchor_date, "2026-10-21");
+assert.match(projectedPanel, /未提醒，持续监控/);
+const reminded = { ...originalLine, first_alert_date: "2026-10-22" };
+const remindedPanel = renderToStaticMarkup(
+  createElement(ChartAnnotationPanel, {
+    state: {
+      ...state,
+      lines: [reminded],
+      views: [{ line: reminded, price: 12.5 }],
+    },
+  }),
+);
+assert.match(remindedPanel, /首次提醒 2026-10-22，此后继续60个交易日/);
+assert.doesNotMatch(remindedPanel, /未提醒，持续监控/);
 const watchPresentation = await compile("./watchlistPresentation.ts");
 const stockNavigation = await compile("../../components/stockNavigation.ts");
 globalThis.__watchlistFixture = {

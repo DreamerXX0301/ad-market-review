@@ -339,7 +339,7 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 ## 显式个股划线提醒与自动自选
 
-水平线返回 `line_type:reference|support|resistance`、`alert_modes:string[]`、`auto_watchlist:boolean`、`revision`、`effective_business_date`。012旧线在015增量迁移后固定为 reference/[]/false，不根据名称猜规则，不扫描历史自动启用。新建或修改可提交上述显式字段；价格、类型、模式或自动收藏改变才递增revision并从当前业务日重新生效，纯名称/颜色不产生新触发版本。`alert_modes:[]`暂停规则，移出自选不暂停规则。
+水平线返回 `line_type:reference|support|resistance`、`alert_modes:string[]`、`auto_watchlist:boolean`、`revision`、`effective_business_date`，另含 `first_alert_date`（尚未提醒为null）、`post_alert_tracking_sessions=60`。012旧线在015增量迁移后固定为 reference/[]/false，不根据名称猜规则，不扫描历史自动启用。新建或修改可提交上述显式字段；价格、类型、模式或自动收藏改变才递增revision并从当前业务日重新生效，纯名称/颜色不产生新触发版本。`alert_modes:[]`暂停规则，移出自选不暂停规则。
 
 支撑模式为 `support_reclaim`（严格前市场日收盘>=线、当日最低<=线、收盘>=线）与可选风险 `support_breakdown`（前收>=线、收盘<线）；压力模式为 `pressure_close_breakout`（前收<=线、收盘>线）和 `pressure_touch`（low<=线<=high，含等号，不需前收）。穿越模式不回退最近有报价日，缺少严格前市场日报价保持unknown。失守为 `state:invalidated`，单独提示风险，不视为回踩收回，不自动新增自选；其余命中为triggered。事件唯一键为annotation/revision/rule/trade_date，持续站上不重复产生收盘突破。
 
@@ -351,9 +351,11 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 `GET /watchlist/line-alerts?as_of=&limit=100` 返回所有股票（包括尚未自选）的已存事件、total、business_date、当前rules_total、latest_check和unknowns；历史只含trade_date<=as_of，不从当前行情反推旧事件。latest_check含job_id、checked_at_ms、market_snapshot_id、checked_rules（本次rule/day结果数）、trigger_count、unknown_count，以及 `is_current/stale/stale_reason`，行情日、head或规则改变后不能将旧完成回执冒充当前完成。
 
-事件保存event_id、instrument_id/name/code、annotation_id/revision、line_type/rule、trade_date、原价与判定价、price_basis/anchor_date、raw OHLC、严格前收/转换前收、转换依据、state/title/reason、创建时间和冻结market_snapshot_id/input_snapshots；引用快照以manual retention pin保存，删除水平线不删除历史证据。`/watchlist`每行latest_line_alert通过按股票分组的批量SQLite摘要返回，不依赖提醒列表limit或逐股GET。
+事件保存event_id、instrument_id/name/code、annotation_id/revision、line_type/rule、trade_date、原价与判定价、price_basis/anchor_date、raw OHLC、严格前收/转换前收、转换依据、state/title/reason、创建时间和冻结market_snapshot_id/input_snapshots；引用快照以manual retention pin保存，手动删除水平线不即时删除历史证据；首次实际提醒后的到期清理规则见下。`/watchlist`每行latest_line_alert通过按股票分组的批量SQLite摘要返回，不依赖提醒列表limit或逐股GET。
 
 仅triggered且auto_watchlist启用时可自动收藏：事件与新自选同一短事务写入，已有自选保持原日期、来源与基准，新增source_kind=stock/source_name=划线提醒/source_id=annotation_id，无跟踪轮次时不伪造策略事件价。`added_to_watchlist/watchlist_add_state`分别记录added、already_present、disabled、not_eligible（失守）、capacity_reached、missing_current_quote；容量或当前收盘缺失仍保存可见事件和解释，不让整次核验失败。原事件重复核验不再次收藏，因此这些未入池事件可由用户手动收藏。unknowns只说明缺口，不伪造触发或价格。
+
+新线未实际提醒时持续监控。首次triggered或invalidated事件日为第0日，之后第1至60个市场交易日继续监控，超过60日停止新提醒。重复提醒或修改线不重置最早日期。新增盘后increment冻结 `line_alert_retention_version=first-alert-plus-60-sessions-v1`，仅其成功/部分成功/无变更后的授权source_check子任务可在短事务中删除到期线、全部版本的关联事件与核验记录，并解除这些事件自有pin；不删除自选或跟踪。旧冻结任务、初始化、GET及普通手动核验不清理。日历不能证明首次提醒日期时保留未知；已有孤立提醒同样到期清理。只保留任务清理计数和检查点，`latest_check.cleanup`可返回累计数与complete。026守卫默认拒绝事件删除，仅worker当前连接的本批精确ID可通过；UPDATE仍拒绝。每批至多100条线，校验head、规则clock与lease并原子记录续跑检查点；人工修改后不续旧任务。详见[保留与恢复边界](../docs/划线提醒到期清理.md)。
 
 ## 上市身份与人工确认
 

@@ -33,12 +33,15 @@ import "./MarketOverview.css";
 import { AmountActivityCell, AmountActivitySummary } from "./AmountActivity";
 import { SectorActivityCell, SectorActivityCoverage } from "./SectorActivity";
 import FundTrend from "./FundTrend";
-import LadderFeedback from "./LadderFeedback";
+import LadderFeedback, { LadderFeedbackOverview } from "./LadderFeedback";
 import BoardTags from "./BoardTags";
 import { flowDisplayState } from "./marketFlowAvailability";
 import MarketDataCoverage from "./MarketDataCoverage";
 import EmotionStage from "./EmotionStage";
-import EmotionDashboard from "./EmotionDashboard";
+import EmotionDashboard, {
+  EmotionSources,
+  IndexEnvironment,
+} from "./EmotionDashboard";
 import EmotionPageNavigation from "./EmotionPageNavigation";
 import MarketOutlook from "./MarketOutlook";
 import { outlookStocks } from "./marketOutlookPresentation";
@@ -350,6 +353,16 @@ export function MarketOverview({
           </div>
         )}
       </div>
+      {!indicesOnly && data && (
+        <LadderFeedbackOverview
+          compact
+          rows={data.feedback || []}
+          firstBoardRows={data.first_board_feedback || []}
+          firstBoardCoverage={data.first_board_feedback_coverage || {}}
+          date={date}
+          snapshotId={data.snapshot_id}
+        />
+      )}
       {!indicesOnly && (
         <>
           <div className="two-col">
@@ -848,6 +861,7 @@ export function MarketPage({
           date={date}
           outlook={!!data?.market_outlook}
           statistics={!!data?.sentiment}
+          feedback={!!data}
           history={data?.history?.length > 0}
         >
           {result.error && (
@@ -862,6 +876,11 @@ export function MarketPage({
             <>
               <MarketOutlook
                 data={data.market_outlook}
+                indexEnvironment={
+                  <IndexEnvironment
+                    dimension={data.sentiment.index_environment || {}}
+                  />
+                }
                 date={date}
                 snapshotId={data.snapshot_id}
                 onStock={(id) =>
@@ -887,8 +906,8 @@ export function MarketPage({
                   )
                 }
               />
-              <details className="market-emotion-details">
-                <summary>展开完整统计、指数明细与情绪证据留存</summary>
+              <details className="market-emotion-details" open>
+                <summary>完整统计与指数明细</summary>
                 <EmotionDashboard
                   sentiment={data.sentiment}
                   coverage={data.data_coverage}
@@ -922,6 +941,22 @@ export function MarketPage({
                 />
               </Panel>
             )
+          )}
+          {data && (
+            <section
+              id="emotion-ladder-feedback"
+              aria-label="连板样本反馈与概览"
+            >
+              <LadderFeedback
+                key={date}
+                rows={data.feedback || []}
+                firstBoardRows={data.first_board_feedback || []}
+                firstBoardCoverage={data.first_board_feedback_coverage || {}}
+                date={date}
+                snapshotId={data.snapshot_id}
+                onStock={onStock}
+              />
+            </section>
           )}
           {data?.history?.length > 0 && (
             <details className="market-emotion-details" id="emotion-history">
@@ -983,6 +1018,7 @@ export function MarketPage({
               </Panel>
             </details>
           )}
+          {data?.sentiment && <EmotionSources sentiment={data.sentiment} />}
         </EmotionPageNavigation>
       </div>
     );
@@ -1577,16 +1613,7 @@ export function MarketPage({
           />
         )}
       {route === "flow" && (
-        <>
-          {hasFundTrend ? <FundTrend data={data!} /> : null}
-          <LadderFeedback
-            snapshotId={data?.snapshot_id}
-            key={date}
-            rows={data?.feedback || []}
-            date={date}
-            onStock={onStock}
-          />
-        </>
+        <>{hasFundTrend ? <FundTrend data={data!} /> : null}</>
       )}
     </div>
   );

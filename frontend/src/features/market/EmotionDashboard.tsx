@@ -323,7 +323,7 @@ function ShortTermDimension({
   );
 }
 
-function IndexEnvironment({ dimension }: { dimension: Row }) {
+export function IndexEnvironment({ dimension }: { dimension: Row }) {
   const indices: Row[] = Array.isArray(dimension.indices)
     ? dimension.indices
     : [];
@@ -507,7 +507,6 @@ export default function EmotionDashboard({
         <p>{sentiment.atmosphere?.summary || "样本尚不足以描述当前盘面。"}</p>
         <time>{sentiment.date || "日期待核验"}</time>
       </section>
-      <IndexEnvironment dimension={sentiment.index_environment || {}} />
       <div className="sentiment-dimensions">
         <Dimension
           dimension={{ ...dimensions[0], label: "个股广度" }}
@@ -515,18 +514,6 @@ export default function EmotionDashboard({
         />
         <ShortTermDimension dimension={dimensions[1]} date={sentiment.date} />
       </div>
-      <section
-        id="emotion-sources"
-        className="sentiment-sources-section"
-        aria-label="来源与留存"
-      >
-        <SentimentProvenance provenance={sentiment.provenance || {}} />
-        <SentimentSnapshots
-          key={`${sentiment.date}:${sentiment.provenance?.input_fingerprint}`}
-          date={sentiment.date}
-          fingerprint={sentiment.provenance?.input_fingerprint}
-        />
-      </section>
       <details className="sentiment-evidence">
         <summary>查看统计口径、数据缺口与广度观察</summary>
         <div className="sentiment-evidence-body">
@@ -594,5 +581,22 @@ export default function EmotionDashboard({
         </div>
       </details>
     </div>
+  );
+}
+
+export function EmotionSources({ sentiment }: { sentiment: Row }) {
+  return (
+    <section
+      id="emotion-sources"
+      className="sentiment-sources-section"
+      aria-label="来源与留存"
+    >
+      <SentimentProvenance provenance={sentiment.provenance || {}} />
+      <SentimentSnapshots
+        key={`${sentiment.date}:${sentiment.provenance?.input_fingerprint}`}
+        date={sentiment.date}
+        fingerprint={sentiment.provenance?.input_fingerprint}
+      />
+    </section>
   );
 }

@@ -11,11 +11,14 @@ const compile = (source, tsx = false) => ts.transpileModule(source, {
 }).outputText;
 const helperUrl = encode(compile(await fs.readFile(new URL("./emotionNavigation.ts", import.meta.url), "utf8")));
 const { emotionSections, revealEmotionSection, activeEmotionSection, keepEmotionSelection } = await import(helperUrl);
-const sections = emotionSections({ outlook: true, statistics: true, history: true });
-assert.equal(sections.length, 8);
-assert.equal(new Set(sections.map((row) => row.id)).size, 8);
+const sections = emotionSections({ outlook: true, statistics: true, history: true, feedback: true });
+assert.equal(sections.length, 9);
+assert.deepEqual(sections.map(row=>row.label),["市场读数","指数环境","执行计划","开仓与量能","核心方向","短线接力","连板反馈","广度历史","来源与留存"],"menu follows the actual reading order with provenance last");
+assert.equal(new Set(sections.map((row) => row.id)).size, 9);
 assert.deepEqual(emotionSections({ outlook: false, statistics: false, history: true }), [{ id: "emotion-history", label: "广度历史" }]);
 assert.deepEqual(emotionSections({ outlook: false, statistics: false, history: false }), []);
+
+assert.deepEqual(emotionSections({ outlook: false, statistics: false, history: false, feedback: true }), [{ id: "emotion-ladder-feedback", label: "连板反馈" }], "feedback stays available when sentiment metrics are missing");
 
 const order = [];
 const boundary = { contains: (element) => element === target || element === inner || element === outer };
@@ -50,7 +53,7 @@ assert.equal(keepEmotionSelection(bottom, [{ offset: NaN, limit: 500 }, { offset
 let code = compile(await fs.readFile(new URL("./EmotionPageNavigation.tsx", import.meta.url), "utf8"), true);
 code = code.replaceAll('from "react"', "from " + JSON.stringify(import.meta.resolve("react"))).replaceAll('from "react/jsx-runtime"', "from " + JSON.stringify(import.meta.resolve("react/jsx-runtime"))).replaceAll('from "./emotionNavigation"', "from " + JSON.stringify(helperUrl)).replace(/^import ["'][^"']+\.css["'];?$/gm, "");
 const { default: Navigation } = await import(encode(code));
-const markup = renderToStaticMarkup(createElement(Navigation, { date: "2026-10-23", outlook: true, statistics: true, history: true }, createElement("section", { id: "emotion-reading" }, "当前读数")));
+const markup = renderToStaticMarkup(createElement(Navigation, { date: "2026-10-23", outlook: true, statistics: true, history: true, feedback: true }, createElement("section", { id: "emotion-reading" }, "当前读数")));
 assert.ok(markup.includes('aria-label="市场情绪页内目录"'));
 assert.ok(markup.includes('aria-current="location"'));
 assert.ok(markup.includes("2026-10-23"));

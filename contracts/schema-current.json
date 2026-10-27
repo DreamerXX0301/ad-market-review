@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 25,
+  "migration_version": 26,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -98,15 +98,19 @@
     {
       "name": "025_supplement_retention.sql",
       "sha256": "5bcb805d45f47345910720addd34a18a6a0eb0d107a84f025a6bd55912cfa4ed"
+    },
+    {
+      "name": "026_line_alert_retention.sql",
+      "sha256": "07787747080918ba137ffc59d5dc026748decd230f89011cc013f84f1d99ed71"
     }
   ],
   "counts": {
     "table": 54,
-    "index": 32,
+    "index": 33,
     "view": 1,
     "trigger": 106
   },
-  "schema_sha256": "8278e940b810956f3064860af347125724a6c890cc1ec48353cba609731aa009",
+  "schema_sha256": "f096d7fddf75a4b9aa731575d8fe7cddc35e3faecf9e1afac410e5fc76585d41",
   "tables": {
     "_schema_migration": {
       "columns": [

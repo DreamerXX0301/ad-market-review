@@ -13,18 +13,20 @@ export default function EmotionPageNavigation({
   date,
   outlook,
   statistics,
+  feedback = false,
   history,
   children,
 }: {
   date: string;
   outlook: boolean;
   statistics: boolean;
+  feedback?: boolean;
   history: boolean;
   children: ReactNode;
 }) {
   const sections = useMemo(
-    () => emotionSections({ outlook, statistics, history }),
-    [outlook, statistics, history],
+    () => emotionSections({ outlook, statistics, history, feedback }),
+    [outlook, statistics, history, feedback],
   );
   const root = useRef<HTMLDivElement>(null);
   const selected = useRef<{

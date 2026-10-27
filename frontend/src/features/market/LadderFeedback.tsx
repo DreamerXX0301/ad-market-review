@@ -40,28 +40,25 @@ export default function LadderFeedback({
   date,
   onStock,
   snapshotId,
+  firstBoardRows = [],
+  firstBoardCoverage = {},
 }: {
   rows: Row[];
   date: string;
   onStock: (id: string, navigation?: StockNavigation) => void;
   snapshotId: unknown;
+  firstBoardRows?: Row[];
+  firstBoardCoverage?: Row;
 }) {
-  const summary = summarizeLadderFeedback(rows, date, snapshotId);
   const tableRows = rows.map((row) => ({
     ...row,
     feedback_height: previousBoardHeight(row, date, snapshotId),
   }));
-  const distribution = [
-    { key: "up", label: "上涨", count: summary.up },
-    { key: "down", label: "下跌", count: summary.down },
-    { key: "flat", label: "平盘", count: summary.flat },
-    { key: "unknown", label: "未知", count: summary.unknown },
-  ];
   return (
     <div className="ladder-feedback-layout">
       <Panel
         title="连板样本反馈"
-        subtitle="上一交易日已留存连板样本 · 当日实际涨跌与当日可知归属"
+        subtitle="昨日二板及以上已留存样本 · 当日实际涨跌与当日可知归属"
         className="ladder-feedback-table"
       >
         <SortableMarketTable
@@ -144,8 +141,8 @@ export default function LadderFeedback({
               id,
               createStockNavigation(orderedRows, {
                 source: "market",
-                scopeKey: `flow:feedback:${date}`,
-                label: "资金轮动 · 连板反馈样本",
+                scopeKey: `emotion:feedback:${date}`,
+                label: "市场情绪 · 连板反馈样本",
                 asOf: date,
               }),
             )
@@ -158,105 +155,169 @@ export default function LadderFeedback({
           按反馈观察日的已留存归属展示，当前业务日包含人工补充；不拿当前题材回填历史，也不代表该股当日上涨原因。
         </div>
       </Panel>
-      <Panel
-        title="连板反馈概览"
-        subtitle={`${date} · 全部已返回反馈样本`}
-        className="ladder-feedback-overview"
-      >
-        <div className="ladder-feedback-summary">
-          <div className="ladder-feedback-total">
-            <span>已返回反馈样本</span>
-            <strong>
-              {integer(summary.total)} <small>只</small>
-            </strong>
-            <span>已知涨幅 {integer(summary.known)} 只</span>
-          </div>
-          {summary.total > 0 && (
-            <div
-              className="ladder-feedback-distribution"
-              role="img"
-              aria-label={distribution
-                .map((item) => `${item.label}${integer(item.count)}只`)
-                .join("，")}
-            >
-              {distribution.map((item) =>
-                item.count ? (
-                  <span
-                    key={item.key}
-                    className={item.key}
-                    style={{ flex: item.count }}
-                  />
-                ) : null,
-              )}
-            </div>
-          )}
-          <dl className="ladder-feedback-counts">
-            {distribution.map((item) => (
-              <div key={item.key}>
-                <dt>
-                  <i className={item.key} />
-                  {item.label}
-                </dt>
-                <dd>{integer(item.count)}</dd>
-              </div>
-            ))}
-          </dl>
-          <dl className="ladder-feedback-returns">
-            <div>
-              <dt>平均涨幅</dt>
-              <dd className={tone(summary.average)}>
-                {percent(summary.average)}
-              </dd>
-            </div>
-            <div>
-              <dt>涨幅中位数</dt>
-              <dd className={tone(summary.median)}>
-                {percent(summary.median)}
-              </dd>
-            </div>
-          </dl>
-          <p className="ladder-feedback-decline">
-            回落至少5% <strong>{integer(summary.sharpDecline)} 只</strong>
-          </p>
-          <div className="ladder-feedback-heights">
-            <h3>按前日连板高度</h3>
-            {summary.heights.length ? (
-              <ul>
-                {summary.heights.map((height) => (
-                  <li key={height.height ?? "unknown"}>
-                    <div>
-                      <strong>
-                        {height.height == null
-                          ? "高度未知"
-                          : `${integer(height.height)}板`}
-                      </strong>
-                      <span>
-                        {integer(height.total)} 只 · 已知{" "}
-                        {integer(height.known)}只
-                      </span>
-                      <small>
-                        涨 {integer(height.up)} / 跌 {integer(height.down)} / 平{" "}
-                        {integer(height.flat)} / 未知 {integer(height.unknown)}
-                      </small>
-                    </div>
-                    <div className="ladder-feedback-height-average">
-                      <span>平均涨幅</span>
-                      <strong className={tone(height.average)}>
-                        {percent(height.average)}
-                      </strong>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted">暂无可比较的已留存样本</p>
+      <LadderFeedbackOverview
+        rows={rows}
+        firstBoardRows={firstBoardRows}
+        firstBoardCoverage={firstBoardCoverage}
+        date={date}
+        snapshotId={snapshotId}
+      />
+    </div>
+  );
+}
+
+export function LadderFeedbackOverview({
+  rows,
+  firstBoardRows = [],
+  firstBoardCoverage = {},
+  date,
+  snapshotId,
+  compact = false,
+}: {
+  rows: Row[];
+  firstBoardRows?: Row[];
+  firstBoardCoverage?: Row;
+  date: string;
+  snapshotId: unknown;
+  compact?: boolean;
+}) {
+  const summary = summarizeLadderFeedback(
+    [...rows, ...firstBoardRows],
+    date,
+    snapshotId,
+  );
+  const distribution = [
+    { key: "up", label: "上涨", count: summary.up },
+    { key: "down", label: "下跌", count: summary.down },
+    { key: "flat", label: "平盘", count: summary.flat },
+    { key: "unknown", label: "未知", count: summary.unknown },
+  ];
+  return (
+    <Panel
+      title="连板反馈概览"
+      subtitle={`${date} · 概览含昨日首板，明细仅昨日二板及以上`}
+      className={`ladder-feedback-overview ${compact ? "ladder-feedback-overview--compact" : ""}`}
+    >
+      <div className="ladder-feedback-summary">
+        <div className="ladder-feedback-total">
+          <span>已返回反馈样本</span>
+          <strong>
+            {integer(summary.total)} <small>只</small>
+          </strong>
+          <span>已知涨幅 {integer(summary.known)} 只</span>
+        </div>
+        {summary.total > 0 && (
+          <div
+            className="ladder-feedback-distribution"
+            role="img"
+            aria-label={distribution
+              .map((item) => `${item.label}${integer(item.count)}只`)
+              .join("，")}
+          >
+            {distribution.map((item) =>
+              item.count ? (
+                <span
+                  key={item.key}
+                  className={item.key}
+                  style={{ flex: item.count }}
+                />
+              ) : null,
             )}
           </div>
+        )}
+        <dl className="ladder-feedback-counts">
+          {distribution.map((item) => (
+            <div key={item.key}>
+              <dt>
+                <i className={item.key} />
+                {item.label}
+              </dt>
+              <dd>{integer(item.count)}</dd>
+            </div>
+          ))}
+        </dl>
+        <dl className="ladder-feedback-returns">
+          <div>
+            <dt>平均涨幅</dt>
+            <dd className={tone(summary.average)}>
+              {percent(summary.average)}
+            </dd>
+          </div>
+          <div>
+            <dt>涨幅中位数</dt>
+            <dd className={tone(summary.median)}>{percent(summary.median)}</dd>
+          </div>
+        </dl>
+        <p className="ladder-feedback-decline">
+          回落至少5% <strong>{integer(summary.sharpDecline)} 只</strong>
+        </p>
+        <div className="ladder-feedback-heights">
+          <h3>按昨日高度（含首板）</h3>
+          {summary.heights.length ? (
+            <ul>
+              {summary.heights.map((height) => (
+                <li key={height.height ?? "unknown"}>
+                  <div>
+                    <strong>
+                      {height.height == null
+                        ? "高度未知"
+                        : height.height === 1
+                          ? "首板"
+                          : `${integer(height.height)}板`}
+                    </strong>
+                    <span>
+                      {integer(height.total)} 只 · 已知 {integer(height.known)}
+                      只
+                    </span>
+                    <small>
+                      涨 {integer(height.up)} / 跌 {integer(height.down)} / 平{" "}
+                      {integer(height.flat)} / 未知 {integer(height.unknown)}
+                    </small>
+                  </div>
+                  <div className="ladder-feedback-height-average">
+                    <span>平均涨幅</span>
+                    <strong className={tone(height.average)}>
+                      {percent(height.average)}
+                    </strong>
+                  </div>
+                </li>
+              ))}
+              {!summary.heights.some((height) => height.height === 1) && (
+                <li>
+                  <div>
+                    <strong>首板</strong>
+                    <span>
+                      {firstBoardCoverage.state === "ready"
+                        ? "已留存0只"
+                        : "待核验"}
+                    </span>
+                  </div>
+                </li>
+              )}
+            </ul>
+          ) : (
+            <p className="muted">
+              暂无可比较的已留存样本 · 首板
+              {firstBoardCoverage.state === "ready" ? "已留存0只" : "待核验"}
+            </p>
+          )}
         </div>
-        <div className="panel-footnote">
-          概览按本次返回的全部样本统计，不随表格排序或分页变化。平均与中位数仅计已知涨幅；不代表上一日全部连板股或全市场。
-        </div>
-      </Panel>
-    </div>
+      </div>
+      {firstBoardCoverage.state !== "ready" && (
+        <p className="panel-footnote">
+          首板来源或高度覆盖不足：已确认
+          {integer(firstBoardCoverage.confirmed_count)}只，另有
+          {integer(firstBoardCoverage.unverified_count)}只来源高度待核验。
+        </p>
+      )}
+      {compact && (
+        <a className="ladder-feedback-detail-link" href="#emotion">
+          查看市场情绪中的连板明细 →
+        </a>
+      )}
+      <div className="panel-footnote">
+        概览含已核验的昨日首板和连板样本，明细只列昨日二板及以上；不随明细排序或分页变化。平均与中位数仅计已知涨幅，缺口保持未知，不代表完整涨停队列或全市场。
+      </div>
+    </Panel>
   );
 }

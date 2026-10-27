@@ -13,6 +13,7 @@ from app.core import connect, get_market, now_ms, new_id, digest, dumps
 from app.services import task_service as tasks
 from app.services.workspace_common import current, e8, pin
 from app.analytics.adjustments import forward_prices, finite_number
+from app.services import line_alert_retention as retention
 
 OPERATION = 'line_alert_check'
 VERSION = 'explicit-local-line-alert-v1'
@@ -38,6 +39,8 @@ def annotation_view(row):
     result['alert_modes'] = json.loads(result.pop('alert_modes_json','[]'))
     result['auto_watchlist'] = bool(result.get('auto_watchlist',False))
     result['origin'] = json.loads(result.pop('origin_json','{}'))
+    result.setdefault('first_alert_date', None)
+    result['post_alert_tracking_sessions'] = retention.SESSIONS
     result.pop('origin_key', None)
     result.pop('instrument_kind', None)
     return result
@@ -62,7 +65,7 @@ def _head(connection):
     return {'primary_snapshot_id':row['snapshot_id'],'market_snapshot_id':json.loads(row['lineage_json']).get('market_snapshot_id') or row['snapshot_id']}
 
 
-def enqueue(connection, request_key=None, origin='manual', *, no_rules_ok=False):
+def enqueue(connection, request_key=None, origin='manual', *, no_rules_ok=False, expiry_tracking=True, retention_sync_job_id=None):
     """Caller owns BEGIN IMMEDIATE, so save and queue cannot fall between commits."""
     key = request_key or new_id('line-check-request')
     if not isinstance(key,str) or not 1<=len(key)<=200: raise HTTPException(422,'请求标识需要1至200字符')
@@ -71,7 +74,8 @@ def enqueue(connection, request_key=None, origin='manual', *, no_rules_ok=False)
         if json.loads(old['parameters_json']).get('operation')!=OPERATION: raise HTTPException(409,'请求标识已用于其他任务')
         return old['job_id']
     rules = active_rules(connection)
-    if not rules and no_rules_ok:return None
+    cleanup_needed = retention_sync_job_id is not None and connection.execute('SELECT 1 FROM line_alert_event LIMIT 1').fetchone() is not None
+    if not rules and no_rules_ok and not cleanup_needed:return None
     head = _head(connection); day = current(connection)
     for rule in rules:
         rule['start_dates'] = {}
@@ -82,7 +86,11 @@ def enqueue(connection, request_key=None, origin='manual', *, no_rules_ok=False)
     parameters = {'operation':OPERATION,'version':VERSION,'origin':origin,'business_date':day,**head,
                   'rules_signature':_signature(rules),'rules_clock':_rule_clock(connection),'rules':rules,
                   'input_snapshots':{record['module']:record['snapshot_id'] for record in connection.execute('SELECT module,snapshot_id FROM published_head ORDER BY module,scope_key')}}
-    logical = digest({'operation':OPERATION,'date':day,**head,'rules_signature':parameters['rules_signature']})
+    policy = {'line_alert_tracking_version':retention.VERSION} if expiry_tracking else {}
+    if retention_sync_job_id is not None:
+        policy.update(line_alert_retention_version=retention.VERSION,retention_sync_job_id=retention_sync_job_id)
+    parameters.update(policy)
+    logical = digest({'operation':OPERATION,'date':day,**head,'rules_signature':parameters['rules_signature'],**policy})
     existing = connection.execute("SELECT job_id FROM job WHERE logical_key=? AND status IN ('queued','running','paused')",(logical,)).fetchone()
     if existing:return existing[0]
     identifier = new_id('job')
@@ -187,11 +195,20 @@ def _auto_add(connection,line,day,raw_close,generation, *, eligible=True):
 def execute_check(job):
     parameters=json.loads(job['parameters_json']);target=parameters['business_date'];rules=parameters['rules']
     try:
-        with connect() as connection:_guard(connection,job,parameters)
+        with connect() as connection:
+            _guard(connection,job,retention.guard_parameters(connection,job,parameters))
+            checkpoint=retention.checkpoint(connection,job['job_id']) if parameters.get('line_alert_retention_version')==retention.VERSION else None
+            first_dates=retention.first_alerts(connection,[line['annotation_id'] for line in rules]) if parameters.get('line_alert_tracking_version')==retention.VERSION else {}
         market=get_market();status=market.status()
         if status.get('snapshot_id')!=parameters['market_snapshot_id']:raise StaleCheck('行情实例代际与冻结任务不符')
         calendar=market.calendar()
         if target not in calendar:raise ValueError('已发布业务日不在真实交易日历内')
+        expiry_positions=retention.positions(calendar,target) if parameters.get('line_alert_tracking_version')==retention.VERSION else None
+        cleanup_guard=lambda connection:_guard(connection,job,retention.guard_parameters(connection,job,parameters))
+        if checkpoint:
+            retention.cleanup(job,parameters,calendar,cleanup_guard)
+            tasks.finish(job['job_id'],'succeeded','划线到期清理已按原检查点完成',lease_owner=job['lease_owner'])
+            return
         reader=getattr(market,'history_for_instruments',None);action_reader=getattr(market,'actions_for_instruments',None)
         master={row['instrument_id']:row for row in market.instruments(limit=10000)}
         total=sum(sum(start<=day<=target for day in calendar) for line in rules for start in line['start_dates'].values())
@@ -214,6 +231,7 @@ def execute_check(job):
                         for mode in line['alert_modes']:
                             if day<line['start_dates'][mode]:continue
                             processed+=1
+                            if expiry_positions is not None and retention.expired(first_dates.get(line['annotation_id']),day,expiry_positions) is True:continue
                             with connect() as connection:
                                 _guard(connection,job,parameters)
                                 saved=connection.execute('SELECT 1 FROM line_alert_evaluation WHERE job_id=? AND annotation_id=? AND annotation_revision=? AND rule=? AND trade_date=?',(job['job_id'],line['annotation_id'],line['revision'],mode,day)).fetchone()
@@ -224,14 +242,18 @@ def execute_check(job):
                                 event_id=None;state='unknown' if hit is None else 'not_triggered'
                                 if hit:
                                     state='invalidated' if mode=='support_breakdown' else 'triggered'
+                                    if expiry_positions is not None:
+                                        first_dates[line['annotation_id']]=min(first_dates.get(line['annotation_id'],day),day)
+                                    past_deadline=expiry_positions is not None and retention.expired(first_dates.get(line['annotation_id']),target,expiry_positions) is True
                                     existing=connection.execute('SELECT event_id FROM line_alert_event WHERE annotation_id=? AND annotation_revision=? AND rule=? AND trade_date=?',(line['annotation_id'],line['revision'],mode,day)).fetchone()
                                     if existing:event_id=existing[0]
                                     else:
-                                        event_id=new_id('line-event');added,add_state=_auto_add(connection,line,target,current_closes.get(line['instrument_id']),parameters['market_snapshot_id'],eligible=state=='triggered')
+                                        event_id=new_id('line-event');added,add_state=_auto_add(connection,line,target,current_closes.get(line['instrument_id']),parameters['market_snapshot_id'],eligible=state=='triggered' and not past_deadline)
                                         identity=master.get(line['instrument_id'],{});title=TITLES[mode]
                                         explanation='收盘低于支撑，不视为回踩收回，不自动新增自选' if state=='invalidated' else '按已发布完整日K核验'
                                         if add_state=='capacity_reached':explanation+='；自选容量已满，未自动加入'
                                         if add_state=='missing_current_quote':explanation+='；当前业务日收盘缺失，未自动加入'
+                                        if past_deadline:explanation+='；首次提醒后已超过60个交易日，不再自动加入自选'
                                         event={**evidence,'event_id':event_id,'instrument_id':line['instrument_id'],'code':line['instrument_id'][:6],
                                             'name':identity.get('name') or line['instrument_id'],'annotation_id':line['annotation_id'],'annotation_revision':line['revision'],
                                         'line_type':line['line_type'],'annotation_label':line.get('label',''),'rule':mode,'trade_date':day,'state':state,'title':title,
@@ -246,6 +268,9 @@ def execute_check(job):
             connection.execute('BEGIN IMMEDIATE');_guard(connection,job,parameters)
             counts=dict(connection.execute("SELECT count(*) checked,sum(state IN ('triggered','invalidated')) triggered,sum(state='unknown') unknown FROM line_alert_evaluation WHERE job_id=?",(job['job_id'],)).fetchone())
             connection.execute('INSERT OR REPLACE INTO line_alert_check VALUES(?,?,?,?,?,?,?,?)',(job['job_id'],target,parameters['market_snapshot_id'],parameters['rules_signature'],counts['checked'],counts['triggered'] or 0,counts['unknown'] or 0,now_ms()))
+            if parameters.get('line_alert_retention_version')==retention.VERSION:retention.start(connection,job,parameters)
+        if parameters.get('line_alert_retention_version')==retention.VERSION:
+            retention.cleanup(job,parameters,calendar,cleanup_guard)
         tasks.finish(job['job_id'],'succeeded','划线提醒核验完成；命中及失守分别留存，缺数保持待核验',lease_owner=job['lease_owner'])
     except StaleCheck as error:
         tasks.finish(job['job_id'],'no_change',str(error),lease_owner=job['lease_owner'])
@@ -270,9 +295,11 @@ def list_alerts(as_of=None,limit=100):
             latest_view=dict(latest);stale_reason=None
             if frozen_row['status'] not in ('succeeded','partial','no_change'):stale_reason='本次核验任务尚未成功完成'
             elif latest['business_date']!=day:stale_reason='核验后业务行情日已更新'
-            elif frozen_parameters['rules_clock']!=_rule_clock(connection):stale_reason='划线规则已修改，等待本次核验'
+            elif retention.guard_parameters(connection,{'job_id':latest['job_id']},frozen_parameters)['rules_clock']!=_rule_clock(connection):stale_reason='划线规则已修改，等待本次核验'
             elif _head(connection)!={key:frozen_parameters[key] for key in ('primary_snapshot_id','market_snapshot_id')}:stale_reason='核验后行情代际已更新'
             latest_view.update(is_current=stale_reason is None,stale=stale_reason is not None,stale_reason=stale_reason)
+            cleanup=retention.checkpoint(connection,latest['job_id'])
+            if cleanup:latest_view['cleanup']=cleanup
             unknowns=[{'instrument_id':frozen.get(row['annotation_id']),'annotation_id':row['annotation_id'],'trade_date':row['trade_date'],'reason':row['reason']} for row in connection.execute("SELECT e.annotation_id,e.reason,e.trade_date,a.instrument_id FROM line_alert_evaluation e LEFT JOIN chart_annotation a USING(annotation_id) WHERE e.job_id=? AND e.state='unknown' ORDER BY e.annotation_id,e.rule",(latest['job_id'],))]
         return {'items':items,'total':total,'business_date':day,'rules_total':sum(len(rule['alert_modes']) for rule in active_rules(connection)),
                 'latest_check':latest_view,'unknowns':unknowns}
@@ -307,7 +334,9 @@ def after_sync(job):
         if current(connection)!=target:
             tasks.append_event(connection,job['job_id'],'line_alert_check_queued','原同步业务日已被新发布取代，不追溯创建旧核验',details={'skipped':True,'target_date':target})
             return None
-        identifier=enqueue(connection,'line-alert-after-sync:'+job['job_id'],'manual-sync',no_rules_ok=True)
+        cleanup=saved['kind']=='increment' and parameters.get('line_alert_retention_version')==retention.VERSION
+        identifier=enqueue(connection,'line-alert-after-sync:'+job['job_id'],'manual-sync',no_rules_ok=True,
+                           expiry_tracking=cleanup,retention_sync_job_id=job['job_id'] if cleanup else None)
         tasks.append_event(connection,job['job_id'],'line_alert_check_queued','已接续本地划线核验；没有启用规则时不创建任务',details={'next_task_id':identifier})
         return identifier
 

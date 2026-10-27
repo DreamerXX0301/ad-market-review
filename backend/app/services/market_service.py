@@ -67,6 +67,7 @@ def prior_ladder_feedback(market,reference,day,indexed):
             symbol=event.get('thscode');row=indexed.get(symbol)
             if not row:continue
             change=row.get('change_pct');height=event.get('board_num')
+            if isinstance(height,(int,float)) and not isinstance(height,bool) and height==1:continue
             found[symbol]={**row,'previous_board_count':height,'previous_board_date':previous,'feedback':'跌停反馈' if symbol in down else '明显回落' if number(change) and change<=-5 else '下跌分歧' if number(change) and change<0 else '上涨' if number(change) and change>0 else '待核验' if not number(change) else '平盘','sample_basis':'上一交易日已留存连板股'}
     if not found:return []
     status=market.status()
@@ -97,6 +98,8 @@ def prior_ladder_feedback(market,reference,day,indexed):
         known=(height.get('state')=='confirmed' and number(value) and not isinstance(value,bool)
                and value>=1 and value==int(value))
         return (not known,-value if known else 0,row.get('instrument_id',''))
+    decorated=[row for row in decorated if not (row.get('board_presentation',{}).get('previous_height',{}).get('state')=='confirmed'
+               and row['board_presentation']['previous_height'].get('value')==1)]
     return sorted(decorated,key=feedback_order)
 
 
@@ -195,7 +198,9 @@ def overview(day=None):
     ranking,_=cached_gainers(market,status,reference,day,rows,5)
     from app.services.market_top_amount import decorate_top_amount
     top_amount, top_amount_activity = decorate_top_amount(market,status,day,rows,reference)
-    return json_clean({"date": day, "snapshot_id": status["snapshot_id"], "data_coverage": data_coverage("overview", status, day, reference, market.calendar()), "indices": market.index_quotes(day) if hasattr(market,"index_quotes") else market.indices(day), "breadth": _breadth(market, rows, day), "total_amount": amount, "amount_scope": "沪深京已留存A股股票成交额", "shsz_total_amount": sum(r["amount"] for r in shsz if number(r.get("amount"))), "bj_amount": sum(r["amount"] for r in three if r["instrument_id"].endswith(".BJ") and number(r.get("amount"))), "sh_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SH") and number(r.get("amount"))), "sz_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SZ") and number(r.get("amount"))), **comparison, "top_amount": top_amount, "top_amount_activity": top_amount_activity, "top_gainers": top("change_pct"), "top_losers": top("change_pct", False), "top_30d": [r for r in ranking if r.get("rank") is not None][:5], "limit_up_count": len(events["limitup"]) if "limitup" in events else None, "limit_down_count": len(events["limitdown"]) if "limitdown" in events else None, "broken_count": len(events["breakpool"]) if "breakpool" in events else None, "divergence": divergence, "largest_seals": largest, "seal_funds_top5": largest, "seal_stability": {"items": [], "needed_capability":"盘中连续封单金额与委托队列快照，带时间戳、采样间隔和覆盖率；通常需要Level-2或许可的连续盘口采样", "unavailable_reason": "当前仅留存封单金额快照，尚无连续封单序列，不能据此计算封单稳定性"}, "warnings": ["行情与技术指标为真实未复权数据；公司行动附近指标重新预热", "上涨家数为已留存可比样本；停牌与缺数尚未全部解释"], "quality": status["quality"]})
+    from app.services.market_feedback import feedback_view
+    feedback = feedback_view(market,status,reference,day,indexed)
+    return json_clean({**feedback, "date": day, "snapshot_id": status["snapshot_id"], "data_coverage": data_coverage("overview", status, day, reference, market.calendar()), "indices": market.index_quotes(day) if hasattr(market,"index_quotes") else market.indices(day), "breadth": _breadth(market, rows, day), "total_amount": amount, "amount_scope": "沪深京已留存A股股票成交额", "shsz_total_amount": sum(r["amount"] for r in shsz if number(r.get("amount"))), "bj_amount": sum(r["amount"] for r in three if r["instrument_id"].endswith(".BJ") and number(r.get("amount"))), "sh_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SH") and number(r.get("amount"))), "sz_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SZ") and number(r.get("amount"))), **comparison, "top_amount": top_amount, "top_amount_activity": top_amount_activity, "top_gainers": top("change_pct"), "top_losers": top("change_pct", False), "top_30d": [r for r in ranking if r.get("rank") is not None][:5], "limit_up_count": len(events["limitup"]) if "limitup" in events else None, "limit_down_count": len(events["limitdown"]) if "limitdown" in events else None, "broken_count": len(events["breakpool"]) if "breakpool" in events else None, "divergence": divergence, "largest_seals": largest, "seal_funds_top5": largest, "seal_stability": {"items": [], "needed_capability":"盘中连续封单金额与委托队列快照，带时间戳、采样间隔和覆盖率；通常需要Level-2或许可的连续盘口采样", "unavailable_reason": "当前仅留存封单金额快照，尚无连续封单序列，不能据此计算封单稳定性"}, "warnings": ["行情与技术指标为真实未复权数据；公司行动附近指标重新预热", "上涨家数为已留存可比样本；停牌与缺数尚未全部解释"], "quality": status["quality"]})
 
 
 @supplement_reader
@@ -288,6 +293,8 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
                                                      universe_upper_bound=universe_upper_bound)
         base["summary"] = {"temperature":emotion['temperature'],"cycle":emotion['phase'],'breadth_state':emotion['breadth_state'],'comparable_count':emotion['comparable_count'],'comparable_coverage_pct':emotion['comparable_coverage']*100,'temperature_delta':emotion['temperature_delta'],"model":emotion['model'],"formula":emotion['formula']}
         base["items"] = [{"name": "上涨家数", "value": breadth["up"], "reference": "普涨参考3000"}, {"name": "下跌家数", "value": breadth["down"], "reference": "已留存可比样本"}, {"name": "收盘涨停", "value": len(events["limitup"]) if "limitup" in events else None}, {"name": "收盘跌停", "value": len(events["limitdown"]) if "limitdown" in events else None}, {"name": "炸板池", "value": len(events["breakpool"]) if "breakpool" in events else None}]
+        from app.services.market_feedback import feedback_view
+        base.update(feedback_view(market,status,reference,day,indexed))
         base["history"] = history
         base["warnings"] = [emotion['notice'],"情绪页使用同口径沪深序列；主行情页的沪深京范围不同。未知、缺报价和除权不可比样本不计作平盘。"]
         if breadth.get('universe_expected_known') is False:base['warnings'].append('部分证券上市日期未知，无法确认全市场应有家数与缺报价家数；可比率以已观察样本为分母，不把应有范围记为0。')
@@ -302,7 +309,6 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
             from app.services.market_topic_members import membership_link
             local, _ = resolve_reference('sectors', day, status, reference)
             base['items'] = [{**row,**membership_link(row,local.get('topics',[]))} for row in base['items']]
-        base["feedback"]=prior_ladder_feedback(market,reference,day,indexed)
         base["summary"] = {"basis": "供应商主力净流入分类" if verified.get('items') else "板块成交活跃度", "intraday_sequence_available": False, "net_flow_available": bool(verified.get('items')), "daily_history_available":bool(verified.get("history")), "history_observed_days":len({r["date"] for r in verified.get("history",[])}), "history_kind":"行业跨交易日资金趋势", "scope":"东财资金页当前行业目录；带明确日期的历史序列，不代表全市场所有概念或历史全部行业"}
         base['supplement_status']=supplement_status(reference,day,'fund_flow')
         base['history']=verified.get('history',[])

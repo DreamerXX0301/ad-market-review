@@ -210,6 +210,9 @@ def sync(payload:dict=Body(...)):
     from app.services.retention_policy import VERSION as retention_version
     from app.adapters.providers import SECTOR_TAIL_PACING_VERSION
     parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1','increment_session_version':LOCK_VERSION,'sector_tail_request_policy_version':SECTOR_TAIL_PACING_VERSION})}
+    if mode=='increment':
+        from app.services.line_alert_retention import VERSION as line_retention_version
+        parameters['line_alert_retention_version']=line_retention_version
     return task_service.create_task(mode,parameters,request_key=payload.get('request_key'))
 
 @router.post('/sync/sector-charts')

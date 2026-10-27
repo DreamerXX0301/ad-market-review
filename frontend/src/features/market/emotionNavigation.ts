@@ -29,22 +29,26 @@ export function keepEmotionSelection(
 export function emotionSections(options: {
   outlook: boolean;
   statistics: boolean;
+  feedback?: boolean;
   history: boolean;
 }): EmotionSection[] {
   return [
+    ...(options.outlook ? [{ id: "emotion-reading", label: "市场读数" }] : []),
+    ...(options.statistics
+      ? [{ id: "emotion-indices", label: "指数环境" }]
+      : []),
     ...(options.outlook
       ? [
-          { id: "emotion-reading", label: "市场读数" },
           { id: "emotion-plan", label: "执行计划" },
           { id: "emotion-entry", label: "开仓与量能" },
           { id: "emotion-watchlist", label: "核心方向" },
         ]
       : []),
     ...(options.statistics
-      ? [
-          { id: "emotion-indices", label: "指数环境" },
-          { id: "emotion-short-term", label: "短线接力" },
-        ]
+      ? [{ id: "emotion-short-term", label: "短线接力" }]
+      : []),
+    ...(options.feedback
+      ? [{ id: "emotion-ladder-feedback", label: "连板反馈" }]
       : []),
     ...(options.history ? [{ id: "emotion-history", label: "广度历史" }] : []),
     ...(options.statistics

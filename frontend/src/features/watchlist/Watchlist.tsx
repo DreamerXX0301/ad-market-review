@@ -242,7 +242,9 @@ export default function Watchlist({
               待核验 {lastCheck.unknown_count}
             </span>
           ) : (
-            <span>按已发布行情日线核验，结果持久保存</span>
+            <span>
+              未提醒持续监控；首次提醒后继续60个交易日，到期随盘后增量清理
+            </span>
           )}
           <small>
             {lastCheck

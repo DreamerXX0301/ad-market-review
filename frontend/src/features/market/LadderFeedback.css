@@ -7,6 +7,28 @@
 .ladder-feedback-layout > .panel {
   min-width: 0;
 }
+.ladder-feedback-detail-link {
+  display: inline-block;
+  margin: 0 18px 14px;
+  color: var(--blue);
+  font-size: 12px;
+}
+.ladder-feedback-overview--compact .ladder-feedback-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 24px;
+}
+.ladder-feedback-overview--compact .ladder-feedback-total {
+  grid-row: span 2;
+}
+.ladder-feedback-overview--compact .ladder-feedback-heights {
+  grid-column: 1 / -1;
+}
+.ladder-feedback-overview--compact .ladder-feedback-heights ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
 .ladder-feedback-topics details {
   margin-top: 5px;
 }

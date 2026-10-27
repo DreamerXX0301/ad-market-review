@@ -11,6 +11,8 @@ export type ChartLine = {
   alert_modes?: string[];
   auto_watchlist?: boolean;
   revision?: number;
+  first_alert_date?: string | null;
+  post_alert_tracking_sessions?: number;
   origin?: {
     algorithm?: string;
     period?: string;

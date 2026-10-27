@@ -26,6 +26,7 @@
 -- 023_market_storage_gc.sql sha256=74b135a3e6749189a1d344216c145f4f271c809745a56c45e19865346903cdf7
 -- 024_strategy_price_basis.sql sha256=5748f0fb752d29a285612882cc3ae4b25fc00d48952127766b2ea39e9afb5a62
 -- 025_supplement_retention.sql sha256=5bcb805d45f47345910720addd34a18a6a0eb0d107a84f025a6bd55912cfa4ed
+-- 026_line_alert_retention.sql sha256=07787747080918ba137ffc59d5dc026748decd230f89011cc013f84f1d99ed71
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -751,6 +752,8 @@ CREATE INDEX line_alert_by_stock ON line_alert_event(instrument_id,trade_date DE
 
 CREATE INDEX line_alert_evaluation_progress ON line_alert_evaluation(annotation_id,annotation_revision,rule,trade_date);
 
+CREATE INDEX line_alert_first_trigger ON line_alert_event(annotation_id,trade_date);
+
 CREATE INDEX listing_confirmation_by_stock ON listing_status_confirmation(instrument_id,created_at_ms DESC);
 
 CREATE INDEX listing_summary_lookup ON listing_status_summary(market_snapshot_id,business_date,manual_revision);
@@ -1018,7 +1021,9 @@ BEGIN
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM snapshot_coverage WHERE snapshot_id=NEW.snapshot_id) THEN RAISE(ABORT,'published snapshot requires coverage') END;
 END;
 
-CREATE TRIGGER retain_line_alert_delete BEFORE DELETE ON line_alert_event BEGIN SELECT RAISE(ABORT,'retain line alert evidence'); END;
+CREATE TRIGGER retain_line_alert_delete BEFORE DELETE ON line_alert_event
+WHEN line_alert_expiry_allowed(OLD.annotation_id,OLD.event_id)=0
+BEGIN SELECT RAISE(ABORT,'retain line alert evidence'); END;
 
 CREATE TRIGGER retain_line_alert_update BEFORE UPDATE ON line_alert_event BEGIN SELECT RAISE(ABORT,'retain line alert evidence'); END;
 
