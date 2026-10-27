@@ -509,6 +509,8 @@ export default function CoveragePanel({
                 ) : opened.module === "security_identity" ? (
                   <ListingIdentityPanel
                     disabled={disabled}
+                    verifying={busy}
+                    onVerify={checkLocal}
                     onSaved={() => {
                       details.reload();
                       onReload();

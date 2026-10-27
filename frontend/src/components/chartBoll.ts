@@ -91,6 +91,12 @@ export function chartBoll(data: Row | null | undefined): BollPoint[] {
       reason = "K线与图表价格口径不一致，BOLL重新预热";
     if (
       !reason &&
+      ((period === "W" && bar.week_closed === false) ||
+        (period === "M" && bar.month_closed === false))
+    )
+      reason = `本${period === "W" ? "周" : "月"}形成中；BOLL只使用已完成的20根可比周期，当前周期不接入轨道`;
+    if (
+      !reason &&
       basis === "forward_event_affine" &&
       bar.adjustment_anchor != null &&
       bar.adjustment_anchor !== data?.as_of

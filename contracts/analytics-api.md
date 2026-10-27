@@ -63,7 +63,7 @@
 | ladder | 来源连板梯队、首末封/开板等可用字段；反包、失败、20cm 分开，未核验核心不造龙头 |
 | gainers | 精确 T/T−30 市场交易日端点、年内涨停证据、技术观察和风险提示 |
 | abnormal | 指定日历史仅名单观察日精确匹配；显式latest读取最新已留存名单，两个范围不混用 |
-| flow | 已核验行业日净流入、跨日趋势；板块成交额与资金净流入分开 |
+| flow（旧接口兼容） | 历史留存资金只读；页面与趋势撤下，新手动任务不再采集 |
 
 `abnormal` 当前接入供应商的严重异动与重点监控 `state=current` 名单。首次主行情同步按每页30条读取完整分页，并分别保留名单 `abnormal_observed_date/abnormal_fetched_at`；后续题材库重发只复用已留存名单，必须保留原观察日与获取时间，缺失仍为未知，不得改成题材任务本次 `collected_at`。板块K线及盘面补充完成不代表另行取得监管历史全集或官方函件。
 
@@ -242,3 +242,31 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 ## 图表高低涨幅（0.1.6）
 
 个股、指数与板块图表的bars新增`chart_high_change_pct`、`chart_low_change_pct`、各自的`_reason`、`chart_extreme_change_period`和`chart_extreme_change_reference_date`。使用同图价格口径及同锚前收，值为百分数；价格继续独立保留。日为严格前一市场交易日，周/月为前一完整可比周期。形成中或缺口不可比返回null及原因；旧冻结图未带字段不由前端猜算。该生成由`include_chart_extremes`图表开关启用，原选股`intraday_high_change_pct`及默认指标输出保持原契约。
+
+### 涨幅榜未排名范围
+
+`GET /market/gainers` 新增 `rank_state=all|unranked`，默认all。unranked不能同时传top_n，其他页面不得使用该范围。summary含available_unranked_total、available_ranked_total、rank_scope_total、rank_state。未排名行保留真实报价与原因，rank及无法核验的收益为null；精确T/T−30端点和公司行动要求不变。前端默认前100名，输入搜索时不传top_n，以便在全市场发现含未排名的证券；清空搜索恢复所选榜单范围。
+
+手动水平线新增默认色：support=green、resistance=red、reference=violet。客户端仅提供这三种新选择；原blue/amber仍兼容保存、读取和渲染，编辑类型或主动选色才改变已有颜色。配色不改变原价、锚、提醒规则或事件证据。
+
+## 龙虎榜与买卖席位（0.1.11）
+
+以下路径沿用 `/api/v1` 前缀。盘面共享观察日，不创建实时轮询或自动日更任务。
+
+- `GET /market/dragon-tiger?date=YYYY-MM-DD` 只读取本地小索引和所选日不可变对象，一次返回该日三类榜；省略日期为当前最新已发布行情日。返回 `date/snapshot_id/collection_snapshot_id/state/availability/boards/labels/coverage/warnings`。`state=ready|partial|unknown`；`availability.available=false`、原因和空boards表示未留存或校验失败，不能当成真实零上榜。读接口不联网、不读取凭据、不打开worker正在写入的DuckDB。
+- `boards.all/org` 为 `{items,source_count,source_stock_count,state,source,date,source_concepts_basis}`；`boards.hot_money.items` 为 `[{name,rows:[stockRow]}]`。`source_count` 保留来源行数，不用规范代码缺失把不同标的合并。`labels` 提供名称及 `stock_count_by_range:{"1":n,"3":n}`，范围分开，不加总。
+- `stockRow` 含 `instrument_id/code/name/source_instrument_id/identity_state/identity_reason/range_days/change_pct/buy_value/sell_value/net_value/org_net_value/hot_money_net_value/label_net_value/label_name/source_concepts/source_concepts_basis/source_limit_reason/source/date`；机构买卖数在来源提供时另有 `org_buy_num/org_sell_num`。金额为人民币元，`change_pct` 已是百分数（如2.3表示2.3%），前端不得再乘100。来源概念资料不证明指定日历史成员，不能当作历史涨停主因；`source_limit_reason` 也不是龙虎榜披露原因。
+- `instrument_id=null` 表示未匹配本地已核验A股名录，保留原始六位代码、名称及原因，主A股统计不得计入；名称、前缀或空标准代码不用于猜测身份。单日 `range_days=1` 与三日累计 `range_days=3` 独立筛选，窗口累计不能混加重叠三日榜。全部记录按日一次返回，前端对当前筛选全量排序后分页；名称、涨幅、净额等可排序，unknown始终末尾；K线上下只导航基于筛选后去重的全部股票，跨分页，不限当前页。
+- 游资未选标签时，前端按股票和区间去重，以股票榜单净额展示，保留全部关联标签；选标签时才使用对应 `label_net_value`。再点同一标签取消。不得把多标签中的股票总买卖额重复累计，也不把机构与游资凑成互斥总额。
+
+`GET /market/dragon-tiger/{instrument_id}?date=YYYY-MM-DD&range_days=1|3` 返回 `date/snapshot_id/instrument_id/name/range_days/state/records/availability/warnings`。标的必须在已核验A股名录，不能利用通用instrument fallback将未知代码标成股票。`records` 保留同股同日多条披露原因，每项有 `record_id/reason/range_days/range_evidence/summary/buy/sell/source/reconciliation/coverage`。`summary` 的 `buy_value/sell_value/net_value` 是该条公开披露记录的来源汇总，与扶摇股票区间汇总分别留证；差异在 `reconciliation` 显示，不凑平。点击股票展开席位并定位；多原因按record_id选择。
+
+每方向行含 `name/source_id/buy/sell/net/raw_net/amounts_complete/rank/source`。买方按实际买入额、卖方按实际卖出额降序，不按名称或通用机构代码0合并；同一席位可同时出现在买卖榜，两表不能简单相加。全日来源分页总数验证完成后，按实际0至5行展示，不补造不足五行；某披露汇总的两方向均未取得任何席位时，该批次不能标为完整。对手方向未披露的金额为null，可核对净额也为null；即使来源NET字段将缺失方向按零计算，仍只将它留在 `raw_net`，不将其当作真实可核验净买额。所有已知买卖净额按元对账。
+
+`POST /market/dragon-tiger/jobs {date?,request_key?,backfill?:boolean}` 显式创建标准 `source_check/dragon_tiger` 任务，返回含 `task_id/job_id` 的标准任务视图，可通过 `/tasks/{task_id}` 查看、暂停、取消与手动恢复。默认backfill=true，冻结当前最新已发布行情日、本地实际市场日历最近30个交易日（含锚日）、行情代际和 `dragon_tiger_policy=dragon-tiger-v1`；backfill=false只取当日。历史观察日不允许另建更早锚或触发清理，须切到最新行情日。旧盘面补充成功回执不阻止此独立入口。相同request_key幂等，完整成功范围拒绝重复采集；窗口有缺口时允许手动补齐。页面读取和恢复服务本身不创建取数任务。
+
+`coverage` 含 `anchor_date/retained_dates/expected_dates/missing_dates/retained_trading_days/complete/can_backfill/available/state/reason/failures/latest_market_date`。expected_dates按最新已发布市场日历取30日，失败不使用更早日期凑满；anchor_date仅由成功验收发布的龙虎榜日推进。新首次初始化链冻结backfill=true，新盘后增量链和新手动盘面补充冻结backfill=false，marker经题材与板块K线链传至唯一worker补充阶段；旧冻结任务无marker则完全不增加龙虎榜范围。独立补齐任务固定具体日期数组，执行时行情代际变化须重新核验，不自动改计划。
+
+唯一worker按日期采集扶摇all/org/hot_money及东方财富买方、卖方、披露汇总全日报表，使用有界连接复用、分页和重试，不逐股打开时联网。实际来源日期不等于请求日不能验收；来源明确的空集与失败分开，缺口保持unknown。每个已验收日期保存独立不可变CAS及全部来源SHA，只用小索引定位该日。新日验收并发布后，才按最新成功龙虎榜日的30个市场交易日窗口清理；失败不先删旧资料、不推进清理锚。窗口内已取得组件可幂等复用，显式暂停/取消不自动继续。此清理仅限龙虎榜命名空间，不触及五年K线、其他补充250日或策略、自选、跟踪。
+
+标准backup/restore包含龙虎榜head→CAS索引→逐日对象→来源对象闭包，以及六类可恢复组件指针；文件SHA、内容身份、日期、版本与稳定引用均核验。备份不遍历全历史CAS目录，恢复除文件清单外再检查来源依赖闭包。主密钥仍外置，原始响应、真实验收截图和运行数据不进入公开Git提交。

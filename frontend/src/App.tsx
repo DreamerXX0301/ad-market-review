@@ -14,6 +14,7 @@ import {
 } from "./components/stockNavigation";
 import type { StockNavigation } from "./components/stockNavigation";
 import { MarketOverview, MarketPage } from "./features/market/Market";
+import DragonTiger from "./features/market/DragonTiger";
 import Topics from "./features/topics/Topics";
 import Strategies from "./features/strategies/Strategies";
 import Tracking from "./features/tracking/Tracking";
@@ -32,6 +33,7 @@ import IncrementProgressDialog from "./components/IncrementProgressDialog";
 const MemoMarketPage = memo(MarketPage);
 const currentRoute = () => {
   const hash = location.hash.slice(1).split("?")[0];
+  if (hash === "flow") return "sectors";
   return routeTitles[hash] ? hash : "market";
 };
 function readInitialTheme() {
@@ -64,6 +66,7 @@ const RetainedPage = memo(
 export default function App() {
   const bootstrap = useApi<Row>("/bootstrap");
   const [visible, setVisible] = useState(() => !document.hidden);
+  const [incrementBlocked, setIncrementBlocked] = useState(true);
   const [route, setRoute] = useState(currentRoute),
     [visited, setVisited] = useState<string[]>([currentRoute()]),
     [date, setDate] = useState(""),
@@ -86,6 +89,7 @@ export default function App() {
     [],
   );
   const navigate = useCallback((next: string, ctx?: Row) => {
+    if (next === "flow") next = "sectors";
     if (ctx) setContext((v) => ({ ...v, [next]: ctx }));
     location.hash = next;
     setRoute(next);
@@ -232,8 +236,11 @@ export default function App() {
       case "ladder":
       case "gainers":
       case "abnormal":
-      case "flow":
         return <MemoMarketPage route={key} date={date} onStock={openStock} />;
+      case "dragon-tiger":
+        return (
+          <DragonTiger date={date} onStock={openStock} onNavigate={navigate} />
+        );
       case "topics":
         return <Topics onStock={openStock} onNavigate={navigate} />;
       case "strategy":
@@ -287,127 +294,136 @@ export default function App() {
     }
   }
   return (
-    <ToastContext.Provider value={notify}>
-      <AppShell
-        route={route}
-        onNavigate={navigate}
-        date={date}
-        onDate={setDate}
-        dates={dates}
-        dataDate={bootstrap.data?.data_date}
-        dataLoading={bootstrap.loading}
-        dataError={!!bootstrap.error}
-        theme={theme}
-        onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-        onStock={openStock}
-        onSector={(row) => {
-          const next = globalSectorSelection(
-            row,
-            date,
-            bootstrap.data?.data_date,
-            marketRoutes.has(route),
-          );
-          if (!next) {
-            notify("请先完成行情初始化，核验板块观察日期。", "error");
-            return;
-          }
-          setStock(null);
-          setSector(next);
-        }}
-      >
-        <ReadonlyPreviewBanner
-          enabled={import.meta.env.VITE_READONLY_PREVIEW === "1"}
-        />
-        {bootstrap.error && (
-          <ErrorBox
-            message={"本机 API 暂未就绪：" + bootstrap.error}
-            retry={bootstrap.reload}
-          />
-        )}{" "}
-        {visited.map((key) => (
-          <div className="workspace-page" key={key} hidden={key !== route}>
-            <ApiPageActivity.Provider value={key === route && visible}>
-              <RetainedPage active={key === route}>{page(key)}</RetainedPage>
-            </ApiPageActivity.Provider>
-          </div>
-        ))}
-      </AppShell>
-      {sector &&
-        (sector.view === "chart" ? (
-          <SectorChartDialog
-            topic={{
-              topicCode: sector.topic.topic_code,
-              name: sector.topic.name,
-              proxy: false,
-              notice: `当前目录中的${sector.topic.kind === "industry" ? "行业" : "概念"}板块；历史成分需单独核验`,
-            }}
-            date={sector.date}
-            onClose={() => setSector(null)}
-            onMembers={() => setSector({ ...sector, view: "members" })}
-          />
-        ) : (
-          <SectorMembersDialog
-            topic={sector.topic}
-            date={sector.date}
-            businessDate={bootstrap.data?.data_date}
-            initialScope={
-              sector.date === bootstrap.data?.data_date
-                ? "latest"
-                : "historical"
+    <ApiPageActivity.Provider value={!incrementBlocked}>
+      <ToastContext.Provider value={notify}>
+        <AppShell
+          route={route}
+          onNavigate={navigate}
+          date={date}
+          onDate={setDate}
+          dates={dates}
+          dataDate={bootstrap.data?.data_date}
+          dataLoading={bootstrap.loading}
+          dataError={!!bootstrap.error}
+          theme={theme}
+          onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          onStock={openStock}
+          onSector={(row) => {
+            const next = globalSectorSelection(
+              row,
+              date,
+              bootstrap.data?.data_date,
+              marketRoutes.has(route),
+            );
+            if (!next) {
+              notify("请先完成行情初始化，核验板块观察日期。", "error");
+              return;
             }
-            onClose={() => setSector(null)}
-            onChart={(asOf) =>
-              setSector({ ...sector, date: asOf || sector.date, view: "chart" })
-            }
-            onStock={(id, quoteDate, navigation) =>
-              setStock(stockSelectionForOpen(id, navigation, quoteDate))
-            }
-          />
-        ))}
-      {stock && (
-        <StockDrawer
-          id={stock.id}
-          asOf={stock.asOf}
-          eventBaseline={stock.eventBaseline}
-          navigation={stock.navigation}
-          onStep={(direction) =>
-            setStock((current) =>
-              current ? stepStockSelection(current, direction) : null,
-            )
-          }
-          onClose={() => setStock(null)}
-          onResearch={(id) => {
             setStock(null);
-            navigate("research", { instrument_id: id });
+            setSector(next);
+          }}
+        >
+          <ReadonlyPreviewBanner
+            enabled={import.meta.env.VITE_READONLY_PREVIEW === "1"}
+          />
+          {bootstrap.error && (
+            <ErrorBox
+              message={"本机 API 暂未就绪：" + bootstrap.error}
+              retry={bootstrap.reload}
+            />
+          )}{" "}
+          {visited.map((key) => (
+            <div className="workspace-page" key={key} hidden={key !== route}>
+              <ApiPageActivity.Provider
+                value={key === route && visible && !incrementBlocked}
+              >
+                <RetainedPage active={key === route}>{page(key)}</RetainedPage>
+              </ApiPageActivity.Provider>
+            </div>
+          ))}
+        </AppShell>
+        {sector &&
+          (sector.view === "chart" ? (
+            <SectorChartDialog
+              topic={{
+                topicCode: sector.topic.topic_code,
+                name: sector.topic.name,
+                proxy: false,
+                notice: `当前目录中的${sector.topic.kind === "industry" ? "行业" : "概念"}板块；历史成分需单独核验`,
+              }}
+              date={sector.date}
+              onClose={() => setSector(null)}
+              onMembers={() => setSector({ ...sector, view: "members" })}
+            />
+          ) : (
+            <SectorMembersDialog
+              topic={sector.topic}
+              date={sector.date}
+              businessDate={bootstrap.data?.data_date}
+              initialScope={
+                sector.date === bootstrap.data?.data_date
+                  ? "latest"
+                  : "historical"
+              }
+              onClose={() => setSector(null)}
+              onChart={(asOf) =>
+                setSector({
+                  ...sector,
+                  date: asOf || sector.date,
+                  view: "chart",
+                })
+              }
+              onStock={(id, quoteDate, navigation) =>
+                setStock(stockSelectionForOpen(id, navigation, quoteDate))
+              }
+            />
+          ))}
+        {stock && (
+          <StockDrawer
+            id={stock.id}
+            asOf={stock.asOf}
+            eventBaseline={stock.eventBaseline}
+            navigation={stock.navigation}
+            onStep={(direction) =>
+              setStock((current) =>
+                current ? stepStockSelection(current, direction) : null,
+              )
+            }
+            onClose={() => setStock(null)}
+            onResearch={(id) => {
+              setStock(null);
+              navigate("research", { instrument_id: id });
+            }}
+          />
+        )}
+        <IncrementProgressDialog
+          onBlockedChange={setIncrementBlocked}
+          onFinished={() => {
+            window.dispatchEvent(new Event("workbench-increment-unlocked"));
+            bootstrap.reload();
+            window.dispatchEvent(
+              new CustomEvent("workbench-route", { detail: "data" }),
+            );
           }}
         />
-      )}
-      <IncrementProgressDialog
-        onFinished={() => {
-          window.dispatchEvent(new Event("workbench-increment-unlocked"));
-          bootstrap.reload();
-          window.dispatchEvent(
-            new CustomEvent("workbench-route", { detail: "data" }),
-          );
-        }}
-      />
-      {toast && (
-        <div className={"toast " + toast.kind}>
-          {toast.kind === "error" ? (
-            <XCircle size={18} />
-          ) : (
-            <CheckCircle2 size={18} />
-          )}
-          <span>{toast.message}</span>
-          <button
-            className="icon-btn"
-            aria-label="关闭消息"
-            onClick={() => setToast(null)}
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
-    </ToastContext.Provider>
+        {toast && (
+          <div className={"toast " + toast.kind}>
+            {toast.kind === "error" ? (
+              <XCircle size={18} />
+            ) : (
+              <CheckCircle2 size={18} />
+            )}
+            <span>{toast.message}</span>
+            <button
+              className="icon-btn"
+              aria-label="关闭消息"
+              onClick={() => setToast(null)}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+      </ToastContext.Provider>
+    </ApiPageActivity.Provider>
   );
 }

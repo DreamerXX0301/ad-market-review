@@ -311,7 +311,12 @@ def fetch_history_for_market(public, market, target, cache, *, progress=None, gu
     return result
 
 
-def refresh_for_market(market, target, *, year_history=False, recent_days=1, progress=None, guard=None, job_id=None, sector_history=False, fund_request_budget_version=None, retention_policy_version=None):
+def refresh_for_market(market, target, *, year_history=False, recent_days=1, progress=None, guard=None, job_id=None, sector_history=False, fund_request_budget_version=None, retention_policy_version=None, fund_flow_policy=None, dragon_tiger_policy=None, dragon_tiger_backfill=False):
+    from .supplement_policy import validate_fund_flow_policy
+    validate_fund_flow_policy(fund_flow_policy)
+    from .dragon_tiger import validate_policy as validate_dragon_tiger
+    validate_dragon_tiger(dragon_tiger_policy)
+    if not isinstance(dragon_tiger_backfill,bool):raise ValueError('龙虎榜补齐范围须为布尔')
     validate_fund_budget_version(fund_request_budget_version)
     from .retention_policy import validate as validate_retention
     validate_retention(retention_policy_version)
@@ -320,6 +325,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
     if target!=status['data_end']:raise ValueError('补充任务以当前冻结行情日为锚；历史盘面从该任务留存的逐日数据读取')
     root=_root(); cache=SupplementCache(root); old=load_supplement()
     doc={'version':VERSION,'snapshot_id':status['snapshot_id'],'target_date':target,'job_id':job_id,'created_at_ms':now_ms(),'public_pools':{},'annual_pools':{},'annual_down_pools':{},'fund_flows':{d:r for d,r in old.get('fund_flows',{}).items() if d in calendar and d<=target},'sector_index_history':{d:r for d,r in old.get('sector_index_history',{}).items() if d in calendar and d<=target},'failures':[]}
+    if fund_flow_policy is not None:doc['fund_flow_policy']=fund_flow_policy
     original_progress=progress
     if sector_history and progress:
         progress=lambda stage,pct,message=None,details=None: original_progress(stage,int(pct*.55),message,details)
@@ -428,35 +434,39 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
             except (ValueError,ProviderError) as error:
                 doc['failures'].append({'capability':'seal_details','date':day,'reason':str(error)})
             done+=1
-        tick('核验行业日级资金',target+' · 按实际日期读取行业历史序列')
-        fund_total=0
-        def fund_progress(processed,total,code):
-            nonlocal planned,fund_total
-            fund_total=total;planned=local_batches+pool_batches+len(recent)+total+1
-            if guard:guard()
-            if progress:progress('核验行业日级资金',75+int(processed/max(1,total)*23),code+' · '+str(processed)+'/'+str(total),{'actual_completed_batches':done+processed,'actual_total_batches':planned,'fund_processed':processed,'fund_catalog_count':total})
-        try:
-            record=fetch_history_for_market(public,market,target,cache,progress=fund_progress,guard=guard,request_budget_version=fund_request_budget_version)
-            if fund_request_budget_version is not None and progress:
-                statistics=record.get('coverage',{})
-                progress('行业资金请求阶段结束',98,'已留存实际请求计数；缺口保持未知',
-                    {'fund_request_budget_version':fund_request_budget_version,
-                     'fund_logical_requests':statistics.get('logical_request_count'),
-                     'fund_actual_transport_attempts':statistics.get('actual_transport_attempt_count'),
-                     'fund_request_elapsed_seconds':statistics.get('elapsed_seconds'),
-                     'fund_source_circuit_open':statistics.get('source_circuit_open'),
-                     'fund_stop_reason':statistics.get('stop_reason'),
-                     'fund_whole_phase_hard_deadline_guaranteed':False})
-            raw=record.pop('raw_pages')
-            record=cache.accept('eastmoney','fund-flow',target,digest({'day':target,'scope':'industry-history'}),record,raw)
-            if record.get('items'):
-                doc['fund_flows'][target]=record
-            for failure in record.get('failures',[]):doc['failures'].append({'capability':'fund_flow','date':target,**failure})
-            if not record.get('items'):doc['failures'].append({'capability':'fund_flow','date':target,'reason':'没有取得目标日可核验行业资金流，保留未知'})
-            fund_total=record.get('coverage',{}).get('selected_count',fund_total)
-        except (ValueError,ProviderError) as error:
-            doc['failures'].append({'capability':'fund_flow','date':target,'reason':str(error)})
-        planned=local_batches+pool_batches+len(recent)+fund_total+1;done=planned
+        if fund_flow_policy is None:
+            tick('核验行业日级资金',target+' · 按实际日期读取行业历史序列')
+            fund_total=0
+            def fund_progress(processed,total,code):
+                nonlocal planned,fund_total
+                fund_total=total;planned=local_batches+pool_batches+len(recent)+total+1
+                if guard:guard()
+                if progress:progress('核验行业日级资金',75+int(processed/max(1,total)*23),code+' · '+str(processed)+'/'+str(total),{'actual_completed_batches':done+processed,'actual_total_batches':planned,'fund_processed':processed,'fund_catalog_count':total})
+            try:
+                record=fetch_history_for_market(public,market,target,cache,progress=fund_progress,guard=guard,request_budget_version=fund_request_budget_version)
+                if fund_request_budget_version is not None and progress:
+                    statistics=record.get('coverage',{})
+                    progress('行业资金请求阶段结束',98,'已留存实际请求计数；缺口保持未知',
+                        {'fund_request_budget_version':fund_request_budget_version,
+                         'fund_logical_requests':statistics.get('logical_request_count'),
+                         'fund_actual_transport_attempts':statistics.get('actual_transport_attempt_count'),
+                         'fund_request_elapsed_seconds':statistics.get('elapsed_seconds'),
+                         'fund_source_circuit_open':statistics.get('source_circuit_open'),
+                         'fund_stop_reason':statistics.get('stop_reason'),
+                         'fund_whole_phase_hard_deadline_guaranteed':False})
+                raw=record.pop('raw_pages')
+                record=cache.accept('eastmoney','fund-flow',target,digest({'day':target,'scope':'industry-history'}),record,raw)
+                if record.get('items'):
+                    doc['fund_flows'][target]=record
+                for failure in record.get('failures',[]):doc['failures'].append({'capability':'fund_flow','date':target,**failure})
+                if not record.get('items'):doc['failures'].append({'capability':'fund_flow','date':target,'reason':'没有取得目标日可核验行业资金流，保留未知'})
+                fund_total=record.get('coverage',{}).get('selected_count',fund_total)
+            except (ValueError,ProviderError) as error:
+                doc['failures'].append({'capability':'fund_flow','date':target,'reason':str(error)})
+            planned=local_batches+pool_batches+len(recent)+fund_total+1;done=planned
+        else:
+            planned=done
+            tick('跳过已停用的行业资金采集', '历史资金证据保留；新任务不再请求该来源')
     finally:con.close()
     if sector_history:
         from app.services.sector_history import collect_sector_history
@@ -494,6 +504,13 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         except (ValueError,ProviderError) as error:
             doc['failures'].append({'capability':'sector_index_history','date':target,'reason':str(error)})
         progress=original_progress
+    if dragon_tiger_policy is not None:
+        from .dragon_tiger import collect_for_market
+        def dragon_progress(stage,percent,message,details):
+            if original_progress:original_progress(stage,95+int(percent*.03),message,details)
+        result=collect_for_market(market,target,backfill=dragon_tiger_backfill,progress=dragon_progress,guard=guard,job_id=job_id)
+        doc['dragon_tiger']={'version':dragon_tiger_policy,**result}
+        doc['failures'].extend({'capability':'dragon_tiger',**failure} for failure in result.get('failures',[]))
     return _publish_document(doc,calendar,target,cache,guard,tick,sector_history,retention_policy_version=retention_policy_version)
 
 
@@ -502,6 +519,10 @@ def execute_supplement(job_id, progress=None):
         row=connection.execute('SELECT parameters_json,target_date FROM job WHERE job_id=?',(job_id,)).fetchone()
     if not row:raise ValueError('补充任务不存在')
     params=json.loads(row['parameters_json'])
+    from .dragon_tiger import validate_policy as validate_dragon_tiger
+    dragon_tiger_policy=validate_dragon_tiger(params.get('dragon_tiger_policy'))
+    from .supplement_policy import validate_fund_flow_policy
+    fund_flow_policy=validate_fund_flow_policy(params.get('fund_flow_policy'))
     validate_fund_budget_version(params.get('fund_request_budget_version'))
     market=get_market();status=market.status();target=row['target_date'] or status.get('data_end')
     if params.get('market_snapshot_id') is not None and params['market_snapshot_id']!=status.get('snapshot_id'):
@@ -517,7 +538,7 @@ def execute_supplement(job_id, progress=None):
         return revalidate_for_market(market,target,progress=progress,guard=guard,job_id=job_id)
     from .retention_policy import validate as validate_retention
     retention_version=validate_retention(params.get('retention_policy_version'))
-    result=refresh_for_market(market,target,year_history=bool(params.get('year_history',True)),recent_days=params.get('recent_days',20),progress=progress,guard=guard,job_id=job_id,sector_history=params.get('sector_history') is True,fund_request_budget_version=params.get('fund_request_budget_version'),**({'retention_policy_version':retention_version} if retention_version is not None else {}))
+    result=refresh_for_market(market,target,year_history=bool(params.get('year_history',True)),recent_days=params.get('recent_days',20),progress=progress,guard=guard,job_id=job_id,sector_history=params.get('sector_history') is True,fund_request_budget_version=params.get('fund_request_budget_version'),**({'retention_policy_version':retention_version} if retention_version is not None else {}),**({'fund_flow_policy':fund_flow_policy} if fund_flow_policy is not None else {}),**({'dragon_tiger_policy':dragon_tiger_policy,'dragon_tiger_backfill':params.get('dragon_tiger_backfill',False)} if dragon_tiger_policy is not None else {}))
     if retention_version is not None:
         from .supplement_retention import collect_after_publication
         try:
@@ -533,4 +554,6 @@ def execute_supplement(job_id, progress=None):
             with connect() as connection:
                 append_event(connection,job_id,'supplement_retention',retention['reason'],'warning',retention)
         result={**result,'retention_result':retention}
+    from .sync_completion import remember_supplement
+    remember_supplement(job_id, result, params)
     return result

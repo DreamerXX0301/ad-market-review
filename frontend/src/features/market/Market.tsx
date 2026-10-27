@@ -32,7 +32,6 @@ import "./Market.css";
 import "./MarketOverview.css";
 import { AmountActivityCell, AmountActivitySummary } from "./AmountActivity";
 import { SectorActivityCell, SectorActivityCoverage } from "./SectorActivity";
-import FundTrend from "./FundTrend";
 import LadderFeedback, { LadderFeedbackOverview } from "./LadderFeedback";
 import BoardTags from "./BoardTags";
 import { flowDisplayState } from "./marketFlowAvailability";
@@ -645,6 +644,7 @@ export function MarketPage({
     [rank, setRank] = useState(route === "flow" ? "amount" : "change_pct"),
     [gainerPage, setGainerPage] = useState(1),
     [gainerTopN, setGainerTopN] = useState<number | null>(100),
+    [gainerUnranked, setGainerUnranked] = useState(false),
     [gainerQuery, setGainerQuery] = useState(""),
     [columnSort, setColumnSort] = useState<MarketSort | null>(null),
     [memberTopic, setMemberTopic] = useState<Row | null>(null),
@@ -669,7 +669,7 @@ export function MarketPage({
   };
   const result = useApi<Row>(
     date && route !== "abnormal"
-      ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerTopN == null ? "" : "&top_n=" + gainerTopN) : ""}`
+      ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
       : null,
   );
   const data = result.data;
@@ -1142,9 +1142,9 @@ export function MarketPage({
               className="search-input compact"
               placeholder={
                 isGainers
-                  ? gainerTopN == null
-                    ? "搜索全市场名称、题材、代码…"
-                    : `在近30日榜前${gainerTopN}名中搜索…`
+                  ? gainerUnranked
+                    ? "搜索未排名证券名称、题材、代码…"
+                    : "搜索全市场名称、题材、代码（含未排名）…"
                   : "筛选名称、题材、代码…"
               }
               value={filter}
@@ -1167,8 +1167,11 @@ export function MarketPage({
               {[100, 200, 300, 500, 1000].map((count) => (
                 <button
                   key={count}
-                  className={gainerTopN === count ? "active" : ""}
+                  className={
+                    !gainerUnranked && gainerTopN === count ? "active" : ""
+                  }
                   onClick={() => {
+                    setGainerUnranked(false);
                     setGainerTopN(count);
                     setGainerPage(1);
                   }}
@@ -1177,24 +1180,41 @@ export function MarketPage({
                 </button>
               ))}
               <button
-                className={gainerTopN == null ? "active" : ""}
+                className={
+                  !gainerUnranked && gainerTopN == null ? "active" : ""
+                }
                 onClick={() => {
+                  setGainerUnranked(false);
                   setGainerTopN(null);
                   setGainerPage(1);
                 }}
               >
                 全市场
               </button>
+              <button
+                className={gainerUnranked ? "active" : ""}
+                onClick={() => {
+                  setGainerUnranked(true);
+                  setGainerPage(1);
+                }}
+              >
+                未排名 {integer(summary.available_unranked_total)} 只
+              </button>
             </div>
             <small>
-              {gainerTopN == null
-                ? "全部匹配证券"
-                : `先按近30日涨幅选前${gainerTopN}名，再在该范围内搜索或重排`}{" "}
+              {gainerUnranked
+                ? "仅查看未排名证券；缺少端点报价或复权依据时保留未知"
+                : gainerQuery
+                  ? "搜索全市场（含未排名），不受前N名限制"
+                  : gainerTopN == null
+                    ? "全部匹配证券"
+                    : `先按近30日涨幅选前${gainerTopN}名，再在该范围内搜索或重排`}{" "}
               · 榜内实际 {integer(summary.rank_scope_total)} 只 · 全部可排名{" "}
               {integer(
                 summary.available_ranked_total ?? data?.summary?.covered_stocks,
               )}{" "}
-              只
+              只 · 未排名 {integer(summary.available_unranked_total)}{" "}
+              只，可切换查看原因
             </small>
           </div>
         )}
@@ -1444,12 +1464,15 @@ export function MarketPage({
                             }
                           >
                             <span className={tone(value)}>
-                              {percent(value)}
+                              {value == null ? "未排名" : percent(value)}
                             </span>
                             {row.return_30d_missing_sessions > 0 && (
                               <small className="market-gap-note">
                                 区间缺 {row.return_30d_missing_sessions} 日报价
-                                · 按端点计算
+                                ·{" "}
+                                {value == null
+                                  ? "端点不足，暂未计算"
+                                  : "按已核验端点计算"}
                               </small>
                             )}
                             {value == null && (
@@ -1543,7 +1566,9 @@ export function MarketPage({
                   : isSector && rank === "change_pct"
                     ? "当前分类没有已确认的上涨记录"
                     : isGainers && gainerQuery
-                      ? "全市场未找到匹配记录"
+                      ? gainerUnranked
+                        ? "未排名证券中未找到匹配记录"
+                        : "全市场未找到匹配记录"
                       : "所选日暂无记录"
             }
             emptyDescription={
@@ -1558,8 +1583,13 @@ export function MarketPage({
         {isGainers && data && (
           <div className="market-server-pagination">
             <span>
-              {gainerTopN == null ? "全市场" : `前${gainerTopN}名内`}匹配{" "}
-              {integer(data.total ?? filtered.length)} 只 · 第 {gainerPage} /{" "}
+              {gainerUnranked
+                ? "未排名证券"
+                : gainerTopN == null || gainerQuery
+                  ? "全市场"
+                  : `前${gainerTopN}名内`}
+              匹配 {integer(data.total ?? filtered.length)} 只 · 第 {gainerPage}{" "}
+              /{" "}
               {Math.max(
                 1,
                 Number(data.pages) || Math.ceil(Number(data.total || 0) / 25),
@@ -1612,9 +1642,6 @@ export function MarketPage({
             onClose={() => setSectorChart(null)}
           />
         )}
-      {route === "flow" && (
-        <>{hasFundTrend ? <FundTrend data={data!} /> : null}</>
-      )}
     </div>
   );
 }

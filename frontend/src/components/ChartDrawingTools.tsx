@@ -9,6 +9,8 @@ import { useWatchlistMembership } from "../features/watchlist/watchlistStore";
 import { LINE_ALERT_CHECK_FINISHED } from "../lib/workbenchEvents";
 import {
   annotationColors,
+  selectableAnnotationColors,
+  defaultLineColor,
   annotationScope,
   projectChartLine,
   lineTypeLabels,
@@ -46,7 +48,7 @@ export function useChartAnnotations(
     [show, setShow] = useState(true),
     [price, setPrice] = useState(""),
     [label, setLabel] = useState(""),
-    [color, setColor] = useState("blue"),
+    [color, setColor] = useState(defaultLineColor("support")),
     [settings, setSettings] = useState(() => defaults()),
     [editing, setEditing] = useState<ChartLine | null>(null),
     [busy, setBusy] = useState(false),
@@ -62,6 +64,7 @@ export function useChartAnnotations(
     setLabel("");
     setError("");
     setSettings(defaults());
+    setColor(defaultLineColor("support"));
     setPreview(null);
     setSelectedCandidates([]);
   }, [context]);
@@ -156,6 +159,7 @@ export function useChartAnnotations(
         setLabel("");
         setPrice("");
         setSettings(defaults());
+        setColor(defaultLineColor("support"));
         toast(message);
       }
     } catch (error) {
@@ -505,7 +509,10 @@ export function ChartAnnotationPanel({
                 name={typeGroup}
                 value={type}
                 checked={state.settings.line_type === type}
-                onChange={() => state.setSettings(state.defaults(type))}
+                onChange={() => {
+                  state.setSettings(state.defaults(type));
+                  state.setColor(defaultLineColor(type));
+                }}
               />
               <span>{lineTypeLabels[type]}</span>
             </label>
@@ -532,7 +539,10 @@ export function ChartAnnotationPanel({
           onClick={() => {
             state.setDrawing(!state.drawing);
             state.setEditing(null);
-            if (state.editing) state.setSettings(state.defaults());
+            if (state.editing) {
+              state.setSettings(state.defaults());
+              state.setColor(defaultLineColor("support"));
+            }
           }}
         >
           <Crosshair size={14} />
@@ -550,12 +560,16 @@ export function ChartAnnotationPanel({
           />
         </label>
         <div className="chart-line-colors" role="group" aria-label="水平线颜色">
-          {Object.entries(annotationColors).map(([value, color]) => (
+          {selectableAnnotationColors.map((value) => (
             <button
               key={value}
               type="button"
               className={state.color === value ? "selected" : ""}
-              style={{ "--line-color": color } as import("react").CSSProperties}
+              style={
+                {
+                  "--line-color": annotationColors[value],
+                } as import("react").CSSProperties
+              }
               aria-label={`选择${({ blue: "蓝", amber: "金", red: "红", green: "绿", violet: "紫" } as Record<string, string>)[value]}色线`}
               aria-pressed={state.color === value}
               disabled={state.busy}
@@ -582,6 +596,7 @@ export function ChartAnnotationPanel({
                 state.setPrice("");
                 state.setLabel("");
                 state.setSettings(state.defaults());
+                state.setColor(defaultLineColor("support"));
               }}
             >
               取消修改

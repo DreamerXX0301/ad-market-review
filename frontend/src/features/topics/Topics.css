@@ -50,6 +50,7 @@
 }
 .topic-selected-toolbar,
 .topic-member-toolbar,
+.topic-board-filter,
 .topic-union-controls {
   display: flex;
   align-items: center;
@@ -57,6 +58,16 @@
   gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-soft);
+}
+.topic-board-filter > span,
+.topic-board-filter > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.topic-board-filter > button.active {
+  border-color: var(--blue);
+  background: var(--blue-bg);
+  color: var(--blue);
 }
 .topic-selected-toolbar {
   justify-content: space-between;

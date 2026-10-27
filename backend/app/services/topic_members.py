@@ -9,12 +9,30 @@ from __future__ import annotations
 import math
 
 from app.core import connect, get_market
+from app.domain.universe import BOARDS, identity_flags
 from app.services import topics
 from app.services.market_supplement import load_supplement
 from app.services.topic_member_metrics import member_metrics
 from app.services.workspace_common import code_info, current, fail, obj, rows
 
 SORT_FIELDS = {'change_pct', 'amount', 'turnover_rate', 'close', 'name', 'code', 'return_ytd_pct', 'change_30d_pct', 'limit_up_ytd', 'last_limit_up_date', 'sessions_since_limit_up'}
+
+
+def _boards(values):
+    if values is None: return []
+    if not isinstance(values, list) or len(values) > len(BOARDS):
+        fail('上市板块最多选择4项')
+    if any(not isinstance(value, str) or value not in BOARDS for value in values) or len(set(values)) != len(values):
+        fail('上市板块仅支持main/chinext/star/beijing，且不能重复')
+    return [value for value in BOARDS if value in values]
+
+
+def _board(identity, day):
+    # Classify only a verified directory identity through the shared universe
+    # rule. A member code alone cannot establish that it is a known stock.
+    known = identity and identity.get('kind', identity.get('asset_type', 'stock')) in ('stock', 'equity', 'a_share', 'A')
+    value = identity_flags(identity, day)['board'] if known else 'unknown'
+    return value if value in BOARDS else 'unknown'
 
 
 def _ids(values, label, maximum):
@@ -85,8 +103,9 @@ def _guard(connection, day, head):
         fail('业务日或行情发布已变化，请重新加载后操作。', 409)
 
 
-def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_order='desc'):
+def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_order='desc', *, boards=None):
     selected = _ids(topic_ids, 'topic_ids', 20)
+    selected_boards = _boards(boards)
     if match not in ('any', 'all'): fail('match仅支持any/all')
     if sort_by not in SORT_FIELDS or sort_order not in ('asc', 'desc'): fail('成员排序字段或方向不支持')
     if not isinstance(query, str) or len(query) > 200: fail('成员搜索最多200字')
@@ -98,6 +117,9 @@ def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_or
         chosen = _select(state, selected)
     observed = [item['members'] for item in chosen]
     candidates = set.union(*observed) if match == 'any' else set.intersection(*observed)
+    board_by_id = {ident: _board(master.get(ident), day) for ident in candidates}
+    if selected_boards:
+        candidates = {ident for ident in candidates if board_by_id[ident] in selected_boards}
     # Exactly one panel read, with an exact observed-day check per security.
     panel = market.panel(day)
     if isinstance(panel, dict): panel = panel.get('items', panel.get('stocks', []))
@@ -121,6 +143,10 @@ def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_or
             rate = _number(turnover.get(ident, {}).get('turnover_rate'))
         item = {**code_info(ident, master), 'close': _number(quote.get('close')) if quote else None, 'change_pct': _number(quote.get('change_pct', quote.get('pct_change'))) if quote else None, 'amount': _number(quote.get('amount')) if quote else None, 'turnover_rate': rate if rate is not None and rate >= 0 else None, 'quote_date': day if quote else None, 'quote_available': quote is not None, 'quote_reason': None if quote else '业务日缺少报价，不使用上一交易日报价替代', 'matched_topics': matches, 'topics': list(dict.fromkeys(tag['name'] for tag in tags if tag['kind'] != 'industry')), 'industries': list(dict.fromkeys(tag['name'] for tag in tags if tag['kind'] == 'industry')), 'price_basis': 'none', **(_membership(chosen[0], ident) if len(chosen) == 1 else {'origin': None, 'manual_override': None, 'provider_member': None})}
         item.update(historical.get(ident, {}))
+        board = board_by_id[ident]
+        item.update(board=board, board_label=BOARDS.get(board, '未知'),
+                    board_scope='当前已核验名录证券代码与交易所分类；不代表历史上市板块身份',
+                    board_reason=None if board != 'unknown' else '没有可确认的股票名录身份，不默认归为主板')
         if not search or search in ' '.join([item['code'], item['name'], ident, *item['topics'], *item['industries']]).casefold(): output.append(item)
     present = [item for item in output if item.get(sort_by) is not None]
     missing = [item for item in output if item.get(sort_by) is None]
@@ -133,7 +159,7 @@ def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_or
     if absent: warnings.append(f'{absent}只股票缺少业务日报价，行情字段保留未知并排序在末尾。')
     with connect() as connection: _guard(connection, day, head)
     metric_coverage={'total':len(output),'return_ytd_complete':sum(item.get('return_ytd_pct') is not None for item in output),'change_30d_complete':sum(item.get('change_30d_pct') is not None for item in output),'limit_up_ytd_complete':sum(item.get('limit_up_ytd') is not None for item in output),'last_limit_up_complete':sum(item.get('last_limit_up_complete') is True for item in output),'price_scope':'本地公司行动事件连续价格；不是含分红到账账户收益','last_limit_scope':'仅已留存、逐原价核验的收盘涨停池；无记录不代表从未涨停'}
-    return {'items': present + missing, 'total': len(output), 'business_date': day, 'quote_date': day, 'selected_topics': [item['public'] for item in chosen], 'match': match, 'members_complete': complete, 'warnings': warnings, 'sort_by': sort_by, 'sort_order': sort_order, 'snapshot_id': snapshot, 'metric_coverage':metric_coverage}
+    return {'items': present + missing, 'total': len(output), 'business_date': day, 'quote_date': day, 'selected_topics': [item['public'] for item in chosen], 'match': match, 'boards': selected_boards, 'members_complete': complete, 'warnings': warnings, 'sort_by': sort_by, 'sort_order': sort_order, 'snapshot_id': snapshot, 'metric_coverage':metric_coverage}
 
 
 def associate(payload):

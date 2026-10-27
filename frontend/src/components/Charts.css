@@ -1,6 +1,22 @@
 .candle-plot {
   position: relative;
 }
+/* A different day's limit/pattern/coverage text must not resize or move the plot.
+   Long explanations remain scrollable inside this width-sized information band. */
+.candle-hover-summary {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
+}
+.candle-hover-summary:focus-visible {
+  outline: 1px solid var(--blue);
+  outline-offset: -1px;
+}
 .candle-pane-value {
   position: absolute;
   left: 64px;

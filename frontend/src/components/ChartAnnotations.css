@@ -90,13 +90,13 @@
   background: color-mix(in srgb, #45c6a4 8%, var(--surface));
 }
 .chart-line-types .selected[data-type="resistance"] {
-  color: #e8c16b;
-  border-color: color-mix(in srgb, #e8c16b 55%, var(--border));
-  background: color-mix(in srgb, #e8c16b 8%, var(--surface));
+  color: #f17c80;
+  border-color: color-mix(in srgb, #f17c80 55%, var(--border));
+  background: color-mix(in srgb, #f17c80 8%, var(--surface));
 }
 .chart-line-types .selected[data-type="reference"] {
-  border-color: var(--blue);
-  color: var(--blue);
+  border-color: #b9a0ff;
+  color: #b9a0ff;
 }
 .chart-line-alert-settings {
   display: grid;
@@ -230,7 +230,10 @@
   color: #45c6a4;
 }
 .chart-line-type-label[data-type="resistance"] {
-  color: #e8c16b;
+  color: #f17c80;
+}
+.chart-line-type-label[data-type="reference"] {
+  color: #b9a0ff;
 }
 .chart-line-rule-summary {
   color: var(--muted);

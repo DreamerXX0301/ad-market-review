@@ -2,11 +2,13 @@
   position: fixed;
   inset: 0;
   z-index: 100000;
-  background: rgb(4 9 17 / 78%);
-  backdrop-filter: blur(7px);
+  /* An opaque layer avoids chart redraws showing through during publication. */
+  background: #0b1423;
   display: grid;
-  place-items: center;
+  align-items: start;
+  justify-items: center;
   padding: 24px;
+  padding-top: max(24px, 6dvh);
 }
 .increment-progress-dialog {
   width: min(680px, 100%);

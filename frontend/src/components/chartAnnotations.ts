@@ -118,6 +118,11 @@ export const annotationColors: Record<string, string> = {
   green: "#45c6a4",
   violet: "#b9a0ff",
 };
+// Blue and amber still render saved marks; new marks use this smaller palette.
+export const selectableAnnotationColors = ["green", "red", "violet"] as const;
+export function defaultLineColor(type: ChartLineType) {
+  return { support: "green", resistance: "red", reference: "violet" }[type];
+}
 export function annotationScope(data: Record<string, any> | null) {
   if (!data) return null;
   if (data.price_basis === "none")

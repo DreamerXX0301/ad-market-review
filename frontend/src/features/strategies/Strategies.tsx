@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Check,
   Clock3,
+  Copy,
   Edit3,
   FlaskConical,
   Play,
@@ -99,6 +100,7 @@ import StrategyBatchToolbar, {
   useBatchStrategySelection,
 } from "./StrategyBatchToolbar";
 import StrategyResultTabs, { StrategyRunNotice } from "./StrategyResultTabs";
+import { strategyCopyDraft } from "./strategyCopy";
 type StrategiesProps = {
   onStock: (id: string, navigation?: StockNavigation) => void;
   onNavigate: (route: string, context?: Row) => void;
@@ -154,6 +156,7 @@ function StrategyEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const editing = !!strategy?.strategy_id;
   const initial = splitUniverse(strategy?.definition);
   const [priceBasis, setPriceBasis] = useState(() =>
     initialStrategyPriceBasis(strategy),
@@ -243,13 +246,13 @@ function StrategyEditor({
           ...(strategy?.policy || {}),
           duration_sessions: Number(duration),
         },
-        ...(strategy ? { apply_to_active_tracking: applyActive } : {}),
+        ...(editing ? { apply_to_active_tracking: applyActive } : {}),
       };
-      const saved = strategy
-        ? await patch(`/strategies/${strategy.strategy_id}`, body)
+      const saved = editing
+        ? await patch(`/strategies/${strategy!.strategy_id}`, body)
         : await post("/strategies", body);
       toast(
-        strategy && applyActive
+        editing && applyActive
           ? `策略已保存 · 更新 ${saved.policy_application?.applied_count ?? 0} 个跟踪轮次，保留 ${saved.policy_application?.skipped_custom_count ?? 0} 个自定义轮次`
           : "策略已保存，默认期限用于之后新入池轮次",
       );
@@ -263,11 +266,22 @@ function StrategyEditor({
   }
   return (
     <Modal
-      title={strategy ? "编辑策略 · 创建新版本" : "创建选股策略"}
+      title={
+        editing
+          ? "编辑策略 · 创建新版本"
+          : strategy
+            ? "复制策略 · 保存为新策略"
+            : "创建选股策略"
+      }
       onClose={onClose}
       wide
     >
       <div className="modal-body">
+        {strategy && !editing && (
+          <p className="form-help">
+            已复制条件、参数、价格口径和跟踪默认政策。保存后创建独立策略，不复制运行结果或跟踪记录，也不会自动执行。
+          </p>
+        )}
         <div className="form-grid">
           <label>
             策略名称
@@ -371,7 +385,7 @@ function StrategyEditor({
             日，重复命中不重置价格与期限。提醒与提前结束可在跟踪池单独设置。
           </div>
         </div>
-        {strategy && (
+        {editing && (
           <PolicyScope
             strategy={strategy}
             checked={applyActive}
@@ -757,6 +771,15 @@ function StockStrategies({
                   >
                     <Edit3 size={13} />
                     编辑
+                  </button>
+                  <button
+                    className="btn small"
+                    aria-label={`复制策略：${chosen.name}`}
+                    title="复制全部条件与参数，保存为独立新策略"
+                    onClick={() => setEditor(strategyCopyDraft(chosen))}
+                  >
+                    <Copy size={13} />
+                    复制
                   </button>
                   <button
                     className="btn small"

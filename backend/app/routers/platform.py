@@ -51,11 +51,12 @@ def index_overview(date:str|None=None):
     return JSONResponse(market_service.index_overview(date))
 
 @router.get('/market/{kind}')
-def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000),monitor_scope:str=Query('historical',pattern='^(historical|latest)$')):
+def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000),monitor_scope:str=Query('historical',pattern='^(historical|latest)$'),rank_state:str=Query('all',pattern='^(all|unranked)$')):
+    if rank_state!='all' and kind!='gainers':raise HTTPException(422,'未排名范围仅适用于近30日涨幅榜')
     if monitor_scope!='historical' and kind!='abnormal':raise HTTPException(422,'最新监控名单范围仅适用于监管页')
     # Services already return JSON-native read models. Avoid FastAPI recursively
     # copying every bar/evidence field again before JSON encoding large charts.
-    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope))
+    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope,rank_state=rank_state))
 
 @router.get('/instruments')
 def instruments(query:str='',limit:int=Query(50,ge=1,le=10000)):
@@ -209,8 +210,14 @@ def sync(payload:dict=Body(...)):
     window=resolve_initial_window(payload,for_new_task=True)['window'] if mode=='initialise' else None
     from app.services.retention_policy import VERSION as retention_version
     from app.adapters.providers import SECTOR_TAIL_PACING_VERSION
+    from app.services.supplement_policy import FUND_FLOW_RETIRED
     parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1','increment_session_version':LOCK_VERSION,'sector_tail_request_policy_version':SECTOR_TAIL_PACING_VERSION})}
+    parameters['fund_flow_policy']=FUND_FLOW_RETIRED
+    from app.adapters.dragon_tiger import VERSION as dragon_tiger_version
+    parameters.update(dragon_tiger_policy=dragon_tiger_version,dragon_tiger_backfill=mode=='initialise')
     if mode=='increment':
+        from app.services.sync_clock import safe_completion_date
+        parameters['sync_completion_date']=safe_completion_date()
         from app.services.line_alert_retention import VERSION as line_retention_version
         parameters['line_alert_retention_version']=line_retention_version
     return task_service.create_task(mode,parameters,request_key=payload.get('request_key'))
@@ -250,14 +257,27 @@ def market_supplement(payload:dict=Body(default={})):
         if revalidate_only or any(payload.get(key)!=repair[key] for key in ('year_history','sector_history','recent_days')):
             raise HTTPException(422,'盘面修补范围与已审阅核验计划不一致')
     if revalidate_only:
+        from app.services.sync_completion import replay_supplement_request
+        replay=replay_supplement_request(payload.get('request_key'),{'revalidate_only':True})
+        if replay:return replay
         return task_service.create_task('source_check',{'operation':'market_supplement','revalidate_only':True,'year_history':True,'sector_history':False,'recent_days':1,'source_id':'local-cache'},target_date=status['data_end'],request_key=payload.get('request_key'))
     year_history=payload.get('year_history',True)
     recent_days=payload.get('recent_days',1)
     sector_history=payload.get('sector_history',True)
     if not isinstance(year_history,bool) or not isinstance(sector_history,bool) or isinstance(recent_days,bool) or not isinstance(recent_days,int) or not 1<=recent_days<=30:raise HTTPException(422,'year_history和sector_history须为布尔，recent_days须为1至30整数')
+    from app.services.sync_completion import replay_supplement_request
+    replay=replay_supplement_request(payload.get('request_key'),
+        {'year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'coverage_plan_id':payload.get('coverage_plan_id')})
+    if replay:return replay
+    if not repair:
+        from app.services.sync_completion import require_published_supplement_available
+        require_published_supplement_available(status.get('snapshot_id'), status['data_end'],
+            {'year_history':year_history,'sector_history':sector_history,'recent_days':recent_days})
     if (year_history or sector_history) and not source_service.client('fuyao').key:raise HTTPException(422,'年内来源池及板块日行情补充需要已配置的扶摇免费Key')
     from app.services.retention_policy import VERSION as retention_version
-    return task_service.create_task('source_check',{'operation':'market_supplement','year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'source_id':'fuyao' if year_history or sector_history else 'akshare-public','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**repair},target_date=status['data_end'],request_key=payload.get('request_key'))
+    from app.services.supplement_policy import FUND_FLOW_RETIRED
+    from app.adapters.dragon_tiger import VERSION as dragon_tiger_version
+    return task_service.create_task('source_check',{'operation':'market_supplement','year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'source_id':'fuyao' if year_history or sector_history else 'akshare-public','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'fund_flow_policy':FUND_FLOW_RETIRED,'retention_policy_version':retention_version,'market_snapshot_id':status.get('snapshot_id'),'completion_target_date':status['data_end'],'dragon_tiger_policy':dragon_tiger_version,'dragon_tiger_backfill':False,**repair},target_date=status['data_end'],request_key=payload.get('request_key'))
 
 @router.post('/research/jobs')
 def research_create(payload:dict=Body(...)):return research_service.create(payload)

@@ -50,7 +50,7 @@ import {
 import { candleChange } from "./candleChange";
 import { candleExtremeChange } from "./candleExtremeChange";
 import { bollCandleValues, chartBoll } from "./chartBoll";
-import { chartPaneLayout } from "./chartPaneLayout";
+import { chartHoverSummaryHeight, chartPaneLayout } from "./chartPaneLayout";
 import { chartSinceReturn } from "./chartSinceReturn";
 import { chartSessionDistance } from "./chartSessionDistance";
 import { chartPriceBasis } from "./chartPriceBasis";
@@ -1495,99 +1495,113 @@ export function CandleChart({
             </span>
           </div>
         )}
-        {activeBar && (
-          <div className="ohlc-strip">
-            <span>{activeBar.date}</span>
-            <span title={activeSessionDistance.reason}>
-              {activeSessionDistance.label}
-            </span>
-            <span>
-              开 <b>{num(activeBar.open)}</b>
-            </span>
-            <span>
-              高 <b>{num(activeBar.high)}</b>{" "}
-              <small
-                className={tone(activeExtremes.high.value)}
-                title={activeExtremes.high.reason}
-              >
-                （最高 {percent(activeExtremes.high.value)}
-                {activeExtremes.high.value == null ? " · 待核验" : ""}）
-              </small>
-            </span>
-            <span>
-              低 <b>{num(activeBar.low)}</b>{" "}
-              <small
-                className={tone(activeExtremes.low.value)}
-                title={activeExtremes.low.reason}
-              >
-                （最低 {percent(activeExtremes.low.value)}
-                {activeExtremes.low.value == null ? " · 待核验" : ""}）
-              </small>
-            </span>
-            <span>
-              收{" "}
-              <b className={tone(activeBar.close - activeBar.open)}>
-                {num(activeBar.close)}
-              </b>
-            </span>
-            <span>
-              成交额 <b>{amount(activeBar.amount)}</b>
-            </span>
-            <span title={activeChange.reason}>
-              {activeChange.label}{" "}
-              <b className={tone(activeChange.value)}>
-                {percent(activeChange.value)}
-              </b>
-              {activeChange.value == null && (
-                <small className="muted">（待核验）</small>
+        <div
+          className="candle-hover-summary"
+          role="region"
+          aria-label="当前K线行情与数据说明"
+          tabIndex={0}
+          style={{
+            height: bars.length
+              ? chartHoverSummaryHeight(plotWidth)
+              : undefined,
+          }}
+        >
+          {activeBar && (
+            <div className="ohlc-strip">
+              <span>{activeBar.date}</span>
+              <span title={activeSessionDistance.reason}>
+                {activeSessionDistance.label}
+              </span>
+              <span>
+                开 <b>{num(activeBar.open)}</b>
+              </span>
+              <span>
+                高 <b>{num(activeBar.high)}</b>{" "}
+                <small
+                  className={tone(activeExtremes.high.value)}
+                  title={activeExtremes.high.reason}
+                >
+                  （最高 {percent(activeExtremes.high.value)}
+                  {activeExtremes.high.value == null ? " · 待核验" : ""}）
+                </small>
+              </span>
+              <span>
+                低 <b>{num(activeBar.low)}</b>{" "}
+                <small
+                  className={tone(activeExtremes.low.value)}
+                  title={activeExtremes.low.reason}
+                >
+                  （最低 {percent(activeExtremes.low.value)}
+                  {activeExtremes.low.value == null ? " · 待核验" : ""}）
+                </small>
+              </span>
+              <span>
+                收{" "}
+                <b className={tone(activeBar.close - activeBar.open)}>
+                  {num(activeBar.close)}
+                </b>
+              </span>
+              <span>
+                成交额 <b>{amount(activeBar.amount)}</b>
+              </span>
+              <span title={activeChange.reason}>
+                {activeChange.label}{" "}
+                <b className={tone(activeChange.value)}>
+                  {percent(activeChange.value)}
+                </b>
+                {activeChange.value == null && (
+                  <small className="muted">（待核验）</small>
+                )}
+              </span>
+              {data?.price_basis === "forward_event_affine" &&
+                activeBar.raw_close != null && (
+                  <span>
+                    原始收盘 <b>{num(activeBar.raw_close)}</b>
+                  </span>
+                )}
+              <span title={activeSinceReturn.reason}>
+                至{activeSinceReturn.end || "观察日"}涨跌幅{" "}
+                <b className={tone(activeSinceReturn.value)}>
+                  {percent(activeSinceReturn.value)}
+                </b>
+                {activeSinceReturn.value == null && (
+                  <small className="muted">（待核验）</small>
+                )}
+              </span>
+              <span className="muted">
+                {period !== "D" && activeBar.complete === false
+                  ? (period === "M"
+                      ? activeBar.monthly_quote_coverage_complete
+                      : activeBar.weekly_quote_coverage_complete) === false
+                    ? `${cycleLabel}内报价不完整`
+                    : (period === "M"
+                          ? activeBar.month_closed
+                          : activeBar.week_closed) === false
+                      ? `本${cycleLabel}形成中`
+                      : `${cycleLabel}K未完整`
+                  : ""}
+              </span>
+              {supportsLimits && (
+                <LimitStatus bar={activeBar} period={period} />
               )}
-            </span>
-            {data?.price_basis === "forward_event_affine" &&
-              activeBar.raw_close != null && (
-                <span>
-                  原始收盘 <b>{num(activeBar.raw_close)}</b>
-                </span>
+              {supportsLimits && (
+                <PatternStatus bar={activeBar} period={period} />
               )}
-            <span title={activeSinceReturn.reason}>
-              至{activeSinceReturn.end || "观察日"}涨跌幅{" "}
-              <b className={tone(activeSinceReturn.value)}>
-                {percent(activeSinceReturn.value)}
-              </b>
-              {activeSinceReturn.value == null && (
-                <small className="muted">（待核验）</small>
-              )}
-            </span>
-            <span className="muted">
-              {period !== "D" && activeBar.complete === false
-                ? (period === "M"
-                    ? activeBar.monthly_quote_coverage_complete
-                    : activeBar.weekly_quote_coverage_complete) === false
-                  ? `${cycleLabel}内报价不完整`
-                  : (period === "M"
-                        ? activeBar.month_closed
-                        : activeBar.week_closed) === false
-                    ? `本${cycleLabel}形成中`
-                    : `${cycleLabel}K未完整`
-                : ""}
-            </span>
-            {supportsLimits && <LimitStatus bar={activeBar} period={period} />}
-            {supportsLimits && (
-              <PatternStatus bar={activeBar} period={period} />
-            )}
-          </div>
-        )}
-        {data?.indicator_continuity_notice && (
-          <div className="source-line chart-continuity-note">
-            {data.indicator_continuity_notice}
-          </div>
-        )}
-        {activeMAState.missing.length > 0 && (
-          <div className="source-line" title={activeMAState.reason}>
-            {activeBar?.date} ·{" "}
-            {activeMAState.missing.map(chartIndicatorLabel).join("、")}{" "}
-            {activeMAState.label} · {activeMAState.reason}
-          </div>
-        )}
+            </div>
+          )}
+          {data?.indicator_continuity_notice && (
+            <div className="source-line chart-continuity-note">
+              {data.indicator_continuity_notice}
+            </div>
+          )}
+          {activeMAState.missing.length > 0 && (
+            <div className="source-line" title={activeMAState.reason}>
+              {activeBar?.date} ·{" "}
+              {activeMAState.missing.map(chartIndicatorLabel).join("、")}{" "}
+              {activeMAState.label} · {activeMAState.reason}
+            </div>
+          )}
+        </div>
         {!frozenMode && result.loading ? (
           <Loading />
         ) : !frozenMode && result.error ? (

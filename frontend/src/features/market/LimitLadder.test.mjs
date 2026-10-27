@@ -10,8 +10,8 @@ const runtime = import.meta.resolve("react/jsx-runtime");
 const observedRuntime =
   encode(`import {jsx as originalJsx,jsxs as originalJsxs} from ${JSON.stringify(runtime)};
 export {Fragment} from ${JSON.stringify(runtime)};
-export const stockButtons=[];
-function observe(type,props){if(type==='button'&&props.className==='ladder-stock-identity')stockButtons.push(props);}
+export const stockButtons=[],conceptButtons=[];
+function observe(type,props){if(type==='button'&&props.className==='ladder-stock-identity')stockButtons.push(props);if(type==='button'&&props.children?.[0]?.props?.children?.startsWith?.('合成数量测试'))conceptButtons.push(props);}
 export function jsx(type,props,key){observe(type,props);return originalJsx(type,props,key);}
 export function jsxs(type,props,key){observe(type,props);return originalJsxs(type,props,key);}`);
 const ui = encode(`import {jsx} from ${JSON.stringify(runtime)};
@@ -440,9 +440,44 @@ const themeMarkup = renderToStaticMarkup(
   createElement(LimitLadder, { ...props, data: attributionData }),
 );
 assert.match(themeMarkup, /class="ladder-theme-board"/);
+assert.match(themeMarkup, /概念关联涨停数/);
+assert.match(themeMarkup, /概念之间有重叠，不可相加/);
+assert.match(themeMarkup, /ladder-concept-count-chips/);
 assert.match(themeMarkup, /class="ladder-supplemental-sections"/);
 assert.match(themeMarkup, /class="ladder-theme-shortcuts"/);
+const manyConcepts = Array.from({ length: 30 }, (_, i) => ({
+  topic_id: "count-fixture-" + i,
+  name: "合成数量测试" + i,
+  kind: "concept",
+  limit_up_count: 1,
+}));
+const cappedMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, {
+    ...props,
+    data: {
+      ...attributionData,
+      theme_counts: manyConcepts,
+      items: [{ ...attributionData.items[0], topics: manyConcepts }],
+    },
+  }),
+);
+const shortcutMarkup = cappedMarkup
+  .split('class="ladder-concept-count-chips"')[1]
+  .split("</nav>")[0];
+assert.equal(
+  (shortcutMarkup.match(/aria-pressed=/g) || []).length,
+  20,
+  "a long concept directory shows exactly the first twenty shortcuts",
+);
+assert.doesNotMatch(shortcutMarkup, /展开全部|收起/);
 setViewOverride(null);
 console.log(
   "limit ladder: existing height/theme classifications and focus-only navigation, counts/uncertainty/sorting, dated board tags and source boundaries passed",
 );
+
+const {conceptButtons} = await import(observedRuntime);
+assert.ok(conceptButtons.length >= 20);
+const changeCount = changes.length;
+conceptButtons.at(-1).onClick();
+assert.equal(changes.length, changeCount+1, "concept click only changes the selected topic; no forced document scroll");
+assert.equal(typeof changes.at(-1), "function");

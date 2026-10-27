@@ -1,3 +1,13 @@
+/** Reserve hover text space by available chart width, never by the selected candle. */
+export function chartHoverSummaryHeight(width: number) {
+  if (!Number.isFinite(width) || width <= 0) return 128;
+  if (width >= 1500) return 66;
+  if (width >= 1000) return 82;
+  if (width >= 700) return 104;
+  if (width >= 480) return 128;
+  return 160;
+}
+
 /** Keep every selected indicator pane inside the canvas, including BOLL. */
 export function chartPaneLayout(
   height: number,

@@ -74,9 +74,15 @@ def create_batch_job(market, day, request_key=None, chain_parameters=None, mode=
     plan = plan_sector_chart_batch(market, day, mode=mode, request_policy_version=policy)
     parameters = {'operation': 'sector_charts', 'mode': mode, 'source_id': 'fuyao', **plan}
     if chain_parameters:
+        from app.services.supplement_policy import validate_fund_flow_policy
+        from app.services.dragon_tiger import validate_policy as validate_dragon_tiger
+        validate_fund_flow_policy(chain_parameters.get('fund_flow_policy'))
+        validate_dragon_tiger(chain_parameters.get('dragon_tiger_policy'))
+        if not isinstance(chain_parameters.get('dragon_tiger_backfill',False),bool):raise ValueError('龙虎榜补齐范围须为布尔')
         parameters.update({key: chain_parameters[key] for key in
                            ('initialization_chain', 'increment_chain', 'parent_sync_job_id',
-                            'previous_chain_job_id', 'data_chain_version', 'fund_request_budget_version', 'retention_policy_version') if key in chain_parameters})
+                            'previous_chain_job_id', 'data_chain_version', 'fund_request_budget_version', 'retention_policy_version',
+                            'fund_flow_policy', 'dragon_tiger_policy', 'dragon_tiger_backfill') if key in chain_parameters})
     return tasks.create_task('source_check', parameters, target_date=day, request_key=request_key)
 
 

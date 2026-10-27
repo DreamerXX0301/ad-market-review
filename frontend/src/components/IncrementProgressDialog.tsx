@@ -25,8 +25,10 @@ import "./IncrementProgressDialog.css";
 
 export default function IncrementProgressDialog({
   onFinished,
+  onBlockedChange,
 }: {
   onFinished: () => void;
+  onBlockedChange?: (blocked: boolean) => void;
 }) {
   const [session, setSession] = useState(readIncrementSession);
   const [savedData, setData] = useState<Row | null>(null);
@@ -42,6 +44,9 @@ export default function IncrementProgressDialog({
   const [, tick] = useState(0);
   const clock = useRef({ received: performance.now(), elapsed: 0 });
   const dialog = useRef<HTMLDivElement>(null);
+  // Ignore responses that started before a local accept/ack/storage change.
+  // Otherwise a slow discovery GET can restore an already dismissed dialog.
+  const sessionRevision = useRef(0);
   const finished = useRef(onFinished);
   finished.current = onFinished;
   const previousSession = useRef<string | undefined>(undefined);
@@ -57,17 +62,21 @@ export default function IncrementProgressDialog({
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     async function discover() {
+      const revision = sessionRevision.current;
       try {
         const value = await api<Row>("/sync/session", {
           signal: controller.signal,
         });
         if (stopped) return;
-        if (value.active) restoreIncrementSession(value.active);
-        setDiscoveryError("");
-        setChecking(false);
+        if (revision === sessionRevision.current) {
+          if (value.active) restoreIncrementSession(value.active);
+          setDiscoveryError("");
+          setChecking(false);
+        }
       } catch (cause: any) {
         if (stopped || cause.name === "AbortError") return;
-        setDiscoveryError(`暂时无法确认工作台状态：${cause.message}`);
+        if (revision === sessionRevision.current)
+          setDiscoveryError(`暂时无法确认工作台状态：${cause.message}`);
       }
       if (!stopped)
         timer = setTimeout(discover, document.hidden ? 10000 : 3000);
@@ -80,10 +89,13 @@ export default function IncrementProgressDialog({
     };
   }, []);
   useEffect(() => {
-    const changed = (event: Event) =>
+    const changed = (event: Event) => {
+      sessionRevision.current += 1;
       setSession((event as CustomEvent<IncrementSession | null>).detail);
+    };
     const storage = (event: StorageEvent) => {
       if (event.key === INCREMENT_SESSION_KEY || event.key === null) {
+        sessionRevision.current += 1;
         if (!readIncrementSession()) setChecking(true);
         setSession(readIncrementSession());
       }
@@ -104,13 +116,14 @@ export default function IncrementProgressDialog({
   useEffect(() => {
     setData(null);
     setFailure(null);
-  }, [identifier]);
+  }, [session?.requestKey]);
   useEffect(() => {
     if (!session) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     let stopped = false;
     async function poll() {
+      const revision = sessionRevision.current;
       try {
         const path = session!.taskId
           ? `task_id=${encodeURIComponent(session!.taskId)}`
@@ -118,9 +131,10 @@ export default function IncrementProgressDialog({
         const value = await api<Row>(`/sync/session?${path}`, {
           signal: controller.signal,
         });
-        if (stopped) return;
+        if (stopped || revision !== sessionRevision.current) return;
         if (!incrementReceiptForSession(value, session))
           throw new Error("进度返回的任务标识不一致，请重新读取");
+        setChecking(false);
         setData(value);
         if (value.acknowledged === true && value.locked === false) {
           acknowledgeIncrementSession(session!.requestKey);
@@ -133,7 +147,12 @@ export default function IncrementProgressDialog({
           elapsed: value.elapsed_ms || 0,
         };
       } catch (cause: any) {
-        if (stopped || cause.name === "AbortError") return;
+        if (
+          stopped ||
+          cause.name === "AbortError" ||
+          revision !== sessionRevision.current
+        )
+          return;
         setFailure({
           identifier: identifier!,
           missing: cause.status === 404,
@@ -151,8 +170,18 @@ export default function IncrementProgressDialog({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [identifier, refresh, session?.requestKey, session?.rejection]);
+  }, [
+    identifier,
+    refresh,
+    session?.requestKey,
+    session?.epoch,
+    session?.createdAt,
+    session?.rejection,
+  ]);
   const blocked = !!session || checking;
+  useEffect(() => {
+    onBlockedChange?.(blocked);
+  }, [blocked, onBlockedChange]);
   useEffect(() => {
     if (!blocked) return;
     const interval = setInterval(() => tick((value) => value + 1), 1000);

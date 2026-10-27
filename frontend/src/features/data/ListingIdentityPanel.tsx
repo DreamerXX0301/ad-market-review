@@ -149,9 +149,13 @@ export function ListingIdentityRows({
 
 export default function ListingIdentityPanel({
   onSaved,
+  onVerify,
+  verifying = false,
   disabled = false,
 }: {
   onSaved: () => void;
+  onVerify?: () => void;
+  verifying?: boolean;
   disabled?: boolean;
 }) {
   const result = useApi<Row>("/data/listing-status");
@@ -244,6 +248,47 @@ export default function ListingIdentityPanel({
           <RefreshCw size={14} />
         </button>
       </div>
+      <section className="coverage-listing-help" aria-label="如何核验证券名录">
+        <h3>如何核验</h3>
+        <ol>
+          <li>
+            先运行本地核验，检查已留存名录、上市日期和实际报价，无需逐只填写。
+          </li>
+          <li>
+            有报价只能证明已交易；首次留存K线日期不能代替上市日期。缺日期的证券继续保留在核验分母。
+          </li>
+          <li>
+            少数仍未知的证券，可复制代码，对照交易所名录或上市公告核对名称、上市日与公告时间；有明确待上市依据才作人工标记。
+          </li>
+        </ol>
+        <div className="button-group">
+          {onVerify && (
+            <button
+              className="btn small"
+              disabled={disabled || verifying}
+              onClick={onVerify}
+            >
+              {verifying ? <Spinner /> : <RefreshCw size={14} />}运行本地核验
+            </button>
+          )}
+          <a
+            className="btn small"
+            href="https://www.sse.com.cn/assortment/stock/list/share/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            上交所股票名录
+          </a>
+          <a
+            className="btn small"
+            href="https://www.szse.cn/disclosure/notice/company/index.html"
+            target="_blank"
+            rel="noreferrer"
+          >
+            深交所上市公告
+          </a>
+        </div>
+      </section>
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}

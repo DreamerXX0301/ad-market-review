@@ -73,6 +73,9 @@ def create_task(kind: str, parameters: dict, target_date: str | None = None, req
                 raise HTTPException(409,'此请求标识已用于不同任务参数，请使用新的请求标识')
             identifier = old[0]
         else:
+            if business_http_request.get() and not retry_of:
+                from .sync_completion import require_available
+                require_available(connection, kind, parameters)
             _guard_initialization(connection, kind)
             if kind == 'initialise':
                 initial = connection.execute("SELECT job_id,logical_key FROM job WHERE kind='initialise' AND status IN ('queued','running','paused') LIMIT 1").fetchone()
@@ -160,7 +163,7 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
         'tracking_review': '板块跟踪核对' if target == 'sector' else '个股跟踪核对',
         'selection': '板块策略筛选' if target == 'sector' else '个股策略选股',
         'source_check': {'sector_chart': '单板块历史K线', 'sector_charts': '板块K线尾部增量' if parameters.get('mode') == 'increment' else '全库板块历史K线',
-                         'market_supplement': '盘面补充', 'local_storage_conversion':'本地存储升级', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
+                         'market_supplement': '盘面补充', 'dragon_tiger':'龙虎榜补齐', 'local_storage_conversion':'本地存储升级', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
                          'strategy_batch_tracking': '板块命中自动入池' if target == 'sector' else '个股命中自动入池'}.get(operation, '数据来源任务'),
     }.get(item['kind'], '后台任务')
     # accepted_batches is a weighted percentage only after progress() reports.

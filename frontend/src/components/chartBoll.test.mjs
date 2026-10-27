@@ -188,6 +188,7 @@ for (const period of ["W", "M"]) {
   aggregate.bars[20][period === "W" ? "week_closed" : "month_closed"] = false;
   const actual = chartBoll(aggregate);
   assert.equal(actual[19].middle, 10);
+  assert.match(actual[20].reason, /本[周月]形成中/);
   assert.equal(
     actual[20].middle,
     null,

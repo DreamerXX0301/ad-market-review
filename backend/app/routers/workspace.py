@@ -9,8 +9,8 @@ from app.services import workspace_deletion, workspace_purge
 router=APIRouter(prefix='/api/v1',tags=['workspace'])
 
 @router.get('/topic-members')
-def topic_members_query(topic_ids:list[str]=Query(...,min_length=1,max_length=20),match:str='any',query:str='',sort_by:str='change_pct',sort_order:str='desc'):
-    return membership_service.list_members(topic_ids,match,query,sort_by,sort_order)
+def topic_members_query(topic_ids:list[str]=Query(...,min_length=1,max_length=20),match:str='any',query:str='',sort_by:str='change_pct',sort_order:str='desc',boards:list[str]|None=Query(None,max_length=4)):
+    return membership_service.list_members(topic_ids,match,query,sort_by,sort_order,boards=boards)
 
 @router.post('/topic-members/associate')
 def topic_members_associate(payload:dict=Body(...)):

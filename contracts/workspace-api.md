@@ -18,9 +18,9 @@
 
 来源成员和人工覆盖分开；撤销人工修改恢复来源集合，不抹历史。来源成员未完整时 `member_count=null`，`observed_member_count` 是样本下界；完整空集才为零。归档分类可读，不可新增关联。
 
-联合查询使用重复 `topic_ids`（1–20 个），`match=any|all`、query、sort_by、sort_order。返回 `selected_topics/members_complete/business_date/quote_date/snapshot_id/warnings`；行含身份、topics/industries/matched_topics、精确当日报价及统一个股统计。无当日报价保留行且行情为 null，不以旧值替代。
+联合查询使用重复 `topic_ids`（1–20 个），`match=any|all`、query、sort_by、sort_order；可选重复 `boards=main|chinext|star|beijing`（主板、创业板、科创板、北交所，最多4项，不接受重复或其他值）。省略 boards 时不限；指定多个板块取其并集，再与分类交并集、搜索结果取交集。按当前已核验股票名录复用股票范围的板块分类，不从没有名录身份的成员代码猜测；未知身份在不限时保留，指定板块时不匹配，勾选四个板块不等于包含未知的“不限”。返回 `selected_topics/members_complete/business_date/quote_date/snapshot_id/warnings/boards`（boards 按上述固定顺序回显）；行含身份、`board/board_label/board_scope/board_reason`、topics/industries/matched_topics、精确当日报价及统一个股统计。board 未知为 unknown，原因非空；当前名录板块不是历史上市身份。无当日报价保留行且行情为 null，不以旧值替代。
 
-排序支持 change_pct/amount/turnover_rate/close/name/code/return_ytd_pct/change_30d_pct/limit_up_ytd/last_limit_up_date/sessions_since_limit_up；完整候选排序后前端分页，null 在两个方向均最后，下界不作精确次数排序。
+排序支持 change_pct/amount/turnover_rate/close/name/code/return_ytd_pct/change_30d_pct/limit_up_ytd/last_limit_up_date/sessions_since_limit_up；上市板块在历史指标批量计算前筛选，完整过滤结果与 total/metric_coverage 一致，服务端全量排序后前端每页25只，切换板块回到第一页。null 在两个方向均最后，下界不作精确次数排序。筛选不改变当前业务日，也不写入分类归属或已选股票的其他关联。
 
 批量关联 body 为 `{instrument_ids,topic_ids,reason?}`，最多 100 股、20 分类。全部验证后同事务追加 include，保留其他归属；已有有效关系 unchanged，被人工排除的可重新纳入。返回 added/unchanged 及数量。它按当前有效状态幂等，不承诺跨后续人工修改的请求重放。
 
@@ -72,6 +72,7 @@
 前端条件组的“快捷添加条件”默认收起且不预选模板。选择、修改参数、取消都不调用规则onChange；仅点“加入条件”才把预览的标准条件加入当前草稿，之后仍须保存策略。历史where/then各自有入口，单叶旧结构打开面板也不重写。all/any中的组合始终作为一个原子子组加入，不拆散到OR。
 
 - `GET/POST /strategies`、`GET/PATCH /strategies/{id}`：name、period=D/W/M、definition、policy、trade_rules、hot_universe；修改追加版本，旧运行冻结。
+- 前端“复制策略”只深拷贝当前策略的 name（默认追加“副本”）、period、price_basis、definition、hot_universe、trade_rules 与 policy 的可编辑字段，不带 strategy_id、版本、自动运行配置、运行结果或跟踪记录。打开和取消仅改前端草稿；确认保存使用原 `POST /strategies`，创建独立标识、规则V1及政策V1，不 PATCH 原策略、不应用到原跟踪轮次、不自动运行。后续调整副本与原策略独立。
 - definition 为叶 `{field,op,value,period?}` / `{field,op,right_field,period?}`，或嵌套 `{all:[...]}` / `{any:[...]}`；兼容旧 logic/conditions 输入。
 - 普通叶默认策略周期，也可逐叶 D/W/M；W/M 使用最近应闭合且有效周期，不能缺最新后退到旧柱。固定日线字段必须 D。右字段只能是兼容白名单数值，常量专用字段不能当右字段。
 - 个股运行在同一规则内一次解析周期、结构与BOLL参数依赖；普通D/W/M指标、底部结构和每个BOLL参数组合分别有界缓存，仅保存固定数据根、行情代际、观察日、周期、算法及已核验来源闭包对应的小摘要。每次运行先核验实际价格、公司行动和日历来源，再允许命中时省略完整历史展开；旧适配器缺少该来源证明时保留原有有界读取。未命中按最多32只读取原始完整指标种子，不截断递推历史；W/M入池价仍独立读取观察日原价。缓存返回深拷贝，身份、题材与用户政策不进入技术缓存；unknown及其原因也按同一来源隔离。保存的完整命中证据、非命中精简证据、规则版本、三态判断和旧运行记录均不改变。

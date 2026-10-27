@@ -45,7 +45,9 @@ def _style(payload, previous=None):
     label = payload.get('label', previous.get('label', ''))
     if not isinstance(label, str) or len(label.strip()) > 40 or any(ord(char) < 32 for char in label):
         fail('标记名称最多40字，不能包含换行或控制字符')
-    color = payload.get('color', previous.get('color', 'blue'))
+    kind = payload.get('line_type', previous.get('line_type', 'reference'))
+    default_color = {'support': 'green', 'resistance': 'red', 'reference': 'violet'}.get(kind, 'violet') if isinstance(kind, str) else 'violet'
+    color = payload.get('color', previous.get('color', default_color) if kind == previous.get('line_type', kind) else default_color)
     if not isinstance(color, str) or color not in COLORS: fail('请选择支持的水平线颜色')
     return float(price), label.strip(), color
 

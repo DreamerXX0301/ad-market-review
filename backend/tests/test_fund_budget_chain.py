@@ -8,6 +8,7 @@ from app import core,worker
 from app.adapters.public_fund_budget import FUND_REQUEST_BUDGET_VERSION as VERSION
 from app.routers import platform
 from app.services import task_service as tasks,sector_chart_batch_jobs,source_service,sync_clock
+from app.services.supplement_policy import FUND_FLOW_RETIRED
 from test_platform import isolated
 
 
@@ -19,11 +20,12 @@ def finish(item):
 
 @pytest.mark.parametrize('new',[True,False])
 def test_initial_topic_chart_supplement_keeps_parent_frozen_policy(isolated,monkeypatch,new):
-    policy={'fund_request_budget_version':VERSION} if new else {}
+    policy={'fund_request_budget_version':VERSION,'fund_flow_policy':FUND_FLOW_RETIRED} if new else {}
     root=tasks.create_task('initialise',{'data_chain_version':'sector-charts-v1',**policy},'2026-10-22')
     finish(root)
     topic=worker.recover_followups()[0]
     assert topic['parameters'].get('fund_request_budget_version')==(VERSION if new else None)
+    assert topic['parameters'].get('fund_flow_policy')==(FUND_FLOW_RETIRED if new else None)
     finish(topic)
     monkeypatch.setattr(core,'get_market',lambda:object())
     def batch(market,day,request_key,chain_parameters,**kw):
@@ -31,9 +33,11 @@ def test_initial_topic_chart_supplement_keeps_parent_frozen_policy(isolated,monk
     monkeypatch.setattr(sector_chart_batch_jobs,'create_batch_job',batch)
     chart=worker.recover_followups()[0]
     assert chart['parameters'].get('fund_request_budget_version')==(VERSION if new else None)
+    assert chart['parameters'].get('fund_flow_policy')==(FUND_FLOW_RETIRED if new else None)
     finish(chart)
     supplement=worker.recover_followups()[0]
     assert supplement['parameters'].get('fund_request_budget_version')==(VERSION if new else None)
+    assert supplement['parameters'].get('fund_flow_policy')==(FUND_FLOW_RETIRED if new else None)
     assert supplement['parameters']['year_history'] is True
     assert worker.recover_followups()==[]
 

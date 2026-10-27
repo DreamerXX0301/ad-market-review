@@ -582,6 +582,8 @@ export default function DataCenter({
     data?.initialization_window,
   );
   const incrementWindow = incrementWindowView(data?.sync_window);
+  const incrementComplete = data?.sync_operations?.increment;
+  const supplementComplete = data?.sync_operations?.supplement;
   const sectorStatus = sectorChartsStatusView(data?.sector_charts);
   const sectorInitialization = sectorChartsInitializationView(
     data?.sector_charts?.initialization,
@@ -748,17 +750,20 @@ export default function DataCenter({
               running ||
               needsSource ||
               !initialization.mainPublished ||
-              !incrementWindow.allowed
+              !incrementWindow.allowed ||
+              incrementComplete?.completed === true
             }
-            title={incrementWindow.reason}
+            title={incrementComplete?.reason || incrementWindow.reason}
             onClick={() => start("increment")}
           >
             {busy === "increment" ? <Spinner /> : <Play size={14} />}
-            {incrementWindow.label}
+            {incrementComplete?.completed
+              ? "本日主行情已更新"
+              : incrementWindow.label}
           </button>
           <small>
             {initialization.mainPublished
-              ? incrementWindow.reason
+              ? incrementComplete?.reason || incrementWindow.reason
               : "主行情初始化发布后可用。"}
           </small>
         </section>
@@ -772,11 +777,17 @@ export default function DataCenter({
             盘面补充
           </h2>
           <p>
-            修补封板、行业资金、行业与概念的板块日行情及年内统计；历史成分股单独核验。
+            修补封板、行业与概念的板块日行情及年内统计；历史成分股单独核验。
           </p>
           <button
             className="btn"
-            disabled={!!busy || running || !initialization.mainPublished}
+            disabled={
+              !!busy ||
+              running ||
+              !initialization.mainPublished ||
+              supplementComplete?.completed === true
+            }
+            title={supplementComplete?.reason || undefined}
             onClick={() => start("market_supplement")}
           >
             {busy === "market_supplement" ? (
@@ -784,10 +795,13 @@ export default function DataCenter({
             ) : (
               <RefreshCw size={14} />
             )}
-            修补盘面缺口
+            {supplementComplete?.completed
+              ? "本日盘面补充已完成"
+              : "修补盘面缺口"}
           </button>
           <small>
-            复用已核验批次，逐板块补当前已发布行情日的真实涨幅与成交额。18:00前首次初始化以最近已完成日为准。
+            {supplementComplete?.reason ||
+              "复用已核验批次，逐板块补当前已发布行情日的真实涨幅与成交额。部分成功仍可修补；完整成功后不重复提交。"}
           </small>
         </section>
         <section

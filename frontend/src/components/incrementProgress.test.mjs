@@ -35,3 +35,7 @@ assert.doesNotMatch(ui, /elapsed\s*>=\s*30000/, "time or 404 cannot prove that a
 assert.match(ui, /value\.acknowledged === true && value\.locked === false/);
 assert.match(ui, /MutationObserver/);
 console.log("Increment dialog: full-chain acknowledgement, measured stage progress and unknown estimates passed");
+
+const scopedReceipt = {...prior, session_epoch: "epoch-old"};
+assert.equal(receipt(scopedReceipt, {requestKey: "previous", taskId: "old-job", epoch: "epoch-new"}), null, "a retry epoch cannot reuse a previous complete receipt");
+assert.equal(receipt(scopedReceipt, {requestKey: "previous", taskId: "old-job", epoch: "epoch-old"}), scopedReceipt);

@@ -221,7 +221,11 @@ def _sectors_from_panel(market, status, day, reference, indexed):
 
 
 @supplement_reader
-def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical'):
+def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical', rank_state='all'):
+    if rank_state not in ('all', 'unranked') or (rank_state != 'all' and kind != 'gainers'):
+        raise HTTPException(422, '未排名范围仅支持近30日涨幅榜')
+    if rank_state == 'unranked' and top_n is not None:
+        raise HTTPException(422, '未排名证券不能同时限定前N名')
     if monitor_scope not in ('historical', 'latest') or (monitor_scope != 'historical' and kind != 'abnormal'):
         raise HTTPException(422, '监控名单范围仅支持监管页的historical或latest')
     if top_n is not None and (kind != 'gainers' or isinstance(top_n,bool) or top_n not in (100,200,300,500,1000)):
@@ -239,9 +243,11 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base["items"], summary = cached_gainers(market,status,reference,day,rows)
         ranked_total = sum(isinstance(row.get('rank'),int) and not isinstance(row.get('rank'),bool) and row['rank'] > 0 for row in base['items'])
         available_total = len(base['items'])
+        if rank_state == 'unranked':
+            base['items'] = [row for row in base['items'] if row.get('rank') is None]
         if top_n is not None:
             base['items'] = [row for row in base['items'] if isinstance(row.get('rank'),int) and not isinstance(row.get('rank'),bool) and 0 < row['rank'] <= top_n]
-        base["summary"] = {**summary,'top_n':top_n,'available_total':available_total,'available_ranked_total':ranked_total,'rank_scope_total':len(base['items']),'rank_scope':'先按近30日涨幅排名选择前N，再在该范围搜索、排序和分页' if top_n is not None else '全市场；端点未知者保留未排名'}
+        base["summary"] = {**summary,'top_n':top_n,'rank_state':rank_state,'available_total':available_total,'available_ranked_total':ranked_total,'available_unranked_total':available_total-ranked_total,'rank_scope_total':len(base['items']),'rank_scope':'先按近30日涨幅排名选择前N，再在该范围搜索、排序和分页' if top_n is not None else '全市场；端点未知者保留未排名'}
         base["warnings"] = ["30个市场交易日端点涨幅；中间缺报价不删股，另列缺口。区间已核验公司行动使用事件前复权价格，未核验则不计算涨幅。", "年内涨停以逐日来源池计数；覆盖不完整时只显示已确认次数下界，不补0。"]
     elif kind == "sectors":
         base.update(_sectors_from_panel(market, status, day, reference, indexed))

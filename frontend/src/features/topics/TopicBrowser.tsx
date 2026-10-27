@@ -22,6 +22,7 @@ import {
   Warnings,
 } from "../../components/UI";
 import AssociationDialog from "./AssociationDialog";
+import TopicBoardFilter from "./TopicBoardFilter";
 import WatchlistButton from "../watchlist/WatchlistButton";
 import { topicKindLabel } from "./TopicDirectory";
 import {
@@ -84,6 +85,7 @@ export default function TopicBrowser({
   onChanged: () => void;
 }) {
   const [match, setMatch] = useState("any"),
+    [selectedBoards, setSelectedBoards] = useState<string[]>([]),
     [query, setQuery] = useState(""),
     [debounced, setDebounced] = useState(""),
     [sortBy, setSortBy] = useState("change_pct"),
@@ -92,6 +94,7 @@ export default function TopicBrowser({
     [associate, setAssociate] = useState(false);
   const toast = useToast();
   const selectedKey = [...topicIds].sort().join("|");
+  const boardKey = selectedBoards.join("|");
   useEffect(() => {
     setSelectedStocks(new Map());
     setQuery("");
@@ -109,6 +112,7 @@ export default function TopicBrowser({
     sort_order: sortOrder,
   });
   [...topicIds].sort().forEach((id) => params.append("topic_ids", id));
+  selectedBoards.forEach((board) => params.append("boards", board));
   const result = useApi<Row>(
     topicIds.length ? "/topic-members?" + params : null,
     [refreshVersion],
@@ -243,6 +247,12 @@ export default function TopicBrowser({
           </div>
         )}
         {!!topicIds.length && (
+          <TopicBoardFilter
+            value={selectedBoards}
+            onChange={setSelectedBoards}
+          />
+        )}
+        {!!topicIds.length && (
           <div className="topic-member-toolbar">
             <input
               type="search"
@@ -307,7 +317,9 @@ export default function TopicBrowser({
           <Loading />
         ) : (
           <Table
-            key={selectedKey + match + debounced + sortBy + sortOrder}
+            key={
+              selectedKey + match + boardKey + debounced + sortBy + sortOrder
+            }
             rows={rows}
             pageSize={25}
             rowKey="instrument_id"
@@ -517,7 +529,7 @@ export default function TopicBrowser({
                 : []),
             ]}
             emptyTitle={
-              debounced
+              debounced || selectedBoards.length
                 ? "没有匹配股票"
                 : match === "all" && topicIds.length > 1
                   ? "当前已知成员没有共同股票"
@@ -526,7 +538,7 @@ export default function TopicBrowser({
             emptyDescription={
               data?.members_complete === false
                 ? "成员采集仍有缺口，不能将空结果当作完整排除依据。"
-                : "可调整分类组合或搜索条件，也可单选分类添加成员。"
+                : "可调整分类组合、上市板块或搜索条件，也可单选分类添加成员。"
             }
           />
         )}

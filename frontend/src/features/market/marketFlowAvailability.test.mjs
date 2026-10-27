@@ -68,7 +68,12 @@ const view = await fs.readFile(
   new URL("./Market.tsx", import.meta.url),
   "utf8",
 );
-assert.match(view, /hasFundTrend\s*\?\s*<FundTrend/);
+assert.doesNotMatch(view, /<FundTrend/);
+const shell = await fs.readFile(
+  new URL("../../components/AppShell.tsx", import.meta.url),
+  "utf8",
+);
+assert.doesNotMatch(shell, /id: "flow"/);
 assert.doesNotMatch(
   view,
   /<Panel title="全天资金轮动时序"|setSealMode|封单最稳/,

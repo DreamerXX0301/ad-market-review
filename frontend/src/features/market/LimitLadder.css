@@ -899,3 +899,43 @@
   font-weight: 600;
   margin: 0;
 }
+.ladder-concept-counts {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.ladder-concept-counts-heading,
+.ladder-concept-count-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.ladder-concept-counts-heading {
+  margin-bottom: 10px;
+}
+.ladder-concept-counts-heading span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.ladder-concept-count-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.ladder-concept-count-chips strong {
+  color: #b9a0ff;
+  white-space: nowrap;
+}
+.ladder-concept-count-chips button.selected {
+  border-color: #b9a0ff;
+  background: color-mix(in srgb, #b9a0ff 12%, var(--surface));
+}
+.ladder-theme-groups {
+  scroll-margin-top: 16px;
+}

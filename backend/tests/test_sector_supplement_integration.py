@@ -227,3 +227,15 @@ def test_new_supplement_child_freezes_sector_scope_without_replacing_legacy_task
     assert child['parameters']==parameters and child['target_date']==DAY
     assert worker._supplement_child(parameters,DAY,'new-sector-child')['job_id']==child['job_id']
     assert tasks.list_tasks()['total']==1
+
+
+def test_retired_fund_collection_skips_new_requests_and_preserves_historical_evidence(cache_workspace,monkeypatch):
+    from app.services.supplement_policy import FUND_FLOW_RETIRED
+    _, market=cache_workspace
+    old=supplement.refresh_for_market(market,DAY)
+    monkeypatch.setattr(supplement,'fetch_history_for_market',lambda *a,**k:pytest.fail('retired source must not be requested'))
+    result=supplement.refresh_for_market(market,DAY,fund_flow_policy=FUND_FLOW_RETIRED)
+    assert result['fund_flows']==old['fund_flows']
+    assert not any(row['capability']=='fund_flow' for row in result['failures'])
+    with pytest.raises(ValueError,match='策略版本'):
+        supplement.refresh_for_market(market,DAY,fund_flow_policy='unsupported')

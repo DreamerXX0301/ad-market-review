@@ -1,6 +1,6 @@
 import {
   Activity,
-  ArrowDownUp,
+  ArrowLeftRight,
   BarChart3,
   BookOpen,
   Boxes,
@@ -40,9 +40,9 @@ export const navigation = [
       { id: "emotion", name: "市场情绪", icon: Activity },
       { id: "sectors", name: "行业与题材", icon: Layers3 },
       { id: "ladder", name: "涨停梯队", icon: Boxes },
+      { id: "dragon-tiger", name: "龙虎榜", icon: ArrowLeftRight },
       { id: "gainers", name: "30日涨幅榜", icon: TrendingUp },
       { id: "abnormal", name: "异动与监管", icon: ShieldAlert },
-      { id: "flow", name: "资金与轮动", icon: ArrowDownUp },
     ],
   },
   {

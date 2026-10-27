@@ -39,6 +39,8 @@ import {
   ladderCardAttribution,
   ladderStockKey,
   ladderThemeIndex,
+  ladderThemeGroups,
+  isStructuralLadderTopic,
 } from "./ladderBoardPresentation";
 import "./LimitLadder.css";
 
@@ -410,7 +412,17 @@ export default function LimitLadder({
     );
   const displayPlan = buildLadderDisplayGroups(main, themes);
   const filteredSet = new Set(filtered);
-  const themeGroups = displayPlan.groups
+  const conceptOverview = ladderThemeGroups(main, themes, "concept").filter(
+    (group) => !isStructuralLadderTopic(group.topic),
+  );
+  const selectedConcept = conceptOverview.find(
+    (group) => group.topic.key === selectedTopic?.key,
+  );
+  const themeGroups = (
+    selectedConcept
+      ? [{ ...selectedConcept, key: selectedConcept.topic.key }]
+      : displayPlan.groups
+  )
     .map((group) => ({
       ...group,
       items: group.items.filter((row) => filteredSet.has(row)),
@@ -719,8 +731,55 @@ export default function LimitLadder({
                 <p className="ladder-display-notice">
                   按已留存概念成员作浏览分组，不代表涨停主因；不修改题材归属。其余关联见股票卡片或下方数据详情。
                 </p>
+                {!!conceptOverview.length && (
+                  <nav
+                    className="ladder-concept-counts"
+                    aria-label="概念关联涨停数量快捷查看"
+                  >
+                    <div className="ladder-concept-counts-heading">
+                      <strong>概念关联涨停数</strong>
+                      <span>
+                        前20个概念 · 按数量降序 · 概念之间有重叠，不可相加
+                      </span>
+                      {selectedTopic && (
+                        <button
+                          className="link"
+                          onClick={() => setSelectedTopic(null)}
+                        >
+                          查看全部分组
+                        </button>
+                      )}
+                    </div>
+                    <div className="ladder-concept-count-chips">
+                      {conceptOverview.slice(0, 20).map((group) => (
+                        <button
+                          key={group.topic.key}
+                          className={
+                            selectedTopic?.key === group.topic.key
+                              ? "selected"
+                              : ""
+                          }
+                          aria-pressed={selectedTopic?.key === group.topic.key}
+                          title={
+                            group.theme.reason ||
+                            "所选日已留存成员关联，不代表涨停主因"
+                          }
+                          onClick={() => {
+                            onTopic(group.topic);
+                          }}
+                        >
+                          <span>{group.topic.name}</span>
+                          <strong>{group.countLabel}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  </nav>
+                )}
                 {themeGroups.length ? (
-                  <div className="ladder-theme-groups">
+                  <div
+                    className="ladder-theme-groups"
+                    id={baseId + "-theme-groups"}
+                  >
                     {themeGroups.map((group) => (
                       <section className="ladder-theme-group" key={group.key}>
                         <header className="ladder-theme-rail">

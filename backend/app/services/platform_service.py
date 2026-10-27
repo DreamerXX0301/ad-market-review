@@ -32,6 +32,7 @@ def data_status():
     from .sector_chart_batch_jobs import batch_status
     from .task_service import initialization_state, task_view
     from .sync_clock import sync_window
+    from .sync_completion import read_view as sync_completion_view
     from .history_window import initialization_window_status
     market=get_market(); status=market.status();datasets=[]
     from .data_coverage import dataset_progress, snapshot_quality_view
@@ -58,4 +59,4 @@ def data_status():
     sync_ready=bool(current and current['sync_supported'] and current['configured'] and current['enabled'])
     reason=None if sync_ready else '请先选择扶摇免费来源，配置Key并启用，再手动同步'
     window=initialization_window_status(market.reference() if status.get('ready') else None)
-    return {'business_date':business_date(),'initialization':initialization,'initialization_window':window,'sync_window':sync_window(),'summary':summary(market),'datasets':datasets,'coverage_check':audit,'latest_task':task_view(latest[0]) if latest else None,'public_supplement':sources['public_supplement'],'sector_charts':batch_status(market),'warnings':status.get('warnings',[]),'automatic_schedule':False,'sync_configuration':{'ready':sync_ready,'source_id':current['source_id'] if current else None,'name':current['name'] if current else None,'tier':current['tier'] if current else None,'requires_key':current['requires_key'] if current else False,'configured':current['configured'] if current else False,'reason':reason}}
+    return {'business_date':business_date(),'initialization':initialization,'initialization_window':window,'sync_window':sync_window(),'sync_operations':sync_completion_view(status.get('snapshot_id'),status.get('data_end')),'summary':summary(market),'datasets':datasets,'coverage_check':audit,'latest_task':task_view(latest[0]) if latest else None,'public_supplement':sources['public_supplement'],'sector_charts':batch_status(market),'warnings':status.get('warnings',[]),'automatic_schedule':False,'sync_configuration':{'ready':sync_ready,'source_id':current['source_id'] if current else None,'name':current['name'] if current else None,'tier':current['tier'] if current else None,'requires_key':current['requires_key'] if current else False,'configured':current['configured'] if current else False,'reason':reason}}

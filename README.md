@@ -23,9 +23,9 @@
 | -------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | 在同一观察日查看指数、市场广度、行业题材和涨停梯队 | 个股与板块分别配置日 / 周 / 月规则，组合历史事件与今日条件 | 把候选加入跟踪或自选，复查触发事件、加入基准和后续涨幅 |
 
-> **版本说明**：本页介绍[0.1.10 的已实现功能](CHANGELOG.md#v0110)，发行源码以 [v0.1.10 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.10)为准。下方 **v0.1.10** 安装命令须在核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.10)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)后使用；完整源码 SHA、镜像摘要和平台结果以本版 `release-image.json` 为准，不能沿用旧版回执。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
+> **版本说明**：本页介绍[0.1.11 的已实现功能](CHANGELOG.md#v0111)，发行源码以 [v0.1.11 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.11)为准。下方 **v0.1.11** 安装命令须在核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.11)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)后使用；完整源码 SHA、镜像摘要和平台结果以本版 `release-image.json` 为准，不能沿用旧版回执。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
 
-0.1.10在0.1.9性能优化基础上，增加划线首次实际提醒后60个市场交易日清理、连板反馈页面迁移与首板概览，并改进市场情绪的默认展开、指数位置、页底来源、复制代码和成交额亿元显示。新增026迁移，业务表仍为54张；迁移本身不删除业务行，升级不自动创建取数或选股任务。新线未实际提醒持续监控，重复提醒不延长；到期清理只接续新手动盘后增量，保留自选与策略跟踪。详见[划线提醒保留规则](docs/划线提醒到期清理.md)、[版本记录](CHANGELOG.md#v0110)和[升级与回滚](docs/版本升级与回滚.md)。
+0.1.11增加本地留存的龙虎榜与买卖席位、题材查股上市板块筛选和个股策略复制，并修复盘后更新闪屏、重复操作、K线悬停抖动和预热提示。近30日榜搜索可查未排名股票及缺口原因；资金轮动旧入口归并至行业与题材。龙虎榜保留30个市场交易日，只有新手动初始化、增量或补齐任务取数；读取页面不联网，旧冻结任务保持原范围。迁移终点仍为026、54张业务表，无新增迁移。详见[本轮使用与核验](docs/盘面使用与数据核验.md)、[龙虎榜](docs/龙虎榜设计方案.md)和[版本记录](CHANGELOG.md#v0111)。
 
 既有明确价格口径、单页K线、紧凑行情头部、高低涨幅和热点浏览筛选继续沿用。盘面补充按250个市场交易日滚动管理，主行情与板块K线保持五年活动窗口和必要的来源、递推种子；历史策略、运行和跟踪不自动改写。[0.1.6及更早的发行记录](CHANGELOG.md#v016)继续保留。
 
@@ -116,7 +116,7 @@
 
 自选与策略跟踪各有自己的基准；重复收藏不重置首次加入价。展开板块成分股只供浏览，不会自动创建个股跟踪或套用板块事件价。
 
-市场情绪用页内目录定位计划、短线接力和来源。操作状态采用禁止红色、有条件绿色、等待黄色、未知灰色；未来条件仍须下一交易日验证。制度组价格反馈按昨日冻结成员计算，今日同制度晋级单独核验；连板反馈默认按已核验昨日高度降序，缺证据保留未知。盘面总览显示连板反馈概览，市场情绪提供完整连板明细；概览增加经核验的昨日首板，明细保留昨日二板及以上。资金与轮动聚焦资金趋势。详见下方两份专题说明。
+市场情绪用页内目录定位计划、短线接力和来源。操作状态采用禁止红色、有条件绿色、等待黄色、未知灰色；未来条件仍须下一交易日验证。制度组价格反馈按昨日冻结成员计算，今日同制度晋级单独核验；连板反馈默认按已核验昨日高度降序，缺证据保留未知。盘面总览显示连板反馈概览，市场情绪提供完整连板明细；概览增加经核验的昨日首板，明细保留昨日二板及以上。不再提供独立“资金与轮动”模块；不稳定的行业资金趋势停止展示，新手动任务不再采集该来源，旧资料保留。详见下方两份专题说明。
 
 ## 数据如何流转
 
@@ -143,9 +143,9 @@ flowchart LR
 
 ## Docker 安装
 
-需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.10`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.11`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
 
-源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.10 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.10)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.10 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
+源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.11 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.11)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.11 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
 
 ```bash
 mkdir ad-market-review
@@ -153,18 +153,18 @@ cd ad-market-review
 
 test ! -e docker-compose.yml && test ! -L docker-compose.yml && \
   curl --fail --location --output docker-compose.yml \
-  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.10/docker-compose.yml'
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.10
+  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.11/docker-compose.yml'
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.11
 
 umask 077
 key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.10 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.11 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
-export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.10
+export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.11
 export SHIXU_HTTP_PORT=8788
 
 docker compose -p ad-market-review -f docker-compose.yml pull
@@ -226,8 +226,13 @@ docker compose -p ad-market-review -f docker-compose.yml --profile worker up -d 
 | 本轮完整验收与BOLL | [本轮存储与工作台验收](docs/2026-10-24-存储与工作台验收.md) · [BOLL选股条件](docs/BOLL选股条件.md) · [BOLL收口研究](docs/research/BOLL收口突破离线研究.md) |
 | 理解市场阶段与次日条件 | [市场温度与下一交易日计划](docs/市场温度与下一交易日计划.md) |
 | 核对连板高度、板型和反馈 | [连板高度、板型与次日反馈](docs/连板高度板型与反馈.md) |
+| 查看龙虎榜与买卖席位 | [龙虎榜使用与30日留存](docs/龙虎榜设计方案.md) |
 | 更新已有安装或准备回滚   | [版本升级与回滚](docs/版本升级与回滚.md)                                                 |
 | 核对指标、价格与历史限制 | [实现范围与数据边界](docs/实现范围与数据边界.md)                                         |
 | 理解模块和本地存储       | [架构与模块边界](docs/架构与模块边界.md) · [数据库与数据流](docs/数据库与数据流.md)      |
 | 参与开发、报告问题       | [贡献指南](CONTRIBUTING.md) · [安全说明](SECURITY.md) · [交付与验收](docs/交付与验收.md) |
 | 查看当前源码和发行差异   | [版本记录](CHANGELOG.md)                                                                 |
+
+近期盘面使用调整：30日涨幅榜默认前100名，搜索覆盖全市场并可单独查看未排名及原因；概念关联顶部可快捷查看涨停数量；成功更新防重复、证券名录核验和划线配色说明见[盘面使用与数据核验](docs/盘面使用与数据核验.md)。
+
+当前源码增加独立“龙虎榜”页，与盘面共用观察日。全部榜、机构榜、游资榜及单日/三日累计分开查看；搜索可一键清除，游资标签再点取消，表头对完整筛选结果排序后分页。点击股票名称打开同一套K线详情，行内其余位置展开并定位到买方、卖方席位；代码按钮只复制。数据由用户手动补齐，页面读取不联网；榜单和席位保留最近30个市场交易日，缺档保留未知。参见[龙虎榜使用与留存](docs/龙虎榜设计方案.md)。

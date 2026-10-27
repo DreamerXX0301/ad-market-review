@@ -76,3 +76,25 @@ def test_instrument_and_line_limit_guards(annotations, monkeypatch):
     for value in (100, 101): assert client.post('/api/v1/instruments/600001.SH/annotations', json={'price': value}).status_code == 200
     assert client.post('/api/v1/instruments/600001.SH/annotations', json={'price': 102}).status_code == 409
     assert client.get('/api/v1/instruments/600001.SH/annotations').json()['total'] == 2
+
+
+@pytest.mark.parametrize('kind,color', [('support','green'),('resistance','red'),('reference','violet')])
+def test_new_line_colors_follow_type_but_explicit_and_saved_colors_are_preserved(annotations,kind,color):
+    _, client = annotations
+    root='/api/v1/instruments/600001.SH/annotations'
+    saved=client.post(root,json={'price':12,'line_type':kind}).json()
+    assert saved['color']==color
+    override=client.post(root,json={'price':13,'line_type':kind,'color':'violet'}).json()
+    assert override['color']=='violet'
+    legacy=client.post(root,json={'price':14,'color':'amber'}).json()
+    changed=client.patch(root+'/'+legacy['annotation_id'],json={'label':'原线保留'}).json()
+    assert changed['color']=='amber'
+    switch=client.patch(root+'/'+legacy['annotation_id'],json={'line_type':'support'}).json()
+    assert switch['color']=='green'
+
+
+@pytest.mark.parametrize('invalid', [[], {}, None, True])
+def test_invalid_line_type_returns_validation_error(annotations,invalid):
+    _,client=annotations
+    response=client.post('/api/v1/instruments/600001.SH/annotations',json={'price':12,'line_type':invalid})
+    assert response.status_code==422

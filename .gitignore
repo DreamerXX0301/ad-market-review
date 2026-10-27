@@ -44,6 +44,8 @@ playwright-report/
 !/docs/数据源与权限.md
 !/docs/Docker部署.md
 !/docs/界面导览.md
+!/docs/盘面使用与数据核验.md
+!/docs/龙虎榜设计方案.md
 !/docs/存储与盘后增量优化.md
 !/docs/本轮功能验收清单.md
 !/docs/2026-10-24-存储与工作台验收.md

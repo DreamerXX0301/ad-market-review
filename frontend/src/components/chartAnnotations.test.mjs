@@ -12,6 +12,9 @@ const compiled = ts.transpileModule(
 ).outputText;
 const {
   annotationScope,
+  defaultLineColor,
+  selectableAnnotationColors,
+  annotationColors,
   lineMatchesScope,
   lineLabel,
   savedLineSettings,
@@ -342,4 +345,15 @@ assert.equal(
 );
 console.log(
   "saved anchor projections: explicit same-generation interval, real affine actions, no-action proof, D/W/M and immutable original marks passed",
+);
+
+assert.deepEqual(["support", "resistance", "reference"].map(defaultLineColor), [
+  "green",
+  "red",
+  "violet",
+]);
+assert.deepEqual(selectableAnnotationColors, ["green", "red", "violet"]);
+assert.ok(
+  annotationColors.blue && annotationColors.amber,
+  "historical saved colors still render",
 );

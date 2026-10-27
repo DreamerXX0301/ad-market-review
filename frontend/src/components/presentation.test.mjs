@@ -881,3 +881,10 @@ assert.equal(
 console.log(
   "presentation: raw-value sorting, comparable D/W/M returns, recent-100 daily zoom, frozen event affine projection and rejection, CNY/volume units, three-valued filters, versioned shared preferences, index isolation, reload/storage sync, and private-storage fallback passed",
 );
+
+for (const [period, closed, label] of [["W", "week_closed", "本周形成中"], ["M", "month_closed", "本月形成中"]]) {
+  const actual = chartIndicatorAvailability({[closed]: false, indicator_warmup_bars: 0, macd_dif: null}, ["macd_dif"], period);
+  assert.equal(actual.label, label);
+  assert.doesNotMatch(actual.label, /预热/);
+}
+assert.match(chartIndicatorAvailability({week_closed: false, indicator_warmup_bars: 17, macd_dif: null, indicator_warmup_reason: "历史连续完整周期不足35根"}, ["macd_dif"], "W").reason, /历史连续完整周期不足35根/);

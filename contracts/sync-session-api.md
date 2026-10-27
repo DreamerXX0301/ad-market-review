@@ -25,3 +25,9 @@
 若本地仅持有请求标识且尚无已接收task_id，404或等待30秒都不能解锁。用户可显式调用确认接口核查并关闭未接收请求：事务证明无对应job、无当前会话后写该request_key的放弃墓碑；迟到的原POST必须在创建任务的事务内核对墓碑并拒绝，确认成功后才清本地层。已知task_id却真实缺失时保持未知，要求核查服务端存档；断网或确认请求失败保持锁定。
 
 API中间件在锁定时拒绝所有新的业务GET/写请求并返回409与当前会话身份。静态资源、SPA、health、会话进度/确认/停止和同链任务读取及pause/cancel保持可达；`POST /sync/tasks`只允许相同已接收request_key的幂等重读。统一任务创建在 `BEGIN IMMEDIATE` 内再次校验HTTP会话锁，防止提前通过中间件的选股或批量请求趁并发窗口新排队。worker不处于HTTP上下文，不会锁死自己的授权链或心跳；不强杀已接收任务，增量沿原唯一worker规则排队。开始锁定前已接收的HTTP读取可能正常完成，此门禁不追溯取消它们。
+
+## 更新完成后的重复请求
+
+`GET /data/status` 新增 `sync_operations.increment/supplement`，各含 `completed/reason/task`。主行情按北京时间盘后日期核验已发布终态，盘面补充按行情代际、目标日期及覆盖范围核验成功回执；不存在、失败或partial补充不填成功。`POST /sync/tasks` 与 `/sync/market-supplement` 在重复成功范围返回409与 `detail.message/completed_task_id`，重复同request_key的任务创建仍先幂等读取。扩大补充范围、明确核验计划、离线重验及失败恢复保持原范围。新补充回执存业务SQLite platform_setting并以真实job终态再次核验，不增加schema；旧版完整成功索引可只读识别。文件取证在事务外，创建事务内只读SQLite回执。
+
+新手动初始/增量/补充冻结 `fund_flow_policy=fund-flow-retired-v1` 并逐级传递：不再请求行业资金历史；旧冻结任务不增删范围。资金历史不删除，旧只读API继续兼容。

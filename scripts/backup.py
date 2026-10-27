@@ -127,6 +127,10 @@ def supplement_files(published):
         if not head.get('snapshot_id') or head['snapshot_id']!=index.get('snapshot_id'):raise ValueError('Public supplement head snapshot differs from its index')
     return required
 
+def dragon_tiger_files(published):
+    from dragon_tiger_archive import inventory
+    return inventory(published,safe_path=safe_path,sha=sha)
+
 def needed_files(c,published):
     required={};snapshots=retained_snapshots(c)
     for r in snapshots:
@@ -149,6 +153,9 @@ def needed_files(c,published):
                 required[str(key)]=item['sha256']
     for key,expected in supplement_files(published).items():
         if key in required and required[key] not in (None,expected):raise ValueError('Conflicting public supplement artifact hashes')
+        required[key]=expected
+    for key,expected in dragon_tiger_files(published).items():
+        if key in required and required[key] not in (None,expected):raise ValueError('Conflicting dragon-tiger artifact hashes')
         required[key]=expected
     return required,snapshots
 
@@ -206,6 +213,8 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
                 if sha(dst)!=before or sha(src)!=before:raise ValueError('Published object changed during backup: '+key)
             supplement={key:value for key,value in required.items() if key.startswith('market-supplement/')}
             if supplement_files(published)!=supplement:raise ValueError('Public supplement changed during backup; wait for manual supplement sync to finish and retry')
+            dragon_tiger={key:value for key,value in required.items() if key.startswith('dragon-tiger/')}
+            if dragon_tiger_files(published)!=dragon_tiger:raise ValueError('Dragon-tiger changed during backup; wait for manual collection to finish and retry')
             if latest:
                 generation=json.loads(latest[0]).get('market_snapshot_id')
                 if generation:
@@ -235,7 +244,7 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
             if path.is_symlink():raise ValueError('Symlink in backup staging directory')
             if finder_metadata(path):continue
             if path.is_file():files.append({'path':str(path.relative_to(stage)),'sha256':sha(path),'bytes':path.stat().st_size})
-        manifest={'format':'shixu-backup-v1','backup_id':owner,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),'sqlite_version':sqlite3.sqlite_version,'heads':heads,'retained_snapshot_count':len(snapshots),'credential_ciphertexts':credential_files,'master_key_included':False,'files':files,'notes':['Online SQLite backup; immutable file references pinned while copying','Optional public market-supplement JSON objects and mutable pointers copied only after checksum and stable-inventory verification','Bulk raw downloads and active DuckDB work files intentionally excluded','Do not change provider credentials during a backup; ciphertext storage is not cross-store versioned']}
+        manifest={'format':'shixu-backup-v1','backup_id':owner,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),'sqlite_version':sqlite3.sqlite_version,'heads':heads,'retained_snapshot_count':len(snapshots),'credential_ciphertexts':credential_files,'master_key_included':False,'files':files,'notes':['Online SQLite backup; immutable file references pinned while copying','Optional public market-supplement JSON objects and mutable pointers copied only after checksum and stable-inventory verification','Optional dragon-tiger day/source CAS closure and resumable component pointers verified independently; no historical CAS directory scan','Bulk raw downloads and active DuckDB work files intentionally excluded','Do not change provider credentials during a backup; ciphertext storage is not cross-store versioned']}
         (stage/'backup-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
         for f in stage.rglob('*'):
             if f.is_symlink():raise ValueError('Symlink in backup staging directory')

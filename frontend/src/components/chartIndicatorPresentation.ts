@@ -27,6 +27,22 @@ export function chartIndicatorAvailability(
       (typeof bar?.[field] !== "number" || !Number.isFinite(bar[field])),
   );
   if (!bar || !missing.length) return { missing, label: "", reason: "" };
+  const forming =
+    period === "M"
+      ? bar.month_closed === false
+      : period === "W" && bar.week_closed === false;
+  if (forming) {
+    const unit = period === "M" ? "月" : "周";
+    const historicalReason =
+      bar.display_indicator_warmup_reason ??
+      bar.indicator_warmup_reason ??
+      bar.indicator_reset_reason;
+    return {
+      missing,
+      label: `本${unit}形成中`,
+      reason: `本${unit}尚未结束，不用当前形成K判定完整周期信号；历史预热以最近已完成周期为准。${typeof historicalReason === "string" ? historicalReason : ""}`,
+    };
+  }
   const required = Math.max(
     ...missing.map((field) =>
       /^ma\d+$/.test(field) ? Number(field.slice(2)) : 35,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 import argparse,json,os,shutil,sqlite3,tempfile,time,uuid
 from pathlib import Path
-from backup import sha,safe_path,connect_sqlite,check_db,finder_metadata
+from backup import sha,safe_path,connect_sqlite,check_db,finder_metadata,dragon_tiger_files
 
 def verify_backup(bundle):
     bundle=Path(bundle).expanduser().resolve()
@@ -26,6 +26,9 @@ def verify_backup(bundle):
         if finder_metadata(p):continue
         if p.is_file() and p!=bundle/'backup-manifest.json':actual.add(str(p.relative_to(bundle)))
     if actual!=expected or 'business/app.sqlite3' not in expected:raise ValueError('Backup inventory differs from manifest')
+    dragon_tiger=dragon_tiger_files(bundle/'published')
+    declared_dragon={item['path'].removeprefix('published/'):item['sha256'] for item in manifest['files'] if item['path'].startswith('published/dragon-tiger/')}
+    if dragon_tiger!=declared_dragon:raise ValueError('Dragon-tiger backup dependency closure differs from manifest')
     c=connect_sqlite(bundle/'business/app.sqlite3','ro')
     try:check_db(c)
     finally:c.close()

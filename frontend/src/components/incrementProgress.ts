@@ -1,10 +1,13 @@
 type Receipt = Record<string, any>;
 export function incrementReceiptForSession(
   data: Receipt | null,
-  session: { requestKey: string; taskId?: string } | null,
+  session: { requestKey: string; taskId?: string; epoch?: string } | null,
 ) {
   return session &&
     data?.request_key === session.requestKey &&
+    (!session.epoch ||
+      !data.session_epoch ||
+      data.session_epoch === session.epoch) &&
     (!session.taskId || data.root_task_id === session.taskId)
     ? data
     : null;

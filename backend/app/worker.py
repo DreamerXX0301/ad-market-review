@@ -118,6 +118,14 @@ def _queue_followup_once(job,completed_result=None):
     from app.adapters.public_fund_budget import validate_fund_budget_version
     fund_version=validate_fund_budget_version(parameters.get('fund_request_budget_version'))
     fund_policy={'fund_request_budget_version':fund_version} if fund_version is not None else {}
+    from app.services.supplement_policy import validate_fund_flow_policy
+    fund_flow_policy=validate_fund_flow_policy(parameters.get('fund_flow_policy'))
+    if fund_flow_policy is not None:fund_policy['fund_flow_policy']=fund_flow_policy
+    from app.services.dragon_tiger import validate_policy as validate_dragon_tiger
+    dragon_tiger_policy=validate_dragon_tiger(parameters.get('dragon_tiger_policy'))
+    if dragon_tiger_policy is not None:
+        if not isinstance(parameters.get('dragon_tiger_backfill',False),bool):raise ValueError('龙虎榜补齐范围须为布尔')
+        fund_policy.update(dragon_tiger_policy=dragon_tiger_policy,dragon_tiger_backfill=parameters.get('dragon_tiger_backfill',False))
     from app.services.retention_policy import validate as validate_retention
     retention_version=validate_retention(parameters.get('retention_policy_version'))
     if retention_version is not None:fund_policy['retention_policy_version']=retention_version
@@ -295,6 +303,10 @@ def dispatch(job):
     elif kind=='source_check' and _parameters(job).get('operation')=='quote_gap_source_check':
         from app.services.quote_gap_source_check import execute_check
         execute_check(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='dragon_tiger':
+        from app.services.dragon_tiger import execute_job
+        result=execute_job(job,callback)
+        tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',result.get('message','龙虎榜已核验'))
     elif kind=='source_check' and json.loads(job.get('parameters_json','{}')).get('operation')=='market_supplement':
         from app.services.market_supplement import execute_supplement
         result=execute_supplement(identifier,callback)

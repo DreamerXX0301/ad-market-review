@@ -264,3 +264,13 @@ def test_http_rank_scope_forwarded_and_bounded(monkeypatch):
     assert client.get('/api/v1/market/gainers?date='+TODAY+'&top_n=1000&page_size=25').status_code == 200
     assert seen[0]['top_n'] == 1000 and seen[0]['page_size'] == 25
     assert client.get('/api/v1/market/gainers?top_n=1001').status_code == 422
+
+
+def test_unranked_is_discoverable_without_fabricating_rank_or_return(rank_scope):
+    result = market.market_page('gainers', TODAY, rank_state='unranked', page_size=25)
+    assert result['summary']['available_unranked_total'] == 1
+    assert result['total'] == 1
+    assert result['items'][0]['rank'] is None and result['items'][0]['change_30d_pct'] is None
+    assert market.market_page('gainers', TODAY, query='未知股', page_size=25)['total'] == 1
+    with pytest.raises(HTTPException):
+        market.market_page('gainers', TODAY, rank_state='unranked', top_n=100)

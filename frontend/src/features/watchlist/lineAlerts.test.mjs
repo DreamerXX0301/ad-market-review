@@ -313,8 +313,11 @@ assert.doesNotMatch(
   /<select/,
   "manual line types and reminder rules remain explicit radio/checkbox controls",
 );
-assert.equal((support.match(/aria-label="选择.色线"/g) || []).length, 5);
+assert.equal((support.match(/aria-label="选择.色线"/g) || []).length, 3);
 assert.match(support, /划线与提醒/);
+assert.doesNotMatch(support, /选择[蓝金]色线/);
+for (const color of ["绿", "红", "紫"])
+  assert.ok(support.includes(`选择${color}色线`));
 const indexPanel = renderToStaticMarkup(
   createElement(ChartAnnotationPanel, {
     state: {
@@ -462,8 +465,12 @@ const watchApi = encoded(
 const hotBrowseURL = await compile("../../components/HotBrowseFilter.tsx", {
   "../lib/api": watchApi,
   "./UI": ui,
-  "../features/strategies/HotUniverse": await compile("../strategies/HotUniverse.tsx"),
-  "./hotBrowsePresentation": await compile("../../components/hotBrowsePresentation.ts"),
+  "../features/strategies/HotUniverse": await compile(
+    "../strategies/HotUniverse.tsx",
+  ),
+  "./hotBrowsePresentation": await compile(
+    "../../components/hotBrowsePresentation.ts",
+  ),
 });
 const watchURL = await compile("./Watchlist.tsx", {
   "../../lib/api": watchApi,
