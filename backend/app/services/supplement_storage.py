@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -15,10 +16,14 @@ FIELDS = ('public_pools', 'annual_pools', 'annual_down_pools', 'fund_flows', 'se
 _cache = OrderedDict()
 _cache_bytes = 0
 _lock = threading.RLock()
+_metadata_cache = OrderedDict()
+_metadata_bytes = 0
+MAX_METADATA_BYTES = 4 * 1024 * 1024
+MAX_METADATA_ENTRY_BYTES = 64 * 1024
+MAX_METADATA_ENTRIES = 8192
 
 
-def _read_object(root, pointer):
-    global _cache_bytes
+def _object_identity(root, pointer):
     if not isinstance(pointer, dict) or set(pointer) != {'record_ref', 'sha256'}:
         raise ValueError('补充数据索引引用格式无效')
     relative, expected = pointer['record_ref'], pointer['sha256']
@@ -37,6 +42,12 @@ def _read_object(root, pointer):
     if not path.is_file() or info.st_size > 32 * 1024 * 1024:
         raise ValueError('补充数据对象类型或体积不受支持')
     key = (str(path), expected, info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    return path, key
+
+
+def _object_value(path, key):
+    global _cache_bytes
+    expected = key[1]
     with _lock:
         cached = _cache.get(key)
         if cached is not None:
@@ -60,21 +71,69 @@ def _read_object(root, pointer):
     return value
 
 
-def _read_record(root, pointer):
+def _read_object(root, pointer):
+    return _object_value(*_object_identity(root, pointer))
+
+
+def _read_metadata(root, pointer):
+    """Verify the same object while retaining only its reference/key shape.
+
+    The large JSON byte cache may churn during a full history scan. This
+    separately bounded cache contains no quotations, and every hit still
+    checks the original path, SHA identity and full filesystem identity.
+    """
+    global _metadata_bytes
+    path, key = _object_identity(root, pointer)
+    with _lock:
+        found = _metadata_cache.get(key)
+        if found is not None:
+            _metadata_cache.move_to_end(key)
+            return found[0]
+    value = _object_value(path, key)
+    metadata = {'keys': tuple(value), 'references': value.get('__supplement_fields_v1')}
+    size = len(dumps(metadata).encode())
+    if size <= MAX_METADATA_ENTRY_BYTES:
+        metadata = deepcopy(metadata)
+        with _lock:
+            if key not in _metadata_cache:
+                _metadata_cache[key] = (metadata, size); _metadata_bytes += size
+            while len(_metadata_cache) > MAX_METADATA_ENTRIES or _metadata_bytes > MAX_METADATA_BYTES:
+                _, (_, removed) = _metadata_cache.popitem(last=False); _metadata_bytes -= removed
+    return metadata
+
+
+def _verify_record(root, pointer):
+    metadata = _read_metadata(root, pointer)
+    references = metadata['references']
+    if references is None:
+        return
+    if not isinstance(references, dict) or len(references) > 64:
+        raise ValueError('补充数据分字段引用无效')
+    for key, reference in references.items():
+        if not isinstance(key, str) or key in metadata['keys'] or key == '__supplement_fields_v1':
+            raise ValueError('补充数据分字段引用与内容冲突')
+        if set(_read_metadata(root, reference)['keys']) != {'__supplement_payload_v1'}:
+            raise ValueError('补充数据分字段对象格式无效')
+
+
+def _read_record(root, pointer, *, fields=None):
     value = _read_object(root, pointer)
     references = value.pop('__supplement_fields_v1', None)
     if references is None:
-        return value
+        return value if fields is None else {key: item for key, item in value.items() if key in fields}
     if not isinstance(references, dict) or len(references) > 64:
         raise ValueError('补充数据分字段引用无效')
     for key, reference in references.items():
         if not isinstance(key, str) or key in value or key == '__supplement_fields_v1':
             raise ValueError('补充数据分字段引用与内容冲突')
-        payload = _read_object(root, reference)
-        if set(payload) != {'__supplement_payload_v1'}:
+        if fields is None or key in fields:
+            payload = _read_object(root, reference)
+            if set(payload) != {'__supplement_payload_v1'}:
+                raise ValueError('补充数据分字段对象格式无效')
+            value[key] = payload['__supplement_payload_v1']
+        elif set(_read_metadata(root, reference)['keys']) != {'__supplement_payload_v1'}:
             raise ValueError('补充数据分字段对象格式无效')
-        value[key] = payload['__supplement_payload_v1']
-    return value
+    return value if fields is None else {key: item for key, item in value.items() if key in fields}
 
 
 def _store_object(root, value):
@@ -154,4 +213,41 @@ def expand_document(root, document, *, dates=None, fields=None):
                 raise ValueError('补充数据日期对象超过有界索引上限')
             values[day] = _read_record(root, pointer) if version == STORAGE_VERSION and isinstance(pointer, dict) else pointer
         result[field] = values
+    return result
+
+
+def expand_status_document(root, document):
+    """Keep current status inputs, verifying every retained reference first.
+
+    Annual coverage is a published aggregate. An unrelated historical object
+    becoming invalid must still invalidate this view, as with full expansion.
+    Only materialization is narrowed; the source verification scope is not.
+    """
+    version = document.get('storage_version')
+    if version not in (None, STORAGE_VERSION):
+        raise ValueError('补充数据索引存储版本不受支持')
+    selected = {'public_pools', 'fund_flows', 'sector_index_history'}
+    target = document.get('target_date')
+    result = {key: value for key, value in document.items() if key != 'storage_version' and key not in FIELDS}
+    count = 0
+    for field in FIELDS:
+        if field not in document:
+            continue
+        if not isinstance(document[field], dict):
+            raise ValueError('补充数据日期索引需要映射结构')
+        values = {}
+        for day, pointer in document[field].items():
+            count += 1
+            if count > 4096:
+                raise ValueError('补充数据日期对象超过有界索引上限')
+            needed = field in selected and day == target
+            if version == STORAGE_VERSION and isinstance(pointer, dict):
+                if needed:
+                    record_fields = {'date', 'items', 'complete'} if field in ('public_pools', 'fund_flows') else None
+                    values[day] = _read_record(root, pointer, fields=record_fields)
+                else: _verify_record(root, pointer)
+            elif needed:
+                values[day] = pointer
+        if field in selected:
+            result[field] = values
     return result

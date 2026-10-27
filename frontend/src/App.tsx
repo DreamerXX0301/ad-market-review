@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CheckCircle2, X, XCircle } from "lucide-react";
-import { useApi } from "./lib/api";
+import { ApiPageActivity, useApi } from "./lib/api";
 import type { Row } from "./lib/api";
 import AppShell, { marketRoutes, routeTitles } from "./components/AppShell";
 import { Empty, ErrorBox, ToastContext, Loading, Panel } from "./components/UI";
@@ -63,6 +63,7 @@ const RetainedPage = memo(
 );
 export default function App() {
   const bootstrap = useApi<Row>("/bootstrap");
+  const [visible, setVisible] = useState(() => !document.hidden);
   const [route, setRoute] = useState(currentRoute),
     [visited, setVisited] = useState<string[]>([currentRoute()]),
     [date, setDate] = useState(""),
@@ -89,6 +90,11 @@ export default function App() {
     location.hash = next;
     setRoute(next);
     setVisited((v) => (v.includes(next) ? v : [...v, next]));
+  }, []);
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
   }, []);
   useEffect(() => {
     const f = () => {
@@ -122,7 +128,11 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent("workbench-route", { detail: route }));
+    window.dispatchEvent(
+      Object.assign(new CustomEvent("workbench-route", { detail: route }), {
+        navigation: true,
+      }),
+    );
   }, [route]);
   const dates = [...(bootstrap.data?.market_dates || [])].sort();
   const openStock = useCallback(
@@ -316,7 +326,9 @@ export default function App() {
         )}{" "}
         {visited.map((key) => (
           <div className="workspace-page" key={key} hidden={key !== route}>
-            <RetainedPage active={key === route}>{page(key)}</RetainedPage>
+            <ApiPageActivity.Provider value={key === route && visible}>
+              <RetainedPage active={key === route}>{page(key)}</RetainedPage>
+            </ApiPageActivity.Provider>
           </div>
         ))}
       </AppShell>

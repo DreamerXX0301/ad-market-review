@@ -25,16 +25,31 @@ SHARED_WINDOW_SESSIONS=64
 _cache=OrderedDict()
 _bytes=0
 _lock=RLock()
+_stats={'hits':0,'misses':0,'evictions':0,'shared_hits':0,'shared_probes':0}
 QUOTE_FIELDS=('date','open','high','low','close','volume','amount','corporate_action','corporate_action_coverage_known','price_basis')
+
+
+def _verified_price_context(price,key):
+    if (key is None or price.get('anchor_date')!=key[3] or price.get('cache_key')!=key[4]
+            or price.get('requested_price_basis')!='forward'):
+        return False
+    if price.get('price_basis')=='forward_event_affine':return price.get('adjustment',{}).get('usable') is True
+    source=price.get('_verified_preparation_source')
+    if (price.get('price_basis')!='unavailable' or price.get('adjustment',{}).get('usable') is not False
+            or not isinstance(source,str) or len(source)!=64):return False
+    from app.domain.strategy_prices import price_cache_key
+    return price_cache_key(key[2],key[3],'forward',{'verified_closure_sha256':source})==key[4]
 
 
 def clear_cache():
     global _bytes
-    with _lock:_cache.clear();_bytes=0
+    with _lock:
+        _cache.clear();_bytes=0
+        for name in _stats:_stats[name]=0
 
 
 def cache_stats():
-    with _lock:return {'entries':len(_cache),'compressed_bytes':_bytes,'max_entries':MAX_ENTRIES,'max_bytes':MAX_BYTES}
+    with _lock:return {'entries':len(_cache),'compressed_bytes':_bytes,'max_entries':MAX_ENTRIES,'max_bytes':MAX_BYTES,**_stats}
 
 
 def window_scope(trees,calendar,day):
@@ -68,6 +83,8 @@ def _payload(context,scope):
                 for day,row in values.items() if first<=day<=last}
     adjustment=price.get('adjustment',{})
     thin={field:price.get(field) for field in ('requested_price_basis','price_basis','anchor_date','cache_key')}
+    if price.get('price_basis')=='unavailable' and price.get('_verified_preparation_source'):
+        thin['_verified_preparation_source']=price['_verified_preparation_source']
     thin['adjustment']={field:adjustment.get(field) for field in ('version','model','usable','reason','events_count','quarantined','source_snapshot_id','source_proof_sha256')}
     daily={day:{field:value for field,value in values.items() if field in kept}
            for day,values in context.daily.items() if first<=day<=last}
@@ -88,7 +105,8 @@ def remember(key,context,scope):
     """Capture a compact pristine input window before attaching source pools."""
     global _bytes
     price=context.price_context or {}
-    if key is None or context.price_basis!='forward_event_affine' or price.get('anchor_date')!=context.as_of:return
+    if (not _verified_price_context(price,key) or price.get('anchor_date')!=context.as_of
+            or context.price_basis!=price.get('price_basis')):return
     payload=_payload(context,scope)
     try:plain=json.dumps(payload,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode()
     except (TypeError,ValueError):return
@@ -98,14 +116,15 @@ def remember(key,context,scope):
     with _lock:
         _remove(key);_cache[key]=(compressed,sha256(plain).digest());_bytes+=len(compressed)
         while len(_cache)>MAX_ENTRIES or _bytes>MAX_BYTES:
-            oldest=next(iter(_cache));_remove(oldest)
+            oldest=next(iter(_cache));_remove(oldest);_stats['evictions']+=1
 
 
 def restore(key,calendar,positions):
     if key is None:return None
     with _lock:
         record=_cache.get(key)
-        if record is None:return None
+        if record is None:
+            _stats['misses']+=1;return None
         _cache.move_to_end(key)
     try:
         decoder=zlib.decompressobj();plain=decoder.decompress(record[0],MAX_DECOMPRESSED+1)
@@ -118,9 +137,11 @@ def restore(key,calendar,positions):
         context=object.__new__(HistoryContext)
         context.calendar=list(calendar);context.positions=dict(positions)
         context.as_of=value['as_of'];context.snapshot_id=value['snapshot_id']
-        context.price_context=value['price_context'];context.price_basis='forward_event_affine'
+        if not _verified_price_context(value['price_context'],key):raise ValueError('cache preparation provenance')
+        context.price_context=value['price_context'];context.price_basis=value['price_context']['price_basis']
         for field in ('quotes','raw_quotes','daily','invalid_dates','action_dates','unknown_action_dates'):setattr(context,field,value[field])
         context.event_cache={}
+        with _lock:_stats['hits']+=1
         return context
     except (ValueError,TypeError,KeyError,zlib.error):
         with _lock:
@@ -242,8 +263,8 @@ def remember_shared(key,context,scope):
     import sqlite3
     try:
         price=context.price_context or {}
-        if (key is None or context.price_basis!='forward_event_affine'
-                or price.get('anchor_date')!=context.as_of or price.get('cache_key')!=key[4]):return False
+        if (not _verified_price_context(price,key) or price.get('anchor_date')!=context.as_of
+                or context.price_basis!=price.get('price_basis')):return False
         identity=_shared_identity(key)
         value=_payload(context,scope)
         if key[5]!=scope['signature'] or not _complete_shared_input(value,scope,context.calendar,context.as_of):return False
@@ -258,13 +279,14 @@ def remember_shared(key,context,scope):
         return False
 
 
-def project_context(context,scope,calendar,positions):
+def project_context(context,scope,calendar,positions,*,owned=False):
     """Return exactly the requested view of a wider pristine technical tail."""
-    value=deepcopy(_payload(context,scope))
+    value=_payload(context,scope)
+    if not owned:value=deepcopy(value)
     projected=object.__new__(HistoryContext)
     projected.calendar=list(calendar);projected.positions=dict(positions)
     projected.as_of=value['as_of'];projected.snapshot_id=value['snapshot_id']
-    projected.price_context=value['price_context'];projected.price_basis='forward_event_affine'
+    projected.price_context=value['price_context'];projected.price_basis=value['price_context']['price_basis']
     for field in ('quotes','raw_quotes','daily','invalid_dates','action_dates','unknown_action_dates'):
         setattr(projected,field,value[field])
     projected.event_cache={}
@@ -275,6 +297,7 @@ def restore_shared(key,requested_scope,calendar,positions):
     """Read a verified same-anchor tail, then project current rule inputs."""
     from app.services import condition_basis_cache as disk
     import sqlite3
+    with _lock:_stats['shared_probes']+=1
     try:
         if key is None:return None
         record=disk._get_disk(_shared_identity(key))
@@ -292,17 +315,19 @@ def restore_shared(key,requested_scope,calendar,positions):
         if (value['version']!=VERSION or value['as_of']!=key[3] or value['snapshot_id']!=key[1]
                 or value['price_context']['anchor_date']!=key[3]
                 or value['price_context']['cache_key']!=key[4]
-                or value['price_context'].get('requested_price_basis')!='forward'
-                or value['price_context'].get('price_basis')!='forward_event_affine'
-                or value['price_context'].get('adjustment',{}).get('usable') is not True):return None
+                or not _verified_price_context(value['price_context'],key)):return None
         if not _complete_shared_input(value,wider,calendar,key[3]):return None
         context=object.__new__(HistoryContext)
         context.calendar=list(calendar);context.positions=dict(positions)
         context.as_of=value['as_of'];context.snapshot_id=value['snapshot_id']
-        context.price_context=value['price_context'];context.price_basis='forward_event_affine'
+        context.price_context=value['price_context'];context.price_basis=value['price_context']['price_basis']
         for field in ('quotes','raw_quotes','daily','invalid_dates','action_dates','unknown_action_dates'):
             setattr(context,field,value[field])
         context.event_cache={}
-        return project_context(context,requested_scope,calendar,positions)
+        # Decoding allocated a private object graph; the temporary context is
+        # discarded here. Projection may transfer its nested values directly.
+        projected=project_context(context,requested_scope,calendar,positions,owned=True)
+        with _lock:_stats['shared_hits']+=1
+        return projected
     except (OSError,ValueError,TypeError,KeyError,AttributeError,OverflowError,sqlite3.Error,zlib.error):
         return None

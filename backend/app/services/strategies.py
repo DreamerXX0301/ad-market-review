@@ -1,6 +1,6 @@
 """strategies application workflows; persistence and side effects live here."""
 from __future__ import annotations
-import hashlib,json,sqlite3
+import hashlib,json,sqlite3,time
 from decimal import Decimal,ROUND_HALF_UP
 from fastapi import HTTPException
 from app.core import connect,get_market,now_ms,new_id
@@ -13,11 +13,12 @@ from app.services.strategy_limits import LIMIT_FIELDS, DAILY_LIMIT_FIELDS, COUNT
 from app.domain.trade_rules import normalize_trade_rules
 from app.domain.history_events import nodes as history_nodes, current_names
 from app.services.history_events import contexts_for_batch, prepare_shared, batch_size as history_batch_size
-from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics,compile_metric_plan,cached_metrics_if_ready,ordinary_metrics_ready,complete_from_basis
+from app.services.strategy_periods import periods_for,add_period_metrics,cached_metrics,compile_metric_plan,cached_metrics_if_ready,ordinary_metrics_ready,complete_from_basis,remember_prepared,prepare_saved_structures
 from app.services import task_service as tasks
 from app.services.workspace_deletion import require_strategy_present,strategy_visibility
 from app.services import strategy_hot_universe as hot_universe
 from app.services.condition_basis_cache import disk_session
+from app.services.selection_compute_pool import compute_session,current_session
 ENGINE_VERSION="workspace-v8-bounded-history-events"
 FORWARD_ENGINE_VERSION='workspace-v17-local-forward-prices-v1'
 PRICE_BASIS_CONTRACT='strategy-local-forward-v1'
@@ -267,7 +268,7 @@ def selection_history_batch(market,symbols,day):
     return method(symbols,end=day) if callable(method) else {symbol:market.bars(symbol,as_of=day) for symbol in symbols}
 
 
-def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=True,require_history=False,price_basis='none',source_token=None,price_contexts=None,history_cached_symbols=None):
+def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=True,require_history=False,price_basis='none',source_token=None,price_contexts=None,history_cached_symbols=None,history_trees=None,computed_histories=None):
     """Read original seeds only for cache misses, with at most 32 securities.
 
     Weekly/monthly entry still uses the observation day's own raw close. A
@@ -280,6 +281,7 @@ def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=
         from app.domain.strategy_prices import prepare_condition_prices,price_cache_key
         for symbol in symbols:contexts[symbol]={'requested_price_basis':'forward','anchor_date':day,
                                               'cache_key':price_cache_key(symbol,day,'forward',source_token)}
+        if generation and source_token is not None:prepare_saved_structures(symbols,day,periods,plan,generation,contexts)
     ready={symbol:{period:cached_metrics_if_ready(day,period,instrument_id=symbol,generation=generation,request=plan.requests[period],
              **({'price_context':contexts[symbol]} if price_basis=='forward' else {})) for period in periods} for symbol in symbols}
     daily_method=getattr(market,'history_for_instruments',None)
@@ -320,15 +322,30 @@ def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=
         actions=action_method(cold) if callable(action_method) else None
         status_method=getattr(market,'status',None);snapshot=status_method().get('snapshot_id') if callable(status_method) else None
         expected_snapshot=generation[0] if isinstance(generation,tuple) else generation
+        from app.services.selection_compute import prepare_cold
+        prepared=(prepare_cold(market,cold,histories,actions,day,market.calendar(),plan,periods,generation,
+            source_token,basis_keys,snapshot=snapshot,history_trees=history_trees if require_history else None)
+            if not require_history or history_trees else None) or {}
         for symbol in cold:
+            if symbol in prepared:
+                value=prepared[symbol];contexts[symbol]=value['price_context']
+                if value['basis_record'] is not None:basis_cache.remember_encoded(basis_keys[symbol],value['basis_record'])
+                for period in periods:
+                    ready[symbol][period]=value['metrics'][period]
+                    remember_prepared(day,period,value['metrics'][period],instrument_id=symbol,generation=generation,
+                        request=plan.requests[period],price_context=contexts[symbol],strict_record=value['strict_records'][period])
+                if computed_histories is not None and value['history'] is not None:computed_histories[symbol]=value['history']
+                continue
             same_generation=expected_snapshot is None or snapshot==expected_snapshot
             known=same_generation and source_token is not None and isinstance(actions,dict) and symbol in actions and isinstance(actions[symbol],list)
             contexts[symbol]=prepare_condition_prices(histories.get(symbol,[]),actions.get(symbol) if isinstance(actions,dict) else None,
                 market.calendar(),day,'forward',instrument_id=symbol,
                 actions_coverage={'known':known,'source_token':source_token if same_generation else None,'snapshot_id':snapshot,
                                   'reason':None if same_generation else '行情代际在价格准备期间变化，不能混用公司行动证据'})
+            if known:basis_cache.mark_verified_unavailable(contexts[symbol],basis_keys.get(symbol))
             shared_seed=(basis_keys.get(symbol) is not None
-                         and contexts[symbol].get('price_basis')=='forward_event_affine')
+                         and (contexts[symbol].get('price_basis')=='forward_event_affine'
+                              or contexts[symbol].get('_verified_preparation_source') is not None))
             # A reusable seed keeps both original quotations and their pristine
             # normalization. It is captured before attaching any rule/pool
             # decisions and never changes an earlier run's immutable evidence.
@@ -347,6 +364,7 @@ def selection_metric_batch(market,symbols,day,plan,generation,*,include_default=
     if daily_only:daily.update(daily_method(daily_only,start=day,end=day))
     return histories,ready,daily
 
+@compute_session()
 @disk_session()
 def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
     if response_decision not in (None,'matched','unmatched','unknown'):fail('结果筛选无效')
@@ -384,6 +402,13 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
         else: check_api_task(job_id, connection)
     def report(*args):
         return tasks.progress(job_id, *args, lease_owner=owner if queued_job else None)
+    next_compute_check=0.0
+    def check_compute_task():
+        nonlocal next_compute_check
+        tick=time.monotonic()
+        if tick>=next_compute_check:
+            check_task();next_compute_check=tick+.2
+    current_session().check_cancel=check_compute_task
     try:
         report('准备个股策略数据',0,'读取已发布行情、交易日历和策略依赖')
         market=get_market();calendar=market.calendar();master=identities(day);result=[];required=names(st['definition'])
@@ -426,6 +451,11 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
         limit_quotes=batch_quote_indexes(market,sorted(master),day,calendar) if fast and limit_evidence and not needs_count else {}
         check_task()
         ordered=sorted(master);event_contexts={};metric_batch=FORWARD_SELECTION_BATCH_SIZE if price_basis=='forward' and event_nodes else 32
+        prefetched_quotes=(not fast and price_basis=='forward' and source_token is not None
+            and limit_evidence is not None and not needs_count and callable(getattr(market,'history_for_instruments',None)))
+        if prefetched_quotes:
+            for offset in range(0,len(ordered),256):
+                check_task();limit_quotes.update(batch_quote_indexes(market,ordered[offset:offset+256],day,calendar))
         history_batch=(history_batch_size([st['definition']]) if event_nodes else 256) if fast else metric_batch
         report('核验个股条件',0,f'准备核验 {len(ordered)} 只证券',{'actual_completed_batches':0,'actual_total_batches':len(ordered)})
         history_shared=prepare_shared(market,ordered,[st['definition']],calendar,day,**({'price_basis':price_basis} if price_basis=='forward' else {})) if event_nodes else None
@@ -436,16 +466,18 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
                 selected=ordered[sequence:sequence+metric_batch]
                 batch_price_contexts={}
                 batch_history_contexts={}
+                computed_histories={}
                 if price_basis=='forward' and event_nodes:
                     from app.services.history_events import cached_forward_contexts
                     batch_history_contexts=cached_forward_contexts(selected,[st['definition']],calendar,day,generation,source_token)
                 batch_bars,batch_ready,batch_daily=selection_metric_batch(market,selected,day,metric_plan,probe_generation,include_default=not fast,require_history=bool(event_nodes and history_shared is None and not fast),
-                    **({'price_basis':price_basis,'source_token':source_token,'price_contexts':batch_price_contexts,'history_cached_symbols':set(batch_history_contexts)} if price_basis=='forward' else {}))
-                if limit_evidence and not needs_count:
+                    **({'price_basis':price_basis,'source_token':source_token,'price_contexts':batch_price_contexts,'history_cached_symbols':set(batch_history_contexts),
+                        'history_trees':[st['definition']],'computed_histories':computed_histories} if price_basis=='forward' else {}))
+                if limit_evidence and not needs_count and not prefetched_quotes:
                     limit_quotes=batch_quote_indexes(market,selected,day,calendar,batch_bars if len(batch_bars)==len(selected) else None)
             if event_nodes and sequence%history_batch==0:
                 event_contexts=contexts_for_batch(market,ordered[sequence:sequence+history_batch],[st['definition']],calendar,day,batch_bars if not fast else None,shared=history_shared,limit_evidence=limit_evidence,
-                    **({'price_basis':price_basis,'price_contexts':batch_price_contexts,'prepared_contexts':batch_history_contexts} if price_basis=='forward' else {}))
+                    **({'price_basis':price_basis,'price_contexts':batch_price_contexts,'prepared_contexts':batch_history_contexts,'computed_contexts':computed_histories} if price_basis=='forward' else {}))
             item=master[ident]
             if item.get('kind',item.get('asset_type','stock')) not in ('stock','equity','a_share','A'):continue
             topic_ids=[x['topic_id'] for x in topics.get(ident,[])]

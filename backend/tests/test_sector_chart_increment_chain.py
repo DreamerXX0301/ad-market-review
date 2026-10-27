@@ -189,7 +189,31 @@ def test_new_increment_http_freezes_chain_version_without_provider_request(http,
     response = http.post('/api/v1/sync/tasks', json={'mode': 'increment', 'request_key': 'daily-chain'})
     assert response.status_code == 200
     assert response.json()['parameters']['data_chain_version'] == INCREMENT_CHAIN
+    assert response.json()['parameters']['sector_tail_request_policy_version']==batch.SECTOR_TAIL_PACING_VERSION
     assert local.adapter.calls == []
+
+
+@pytest.mark.parametrize('new_pacing',[False,True])
+def test_increment_chain_and_child_retry_keep_original_pacing_signature(local,new_pacing):
+    parameters={'source_id':'fuyao','data_chain_version':INCREMENT_CHAIN}
+    if new_pacing:parameters['sector_tail_request_policy_version']=batch.SECTOR_TAIL_PACING_VERSION
+    parent=tasks.create_task('increment',parameters,target_date=DAY)
+    finish_claimed(parent)
+    child=worker.recover_followups()[0]
+    frozen=child['parameters']
+    assert ('sector_tail_request_policy_version' in frozen) is new_pacing
+    expected=batch.plan_sector_chart_batch(local.market,DAY,'increment',
+        request_policy_version=batch.SECTOR_TAIL_PACING_VERSION if new_pacing else None)
+    assert frozen['request_signature']==expected['request_signature']
+    assert frozen['boards']==expected['boards']
+    finish_claimed(child,'failed')
+    retried=tasks.change_task(child['job_id'],'retry')
+    assert retried['parameters']==frozen
+    tasks.change_task(retried['job_id'],'pause')
+    assert worker.recover_followups()==[]
+    resumed=tasks.change_task(retried['job_id'],'resume')
+    assert resumed['parameters']==frozen
+    assert local.adapter.calls==[]
 
 
 @pytest.mark.parametrize('status', ['partial', 'succeeded', 'no_change'])

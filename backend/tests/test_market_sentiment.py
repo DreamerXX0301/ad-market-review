@@ -135,7 +135,7 @@ def test_generic_absence_is_not_proof_of_a_complete_previous_cohort(market,mode)
 def test_panel_reference_reuses_proof_without_loading_supplement_again(market, monkeypatch):
     """Retained panel facts match the former constructor-and-overwrite path."""
     calls=[]
-    def load(snapshot):
+    def load(snapshot, **_kwargs):
         calls.append(snapshot)
         return {'unrelated': 'would immediately be discarded'}
     monkeypatch.setattr(strategy_limits, 'load_supplement', load)

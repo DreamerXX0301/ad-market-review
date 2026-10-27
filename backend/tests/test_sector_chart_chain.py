@@ -82,6 +82,7 @@ def test_new_initial_http_freezes_new_chain_version_without_network(http,local):
     task=response.json()
     assert task['kind']=='initialise'
     assert task['parameters']['data_chain_version']==CHAIN
+    assert 'sector_tail_request_policy_version' not in task['parameters']
     assert local.adapter.calls==[]
 
 

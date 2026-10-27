@@ -8,7 +8,8 @@ from __future__ import annotations
 import json
 import time
 
-from app.adapters.providers import ProviderError
+from app.adapters.providers import (ProviderError, SECTOR_TAIL_PACING_VERSION,
+    validate_sector_tail_pacing, sector_tail_request_scope)
 from app.core import digest
 from app.services.sector_charts import (collect_sector_chart, collect_sector_chart_incremental,
     _plan_from_inputs, _root, _verified_json)
@@ -20,10 +21,13 @@ MAX_CODES = 800
 REQUEST_INTERVAL = 1.2
 
 
-def plan_sector_chart_batch(market, as_of, mode='initial'):
+def plan_sector_chart_batch(market, as_of, mode='initial', *, request_policy_version=None):
     """Bind the current catalog identity, published generation and date scope."""
     day = _day(as_of)
     if mode not in ('initial', 'increment'): raise ValueError('板块K线仅支持首次补齐或尾部增量模式')
+    validate_sector_tail_pacing(request_policy_version)
+    if request_policy_version is not None and mode != 'increment':
+        raise ValueError('新请求节奏只适用于明确冻结的板块尾部增量')
     catalog, invalid, duplicates, ambiguous = _catalog(market.reference())
     if not catalog:
         raise ValueError('行业概念目录为空，不能将空目录视为全量K线完成')
@@ -39,13 +43,16 @@ def plan_sector_chart_batch(market, as_of, mode='initial'):
               'normalization_version': NORMALIZATION_VERSION,
               'scope': '冻结当前目录的行业与概念历史指数K线；不代表完整历史目录或历史成分股'}
     if mode == 'increment': frozen['mode'] = mode
+    if request_policy_version is not None:
+        frozen['sector_tail_request_policy_version'] = request_policy_version
     frozen['request_signature'] = digest(frozen)
     return frozen
 
 
 def _validate_plan(market, plan):
     if not isinstance(plan, dict): raise ValueError('全量板块K线缺少冻结计划')
-    current = plan_sector_chart_batch(market, plan.get('as_of'), plan.get('mode', 'initial'))
+    current = plan_sector_chart_batch(market, plan.get('as_of'), plan.get('mode', 'initial'),
+                                     request_policy_version=plan.get('sector_tail_request_policy_version'))
     if any(plan.get(key) != value for key, value in current.items()):
         raise ValueError('全量板块K线冻结目录、身份、日期或行情代际已不符，请重新创建任务')
     return current
@@ -60,8 +67,10 @@ class _SourceStopped(Exception):
 
 
 class _BoundedAdapter:
-    def __init__(self, adapter, guard):
+    def __init__(self, adapter, guard, pacing=None):
         self.adapter = adapter; self.guard = guard
+        self.pacing = pacing
+        self.interval = pacing.interval if pacing is not None else REQUEST_INTERVAL
         self.requests = 0; self.last_request = None; self.blocked = None
         self.request_kind = 'full'; self.full_requests = 0; self.tail_requests = 0
 
@@ -73,8 +82,9 @@ class _BoundedAdapter:
         if self.blocked: raise _SourceStopped(self.blocked)
         if self.requests >= MAX_CODES: raise _SourceStopped('达到本次800个逻辑请求保护上限')
         if self.last_request is not None:
-            delay = REQUEST_INTERVAL-(time.monotonic()-self.last_request)
-            if delay > 0: time.sleep(delay)
+            delay = self.interval-(time.monotonic()-self.last_request)
+            if delay > 0:
+                (self.pacing.wait if self.pacing is not None else time.sleep)(delay)
         self.guard()
         self.requests += 1; self.last_request = time.monotonic()
         if self.request_kind == 'tail': self.tail_requests += 1
@@ -82,7 +92,7 @@ class _BoundedAdapter:
         try:
             return self.adapter.request(path, params)
         except ProviderError as error:
-            if error.status in (401, 403, 429) or error.code == 2001:
+            if error.status in (401, 403, 429) or error.code == 2001 or self.pacing is not None and error.code in (2003, 4001):
                 self.blocked = '来源认证、权限或限流拒绝，停止新增请求；缓存仍逐项复验：'+str(error)
             raise
 
@@ -147,12 +157,14 @@ def read_frozen_sector_chart_batch_report(plan, mode='initial'):
         raise ValueError('板块K线全库摘要原始依据不符')
     proof = raw.get('report')
     keys = ('date', 'source', 'snapshot_id', 'catalog_signature', 'request_signature',
-            'normalization_version', 'items', 'coverage', 'failures', 'complete', 'quality', 'message', 'mode')
+            'normalization_version', 'items', 'coverage', 'failures', 'complete', 'quality', 'message', 'mode',
+            'sector_tail_request_policy_version')
     if (not isinstance(proof, dict) or any(record.get(key) != proof.get(key) for key in keys)
             or record.get('date') != expected['as_of'] or record.get('source') != expected['source']
             or record.get('snapshot_id') != expected['snapshot_id']
             or record.get('catalog_signature') != expected['catalog_signature']
             or record.get('request_signature') != expected['request_signature']
+            or record.get('sector_tail_request_policy_version') != plan.get('sector_tail_request_policy_version')
             or record.get('mode', 'initial') != mode
             or record.get('normalization_version') != NORMALIZATION_VERSION):
         raise ValueError('板块K线全库摘要代际、目录、日期或请求证明不符')
@@ -161,6 +173,11 @@ def read_frozen_sector_chart_batch_report(plan, mode='initial'):
 
 
 def read_sector_chart_batch_report(market, as_of, mode='initial'):
+    if mode == 'increment':
+        current = plan_sector_chart_batch(market, as_of, mode, request_policy_version=SECTOR_TAIL_PACING_VERSION)
+        report = read_frozen_sector_chart_batch_report(current, mode)
+        if report is not None:
+            return report
     plan = plan_sector_chart_batch(market, as_of, mode)
     return read_frozen_sector_chart_batch_report(plan, mode)
 
@@ -183,10 +200,10 @@ def collect_sector_chart_batch(market, plan, adapter, guard=None, progress=None)
     try:
         checked()
         frozen = _validate_plan(market, plan)
-        bounded = _BoundedAdapter(adapter, checked)
         items = []; failures = list(frozen['catalog_failures'])
         failed = 0; unrequested = 0; cache_hits = 0; total = len(frozen['boards'])
-        with planning_scope(market, frozen['as_of'], plans=frozen['boards']):
+        with sector_tail_request_scope(frozen.get('sector_tail_request_policy_version'), checked) as pacing, planning_scope(market, frozen['as_of'], plans=frozen['boards']):
+            bounded = _BoundedAdapter(adapter, checked, pacing)
             for done, board in enumerate(frozen['boards'], 1):
                 checked()
                 prior_requests = bounded.requests; result = None
@@ -248,6 +265,11 @@ def collect_sector_chart_batch(market, plan, adapter, guard=None, progress=None)
                 'quality': 'complete' if complete else 'partial',
                 'normalization_version': NORMALIZATION_VERSION,
                 'message': f'行业概念历史K线已核验 {len(items)}/{total} 个；失败 {failed}、未请求 {unrequested}，报价缺口见覆盖说明'}
+        if pacing is not None:
+            report['sector_tail_request_policy_version'] = frozen['sector_tail_request_policy_version']
+            coverage.update(request_policy_version=frozen['sector_tail_request_policy_version'],
+                            request_interval_seconds=pacing.interval, request_interval_anchor='transport-start',
+                            maximum_inflight=1, provider_transport_attempts=pacing.attempts)
         return _save_report(frozen, report, checked)
     except _GuardInterrupted as error:
         raise error.__cause__

@@ -132,7 +132,7 @@ import {
 import type { ChartPanel } from "./chartPreferences";
 import { useChartPreferences } from "./useChartPreferences";
 import { projectEventBaseline } from "./chartDisplay";
-import { candleChartEndpoint } from "./chartEndpoint";
+import { candleChartEndpoint, initialChartResponse } from "./chartEndpoint";
 import {
   chartIndicatorAvailability,
   chartIndicatorLabel,
@@ -243,6 +243,7 @@ export function CandleChart({
   historicalChecks,
   historicalChecksReason,
   dataEndpoint,
+  initialChart,
   showStockSummary = true,
   showDataNotes = true,
   frozenChartsByPeriod,
@@ -259,6 +260,7 @@ export function CandleChart({
   historicalChecks?: unknown;
   historicalChecksReason?: string;
   dataEndpoint?: string;
+  initialChart?: { endpoint: string; data: Row };
   showStockSummary?: boolean;
   showDataNotes?: boolean;
   frozenChartsByPeriod?: Partial<Record<ChartPeriod, Row>>;
@@ -370,8 +372,29 @@ export function CandleChart({
       });
   const entryCanvasKey =
     chartRequestPath || `frozen|${instrumentId}|${asOf || ""}|${period}`;
-  const result = useApi<Row>(chartRequestPath);
-  const data = frozenMode ? frozenChartsByPeriod[period] || null : result.data;
+  const [initialRequestPath] = useState(() => chartRequestPath);
+  const [initialRequestActive, setInitialRequestActive] = useState(true);
+  useEffect(() => {
+    if (chartRequestPath !== initialRequestPath) setInitialRequestActive(false);
+  }, [chartRequestPath, initialRequestPath]);
+  // Once controls select another request, returning to D performs a fresh GET.
+  // The owner may refresh its initial response while that first D view is open.
+  const initialData =
+    !frozenMode &&
+    initialRequestActive &&
+    chartRequestPath === initialRequestPath
+      ? initialChartResponse(
+          initialChart,
+          dataEndpoint,
+          instrumentId,
+          asOf,
+          period,
+        )
+      : null;
+  const result = useApi<Row>(initialData ? null : chartRequestPath);
+  const data = frozenMode
+    ? frozenChartsByPeriod[period] || null
+    : initialData || result.data;
   const bars = useMemo<Row[]>(() => data?.bars || [], [data]);
   useEffect(() => {
     const node = plotRoot.current;

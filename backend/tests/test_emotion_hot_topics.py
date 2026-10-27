@@ -55,7 +55,7 @@ def test_emotion_uses_one_cached_same_scope_history_without_second_panel_and_kee
         def calendar(self):return [previous,day]
         def instruments(self,**kwargs):return [{'instrument_id':'600001.SH','kind':'stock','list_date':None}]
         def panel(self,*args):raise AssertionError('No repeated current/previous panel computation')
-    monkeypatch.setattr(market_service,'panel',lambda _: (Market(),{'snapshot_id':'fixture','data_end':day},day,{},[]))
+    monkeypatch.setattr(market_service,'panel',lambda _, **_kwargs: (Market(),{'snapshot_id':'fixture','data_end':day},day,{},[]))
     result=market_service.market_page('emotion',day)
     assert calls==[day] and result['emotion']['phase']=='修复'
     assert result['breadth']['expected_current_universe'] is None

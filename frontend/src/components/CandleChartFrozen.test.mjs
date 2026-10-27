@@ -25,7 +25,7 @@ const { chartBoll, bollCandleValues } = await helper("./chartBoll.ts");
 const { annotationColors, lineLabel, savedLineSettings, levelOriginLabel } = await helper("./chartAnnotations.ts");
 const lineLabels = await helper("./chartLineLabelLayout.ts");
 const { chartPaneLayout } = await helper("./chartPaneLayout.ts");
-const { candleChartEndpoint } = await helper("./chartEndpoint.ts");
+const { candleChartEndpoint, initialChartResponse } = await helper("./chartEndpoint.ts");
 const { candleExtremeChange } = await helper("./candleExtremeChange.ts");
 const { chartSessionDistance } = await helper("./chartSessionDistance.ts");
 const { chartPriceBasis } = await helper("./chartPriceBasis.ts");
@@ -96,6 +96,7 @@ const scopeValues = {
   EMPTY_LINE_IDS: new Set(),
   chartPaneLayout,
   candleChartEndpoint,
+  initialChartResponse,
   candleExtremeChange,
   useChartPreferences: () => ({
     preferences: settings,

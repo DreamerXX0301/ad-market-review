@@ -1,5 +1,6 @@
 """HTTP adapters for independent research. Domain rules never depend on market view date."""
 from fastapi import APIRouter,Body,Query
+from fastapi.responses import JSONResponse
 from app.services import topics,strategies,tracking,topic_members as membership_service
 from app.services import sector_strategies,sector_tracking,strategy_batches
 from app.domain.conditions import specs
@@ -75,18 +76,18 @@ def strategy_restore(strategy_id:str):return workspace_deletion.restore_strategy
 @router.post('/strategies/{strategy_id}/runs')
 def strategy_run(strategy_id:str,payload:dict=Body(default={}),response_decision:str|None=None):return strategies.run_strategy(strategy_id,payload,response_decision=response_decision)
 @router.get('/strategy-runs')
-def strategy_runs(strategy_id:str|None=None,limit:int=Query(50,ge=1,le=200)):return strategies.list_runs(strategy_id,limit)
+def strategy_runs(strategy_id:str|None=None,limit:int=Query(50,ge=1,le=200)):return JSONResponse(strategies.list_runs(strategy_id,limit))
 @router.get('/strategy-runs/{run_id}')
-def strategy_run_get(run_id:str,decision:str|None=None):return strategies.get_run(run_id,decision)
+def strategy_run_get(run_id:str,decision:str|None=None):return JSONResponse(strategies.get_run(run_id,decision))
 
 @router.get('/tracking-rounds')
-def tracking_list(strategy_id:str|None=None,status:str='tracking',triggered_only:bool=False):return tracking.list_tracking(strategy_id,status,triggered_only)
+def tracking_list(strategy_id:str|None=None,status:str='tracking',triggered_only:bool=False,view:str=Query('full',pattern='^(full|summary)$')):return JSONResponse(tracking.list_tracking(strategy_id,status,triggered_only,view))
 @router.post('/tracking-rounds')
 def tracking_add(payload:dict=Body(...)):return tracking.add_tracking(payload)
 @router.post('/tracking-rounds/review')
 def tracking_review(payload:dict=Body(default={})):return tracking.review_tracking(payload)
 @router.get('/tracking-rounds/{round_id}')
-def tracking_get(round_id:str):return tracking.get_tracking(round_id)
+def tracking_get(round_id:str):return JSONResponse(tracking.get_tracking(round_id))
 @router.patch('/tracking-rounds/{round_id}/policy')
 def tracking_policy(round_id:str,payload:dict=Body(...)):return tracking.change_tracking_policy(round_id,payload)
 @router.post('/tracking-rounds/{round_id}/remove')

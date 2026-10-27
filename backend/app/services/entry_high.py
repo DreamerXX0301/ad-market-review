@@ -66,8 +66,9 @@ def _unknown(round_, reason, kind='high'):
             'raw_' + kind: None, 'raw_' + kind + '_e8': None, 'price_basis': 'none', 'reason': reason}
 
 
-def _frozen(round_, kind='high'):
-    proof = _basis(round_).get('entry_' + kind)
+def _frozen(round_, kind='high', basis=None):
+    basis = _basis(round_) if basis is None else basis
+    proof = basis.get('entry_' + kind)
     if not isinstance(proof, dict) or proof.get('state') != 'ready': return None
     generation = proof.get('market_snapshot_id')
     version = VERSION if kind == 'high' else LOW_VERSION
@@ -75,7 +76,7 @@ def _frozen(round_, kind='high'):
     valid = (proof.get('version') == version and proof.get('date') == round_['entry_business_date']
              and proof.get('instrument_id') == round_['instrument_id']
              and proof.get('entry_snapshot_id') == round_['entry_snapshot_id']
-             and proof.get('price_basis') == 'none' and _basis(round_).get('price_basis') == 'none'
+             and proof.get('price_basis') == 'none' and basis.get('price_basis') == 'none'
              and isinstance(generation, str) and re.fullmatch(r'market-[A-Za-z0-9_-]+', generation)
              and proof.get('source_artifact') in (generation + '/daily.parquet',generation + '/daily.manifest.json')
              and isinstance(proof.get('source_sha256'), str) and re.fullmatch(r'[a-f0-9]{64}', proof['source_sha256'])
@@ -118,7 +119,7 @@ def _artifact(snapshot_id, module, role):
     return descriptor
 
 
-def load_entry_highs(rounds, *, _kind='high'):
+def load_entry_highs(rounds, *, _kind='high', bases=None):
     """Return key->proof, using a bounded exact-pair query for each old generation."""
     kind = _kind
     if kind not in ('high', 'low'): raise ValueError('unknown entry-day price kind')
@@ -126,9 +127,13 @@ def load_entry_highs(rounds, *, _kind='high'):
     raw = 'raw_' + kind
     result = {}; grouped = {}
     for round_ in rounds:
-        key = _key(round_); frozen = _frozen(round_, kind)
+        # A browsing request can share its freshly decoded entry JSON between
+        # high, low and row rendering. It is never retained across requests.
+        basis = bases.get(id(round_)) if bases is not None else None
+        if basis is None: basis = _basis(round_)
+        key = _key(round_); frozen = _frozen(round_, kind, basis)
         if frozen is not None: result[key] = frozen
-        elif _basis(round_).get('price_basis') != 'none': result[key] = _unknown(round_, '入池口径不是已核验未复权价格，事件日' + label + '待核验', kind)
+        elif basis.get('price_basis') != 'none': result[key] = _unknown(round_, '入池口径不是已核验未复权价格，事件日' + label + '待核验', kind)
         else: grouped.setdefault(round_['entry_snapshot_id'], {})[key] = round_
     for snapshot, candidates in grouped.items():
         try:
@@ -181,8 +186,8 @@ def entry_high_for(round_, prepared):
     return prepared.get(_key(round_), _unknown(round_, '未准备入池事件日最高价证据'))
 
 
-def load_entry_lows(rounds):
-    return load_entry_highs(rounds, _kind='low')
+def load_entry_lows(rounds, *, bases=None):
+    return load_entry_highs(rounds, _kind='low', bases=bases)
 
 
 def entry_low_for(round_, prepared):

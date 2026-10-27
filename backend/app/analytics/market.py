@@ -578,6 +578,61 @@ class MarketData:
         for row in selected:result[row['instrument_id']].append(row)
         return result
 
+    def return_prices_for_instruments(self, instrument_ids, start=None, end=None):
+        """Bounded OHLC inputs for exact-date returns and action validation.
+
+        Do not convert volume, amount or joined indicator/evidence columns when
+        a return only consumes dated OHLC. Keep every duplicate and NULL price;
+        corporate-action validation still receives all four price fields.
+        """
+        symbols=list(dict.fromkeys(canonical(symbol) for symbol in instrument_ids))
+        if len(symbols)>256:raise ValueError('涨幅价格输入每批最多256只证券')
+        result={symbol:[] for symbol in symbols}
+        if not symbols:return result
+        columns=('instrument_id','date','open','high','low','close')
+        with self._lock:
+            head=self._load()
+            if not head:return result
+            if self._frame is not None:
+                _,stamp=self._daily_source(head)
+                if self._frame_source_stamp!=stamp:
+                    self._frame=None;self._frame_source_stamp=None;self._symbol_ranges={};self._daily_columns=None;self._daily_native_dtypes=None;self._daily_text_nulls=None
+            if self._frame is not None:
+                import pandas as pd
+                import numpy as np
+                dates=self._frame['date'];pieces=[]
+                for symbol in symbols:
+                    bounds=self._symbol_ranges.get(symbol)
+                    if not bounds:continue
+                    left,right=bounds;days=dates.iloc[left:right]
+                    try:
+                        begin=left+int(days.searchsorted(start,side='left')) if start else left
+                        finish=left+int(days.searchsorted(end,side='right')) if end else right
+                        if begin<finish:pieces.append(np.arange(begin,finish))
+                    except ValueError:
+                        selected=self._frame.iloc[left:right]
+                        if start:selected=selected.loc[selected.date>=start]
+                        if end:selected=selected.loc[selected.date<=end]
+                        if not selected.empty:pieces.append(selected.index.to_numpy())
+                if not pieces:return result
+                positions=np.concatenate(pieces)
+                selected=pd.DataFrame({name:self._frame[name].take(positions).array for name in columns})
+                selected=selected.astype({name:self._daily_native_dtypes[name] for name in columns})
+                values=selected.to_dict('list')
+                for values_row in zip(*(values[name] for name in columns)):
+                    result[values_row[0]].append(dict(zip(columns,values_row)))
+                return result
+            clauses=['instrument_id IN (SELECT unnest(?))'];params=[symbols]
+            if start:clauses.append('date>=?');params.append(start)
+            if end:clauses.append('date<=?');params.append(end)
+            con=duckdb.connect(':memory:')
+            try:
+                selected=con.execute('SELECT '+','.join(columns)+' FROM read_parquet(?) WHERE '+' AND '.join(clauses)+' ORDER BY instrument_id,date',
+                    [parquet_input(self.data_dir/'published'/head['snapshot_id']/'daily.parquet',start=start,end=end),*params]).fetchdf().to_dict('records')
+            finally:con.close()
+        for row in selected:result[row['instrument_id']].append(row)
+        return result
+
     def condition_histories(self, instrument_ids, start=None, end=None):
         """At most 32 securities' joined raw histories, with no market-sized dict.
 

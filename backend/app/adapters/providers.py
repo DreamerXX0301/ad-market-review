@@ -17,6 +17,74 @@ class ProviderError(ValueError):
 
 
 _CONNECTION_SCOPE = ContextVar('provider_connection_scope', default=None)
+_SECTOR_TAIL_PACING = ContextVar('sector_tail_pacing', default=None)
+SECTOR_TAIL_PACING_VERSION = 'sector-tail-pacing-v2'
+
+
+def validate_sector_tail_pacing(version):
+    if version is not None and version != SECTOR_TAIL_PACING_VERSION:
+        raise ValueError('板块尾部请求节奏版本不受支持')
+    return version
+
+
+class _PacingInterrupted(Exception):
+    pass
+
+
+class _SectorTailPacing:
+    """One explicit serial batch; real transport starts share the same clock."""
+    interval = .6
+
+    def __init__(self, guard):
+        self.guard = guard
+        self.last_start = None
+        self.blocked = None
+        self.closed = False
+        self.attempts = 0
+
+    def check(self):
+        if self.closed:
+            raise ProviderError('本次板块尾部请求范围已结束')
+        try:
+            if self.guard:
+                self.guard()
+        except Exception as error:
+            raise _PacingInterrupted() from error
+
+    def wait(self, seconds):
+        deadline = time.monotonic()+seconds
+        while True:
+            self.check()
+            remaining = deadline-time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(.2, remaining))
+
+    def before_request(self):
+        self.check()
+        if self.blocked is not None:
+            raise self.blocked
+        if self.last_start is not None:
+            self.wait(max(0, self.interval-(time.monotonic()-self.last_start)))
+        self.check()
+        self.last_start = time.monotonic()
+        self.attempts += 1
+
+
+@contextmanager
+def sector_tail_request_scope(version, guard=None):
+    """Only a frozen increment batch may change this one endpoint's pacing."""
+    validate_sector_tail_pacing(version)
+    pacing = _SectorTailPacing(guard) if version is not None else None
+    token = _SECTOR_TAIL_PACING.set(pacing)
+    try:
+        yield pacing
+    except _PacingInterrupted as error:
+        raise error.__cause__
+    finally:
+        if pacing is not None:
+            pacing.closed = True
+        _SECTOR_TAIL_PACING.reset(token)
 
 
 def _http_client():
@@ -103,20 +171,27 @@ class ProviderClient:
         if self.key:
             headers["X-api-key"] = self.key
         params = {k: str(v).lower() if isinstance(v, bool) else v for k, v in (params or {}).items()}
+        pacing = _SECTOR_TAIL_PACING.get() if self.source_id == 'fuyao' and path == '/api/a-share-index/prices/historical' else None
         with _request_connection(self) as (client, state):
             for attempt in range(3):
-                delay = (1.2 if self.source_id == "fuyao" else 6.2) - (time.monotonic() - state['last_request'])
-                if delay > 0:
-                    time.sleep(delay)
+                if pacing is not None:
+                    pacing.before_request()
+                else:
+                    delay = (1.2 if self.source_id == "fuyao" else 6.2) - (time.monotonic() - state['last_request'])
+                    if delay > 0:
+                        time.sleep(delay)
                 try:
                     try:
                         response = client.get(self.BASES[self.source_id] + path, params=params, headers=headers)
                     finally:
                         # Transport failures also consume the request interval.
                         self.last_request = state['last_request'] = time.monotonic()
+                    if pacing is not None and response.status_code in (401, 403, 429):
+                        pacing.blocked = ProviderError('来源拒绝本次板块尾部请求，已停止新增请求', status=response.status_code)
+                        raise pacing.blocked
                     if response.status_code == 429 or response.status_code >= 500:
                         if attempt < 2:
-                            time.sleep(2 ** attempt * 2)
+                            (pacing.wait if pacing is not None else time.sleep)(2 ** attempt * 2)
                             continue
                     if response.status_code != 200:
                         raise ProviderError("来源返回HTTP " + str(response.status_code), response.status_code)
@@ -125,8 +200,11 @@ class ProviderClient:
                         raise ValueError('来源响应格式异常')
                     if self.source_id == "fuyao" and body.get("code") != 0:
                         code = body.get("code")
+                        if pacing is not None and code in (2001, 2003, 4001):
+                            pacing.blocked = ProviderError('来源认证、权限或限流拒绝，已停止新增板块尾部请求', code=code)
+                            raise pacing.blocked
                         if (code == 4001 or str(code).startswith("5")) and attempt < 2:
-                            time.sleep(2 ** attempt * 2)
+                            (pacing.wait if pacing is not None else time.sleep)(2 ** attempt * 2)
                             continue
                         raise ProviderError("来源业务响应未通过（code=" + str(code) + "）", code=code)
                     if body.get("data") is None:
@@ -137,7 +215,7 @@ class ProviderClient:
                         raise
                     if attempt == 2:
                         raise ProviderError("来源连接或数据格式异常，已有限重试；请稍后再试") from None
-                    time.sleep(2 ** attempt)
+                    (pacing.wait if pacing is not None else time.sleep)(2 ** attempt)
         raise ProviderError("来源请求未完成")
 
     def download(self, kind, target: Path, progress=None):

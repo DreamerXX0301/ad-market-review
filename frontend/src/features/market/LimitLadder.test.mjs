@@ -368,9 +368,13 @@ assert.equal(
   (shapeMarkup.match(/data-board-tag="type:one_price_limit_up"/g) || []).length,
   1,
 );
+const earthCard = shapeMarkup
+  .match(/<article class="ladder-stock-card">[\s\S]*?<\/article>/g)
+  .find((card) => card.includes("地天合成样本"));
+assert.match(earthCard, /aria-label="复制代码">600101<\/button>/);
 assert.match(
-  shapeMarkup,
-  /地天合成样本<\/strong><\/button><div class="board-tags"/,
+  earthCard,
+  /class="ladder-stock-badges"><div class="board-tags"[\s\S]*?地天板<\/span>/,
 );
 assert.match(shapeMarkup, /一字涨停<\/span>/);
 assert.match(shapeMarkup, /不还原首次触板或开板回封路径/);

@@ -11,6 +11,7 @@ x-runtime: &runtime
     SHIXU_WORK_DIR: /var/lib/shixu/work
     SHIXU_CREDENTIAL_DIR: /var/lib/shixu/credentials
     SHIXU_CREDENTIAL_MASTER_KEY_FILE: /run/secrets/shixu_master
+    SHIXU_SELECTION_CPU_WORKERS: ${SHIXU_SELECTION_CPU_WORKERS-4}
   init: true
   security_opt: [no-new-privileges:true]
   stop_grace_period: 40s

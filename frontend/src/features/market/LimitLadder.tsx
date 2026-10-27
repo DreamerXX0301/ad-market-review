@@ -137,13 +137,6 @@ function LadderStockCard({
               {row.name || row.code || row.instrument_id || "名称待核验"}
             </strong>
           </button>
-          <BoardTags
-            row={row}
-            date={observationDate}
-            snapshotId={snapshotId}
-            height={showHeight && !failed}
-            previousHeight={showHeight && failed}
-          />
           <CopyStockCode code={row.code} instrumentId={row.instrument_id} />
         </div>
         <div className="ladder-stock-status">
@@ -159,6 +152,15 @@ function LadderStockCard({
             {percent(row.change_pct)}
           </span>
         </div>
+      </div>
+      <div className="ladder-stock-badges">
+        <BoardTags
+          row={row}
+          date={observationDate}
+          snapshotId={snapshotId}
+          height={showHeight && !failed}
+          previousHeight={showHeight && failed}
+        />
       </div>
       <div className="ladder-stock-topics">
         <div className="ladder-attribution-row">

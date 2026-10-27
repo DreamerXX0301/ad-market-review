@@ -16,16 +16,45 @@ CATALOG = {
 }
 
 
+def _latest_probes(connection, revisions):
+    """Select current-credential evidence in SQLite, then decode only winners."""
+    expected = [(identifier, revisions.get(identifier, 'legacy')) for identifier in CATALOG]
+    if any(not isinstance(revision, str) for _, revision in expected):
+        # Older local settings could contain arbitrary JSON. Preserve their
+        # Python equality semantics without treating JSON objects as strings.
+        latest = {}
+        for row in connection.execute('SELECT * FROM capability_probe ORDER BY probed_at_ms,rowid'):
+            evidence = json.loads(row['evidence_json'])
+            if evidence.get('credential_revision', 'legacy') == revisions.get(row['connection_id'], 'legacy'):
+                latest[(row['connection_id'], row['capability'])] = {**dict(row), '_evidence': evidence}
+        return latest
+    placeholders = ','.join('(?,?)' for _ in expected)
+    rows = connection.execute('''WITH expected(connection_id,revision) AS (VALUES '''+placeholders+'''),
+        ranked AS (
+            SELECT p.*,row_number() OVER (
+                PARTITION BY p.connection_id,p.capability
+                ORDER BY p.probed_at_ms DESC,p.rowid DESC) AS position
+            FROM expected e JOIN capability_probe p ON p.connection_id=e.connection_id
+            WHERE (json_type(p.evidence_json,'$.credential_revision') IS NULL AND e.revision='legacy')
+               OR (json_type(p.evidence_json,'$.credential_revision')='text'
+                   AND json_extract(p.evidence_json,'$.credential_revision')=e.revision)
+        ) SELECT * FROM ranked WHERE position=1''',
+        tuple(value for row in expected for value in row))
+    return {(row['connection_id'], row['capability']): {**dict(row), '_evidence': json.loads(row['evidence_json'])}
+            for row in rows}
+
+
 def list_sources(*, include_supplement=True):
     vault = CredentialStore()
     with connect() as connection:
+        connection.execute('BEGIN')
         profiles = {r["connection_id"]: dict(r) for r in connection.execute("SELECT * FROM provider_connection")}
-        revisions={row['key'].removeprefix('source-credential-revision:'):json.loads(row['value_json']) for row in connection.execute("SELECT key,value_json FROM platform_setting WHERE key LIKE 'source-credential-revision:%'")}
-        latest = {}
-        for row in connection.execute("SELECT * FROM capability_probe ORDER BY probed_at_ms"):
-            revision=revisions.get(row['connection_id'],'legacy')
-            if json.loads(row['evidence_json']).get('credential_revision','legacy')!=revision:continue
-            latest[(row["connection_id"], row["capability"])] = dict(row)
+        settings={row['key']:json.loads(row['value_json']) for row in connection.execute(
+            "SELECT key,value_json FROM platform_setting WHERE key='active_source' OR key LIKE 'source-credential-revision:%'")}
+        revisions={key.removeprefix('source-credential-revision:'):value for key,value in settings.items()
+                   if key.startswith('source-credential-revision:')}
+        latest = _latest_probes(connection, revisions)
+        active_source = settings.get('active_source', 'fuyao')
     result = []
     for identifier, meta in CATALOG.items():
         profile = profiles.get(identifier, {})
@@ -35,14 +64,14 @@ def list_sources(*, include_supplement=True):
             probe = latest.get((identifier, key))
             document = key in meta["supported"]
             state = "available" if probe and probe["account_access"] == "allowed" else "locked" if probe and probe["account_access"] == "denied" else "unsupported" if not document else "unverified"
-            reason = json.loads(probe["evidence_json"]).get("reason") if probe else "适配器支持，等待此账号单项核验" if document else "本项目尚未适配此能力，不能由此判断供应商全部权限"
-            evidence=json.loads(probe["evidence_json"]) if probe else {}
+            evidence=probe['_evidence'] if probe else {}
+            reason = evidence.get("reason") if probe else "适配器支持，等待此账号单项核验" if document else "本项目尚未适配此能力，不能由此判断供应商全部权限"
             capabilities.append({"key": key, "name": name, "status": state, "reason": reason, "checked_at":probe['probed_at_ms'] if probe else None, "account_access":probe['account_access'] if probe else None, "sample":evidence.get('sample')})
         configured = identifier == "tickflow-public" or vault.exists(identifier)
         # Pricing labels describe the source, never user-declared permissions.
         # Legacy source-tier settings are preserved but no longer presented as
         # account facts, including incorrectly saved paid labels for Fuyao.
-        result.append({"source_id": identifier, "name": meta["name"], "tier": meta["tier"], "billing_mode":meta['billing_mode'], "requires_key":meta['requires_key'], "sync_supported":meta['sync_supported'], "configuration_note":meta['configuration_note'], "configured": configured, "enabled": bool(profile.get("enabled", True)), "status": "verified" if any(r["account_access"] == "allowed" for r in verified) else "unverified" if configured else "needs_key", "description": meta["description"], "capabilities": capabilities, "last_verified_at": max((r["probed_at_ms"] for r in verified), default=None), "active": setting("active_source", "fuyao") == identifier})
+        result.append({"source_id": identifier, "name": meta["name"], "tier": meta["tier"], "billing_mode":meta['billing_mode'], "requires_key":meta['requires_key'], "sync_supported":meta['sync_supported'], "configuration_note":meta['configuration_note'], "configured": configured, "enabled": bool(profile.get("enabled", True)), "status": "verified" if any(r["account_access"] == "allowed" for r in verified) else "unverified" if configured else "needs_key", "description": meta["description"], "capabilities": capabilities, "last_verified_at": max((r["probed_at_ms"] for r in verified), default=None), "active": active_source == identifier})
     response = {"items": result, "total": len(result)}
     if include_supplement:
         response['public_supplement'] = supplement_status()
@@ -53,9 +82,9 @@ def list_sources(*, include_supplement=True):
 def supplement_status():
     """Read accepted evidence only; visiting settings never starts remote requests."""
     from app.core import get_market
-    from app.services.market_supplement import load_supplement
+    from app.services.market_supplement import load_supplement_status
     from app.services.sector_history import sector_prices_for_date
-    market=get_market();status=market.status();doc=load_supplement(status.get('snapshot_id'))
+    market=get_market();status=market.status();doc=load_supplement_status(status.get('snapshot_id'))
     day=doc.get('target_date');pool=doc.get('public_pools',{}).get(day,{})
     flow=doc.get('fund_flows',{}).get(day,{})
     coverage=doc.get('annual_coverage',{}); down=doc.get('annual_down_coverage',{})
@@ -81,7 +110,7 @@ def configure(identifier, payload):
     # capabilities, so accept the rest of the configuration without storing it.
     if payload.get("active", True):
         set_setting("active_source", identifier)
-    return next(r for r in list_sources()["items"] if r["source_id"] == identifier)
+    return next(r for r in list_sources(include_supplement=False)["items"] if r["source_id"] == identifier)
 
 
 def client(identifier=None):
@@ -124,4 +153,4 @@ def verify(identifier):
         with connect() as connection:
             sample='下载授权已验证，文件字段与完整性须经同步另验' if capability in ('adjustment','bulk') else '单一标的或成员样本，不代表全市场完整'
             connection.execute("INSERT INTO capability_probe(probe_id,connection_id,capability,document_support,account_access,coverage_state,probed_at_ms,schema_version,evidence_json) VALUES(?,?,?,?,?,?,?,?,?)", (new_id("probe"), identifier, capability, "supported", allowed, state, now_ms(), "provider-v1", dumps({"reason": reason, "endpoint": path, "sample": sample,'credential_revision':revision})))
-    return next(r for r in list_sources()["items"] if r["source_id"] == identifier)
+    return next(r for r in list_sources(include_supplement=False)["items"] if r["source_id"] == identifier)

@@ -16,6 +16,8 @@ from app.services.sector_views import sector_view
 
 _gainers_cache=OrderedDict()
 _gainers_lock=threading.RLock()
+_POOL_SUPPLEMENT_FIELDS=('public_pools','annual_pools','annual_down_pools')
+_SECTOR_SUPPLEMENT_FIELDS=(*_POOL_SUPPLEMENT_FIELDS,'sector_index_history')
 
 
 def context(day=None):
@@ -123,9 +125,12 @@ def stock(row, reference=None):
     return result
 
 
-def panel(day=None):
+def panel(day=None, *, supplement_fields=None):
     market, status, day = context(day)
-    supplement,fingerprint=load_supplement_with_fingerprint(status["snapshot_id"])
+    # Keep every retained date: annual coverage, last events and listing dates
+    # are wider than T/T-1. Only omit capabilities the caller never consumes.
+    projection={} if supplement_fields is None else {'fields':supplement_fields}
+    supplement,fingerprint=load_supplement_with_fingerprint(status["snapshot_id"],**projection)
     reference = {**market.reference(), "_supplement":supplement,
                  "_supplement_cache_source":(supplement,fingerprint) if fingerprint is not None else None}
     result=[stock(r, reference if day == status["data_end"] else None) for r in market.panel(day)]
@@ -164,7 +169,7 @@ def index_overview(day=None):
 
 @supplement_reader
 def overview(day=None):
-    market, status, day, reference, rows = panel(day)
+    market, status, day, reference, rows = panel(day,supplement_fields=_POOL_SUPPLEMENT_FIELDS)
     events=dated_events(reference,day)
     latest = day == reference.get("pool_trade_date")
     shsz = [r for r in rows if r["instrument_id"].endswith((".SH", ".SZ"))]
@@ -196,7 +201,7 @@ def overview(day=None):
 @supplement_reader
 def market_topic_members(day=None, *, topic_id=None, source_code=None, kind=None, source_name=None):
     from app.services.market_topic_members import list_members
-    market, status, day, reference, rows = panel(day)
+    market, status, day, reference, rows = panel(day,supplement_fields=_POOL_SUPPLEMENT_FIELDS)
     return list_members(market, status, day, reference, rows, topic_id=topic_id, source_code=source_code, kind=kind, source_name=source_name)
 
 
@@ -217,7 +222,10 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
     if top_n is not None and (kind != 'gainers' or isinstance(top_n,bool) or top_n not in (100,200,300,500,1000)):
         raise HTTPException(422, '近30日涨幅榜仅支持前100、200、300、500或1000；省略top_n查看全市场')
     requested_date = day
-    market, status, day, reference, rows = panel(None if kind == 'abnormal' and monitor_scope == 'latest' else day)
+    # Flow may read a later anchor's historical series and fall back to sectors;
+    # sector views additionally need their retained seven-day index history.
+    fields=None if kind=='flow' else _SECTOR_SUPPLEMENT_FIELDS if kind=='sectors' else _POOL_SUPPLEMENT_FIELDS
+    market, status, day, reference, rows = panel(None if kind == 'abnormal' and monitor_scope == 'latest' else day,supplement_fields=fields)
     indexed = {r["instrument_id"]: r for r in rows}
     latest = day == reference.get("pool_trade_date")
     events=dated_events(reference,day)
@@ -356,7 +364,8 @@ def _gainers_histories(market, day, baseline, rows):
     read must not turn a formerly missing endpoint into a verified return.
     """
     if baseline is None:return {}
-    reader=getattr(market,'history_for_instruments',None)
+    reader=getattr(market,'return_prices_for_instruments',None)
+    if not callable(reader):reader=getattr(market,'history_for_instruments',None)
     if not callable(reader):return market.history_panel(day,lookback=31)
     from app.services.topic_member_metrics import BATCH_SIZE
     symbols=sorted({row['instrument_id'] for row in rows});histories={}
@@ -428,7 +437,11 @@ def cached_gainers(market,status,reference,day,rows,max_items=None):
     with _gainers_lock:
         if key not in _gainers_cache:
             _gainers_cache[key]=gainers_rows(market,reference,day,rows,max_items)
-            while len(_gainers_cache)>4:_gainers_cache.popitem(last=False)
+            # Overview's five-row rank must not evict a full dated rank, or
+            # vice versa. Each scope keeps its own four LRU entries; current
+            # callers retain at most four full ranks and twenty overview rows.
+            scope=[entry for entry in _gainers_cache if (entry[-1] is None)==(max_items is None)]
+            for expired in scope[:-4]:del _gainers_cache[expired]
         _gainers_cache.move_to_end(key)
         return _gainers_cache[key]
 

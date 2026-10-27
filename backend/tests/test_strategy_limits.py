@@ -51,7 +51,7 @@ class EvidenceMarket:
 
 
 def adapter(monkeypatch, supplement=None, reference=None):
-    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot: deepcopy(supplement or {}))
+    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot, **_kwargs: deepcopy(supplement or {}))
     return LimitConditionEvidence(EvidenceMarket(reference))
 
 
@@ -172,7 +172,7 @@ def test_batch_quotes_one_bounded_read_or_reused_histories_without_stock_scans()
 def workspace_sources(monkeypatch, market, supplements):
     monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': 'fixture-snapshot'}, raising=False)
     monkeypatch.setattr(market, 'reference', lambda: {}, raising=False)
-    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot: deepcopy(supplements))
+    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot, **_kwargs: deepcopy(supplements))
 
 
 @pytest.mark.parametrize('period', ['D', 'W'])

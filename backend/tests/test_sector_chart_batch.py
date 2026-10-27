@@ -40,6 +40,46 @@ def test_plan_freezes_catalog_identity_window_and_scope(local):
     assert len(plan['request_signature']) == len(plan['catalog_signature']) == 64
 
 
+def test_new_tail_pacing_is_explicit_signed_and_does_not_change_board_scope(local):
+    legacy=batch.plan_sector_chart_batch(local[0],DAY,mode='increment')
+    assert batch.plan_sector_chart_batch(local[0],DAY,mode='increment',request_policy_version=None)==legacy
+    current=batch.plan_sector_chart_batch(local[0],DAY,mode='increment',request_policy_version=batch.SECTOR_TAIL_PACING_VERSION)
+    assert current['boards']==legacy['boards'] and current['catalog_signature']==legacy['catalog_signature']
+    assert current['request_signature']!=legacy['request_signature']
+    assert batch._validate_plan(local[0],current)==current
+    tampered=deepcopy(current);tampered.pop('sector_tail_request_policy_version')
+    with pytest.raises(ValueError,match='冻结'):batch._validate_plan(local[0],tampered)
+    for mode,version in [('initial',batch.SECTOR_TAIL_PACING_VERSION),('increment','future')]:
+        with pytest.raises(ValueError):batch.plan_sector_chart_batch(local[0],DAY,mode,request_policy_version=version)
+    assert local[1].calls==[]
+
+
+@pytest.mark.parametrize('code',[2001,2003,4001])
+def test_new_tail_refusal_stops_misses_but_revalidates_later_cache(local,code):
+    market,adapter,_=local
+    charts.collect_sector_chart(market,charts.plan_sector_chart(market,CODE,DAY),adapter)
+    market.ref['concept_catalog'].append({'thscode':'886001.TI','name':'未请求概念'})
+    class Refused:
+        def request(self,*args):raise ProviderError('controlled refusal',code=code)
+    plan=batch.plan_sector_chart_batch(market,DAY,'increment',request_policy_version=batch.SECTOR_TAIL_PACING_VERSION)
+    result=batch.collect_sector_chart_batch(market,plan,Refused())
+    assert result['coverage']['request_count']==result['coverage']['failed_count']==1
+    assert result['coverage']['cache_hit_count']==result['coverage']['unrequested_count']==1
+    assert result['sector_tail_request_policy_version']==batch.SECTOR_TAIL_PACING_VERSION
+    assert batch.read_frozen_sector_chart_batch_report(plan,'increment')['coverage']==result['coverage']
+    assert batch.read_sector_chart_batch_report(market,DAY,'increment')['sha256']==result['sha256']
+
+
+@pytest.mark.parametrize('error_type',[TaskPaused,TaskCancelled,ValueError])
+def test_new_tail_guard_propagates_without_publishing_report(local,error_type):
+    plan=batch.plan_sector_chart_batch(local[0],DAY,'increment',request_policy_version=batch.SECTOR_TAIL_PACING_VERSION)
+    def guard():
+        if local[1].calls:raise error_type('controlled interruption')
+    with pytest.raises(error_type):batch.collect_sector_chart_batch(local[0],plan,local[1],guard=guard)
+    assert len(local[1].calls)==1
+    assert not (local[2]/'market-supplement/accepted/fuyao/sector-chart-increment-batch').exists()
+
+
 def test_batch_plan_and_manifest_status_read_reference_calendar_and_status_once(local, monkeypatch):
     market, _, _ = local
     counts = {'reference': 0, 'calendar': 0, 'status': 0}

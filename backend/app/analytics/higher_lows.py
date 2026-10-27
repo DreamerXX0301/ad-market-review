@@ -40,6 +40,13 @@ def _period_rows(rows, calendar, as_of, period):
     closed = layout.closed
     if closed is None:
         return []
+    from .strict_quote_inputs import NormalizedMetricRows
+    positive = rows.positive_ohlcv() if isinstance(rows, NormalizedMetricRows) else None
+    def valid(row):
+        if positive is None:return _valid(row)
+        return (id(row) in positive
+                and row.get('_higher_lows_action_coverage_known',row.get('corporate_action_coverage_known')) is True
+                and row.get('corporate_action') is False)
     by_date = defaultdict(list)
     for row in rows:
         day = row.get('date')
@@ -48,8 +55,15 @@ def _period_rows(rows, calendar, as_of, period):
     unexpected = {_key(day, period) for day in by_date if day not in layout.session_set}
     result = []
     for key, days, boundary_known in layout.groups:
+        if len(days) == 1 and (period == 'D' or boundary_known) and key not in unexpected:
+            daily = by_date[days[0]]
+            if len(daily) == 1 and valid(daily[0]):
+                row = daily[0]
+                result.append({'date': days[0], 'low': row['low'], 'close': row['close'],
+                               'valid': True, 'blocker': None})
+                continue
         values = [by_date[day][0] for day in days if len(by_date[day]) == 1]
-        complete = len(values) == len(days) and all(_valid(row) for row in values) and key not in unexpected
+        complete = len(values) == len(days) and all(valid(row) for row in values) and key not in unexpected
         if period != 'D':
             complete = complete and boundary_known
         blocker = None
@@ -60,7 +74,7 @@ def _period_rows(rows, calendar, as_of, period):
                          if row.get('_higher_lows_action_coverage_known',row.get('corporate_action_coverage_known')) is not True
                          or not isinstance(row.get('corporate_action'),bool)]
             actions = [row['date'] for row in values if row.get('corporate_action') is True]
-            invalid = [row['date'] for row in values if not _valid(row)]
+            invalid = [row['date'] for row in values if not valid(row)]
             kind,label,affected = ('missing_quotes','缺少市场交易日报价',missing) if missing else (
                 'duplicate_quotes','存在重复市场交易日报价',duplicates) if duplicates else (
                 'unknown_action_coverage','公司行动覆盖未核验',uncovered) if uncovered else (
@@ -76,7 +90,7 @@ def _period_rows(rows, calendar, as_of, period):
     return result
 
 
-def _states(rows, calendar, as_of, period, *, latest_only=False):
+def _states(rows, calendar, as_of, period, *, latest_only=False, prepared_periods=None):
     if period not in ('D', 'W', 'M'):
         raise ValueError('底部抬高仅支持日/完整周/完整月')
     recent = deque(maxlen=5)
@@ -84,7 +98,7 @@ def _states(rows, calendar, as_of, period, *, latest_only=False):
     covered = 0
     minimum = None
     blocker = None
-    periods = _period_rows(rows, calendar, as_of, period)
+    periods = _period_rows(rows, calendar, as_of, period) if prepared_periods is None else prepared_periods
     for position, row in enumerate(periods):
         if not row['valid']:
             blocker = row['blocker']
@@ -122,11 +136,16 @@ def summaries(rows, calendar, as_of, period='D'):
 
 
 def latest(rows, calendar, as_of, period='D'):
+    return latest_from_periods(_period_rows(rows, calendar, as_of, period), period)
+
+
+def latest_from_periods(periods, period='D'):
+    """Evaluate a complete, already validated strict period sequence."""
     value={'version': VERSION, 'period': period, 'observed_date': None,
         'covered_periods': 0, 'available_periods': 0, 'recent_lows': [],
         'minimum_close_since_l2_confirmation': None, 'last_blocker':None,
         'reason': '尚无已完整结束并可核验的市场周期'}
-    for _,value in _states(rows,calendar,as_of,period,latest_only=True):pass
+    for _,value in _states([],[],None,period,latest_only=True,prepared_periods=periods):pass
     return value
 
 

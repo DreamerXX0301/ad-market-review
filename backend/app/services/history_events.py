@@ -51,7 +51,7 @@ def attach_limit_events(context, symbol, trees, evidence):
     return context
 
 
-def contexts_for_batch(market, symbols, trees, calendar, day, histories=None, shared=None, limit_evidence=None,price_basis='none',price_contexts=None,prepared_contexts=None):
+def contexts_for_batch(market, symbols, trees, calendar, day, histories=None, shared=None, limit_evidence=None,price_basis='none',price_contexts=None,prepared_contexts=None,computed_contexts=None):
     if len(symbols) > batch_size(trees): raise ValueError('历史事件准备每批超出有界证券数量')
     if not symbols: return {}
     if 'limit_up' in prepared_fields(trees) and limit_evidence is None:
@@ -104,14 +104,20 @@ def contexts_for_batch(market, symbols, trees, calendar, day, histories=None, sh
         if price_basis=='forward' and price_context is None:
             from app.domain.strategy_prices import condition_prices_for
             price_context=condition_prices_for(market,symbol,values,calendar,day,price_basis)
-        context=HistoryContext(values, calendar, day, snapshot,
-            retain_start=shared_scope['first'] if shared_scope else retain_start(trees, calendar, day),price_context=price_context)
+        context=(computed_contexts or {}).get(symbol)
+        if context is None:
+            context=HistoryContext(values, calendar, day, snapshot,
+                retain_start=shared_scope['first'] if shared_scope else retain_start(trees, calendar, day),price_context=price_context)
+        elif (context.as_of!=day or context.snapshot_id!=snapshot or context.calendar!=calendar
+              or context.price_context!=price_context):
+            raise ValueError('并行历史输入身份不一致，拒绝混用来源')
         if price_basis=='forward':
-            from app.services.forward_history_cache import key_for,remember,remember_shared,project_context
-            if shared_scope is not None and context.price_basis=='forward_event_affine':
+            from app.services.forward_history_cache import key_for,remember,remember_shared,project_context,_verified_price_context
+            if shared_scope is not None:
                 shared_key=key_for(symbol,day,snapshot,(price_context or {}).get('cache_key'),shared_scope)
-                remember_shared(shared_key,context,shared_scope)
-                context=project_context(context,cache_scope,calendar,{value:index for index,value in enumerate(calendar)})
+                if _verified_price_context(price_context or {},shared_key):
+                    remember_shared(shared_key,context,shared_scope)
+                    context=project_context(context,cache_scope,calendar,{value:index for index,value in enumerate(calendar)})
             key=key_for(symbol,day,snapshot,(price_context or {}).get('cache_key'),cache_scope)
             remember(key,context,cache_scope)
         result[symbol] = attach_limit_events(context,symbol,trees,limit_evidence)

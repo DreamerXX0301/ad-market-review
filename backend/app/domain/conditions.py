@@ -224,6 +224,7 @@ def topic_dependencies(node):
     return set().union(*(topic_dependencies(c) for c in node.get('all',node.get('any',[]))))
 
 def finite(v):
+    if type(v) is float:return v if isfinite(v) else None
     if v is None or isinstance(v,bool):return None
     try:
         value=float(v)
@@ -242,12 +243,16 @@ def past_limit_up_metrics(count_metrics):
             'limit_up_1y_evidence':{'basis':'截至昨日滚动一自然年，逐股原始收盘及有效成交量核验的来源收盘池',
                                      'confirmed_count':count if valid else None,'coverage':coverage}}
 
+_BAR_ALIASES = {'date':('date','trade_date','day','time'),'open':('open','open_price'),
+    'high':('high','high_price'),'low':('low','low_price'),'close':('close','close_price'),
+    'volume':('volume','volume_shares','vol'),'amount':('amount','turnover_cny','turnover','money')}
+
+
 def normalized_bar(row):
     r=dict(row)
-    aliases={'date':('date','trade_date','day','time'),'open':('open','open_price'),'high':('high','high_price'),'low':('low','low_price'),'close':('close','close_price'),'volume':('volume','volume_shares','vol'),'amount':('amount','turnover_cny','turnover','money')}
     out={}
-    for key,choices in aliases.items():
-        value=next((r[c] for c in choices if c in r),None)
+    for key,choices in _BAR_ALIASES.items():
+        value=r[key] if key in r else next((r[c] for c in choices[1:] if c in r),None)
         out[key]=str(value)[:10] if key=='date' and value is not None else finite(value)
     out['limit_up']=r.get('limit_up') if isinstance(r.get('limit_up'),bool) else None
     out['turnover_ratio_pct']=finite(r.get('turnover_ratio_pct'))
@@ -273,6 +278,7 @@ class _PreparedMetricBars(list):
     def __init__(self, bars):
         super().__init__(dict(row) for row in bars)
         self._normalized = None
+        self._daily_indicator_tail = None
 
     def normalized(self):
         if self._normalized is None:
@@ -287,10 +293,11 @@ def prepare_metric_bars(bars):
 
 def normalized_metric_rows(bars,as_of):
     """Return private period rows; never normalize a prepared row twice."""
+    from app.analytics.strict_quote_inputs import NormalizedMetricRows
     if isinstance(bars,_PreparedMetricBars):
-        return [dict(row) for row in bars.normalized() if row['date'] and row['date']<=as_of]
+        return NormalizedMetricRows(dict(row) for row in bars.normalized() if row['date'] and row['date']<=as_of)
     rows=sorted((normalized_bar(row) for row in bars),key=lambda row:row['date'] or '')
-    return [row for row in rows if row['date'] and row['date']<=as_of]
+    return NormalizedMetricRows(row for row in rows if row['date'] and row['date']<=as_of)
 
 
 def explain_missing_indicators(metrics,row):
@@ -458,7 +465,14 @@ def metrics_for(bars:list,as_of:str,calendar:list[str],period='D',topics=None,*,
     if period in ('W','M'):
         from app.analytics.period_dates import completed_indicator_bars
         enriched=completed_indicator_bars(rows,calendar,as_of,period,tail=2,**({'source_facts_only':True} if _source_facts_only else {}))
-    else:enriched=enrich_bars(rows,calendar,tail=2)
+    else:
+        shared = bars._daily_indicator_tail if isinstance(bars,_PreparedMetricBars) else None
+        if shared is not None and shared[:3] == (as_of,tuple(calendar),len(rows)):
+            # A historical context can supply this only after proving that
+            # every normalized quote was accepted by both strict inputs.
+            # Missing-volume adaptation is therefore True on both tail rows.
+            enriched = [{**row,'_volume_known':True} for row in shared[3]]
+        else:enriched=enrich_bars(rows,calendar,tail=2)
     if not enriched:return empty
     current=enriched[-1];previous=enriched[-2] if len(enriched)>1 else None
     if period in ('W','M'):

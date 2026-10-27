@@ -4,9 +4,9 @@ React、TypeScript、Vite 与 ECharts 实现盘面研究、个股/板块策略�
 
 产品入口和首次配置见[项目 README](../README.md)，部署与更新见[版本升级与回滚](../docs/版本升级与回滚.md)。
 
-0.1.8发行源码以 [v0.1.8 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.8)为准，已实现范围见[版本记录](../CHANGELOG.md#v018)。构建成功不证明镜像已可用，实际镜像可用性与摘要以[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.8)、[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)及本版 `release-image.json` 为准；核对其中完整 `git_commit`，不沿用旧版回执。
+0.1.9发行源码以 [v0.1.9 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.9)为准，已实现范围见[版本记录](../CHANGELOG.md#v018)。构建成功不证明镜像已可用，实际镜像可用性与摘要以[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.9)、[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)及本版 `release-image.json` 为准；核对其中完整 `git_commit`，不沿用旧版回执。
 
-0.1.8是盘后增量Parquet写出内存热修复，前端行为沿用0.1.7已交付的图表、分类结果读取和整链进度锁；不增加界面功能或新的重试接口。前端与API及唯一worker按同一冻结提交发布，schema仍为025。升级验收前保留原失败会话及锁；验收后仅在用户明确授权时，按原有界面语义确认最新失败结果，再重试最新根任务，不能把更早失败根当成该次重试。
+0.1.9是盘后增量Parquet写出内存热修复，前端行为沿用0.1.7已交付的图表、分类结果读取和整链进度锁；不增加界面功能或新的重试接口。前端与API及唯一worker按同一冻结提交发布，schema仍为025。升级验收前保留原失败会话及锁；验收后仅在用户明确授权时，按原有界面语义确认最新失败结果，再重试最新根任务，不能把更早失败根当成该次重试。
 
 ## 本地开发
 
@@ -78,6 +78,6 @@ find src -name '*.test.mjs' -print0 | xargs -0 -n 1 node
 SHIXU_API_BASE=http://127.0.0.1:8789/api/v1 npm run check:api
 ```
 
-默认地址为 `http://127.0.0.1:8788/api/v1`，执行时用 `SHIXU_API_BASE` 显式指定隔离候选的完整前缀；8789是示例候选端口。完整套件读取研究报告会更新报告缓存TTL和保留引用，不是业务库完全不变的只读检查，不能对唯一正式库直接运行。报告写入当前目录 `api-contract-checks.json`，不应把包含本机业务明细的报告直接作为公开制品。脚本不会配置来源、验证凭据、创建同步或运行策略；未初始化实例不满足这项真实数据审计的前提。正式只读验收须排除有副作用的GET并做前后对账，步骤见[交付与验收](../docs/交付与验收.md#已初始化实例检查与get副作用)。
+不设默认地址；执行时必须用 `SHIXU_API_BASE` 显式指定隔离候选的完整前缀，缺少参数时在发送请求前退出。8789是示例候选端口。完整套件读取研究报告会更新报告缓存TTL和保留引用，不是业务库完全不变的只读检查，不能对唯一正式库直接运行。报告写入当前目录 `api-contract-checks.json`，不应把包含本机业务明细的报告直接作为公开制品。脚本不会配置来源、验证凭据、创建同步或运行策略；未初始化实例不满足这项真实数据审计的前提。正式只读验收须排除有副作用的GET并做前后对账，步骤见[交付与验收](../docs/交付与验收.md#已初始化实例检查与get副作用)。
 
 字段参考：[前端需求](../contracts/frontend-needs.md)、[工作区 API](../contracts/workspace-api.md)、[分析 API](../contracts/analytics-api.md)。新增接口以路由与服务实现为准；验收范围见[交付与验收](../docs/交付与验收.md)。

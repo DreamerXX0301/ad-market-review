@@ -2,7 +2,11 @@
  * renews its cache TTL and retention pin; this is not a no-write business audit.
  * Never configures or verifies source credentials or creates user tasks. */
 import fs from "node:fs/promises";
-const base = process.env.SHIXU_API_BASE || "http://127.0.0.1:8788/api/v1";
+const base = process.env.SHIXU_API_BASE;
+if (!base)
+  throw new Error(
+    "请用 SHIXU_API_BASE 显式指定隔离验收实例的 /api/v1 地址；完整审计包含会更新研究报告缓存的 GET，不默认访问正式服务。",
+  );
 const checks = [];
 function check(name, condition, detail = "") {
   checks.push({ name, passed: !!condition, ...(detail ? { detail } : {}) });

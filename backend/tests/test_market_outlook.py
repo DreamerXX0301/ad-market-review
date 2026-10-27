@@ -311,7 +311,7 @@ def test_service_adds_outlook_without_extra_panel_or_full_history_context_replay
             return [{'instrument_id': A, 'kind': 'stock', 'list_date': None}]
         def panel(self, *args): raise AssertionError('Do not recompute the panel')
     market = OnePanel()
-    def panel(day):
+    def panel(day, **_):
         calls.append(('panel', day))
         return market, market.status(), TODAY, {}, []
     def context(*args):

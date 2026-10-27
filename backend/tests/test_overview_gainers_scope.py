@@ -54,7 +54,7 @@ def test_full_and_partial_cache_are_isolated_in_parallel_and_fingerprint_actual_
             full_future=pool.submit(service.cached_gainers,market,status,reference,day,rows)
             top,_=top_future.result();full,_=full_future.result()
         assert len(full)==600 and len(top)==5 and top==full[:5]
-        monkeypatch.setattr(service,'panel',lambda *_:(market,status,day,reference,rows))
+        monkeypatch.setattr(service,'panel',lambda *_, **_kwargs:(market,status,day,reference,rows))
         first=service.market_page('gainers',day,page_size=25,top_n=100,sort_by='change_30d_pct',sort_order='desc')
         second=service.market_page('gainers',day,page_size=25,page=2,top_n=100,sort_by='change_30d_pct',sort_order='desc')
         assert first['total']==second['total']==100 and first['items']==full[:25] and second['items']==full[25:50]

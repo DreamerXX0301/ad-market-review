@@ -13,7 +13,14 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { api, list, post, requestKey, useApi } from "../../lib/api";
+import {
+  api,
+  list,
+  post,
+  requestKey,
+  useApi,
+  usePageActive,
+} from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
   dateTime,
@@ -355,6 +362,7 @@ export default function DataCenter({
 }) {
   const result = useApi<Row>("/data/status"),
     history = useApi<Row>("/tasks?limit=200&summary=true");
+  const active = usePageActive();
   const [selectedId, setSelectedId] = useState(""),
     [followChain, setFollowChain] = useState(true),
     [busy, setBusy] = useState(""),
@@ -402,7 +410,7 @@ export default function DataCenter({
     if (latest && !selectedId) setSelectedId(latest.task_id || latest.job_id);
   }, [data, recent]);
   useEffect(() => {
-    if (!task.data) return;
+    if (!active || !task.data) return;
     if (
       followChain &&
       chain.state === "queued" &&
@@ -416,11 +424,12 @@ export default function DataCenter({
     if (task.loading || (!selectedActive && !waitingForChild)) return;
     const timer = setTimeout(task.reload, 2000);
     return () => clearTimeout(timer);
-  }, [task.data, task.loading, task.error, followChain]);
+  }, [active, task.data, task.loading, task.error, followChain]);
   // Viewing a completed historical task must not freeze a currently running
   // job's status, button availability or its newly queued follow-up.
   useEffect(() => {
     if (
+      !active ||
       history.loading ||
       (!activeHistory &&
         !selectedActive &&
@@ -431,6 +440,7 @@ export default function DataCenter({
     const timer = setTimeout(history.reload, 2000);
     return () => clearTimeout(timer);
   }, [
+    active,
     history.data,
     history.loading,
     history.error,
@@ -602,9 +612,10 @@ export default function DataCenter({
     : sectorStatus.catalog;
   useEffect(() => {
     // Recheck the server clock while this page stays open across 18:00.
+    if (!active) return;
     const timer = setTimeout(result.reload, 60000);
     return () => clearTimeout(timer);
-  }, [data?.sync_window?.now, result.loading]);
+  }, [active, data?.sync_window?.now, result.loading]);
   return (
     <div className="page-stack data-center">
       <div className="data-center-heading">

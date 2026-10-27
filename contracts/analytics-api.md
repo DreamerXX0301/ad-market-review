@@ -44,6 +44,8 @@
 | `GET /search?query=&limit=` | 股票、指数、行业、概念统一检索；空白返回空，limit 为 1–100 |
 | `GET /instruments/{id}?as_of=` | 标的身份、所选日行情、可用题材/风险标签及缺口 |
 
+尚未发行的读取候选中，`GET /sources` 按当前凭据修订选取每项能力的最新本地核验记录，只解码被选中的证据；配置、修订和活动来源在同一SQLite读取快照中获取，凭据是否存在仍当次检查，不解密或返回Key，不缓存账号权限结论。`public_supplement` 保持原字段、日期与未知语义：只物化状态展示需要的当日池和资金字段及板块来源记录，但仍逐项验证完整补充索引的所有留存对象和嵌套引用。历史对象损坏仍使该状态未知，不能用裁剪读取掩盖来源缺口。`/bootstrap` 的来源列表不重复构建未使用的补充状态；容量统计继续遵循上述精确遍历口径。
+
 统一检索按名称/代码匹配，不推断拼音。去空格后 query 最多 100 字，原始最多 512 字；先精确匹配，再按类型平衡截取。返回 `items/total/matched_by_kind/scope/current_catalog/historical_membership`。股票/指数有 `instrument_id/kind/target_type`；板块另有 `topic_code/topic_id/sector_kind`，`target_type=sector`。当前目录只说明身份，不证明历史目录或成员。
 
 总览指数的自身涨跌幅与 `amount_change` 分开：金额差按 T 与前一精确市场交易日金额（元）相减；缺前期或非法金额为 null。沪深总成交额不能将四个指数相加得到。
@@ -219,6 +221,9 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 - `GET /market/sector-chart?topic_code=&date=&period=D|W|M` 返回通用 chart shape 加 `available/task/unavailable_reason`；未缓存时 bars 为空，不联网。
 - `POST /market/sector-chart/jobs {topic_code,date?,request_key?}` 手动加载单板块；返回标准任务或 `{cache_hit:true}`，随后重读 GET。只加载该来源代码，不扫描全库。
 - 历史缓存须先复验原始全段与 SHA，再按目标日截断重算聚合和指标；不得从未来已聚合结果切片。板块是原始指数点位，不做个股复权/涨跌停标记。
+- 新手动盘后增量额外冻结 `sector_tail_request_policy_version=sector-tail-pacing-v2`，沿父任务传给板块增量子任务，并进入批次 `request_signature`；逐板来源窗口、身份、缓存签名与来源SHA不因节奏变化而改变。旧父/子任务缺省该字段，恢复、重试与后续创建子任务仍沿用旧节奏，不自动补版本。首次全库、单板块加载、主行情和盘面补充不启用该策略。
+- 新节奏在唯一worker中保持串行，同批次扶摇历史指数端点的所有实际HTTP发起至少相隔0.6秒；最多800个逻辑请求，每个逻辑请求仍最多3次传输尝试。HTTP 401/403/429 或业务2001/2003/4001立即停止新增请求，不连续重试；后续缓存仍复验，未请求及失败各自保留。其他暂时错误保留有限退避；节奏等待与退避期间检查暂停、取消和代际guard，作用域退出还原默认策略。旧任务保持来源请求完成后1.2秒间隔。
+- 新批次报告保留 `sector_tail_request_policy_version`，coverage增加 `request_policy_version/request_interval_seconds/request_interval_anchor/maximum_inflight/provider_transport_attempts`；状态读取兼容新旧签名，仅读小清单。此为0.1.9新增契约；短来源样本不构成710板块整链耗时承诺。
 - `GET /sectors/{topic_code}/members?as_of=&membership_scope=latest|historical` 无需跟踪轮次。latest 仅用当前业务日报价，显示真实成员采集日；historical 严格查历史留存。无档保持未知，不按名称猜成员。
 - 成员返回 `membership_as_of/quote_as_of/members_complete`、board 和上述收益/事件字段；`stock_entry_baseline=null`。展开成员不会创建个股跟踪，也不会把板块入池点位套给股票。
 

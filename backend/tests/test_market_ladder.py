@@ -160,7 +160,7 @@ def test_missing_historical_membership_does_not_borrow_current_topics(market):
 
 
 def test_market_endpoint_returns_all_ladder_rows_even_with_legacy_limit_and_page_size(market, monkeypatch):
-    monkeypatch.setattr(market_service, 'panel', lambda day: (market, market.status(), day, market.ref, market.rows()))
+    monkeypatch.setattr(market_service, 'panel', lambda day, **_: (market, market.status(), day, market.ref, market.rows()))
     monkeypatch.setattr(market_service, 'prior_ladder_feedback', lambda *args: [])
     monkeypatch.setattr(market_service, 'data_coverage', lambda *args: {'notice': 'fixture'})
     result = market_service.market_page('ladder', TODAY, limit=1, page_size=1, page=3)

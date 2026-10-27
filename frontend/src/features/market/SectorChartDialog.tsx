@@ -215,6 +215,7 @@ export default function SectorChartDialog({
             instrumentKind="index"
             asOf={date}
             dataEndpoint={endpoint}
+            initialChart={{ endpoint, data: chart.data! }}
             height={680}
             entryFocus
           />

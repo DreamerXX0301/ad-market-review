@@ -71,7 +71,7 @@ def install_panel(monkeypatch, current, *, snapshot='market-current', selected='
     status = {'ready': True, 'snapshot_id': snapshot, 'data_begin': '2023-10-20',
               'data_end': '2026-10-20', 'quality': 'partial'}
     calls = []
-    def panel(day=None):
+    def panel(day=None, **_):
         day = day or selected
         calls.append(day)
         rows = [{'instrument_id': A, 'name': '合成甲', 'change_pct': 5, 'amount': 100, 'limit_up': None, 'date': day},
@@ -264,7 +264,7 @@ def test_per_feature_coverage_uses_real_source_dates_instead_of_global_price_ran
 def test_price_coverage_without_calendar_capability_stays_unknown_not_inferred_from_requested_date(monkeypatch):
     status = {'snapshot_id': 'minimal-fixture', 'data_begin': '2026-10-19', 'data_end': '2026-10-20'}
     row = {'instrument_id': A, 'change_30d_pct': 5}
-    monkeypatch.setattr(market_service, 'panel', lambda day: (object(), status, day, {}, [row]))
+    monkeypatch.setattr(market_service, 'panel', lambda day, **_: (object(), status, day, {}, [row]))
     monkeypatch.setattr(market_service, 'cached_gainers', lambda *args: ([row], {}))
     result = market_service.market_page('gainers', '2026-10-20')
     assert result['items'] == [row]

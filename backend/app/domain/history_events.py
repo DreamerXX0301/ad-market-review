@@ -211,7 +211,16 @@ class HistoryContext:
         self.invalid_dates=[day for day in calendar if day<=as_of and day not in valid_dates]
         self.unknown_action_dates=sorted(day for day,row in self.raw_quotes.items() if row and row.get('corporate_action_coverage_known') is not True)
         self.action_dates=[]  # Only the verified price lane crosses known actions.
-        values=retained_indicator_rows([row for day,row in sorted(self.quotes.items()) if day in valid_dates and valid_quote(row)],calendar,retain_start)
+        indicator_rows=[row for day,row in sorted(self.quotes.items()) if day in valid_dates and valid_quote(row)]
+        values=retained_indicator_rows(indicator_rows,calendar,retain_start)
+        # The historical path has stricter quote eligibility than ordinary
+        # indicators. Reuse its fully replayed last two rows only when neither
+        # path filtered any seed or adapted missing volume/amount. Otherwise
+        # keep the independent original recurrences and unknown explanations.
+        if (usable and prepared_prices and len(indicator_rows)==len(price_rows.normalized())
+                and all(row.get('amount') is not None for row in indicator_rows)):
+            price_rows._daily_indicator_tail=(as_of,tuple(calendar),len(indicator_rows),
+                                             tuple(dict(row) for row in values[-2:]))
         enriched_by_date={row['date']:row for row in values};previous_by_date={row['date']:values[i-1] if i else None for i,row in enumerate(values)}
         facts={'change_pct','volume','amount','volume_ratio','volume_expand','volume_shrink','intraday_high_change_pct','limit_up','prev_limit_up','turnover_ratio_pct'}
         for raw in valid:

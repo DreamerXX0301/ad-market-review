@@ -68,7 +68,10 @@ def create_batch_job(market, day, request_key=None, chain_parameters=None, mode=
     from app.services.source_service import client
     if not client('fuyao').key:
         raise ValueError('补齐行业概念历史K线需要已配置的扶摇Key；权限以实际接口验证为准')
-    plan = plan_sector_chart_batch(market, day) if mode == 'initial' else plan_sector_chart_batch(market, day, mode=mode)
+    from app.adapters.providers import SECTOR_TAIL_PACING_VERSION
+    policy = (chain_parameters.get('sector_tail_request_policy_version') if chain_parameters is not None
+              else SECTOR_TAIL_PACING_VERSION) if mode == 'increment' else None
+    plan = plan_sector_chart_batch(market, day, mode=mode, request_policy_version=policy)
     parameters = {'operation': 'sector_charts', 'mode': mode, 'source_id': 'fuyao', **plan}
     if chain_parameters:
         parameters.update({key: chain_parameters[key] for key in

@@ -186,6 +186,8 @@ forward复用本地`event_affine`变换，契约为`strategy-local-forward-v1`�
 
 前复权历史窗口另有可丢弃的进程内纯值缓存：压缩体总量最多64MiB、16,384项，单项解压上限8MiB；键绑定数据根、行情代际、已核验来源SHA、证券、观察日锚、窗口与所需字段及算法版本。每次运行先核验实际来源再命中，不能跳过源核验。缓存不保存策略阈值、题材、政策、事件绑定或判断结果；每次生成新历史上下文并重新核验涨停池证据。缺失、损坏、超界或键不匹配时丢弃重算，不据缓存错误认定采集失败。
 
+个股手动执行的准备层可在来源核验后按需使用至多4个spawn纯计算子进程，批次仍最多16/32股；子进程仅接受父进程已读取的有界输入，不打开SQLite、DuckDB或网络，不写缓存、不求值策略、不发布行情。父进程保持确定证券顺序、任务暂停取消检查及唯一业务写入；暖缓存不启动子进程，基础设施失败可记录诊断后走原串行路径，控制异常与计算错误继续传播。完整严格周期输入可按原边界共享，参数改变仍重放当前参数的原始递推。只有完整来源证明与成功行动读取绑定的规范日期准备失败，才能缓存相同unavailable输入；unknown、原因、源指纹、日历和锚均不放宽。年内涨停计数摘要仍逐次核验实际来源及补充文档内容，不缓存题材、政策或策略决定。具体容量与回退边界见[选股执行性能](../docs/日期切换与选股性能.md)。
+
 跟踪轮次冻结入池策略的信号口径，原始入池价与高低价仍独立保存。forward复核在每个T重新投影冻结参考价，不用后来的行情替换原始基准。浏览保持小原价缓存；缺少同日同代际的复核比较证据时，原价最新收盘照常显示、复权比较待核验，不借用昨日核对。政策仍每次重新读取，修改策略当前口径不改变旧轮次。
 
 forward回测冻结口径和契约，信号逐日锚定；真实撮合、费用及限价仍用原始价格。现有权益账本未处理分红、送股、配股，因此回测区间内有公司行动的证券仍按原受限契约排除，不能将前复权价格收益冒充已记账账户收益。旧none任务继续使用原引擎及冻结内容，不自动重跑。
@@ -233,7 +235,7 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 | `GET /strategy-runs?strategy_id=&limit=`、`GET /strategy-runs/{run_id}?decision=` | 运行列表及 matched/unmatched/unknown 证据 |
 | `GET/PUT /strategies/{id}/automation` | refresh_after_sync、auto_track；默认关闭，auto_track 需 refresh |
 | `POST /tracking-rounds {run_id,instrument_ids}` | 仅当前版本/当前业务日 matched 入池；重复与忽略项跳过 |
-| `GET /tracking-rounds?strategy_id=&status=&triggered_only=` | 当前轮次、进度、行情、题材及提醒 |
+| `GET /tracking-rounds?strategy_id=&status=&triggered_only=&view=full\|summary` | 当前轮次、进度、行情、题材及提醒，默认完整响应 |
 | `GET /tracking-rounds/{round_id}`、`GET /tracking-events` | 详情和追加事件 |
 | `POST /tracking-rounds/review {strategy_id?,request_key?}` | 按市场日补核对，按政策版本与日期幂等 |
 | `PATCH /tracking-rounds/{round_id}/policy` | 显式迁移政策，追加审计，不改入池锚点 |
@@ -243,6 +245,10 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 个股政策使用 alert_logic/exit_logic=`AND|OR`、alerts/exits、duration_sessions（默认 30）、事件日开关（默认 false）。D0 为入池日；未知交易日进度不补零。提醒不结束，死叉不等于“金叉=false”。本轮高/低锚点是原入池快照唯一日 K 的 high/low，不是跟踪累计值或周柱；严格高于/跌破，相等不触发，行动不可比时未知。
 
 个股/板块跟踪列表额外返回 `counts={active,history}`，是当前策略范围内、应用 status/triggered_only 前的真实轮次数；触发提醒数使用事件接口 total。前端分类以数量分段展示，题材只预览两项，完整归属和逐项触发依据按需展开。
+
+个股跟踪页面使用显式 `view=summary`；省略或 `view=full` 保持原完整响应，其它值返回422。摘要仍返回该筛选范围的全部轮次，保留全部排序字段、价格与未知原因、完整政策、当前题材及热点作用域。`entry_basis` 保留完整 `entry_checks` 与原有标量，只省略 `source_lineage/entry_topics/entry_high/entry_low`；行级省略 `topics/topics_snapshot/entry_high_basis/entry_low_basis`；`latest_event/alerts` 保留事件头而省略 `evidence`。图表历史检查、连续导航与同股不同轮次的价格基准不变，前复权 `tracking_reference_evidence` 仍完整。摘要额外返回 `view=summary` 与 `counts.alerts`，后者与同策略范围的 `GET /tracking-events?event_type=alert` 总数相同，跨活动和结束轮次，不受列表状态或触发过滤影响。详情接口及独立事件接口始终完整，政策编辑、题材和事件每次重新读取；摘要不是整页缓存。
+
+上述个股跟踪列表/详情、已保存个股运行列表/分类详情以及自选列表的GET响应，直接编码已构造的JSON数据，避免重复递归复制。完整响应的字段、精确值、未知状态及证据不变，读取不执行新策略、不修改轮次，不改变分类筛选和计数范围。
 
 `GET /tracking-events` 每行含冻结的 `entry_business_date/entry_price/entry_basis` 和 `valuation_date/observed_close/today_change_pct`。事件行情按各条 `business_date` 与其精确前一市场交易日，从同代际本地批量读取、复用有界行情缓存；缺报、行动覆盖不明或价格不可比返回 null，不使用最新行情、结束日或历史证据中的近似值回填。没有有效市场日历的临时读取不写入报价缓存，以免污染同代际后续有效读取。此补充只用于浏览，不改已存事件、策略判断或冻结基准。触发列表中“今日涨幅”是该行触发日涨幅，排序仅覆盖接口已加载事件；当前题材仍使用当前有效关系。板块提醒的观察日行情使用其已冻结的日线证据，不把当前轮次报价套回过去。
 

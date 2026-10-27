@@ -134,6 +134,11 @@ def _period_rows(rows, calendar, as_of, period):
     closed = layout.closed
     if closed is None:
         return []
+    from .strict_quote_inputs import NormalizedMetricRows
+    positive = rows.positive_ohlcv() if isinstance(rows, NormalizedMetricRows) else None
+    def valid(row):
+        if positive is None:return _valid(row)
+        return id(row) in positive and _covered(row) and row['corporate_action'] is False
     by_day = defaultdict(list)
     for row in rows:
         day = row.get('date')
@@ -143,12 +148,18 @@ def _period_rows(rows, calendar, as_of, period):
     unexpected = {_period_key(day, period) for day in by_day if day not in layout.session_set}
     result = []
     for key, days, boundary_known in layout.groups:
+        if len(days) == 1 and boundary_known and key not in unexpected:
+            daily = by_day[days[0]]
+            if len(daily) == 1 and valid(daily[0]):
+                result.append({'date': days[0], 'close': float(daily[0]['close']),
+                               'valid': True, 'blocker': None})
+                continue
         values = [by_day[day][0] for day in days if len(by_day[day]) == 1]
         missing = [day for day in days if not by_day[day]]
         duplicates = [day for day in days if len(by_day[day]) > 1]
         uncovered = [row['date'] for row in values if not _covered(row)]
         actions = [row['date'] for row in values if row.get('corporate_action') is True]
-        invalid = [row['date'] for row in values if not _valid(row)]
+        invalid = [row['date'] for row in values if not valid(row)]
         complete = not (missing or duplicates or invalid or key in unexpected) and boundary_known
         blocker = None
         if not complete:
@@ -373,6 +384,13 @@ def latest_states(daily_rows, calendar, as_of, period='D', configs=None):
     if period not in ('D', 'W', 'M'):
         raise ValueError('BOLL仅支持日/完整周/完整月')
     rows = _period_rows(daily_rows, calendar, as_of, period)
+    return latest_states_from_periods(rows, period, configs)
+
+
+def latest_states_from_periods(rows, period='D', configs=None):
+    """Replay unchanged bands using an independently verified strict input."""
+    if period not in ('D', 'W', 'M'):
+        raise ValueError('BOLL仅支持日/完整周/完整月')
     result = {}
     for source in configs or []:
         config = validate_config(source); key = config_key(config)

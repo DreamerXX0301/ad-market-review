@@ -50,6 +50,17 @@ _stats = {'memory_hits': 0, 'disk_hits': 0, 'structure_hits': 0, 'misses': 0, 's
 _CONTEXT_FIELDS = ('requested_price_basis', 'price_basis', 'anchor_date', 'cache_key', 'adjustment')
 
 
+def mark_verified_unavailable(context,key):
+    """Caller has verified the real closure and successfully read actions."""
+    if key is None or context.get('price_basis')!='unavailable':return
+    from datetime import date
+    try:
+        if all(isinstance(row.get('date'),str) and date.fromisoformat(row['date']).isoformat()==row['date']
+               for row in context.get('raw_rows',[])):
+            context['_verified_preparation_source']=key[4]
+    except (TypeError,ValueError):return
+
+
 def key_for(symbol, day, generation, source_token):
     """No rule/window/run identity: only verified immutable technical inputs."""
     if (not isinstance(symbol, str) or not symbol or not isinstance(day, str)
@@ -100,6 +111,16 @@ class _Columns:
         self.columns = []; self.index = {}
 
     def table(self, rows):
+        # Quotation lanes normally have one insertion-ordered schema. Zip
+        # their values in C once instead of doing one Python dict lookup per
+        # cell; the general sparse/unequal-schema path remains exact below.
+        # Field ordering on the wire is still canonical, not source order.
+        if rows and len(rows) <= MAX_ROWS:
+            order = tuple(rows[0])
+            if len(order) <= MAX_FIELDS and all(tuple(row) == order for row in rows):
+                values = dict(zip(order, zip(*(row.values() for row in rows))))
+                fields = sorted(order)
+                return self.table_from_columns(fields, (values[field] for field in fields), len(rows))
         fields = sorted({field for row in rows for field in row})
         return self.table_from_columns(fields,
             ([row.get(field, _MISSING) for row in rows] for field in fields), len(rows))
@@ -226,13 +247,25 @@ class _ReadColumns:
 
 def _encode(key, context):
     from app.domain.strategy_prices import price_cache_key
+    negative = (isinstance(context,dict) and context.get('price_basis')=='unavailable'
+        and context.get('_verified_preparation_source')==key[4]
+        and context.get('adjustment',{}).get('usable') is False)
     if (not isinstance(context, dict) or context.get('projection') or context.get('requested_price_basis') != 'forward'
-            or context.get('price_basis') != 'forward_event_affine'
+            or context.get('price_basis') != 'forward_event_affine' and not negative
             or context.get('anchor_date') != key[3]
             or context.get('cache_key') != price_cache_key(key[2], key[3], 'forward', {'verified_closure_sha256': key[4]})
-            or context.get('adjustment', {}).get('usable') is not True):
+            or context.get('adjustment', {}).get('usable') is not True and not negative):
         raise ValueError('unverified price context')
     payload = {'key': list(key), 'context': {field: context.get(field) for field in _CONTEXT_FIELDS}, 'lanes': {}}
+    if negative:
+        # A proven, deterministic rejection is reusable only when original
+        # date handling survives normalization unchanged. Unknown provenance
+        # and quarantined legacy timestamp aliases never enter this lane.
+        from datetime import date
+        if any(not isinstance(row.get('date'),str) or date.fromisoformat(row['date']).isoformat()!=row['date']
+               for row in context.get('raw_rows',[])):
+            raise ValueError('negative preparation canonical dates')
+        payload['verified_negative_preparation'] = key[4]
     columns = _Columns()
     for field in ('raw_rows', 'price_rows'):
         rows = context[field]
@@ -266,10 +299,13 @@ def _decode(key, record, *, structure_only=False):
     if value['key'] != list(key):
         raise ValueError('cache identity')
     result = value['context']
+    negative = (result.get('price_basis')=='unavailable' and result.get('adjustment',{}).get('usable') is False
+                and value.get('verified_negative_preparation')==key[4])
     if (set(result) != set(_CONTEXT_FIELDS) or result['anchor_date'] != key[3]
-            or result['requested_price_basis'] != 'forward' or result['price_basis'] != 'forward_event_affine'
-            or result['adjustment'].get('usable') is not True):
+            or result['requested_price_basis'] != 'forward' or result['price_basis'] != 'forward_event_affine' and not negative
+            or result['adjustment'].get('usable') is not True and not negative):
         raise ValueError('cache context')
+    if negative:result['_verified_preparation_source']=key[4]
     columns = _ReadColumns(value['columns'])
     if structure_only:
         prepared = prepare_metric_bars([])
@@ -309,10 +345,11 @@ def _safe_directory(create):
     root = Path(work_dir()).absolute()
     # config.work_dir resolves its environment input; inspect the original too.
     raw = Path(os.environ.get('SHIXU_WORK_DIR', root)).expanduser().absolute()
-    for location in (raw, root):
-        for path in (location, *location.parents):
-            if path.is_symlink():
-                raise ValueError('cache path symlink')
+    # Raw and resolved roots usually share every ancestor. Check each actual
+    # path once; all original symlink boundaries are still verified per I/O.
+    for path in dict.fromkeys(path for location in (raw, root) for path in (location, *location.parents)):
+        if path.is_symlink():
+            raise ValueError('cache path symlink')
     path = root / _DIRECTORY
     protected_roots = (published_dir(), sqlite_path().parent, raw_dir())
     for protected in protected_roots:
@@ -666,8 +703,18 @@ def _get_disk(identity):
 def remember(key, price_context):
     """Capture a pristine full technical seed; false means an optional miss."""
     try:
-        identity = _identity(key)
+        _identity(key)
         record = _encode(key, price_context)
+    except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
+        return False
+    return remember_encoded(key, record)
+
+
+def remember_encoded(key, record):
+    """Install this process's pure preparation result without encoding twice."""
+    try:
+        identity = _identity(key)
+        record = _disk_record(record)
     except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
         return False
     _remember_memory(key, record)

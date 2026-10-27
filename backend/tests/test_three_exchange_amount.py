@@ -31,7 +31,7 @@ def test_overview_total_reconciles_three_exchanges(monkeypatch):
         def indices(self,day):return []
     market=Market();day='2026-10-20'
     rows=[{'instrument_id':symbol,'amount':amount} for symbol,amount in (('600001.SH',120),('000001.SZ',180),('920001.BJ',50))]
-    monkeypatch.setattr(market_service,'panel',lambda date:(market,{'snapshot_id':'fixture','quality':'partial'},day,{},rows))
+    monkeypatch.setattr(market_service,'panel',lambda date, **_:(market,{'snapshot_id':'fixture','quality':'partial'},day,{},rows))
     monkeypatch.setattr(market_service,'cached_gainers',lambda *args:([],{}))
     monkeypatch.setattr(market_service,'_breadth',lambda *args:{'scope':'unchanged'})
     monkeypatch.setattr(market_service,'data_coverage',lambda *args:{})

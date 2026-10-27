@@ -106,7 +106,7 @@ def test_recent_limit_sort_keeps_unknown_dates_last(monkeypatch, order):
     rows=[{'instrument_id':A,'last_limit_up_date':market.days[8]},
           {'instrument_id':B,'last_limit_up_date':market.days[9]},
           {'instrument_id':'688001.SH','last_limit_up_date':None}]
-    monkeypatch.setattr(market_service,'panel',lambda *_:(market,market.status(),day,{},rows))
+    monkeypatch.setattr(market_service,'panel',lambda *_, **_kwargs:(market,market.status(),day,{},rows))
     monkeypatch.setattr(market_service,'cached_gainers',lambda *_:(deepcopy(rows),{}))
     result=market_service.market_page('gainers',day,sort_by='last_limit_up_date',sort_order=order,page_size=2)
     assert result['items'][0]['instrument_id']==(A if order=='asc' else B)

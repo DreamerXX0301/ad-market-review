@@ -450,14 +450,18 @@ function StockTracking({
     [busy, setBusy] = useState(""),
     [error, setError] = useState("");
   const query = new URLSearchParams({
+    view: "summary",
     status: tab === "active" ? "tracking" : "all",
     triggered_only: String(tab === "active" && triggered),
   });
   if (strategyId) query.set("strategy_id", strategyId);
   const result = useApi<Row>(`/tracking-rounds?${query}`);
   const eventsResult = useApi<Row>(
-    `/tracking-events?limit=200${strategyId ? "&strategy_id=" + strategyId : ""}&event_type=alert`,
+    tab === "alerts"
+      ? `/tracking-events?limit=200${strategyId ? "&strategy_id=" + strategyId : ""}&event_type=alert`
+      : null,
   );
+  const alertCount = eventsResult.data?.total ?? result.data?.counts?.alerts;
   const topics = list(topicsResult.data);
   const completeTopics = new Set<string>(
     topics
@@ -667,7 +671,7 @@ function StockTracking({
       <div className="stats-grid">
         <Stat label="当前列表" value={rows.length} />
         <Stat label="最新业务日" value={result.data?.business_date || "—"} />
-        <Stat label="提醒记录" value={eventsResult.data?.total ?? 0} />
+        <Stat label="提醒记录" value={alertCount ?? "—"} />
         <Stat
           label="计时口径"
           value="市场交易日"
@@ -691,7 +695,7 @@ function StockTracking({
             onChange={setTab}
             counts={{
               active: result.data?.counts?.active,
-              alerts: eventsResult.data?.total,
+              alerts: alertCount,
               history: result.data?.counts?.history,
             }}
           />
@@ -721,6 +725,11 @@ function StockTracking({
           scope={result.data?.current_topics_scope}
         />
         <HotBrowseFilter model={hotFilter} onRefreshList={result.reload} />
+        {result.loading && result.data && (
+          <div className="panel-footnote" role="status">
+            正在核对最新跟踪数据…
+          </div>
+        )}
         {topicsResult.error && (
           <ErrorBox message={topicsResult.error} retry={topicsResult.reload} />
         )}
@@ -737,7 +746,8 @@ function StockTracking({
         )}
         {result.error ? (
           <ErrorBox message={result.error} retry={result.reload} />
-        ) : result.loading || (tab === "alerts" && eventsResult.loading) ? (
+        ) : (result.loading && !result.data) ||
+          (tab === "alerts" && eventsResult.loading && !eventsResult.data) ? (
           <Loading />
         ) : tab === "alerts" && eventsResult.error ? (
           <ErrorBox message={eventsResult.error} retry={eventsResult.reload} />

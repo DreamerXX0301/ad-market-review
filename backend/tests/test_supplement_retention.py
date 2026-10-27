@@ -3,6 +3,8 @@ from copy import deepcopy
 from datetime import date, timedelta
 import json
 from pathlib import Path
+import random
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -206,6 +208,8 @@ def test_worker_collection_records_exact_receipts_and_is_idempotent(collected, m
     before = retention.plan_retention(root, days, days[-1])
     result = retention.collect_after_publication('fixture-job', market, document)
     assert result['status'] == 'completed', result
+    assert result['database_scope_calls'] == 1 and result['database_scope_ms'] >= 0
+    assert result['planning_ms'] >= 0
     assert result['removed_files'] == len(before['scope']['files'])
     assert result['removed_bytes'] == before['scope']['selected_bytes']
     with core.connect() as c:
@@ -258,7 +262,11 @@ def test_protection_change_after_long_plan_stops_before_ledger_or_delete(collect
     monkeypatch.setattr(retention, 'plan_retention', plan)
     result = retention.collect_after_publication('fixture-job', market, document)
     assert result['status'] == 'warning' and result['removed_files'] == 0
-    with core.connect() as c: assert c.execute('SELECT count(*) FROM supplement_retention_run').fetchone()[0] == 0
+    with core.connect() as c:
+        assert c.execute('SELECT count(*) FROM supplement_retention_run').fetchone()[0] == 0
+        event = c.execute("SELECT level,details_json FROM job_event WHERE job_id='fixture-job' AND stage='supplement_retention' ORDER BY seq DESC LIMIT 1").fetchone()
+        assert event['level'] == 'warning'
+        assert json.loads(event['details_json']) == result
 
 
 def test_heartbeat_and_current_lease_during_long_plan_allow_same_protection_scope(collected, monkeypatch):
@@ -338,3 +346,39 @@ def test_escaped_business_identifier_conservatively_protects_old_generation(coll
     assert 'market-old' in state['protected_generations']
     plan = retention.plan_retention(root, days, days[-1], protected_generations=state['protected_generations'])
     assert details[1]['artifact'] in plan['protected_keys']
+
+
+def test_factored_reference_scan_matches_original_literal_search():
+    # These are deliberately not just the current snapshot naming grammar.
+    # Substring matches, prefix IDs, regex metacharacters and Unicode retain
+    # the conservative protection semantics of the old literal alternation.
+    identifiers = {'a', 'ab', 'abcdefgh', 'abcdefgh-long', 'abcdefgh-longer',
+                   'market-old', 'market-old-extra', '结果[1]', 'a+b', 'x\\y',
+                   'analysis_bars-'+'a'*24, 'analysis_bars-'+'b'*24,
+                   '超长标识['+'x'*10000+']'}
+    generator = random.Random(713)
+    identifiers.update('shared-prefix-'+''.join(generator.choices('012abc', k=18)) for _ in range(300))
+    reference = re.compile('|'.join(re.escape(value) for value in sorted(identifiers, key=len, reverse=True)))
+    candidate = retention._reference_pattern(identifiers)
+    texts = ['ZZZZ', 'x\\y', '结果[1]', 'prefix: market-old-extra suffix', 'abcdefgh-longerabcdefgh',
+             json.dumps({'escaped': '结果[1]', 'nested': json.dumps({'reference': 'x\\y'})}, ensure_ascii=False)]
+    values = sorted(identifiers)
+    texts.extend(''.join(generator.choice(values + ['miss', ':', '  ']) for _ in range(20)) for _ in range(100))
+    for text in texts:
+        assert candidate.findall(text) == reference.findall(text)
+    assert retention._reference_pattern([]) is None
+
+
+def test_factored_business_scan_preserves_complete_protection_scope(collected, monkeypatch):
+    _, days, _, _, _ = collected
+    with core.connect() as connection:
+        publish_old_snapshot(connection, days)
+        connection.execute('CREATE TABLE custom_business(id INTEGER PRIMARY KEY,evidence_json TEXT,source_snapshot TEXT)')
+        connection.execute('INSERT INTO custom_business VALUES(1,?,?)',
+                           (json.dumps({'nested': json.dumps({'ref': 'prefix-market-old-suffix'})}), 'saved-old'))
+    candidate, reason = retention._database_scope('fixture-job')
+    assert reason is None and 'market-old' in candidate['protected_generations']
+    monkeypatch.setattr(retention, '_reference_pattern', lambda values:
+                        re.compile('|'.join(re.escape(value) for value in sorted(values, key=len, reverse=True))) if values else None)
+    original, reason = retention._database_scope('fixture-job')
+    assert reason is None and original == candidate

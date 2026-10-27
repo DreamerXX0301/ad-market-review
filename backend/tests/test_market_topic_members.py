@@ -167,7 +167,7 @@ def test_member_link_without_identity_cannot_guess_the_only_local_topic():
 def test_market_wrapper_uses_one_selected_day_panel(archives, monkeypatch):
     archives('market-old', OLD, [topic([A])])
     seen = []
-    def panel(day):
+    def panel(day, **_):
         seen.append(day)
         return LocalMarket(), {'snapshot_id': 'market-current', 'data_end': TODAY}, day, {}, [quote(A, 2)]
     monkeypatch.setattr(market, 'panel', panel)
@@ -180,7 +180,7 @@ def test_fund_page_exposes_proxy_lookup_without_replacing_fund_id(archives, monk
     row = {'topic_id': 'eastmoney-BK0486', 'topic_code': 'BK0486', 'name': '文化传媒',
            'kind': 'industry', 'date': OLD, 'net_inflow': 123}
     original = deepcopy(row)
-    monkeypatch.setattr(market, 'panel', lambda day: (LocalMarket(), {'snapshot_id': 'market-current', 'data_end': TODAY}, day, {}, [quote(A, 2)]))
+    monkeypatch.setattr(market, 'panel', lambda day, **_: (LocalMarket(), {'snapshot_id': 'market-current', 'data_end': TODAY}, day, {}, [quote(A, 2)]))
     monkeypatch.setattr(market, 'fund_flow_for_date', lambda *args: {'items': [row], 'history': [], 'coverage': {}})
     monkeypatch.setattr(market, 'prior_ladder_feedback', lambda *args: [])
     result = market.market_page('flow', OLD)
@@ -209,7 +209,7 @@ def rank_scope(monkeypatch):
     rows = [{'instrument_id': f'{index:06}.SH', 'name': f'股票{index}', 'rank': index,
              'change_30d_pct': 2000-index, 'change_pct': index, 'topics': []} for index in range(1, 1501)]
     rows.append({'instrument_id': '999999.SH', 'name': '未知股', 'rank': None, 'change_30d_pct': None, 'change_pct': 10000})
-    monkeypatch.setattr(market, 'panel', lambda day: (object(), {'snapshot_id': 'fixture', 'data_end': day}, day, {}, []))
+    monkeypatch.setattr(market, 'panel', lambda day, **_: (object(), {'snapshot_id': 'fixture', 'data_end': day}, day, {}, []))
     monkeypatch.setattr(market, 'cached_gainers', lambda *args: (rows, {'covered_stocks': 1500, 'unknown_count': 1}))
     return rows
 

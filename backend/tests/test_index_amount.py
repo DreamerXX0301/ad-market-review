@@ -112,7 +112,7 @@ def test_market_overview_uses_real_index_quotes_contract(market, monkeypatch):
     day = DAYS[-1]
     monkeypatch.setattr(market, 'indices', lambda *_: pytest.fail('overview must use enhanced lightweight index_quotes'))
     monkeypatch.setattr(market, 'turnover_history', lambda *_: [])
-    monkeypatch.setattr(market_service, 'panel', lambda *_: (market, market.status(), day, {}, []))
+    monkeypatch.setattr(market_service, 'panel', lambda *_, **_kwargs: (market, market.status(), day, {}, []))
     monkeypatch.setattr(market_service, 'cached_gainers', lambda *_: ([], {}))
     result = market_service.overview(day)
     assert len(result['indices']) == 4
@@ -123,7 +123,7 @@ def test_market_overview_uses_real_index_quotes_contract(market, monkeypatch):
 @pytest.mark.parametrize('day', DAYS)
 def test_index_page_projection_matches_overview_without_any_stock_or_supplement_read(market, monkeypatch, day):
     monkeypatch.setattr(market_service, 'get_market', lambda: market)
-    monkeypatch.setattr(market_service, 'panel', lambda *_: pytest.fail('index page cannot build a stock panel'))
+    monkeypatch.setattr(market_service, 'panel', lambda *_, **_kwargs: pytest.fail('index page cannot build a stock panel'))
     monkeypatch.setattr(market_service, 'cached_gainers', lambda *_: pytest.fail('index page cannot rank stocks'))
     monkeypatch.setattr(market_service, 'load_supplement', lambda *_: pytest.fail('index page cannot expand source histories'))
     monkeypatch.setattr(market_service, 'load_supplement_with_fingerprint', lambda *_: pytest.fail('index page cannot inspect supplement identities'))

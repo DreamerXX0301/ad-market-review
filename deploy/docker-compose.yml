@@ -2,7 +2,7 @@
 # Version tag is a convenience; use SHIXU_IMAGE_REF=repository@sha256:digest to pin.
 name: ad-market-review
 x-runtime: &runtime
-  image: ${SHIXU_IMAGE_REF:-ghcr.io/dreamerxx0301/ad-market-review:v0.1.8}
+  image: ${SHIXU_IMAGE_REF:-ghcr.io/dreamerxx0301/ad-market-review:v0.1.9}
   environment: &environment
     SHIXU_DATA_DIR: /var/lib/shixu
     SHIXU_SQLITE_PATH: /var/lib/shixu/business/app.sqlite3
@@ -11,6 +11,7 @@ x-runtime: &runtime
     SHIXU_WORK_DIR: /var/lib/shixu/work
     SHIXU_CREDENTIAL_DIR: /var/lib/shixu/credentials
     SHIXU_CREDENTIAL_MASTER_KEY_FILE: /run/secrets/shixu_master
+    SHIXU_SELECTION_CPU_WORKERS: ${SHIXU_SELECTION_CPU_WORKERS-4}
   init: true
   security_opt: [no-new-privileges:true]
   stop_grace_period: 40s

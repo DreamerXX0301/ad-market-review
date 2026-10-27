@@ -63,7 +63,7 @@ def fixture_evidence(monkeypatch, market=None):
     market = market or CountMarket()
     document = {'snapshot_id': 'count-fixture', 'job_id': 'source-evidence-job',
                 'annual_pools': {day: pool(day, [event(day)] if day in EVENTS else None) for day in market.days}}
-    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot: deepcopy(document))
+    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot, **_kwargs: deepcopy(document))
     return market, document
 
 
@@ -235,7 +235,7 @@ def test_strategy_combines_count_with_today_yesterday_and_freezes_partial_eviden
     document['annual_pools'][day] = pool(day, [event(day, OTHER, market.data[OTHER][70]['close'])])
     monkeypatch.setattr(market, 'reference', lambda: {}, raising=False)
     monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': 'count-fixture'}, raising=False)
-    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot: deepcopy(document))
+    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot, **_kwargs: deepcopy(document))
     calls = []
     def batch(symbols, start=None, end=None):
         calls.append((start, end))
@@ -267,7 +267,7 @@ def test_tracking_count_alert_has_same_window_without_turning_partial_equality_i
     document = {'annual_pools': {day: pool(day, [event(day, close=market.data[SYMBOL][70]['close'])])}}
     monkeypatch.setattr(market, 'reference', lambda: {}, raising=False)
     monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': 'count-fixture'}, raising=False)
-    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot: deepcopy(document))
+    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot, **_kwargs: deepcopy(document))
     strategy = make_strategy(client, policy={'alerts': [rule('>=', 1)], 'exits': [rule('==', 1)]})
     _, tracked = add_one(client, strategy)
     advance(market, 71)
@@ -291,7 +291,7 @@ def test_new_count_policy_added_during_review_uses_frozen_local_inputs(ws, monke
     document = {'annual_pools': {day: pool(day, [event(day, close=market.data[SYMBOL][70]['close'])])}}
     monkeypatch.setattr(market, 'reference', lambda: {}, raising=False)
     monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': 'count-fixture'}, raising=False)
-    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot: deepcopy(document))
+    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot, **_kwargs: deepcopy(document))
     _, tracked = add_one(client, make_strategy(client))
     advance(market, 71)
     original = market.bars; added = []

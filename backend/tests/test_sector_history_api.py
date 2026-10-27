@@ -74,7 +74,7 @@ def install(monkeypatch):
               {'instrument_id':B,'date':DAY,'name':'合成乙','close':9.,'change_pct':-3.,'amount':200.,'limit_up':False}]
         status={'ready':True,'snapshot_id':'market-current','data_begin':'2021-10-20','data_end':DAY,'quality':'partial'}
         market=LocalMarket();calls=[];report=quote_report(items)
-        def panel(day=None):
+        def panel(day=None, **_):
             calls.append(day)
             assert day==DAY
             return market,status,DAY,deepcopy(current),deepcopy(rows)

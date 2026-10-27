@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { restoreIncrementSession } from "../components/incrementSession";
 export type Row = Record<string, any>;
+// null is an application-level reader; retained pages explicitly provide
+// visibility so their independent state survives without background GETs.
+export const ApiPageActivity = createContext<boolean | null>(null);
+export function usePageActive() {
+  return useContext(ApiPageActivity) !== false;
+}
 export async function api<T = any>(
   path: string,
   options: RequestInit = {},
@@ -49,6 +62,8 @@ export const post = <T = any>(path: string, data: unknown = {}) =>
 export const patch = <T = any>(path: string, data: unknown) =>
   api<T>(path, { method: "PATCH", body: JSON.stringify(data) });
 export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
+  const pageActivity = useContext(ApiPageActivity);
+  const active = pageActivity !== false;
   const [data, setData] = useState<T | null>(null),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(""),
@@ -58,6 +73,10 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
   const incrementBlocked = useRef(false);
   const reload = useCallback(() => setKey((x) => x + 1), []);
   useEffect(() => {
+    if (!active) {
+      setLoading(false);
+      return;
+    }
     if (!path) {
       setData(null);
       setLoading(false);
@@ -87,7 +106,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
         if (!abort.signal.aborted) setLoading(false);
       });
     return () => abort.abort();
-  }, [path, key, ...deps]);
+  }, [path, key, active, ...deps]);
   useEffect(() => {
     const prefixes: Record<string, string[]> = {
       topics: ["/topics", "/topic-members", "/bootstrap"],
@@ -106,6 +125,14 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
       research: ["/research"],
     };
     const onRoute = (event: Event) => {
+      if (!active) return;
+      // Activation already starts a fresh read. Keep route notifications for
+      // task completion/unlock, without aborting and restarting that read.
+      if (
+        pageActivity !== null &&
+        (event as Event & { navigation?: boolean }).navigation
+      )
+        return;
       const route = (event as CustomEvent).detail;
       if (path && prefixes[route]?.some((prefix) => path.startsWith(prefix)))
         reload();
@@ -113,6 +140,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     window.addEventListener("workbench-route", onRoute);
     const onTopicsChanged = () => {
       if (
+        active &&
         path &&
         [
           "/topics",
@@ -129,7 +157,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     const onIncrementUnlocked = () => {
       if (incrementBlocked.current) {
         incrementBlocked.current = false;
-        reload();
+        if (active) reload();
       }
     };
     window.addEventListener(
@@ -145,11 +173,11 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
         onIncrementUnlocked,
       );
     };
-  }, [path, reload]);
+  }, [path, reload, active, pageActivity]);
   // A changed URL must never render the old date/security response for even one frame.
   return {
     data: resolvedPath.current === path ? data : null,
-    loading: loading || (!!path && previousPath.current !== path),
+    loading: active && (loading || (!!path && previousPath.current !== path)),
     error: previousPath.current === path ? error : "",
     reload,
     setData,

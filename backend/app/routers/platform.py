@@ -1,5 +1,6 @@
 """Platform HTTP endpoints; all data and job behavior lives in services."""
 from fastapi import APIRouter,Body,HTTPException,Query
+from fastapi.responses import JSONResponse
 from app.core import APP_NAME,APP_ID,json_clean
 from app.services import platform_service,market_service,task_service,source_service,research_service,workspace_automation
 from app.adapters.public_fund_budget import FUND_REQUEST_BUDGET_VERSION
@@ -20,10 +21,10 @@ def quote_gap_source_check(payload:dict=Body(...)):
 def health(): return {'status':'ok','application':APP_ID,'app_name':APP_NAME}
 
 @router.get('/bootstrap')
-def bootstrap():return json_clean(platform_service.bootstrap())
+def bootstrap():return JSONResponse(json_clean(platform_service.bootstrap()))
 
 @router.get('/overview')
-def overview(date:str|None=None):return market_service.overview(date)
+def overview(date:str|None=None):return JSONResponse(market_service.overview(date))
 
 @router.get('/market/topic-members')
 def market_topic_members(date:str|None=None,topic_id:str|None=Query(None,max_length=200),source_code:str|None=Query(None,max_length=200),kind:str|None=Query(None,pattern='^(industry|concept)$'),source_name:str|None=Query(None,max_length=200)):
@@ -33,7 +34,7 @@ def market_topic_members(date:str|None=None,topic_id:str|None=Query(None,max_len
 def sector_chart(topic_code:str=Query(...,max_length=30),date:str|None=None,period:str=Query('D',pattern='^(D|W|M)$')):
     from app.services.sector_chart_jobs import chart_view
     market,_,day=market_service.context(date)
-    return json_clean(chart_view(market,topic_code,day,period))
+    return JSONResponse(json_clean(chart_view(market,topic_code,day,period)))
 
 @router.post('/market/sector-chart/jobs')
 def sector_chart_create(payload:dict=Body(...)):
@@ -47,12 +48,14 @@ def sector_chart_create(payload:dict=Body(...)):
 
 @router.get('/market/indices')
 def index_overview(date:str|None=None):
-    return market_service.index_overview(date)
+    return JSONResponse(market_service.index_overview(date))
 
 @router.get('/market/{kind}')
 def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000),monitor_scope:str=Query('historical',pattern='^(historical|latest)$')):
     if monitor_scope!='historical' and kind!='abnormal':raise HTTPException(422,'最新监控名单范围仅适用于监管页')
-    return market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope)
+    # Services already return JSON-native read models. Avoid FastAPI recursively
+    # copying every bar/evidence field again before JSON encoding large charts.
+    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope))
 
 @router.get('/instruments')
 def instruments(query:str='',limit:int=Query(50,ge=1,le=10000)):
@@ -76,12 +79,12 @@ def chart(instrument_id:str,period:str='D',as_of:str|None=None,price_basis:str='
     market,_,_=market_service.context(as_of)
     result=market.chart(instrument_id,period,as_of,price_basis,indicator_continuity=indicator_continuity)
     if not result['bars']:raise HTTPException(404,'该标的没有已留存K线')
-    return json_clean(enrich_chart_limits(market,result))
+    return JSONResponse(json_clean(enrich_chart_limits(market,result)))
 
 @router.get('/instruments/{instrument_id}/summary')
 def instrument_summary(instrument_id:str,as_of:str|None=None):
     from app.services.stock_summary import get_summary
-    return json_clean(get_summary(instrument_id,as_of))
+    return JSONResponse(json_clean(get_summary(instrument_id,as_of)))
 
 @router.get('/instruments/{instrument_id}/tracking-baselines')
 def instrument_tracking_baselines(instrument_id:str,as_of:str|None=None):
@@ -102,10 +105,10 @@ def instrument_detail(instrument_id:str,as_of:str|None=None):
     row.update(instrument_id=symbol,topics=[{'topic_id':t['topic_id'],'name':t['name']} for t in market.topics_data() if current and symbol in t['instrument_ids']],turnover_ratio_pct=None)
     identity=market.instrument(symbol)
     memberships=stock_membership_fields(market,symbol) if identity.get('kind',identity.get('asset_type','stock')) in ('stock','equity','a_share','A') else {}
-    return json_clean({**identity,**market_service.stock(row,market.reference() if current else None),**memberships,**patterns,'instrument':identity,'data_date':day,'snapshot_id':status['snapshot_id'],'warnings':status.get('warnings',[])+([] if current else ['历史题材与监管标签未留存；当前归属单独列示，不使用当前分类回填历史'])})
+    return JSONResponse(json_clean({**identity,**market_service.stock(row,market.reference() if current else None),**memberships,**patterns,'instrument':identity,'data_date':day,'snapshot_id':status['snapshot_id'],'warnings':status.get('warnings',[])+([] if current else ['历史题材与监管标签未留存；当前归属单独列示，不使用当前分类回填历史'])}))
 
 @router.get('/data/status')
-def data_status():return json_clean(platform_service.data_status())
+def data_status():return JSONResponse(json_clean(platform_service.data_status()))
 
 @router.get('/data/coverage/check')
 def coverage_check():
@@ -205,7 +208,8 @@ def sync(payload:dict=Body(...)):
     from app.services.history_window import resolve_initial_window
     window=resolve_initial_window(payload,for_new_task=True)['window'] if mode=='initialise' else None
     from app.services.retention_policy import VERSION as retention_version
-    parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1','increment_session_version':LOCK_VERSION})}
+    from app.adapters.providers import SECTOR_TAIL_PACING_VERSION
+    parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1','increment_session_version':LOCK_VERSION,'sector_tail_request_policy_version':SECTOR_TAIL_PACING_VERSION})}
     return task_service.create_task(mode,parameters,request_key=payload.get('request_key'))
 
 @router.post('/sync/sector-charts')

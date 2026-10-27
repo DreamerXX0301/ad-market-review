@@ -34,6 +34,13 @@ def load_supplement(snapshot_id=None, *, dates=None, fields=None):
     return load_supplement_with_fingerprint(snapshot_id,dates=dates,fields=fields)[0]
 
 
+def load_supplement_status(snapshot_id=None):
+    """A small status view with the same retained-object verification scope."""
+    from .supplement_access import supplement_access
+    with supplement_access():
+        return _load_supplement_with_fingerprint(snapshot_id, status_projection=True)[0]
+
+
 def load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=None):
     """Return the same document plus its verified, private dependency identity.
 
@@ -46,7 +53,7 @@ def load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=Non
         return _load_supplement_with_fingerprint(snapshot_id,dates=dates,fields=fields)
 
 
-def _load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=None):
+def _load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=None, status_projection=False):
     root=_root();head=_load(root/'head.json',{})
     if snapshot_id and head.get('snapshot_id')!=snapshot_id:return {},None
     if not head:return {},None
@@ -54,8 +61,10 @@ def _load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=No
     if not path.is_relative_to(root.resolve()) or not path.is_file() or hash_file(path)!=head.get('sha256'):return {'quality':'unknown','failure_reason':'补充数据索引缺失或校验失败'},None
     result=_load(path,{})
     if result.get('version')!=VERSION:return {'quality':'unknown','failure_reason':'补充数据版本不匹配'},None
-    from .supplement_storage import expand_document
+    from .supplement_storage import expand_document, expand_status_document
     try:
+        if status_projection:
+            return expand_status_document(root, result), None
         dates=None if dates is None else tuple(dates);fields=None if fields is None else tuple(fields)
         document=expand_document(root,result,dates=dates,fields=fields)
         fingerprint=('verified-supplement-index-v1',str(root.resolve()),head.get('snapshot_id'),head['sha256'],
@@ -512,6 +521,9 @@ def execute_supplement(job_id, progress=None):
     if retention_version is not None:
         from .supplement_retention import collect_after_publication
         try:
+            if progress:
+                progress('核验补充数据保留引用',99,'补充索引已发布；正在核验业务引用与可清理对象',
+                         {'supplement_published':True,'retention_policy_version':retention_version})
             retention=collect_after_publication(job_id,market,result,guard=guard)
         except (TaskCancelled,TaskPaused):
             raise

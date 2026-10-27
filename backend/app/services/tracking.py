@@ -194,13 +194,15 @@ def _entry_comparison(r,day,price,market=None,price_context=None,entry_basis=Non
         return price,'not_required',None
     return None,'unknown','未验证期间公司行动，不能直接跨日比较入池基准'
 
-def _event_view(r, payloads=None):
+def _event_view(r, payloads=None, *, summary=False):
+    if summary:return {k:v for k,v in r.items() if k!='evidence_json'}
     evidence=obj(r.get('evidence_json'),{}) if payloads is None else _browse_payload(r,payloads)
     return {k:v for k,v in r.items() if k!='evidence_json'}|{'evidence':evidence}
 
-def _round_view(c,r,master,calendar,bars,day,with_events=False,current_memberships=None,entry_high=None,entry_low=None,quote=None,market=None,browse=None):
+def _round_view(c,r,master,calendar,bars,day,with_events=False,current_memberships=None,entry_high=None,entry_low=None,quote=None,market=None,browse=None,entry_basis=None,market_status=None,summary=False):
     valuation_date=r['end_business_date'] if r['status']!='tracking' else day
-    basis=obj(r['entry_basis_json'],{});payloads=browse['payloads'] if browse is not None else {}
+    basis=obj(r['entry_basis_json'],{}) if entry_basis is None else entry_basis
+    payloads=browse['payloads'] if browse is not None else {}
     ms=quote if quote is not None else metrics_for(bars,valuation_date,calendar);age=_age(calendar,r['entry_business_date'],valuation_date);p=browse['policy'] if browse is not None else _policy_at(c,r,valuation_date)
     saved_review=browse['saved_review'] if browse is not None else c.execute("SELECT * FROM tracking_event WHERE round_id=? AND event_type='review' AND business_date=? ORDER BY recorded_at_ms DESC,rowid DESC LIMIT 1",(r['round_id'],valuation_date)).fetchone()
     saved=_browse_payload(saved_review,payloads) if saved_review else None
@@ -209,7 +211,7 @@ def _round_view(c,r,master,calendar,bars,day,with_events=False,current_membershi
     frozen_comparison=None
     if _signal_price_basis(r,basis)=='forward' and saved_review:
         frozen=obj(saved.get('metrics'),{}) if isinstance(saved.get('metrics'),str) else saved.get('metrics',{})
-        status=market.status() if market is not None and callable(getattr(market,'status',None)) else {}
+        status=market_status if market_status is not None else market.status() if market is not None and callable(getattr(market,'status',None)) else {}
         if (isinstance(frozen,dict) and frozen.get('tracking_comparison_anchor')==valuation_date
                 # An ended round displays its immutable ending review, including
                 # its close. Only an active round compares a freshly read quote
@@ -225,7 +227,7 @@ def _round_view(c,r,master,calendar,bars,day,with_events=False,current_membershi
     review_payload=_browse_payload(latest_review,payloads) if latest_review else None
     topics=review_payload.get('topics') if latest_review else None
     if topics is None:topics=basis.get('entry_topics',[])
-    item={**{k:v for k,v in r.items() if k not in ('entry_basis_json','entry_price_e8')},**code_info(r['instrument_id'],master),'valuation_date':valuation_date,'entry_price':money(r['entry_price_e8']),'entry_basis':basis,'latest_price':price,'today_change_pct':ms.get('change_pct'),'tracking_change_pct':(normalized/money(r['entry_price_e8'])-1)*100 if normalized is not None else None,'comparison_state':state,'comparison_reason':reason,'trading_age':age,'remaining_sessions':max(0,p['duration_sessions']-age) if age is not None else None,'policy':p,'topics':topics,'latest_event':_event_view(dict(latest),payloads) if latest else None,'alerts':[_event_view(a,payloads) for a in alerts]}
+    item={**{k:v for k,v in r.items() if k not in ('entry_basis_json','entry_price_e8')},**code_info(r['instrument_id'],master),'valuation_date':valuation_date,'entry_price':money(r['entry_price_e8']),'entry_basis':basis,'latest_price':price,'today_change_pct':ms.get('change_pct'),'tracking_change_pct':(normalized/money(r['entry_price_e8'])-1)*100 if normalized is not None else None,'comparison_state':state,'comparison_reason':reason,'trading_age':age,'remaining_sessions':max(0,p['duration_sessions']-age) if age is not None else None,'policy':p,'topics':topics,'latest_event':_event_view(dict(latest),payloads,summary=summary) if latest else None,'alerts':[_event_view(a,payloads,summary=summary) for a in alerts]}
     if frozen_comparison is not None:
         item.update(tracking_change_pct=frozen_comparison.get('tracking_change_pct'),
                     tracking_reference_price=frozen_comparison.get('tracking_reference_price'),
@@ -242,32 +244,46 @@ def _round_view(c,r,master,calendar,bars,day,with_events=False,current_membershi
     reviewed_policy=review_payload.get('policy_version') if latest_review and latest_review['business_date']==valuation_date else None
     item['policy_review_pending']=r['status']=='tracking' and reviewed_policy!=p['policy_version']
     item['duration_reached']=r['status']=='tracking' and age is not None and age>0 and age>=p['duration_sessions']
+    if summary:
+        # Keep full checks for chart navigation and policy for direct editing.
+        # Duplicated provenance belongs to the explicit round-detail response.
+        item['entry_basis']={key:value for key,value in basis.items() if key not in ('source_lineage','entry_topics','entry_high','entry_low')}
+        for key in ('topics','topics_snapshot','entry_high_basis','entry_low_basis'):item.pop(key,None)
     if with_events:item['events']=[_event_view(x,payloads) for x in (browse['events'] if browse is not None else rows(c,'SELECT * FROM tracking_event WHERE round_id=? ORDER BY business_date,recorded_at_ms,rowid',(r['round_id'],)))]
     return item
 
-def list_tracking(strategy_id=None,status='tracking',triggered_only=False):
+def list_tracking(strategy_id=None,status='tracking',triggered_only=False,view='full'):
+    if view not in ('full','summary'):fail('不支持的跟踪列表视图')
     with connect() as c:
         day=current(c);calendar=get_market().calendar();master=identities(day);sql='SELECT r.*,s.name strategy_name FROM tracking_round r JOIN strategy s USING(strategy_id) WHERE 1=1';params=[]
         if strategy_id:sql+=' AND r.strategy_id=?';params.append(strategy_id)
         status_counts=rows(c,'SELECT status,count(*) AS count FROM tracking_round'+(' WHERE strategy_id=?' if strategy_id else '')+' GROUP BY status',([strategy_id] if strategy_id else []))
         counts={'active':sum(row['count'] for row in status_counts if row['status']=='tracking'),'history':sum(row['count'] for row in status_counts if row['status']!='tracking')}
+        if view=='summary':
+            # The alerts tab spans active and ended rounds, independent of the
+            # list's status/trigger filter, exactly like tracking-events.
+            counts['alerts']=c.execute("SELECT count(*) FROM tracking_event e JOIN tracking_round r USING(round_id) JOIN strategy s USING(strategy_id) WHERE e.event_type='alert'"+(' AND r.strategy_id=?' if strategy_id else ''),[strategy_id] if strategy_id else []).fetchone()[0]
         if status and status!='all':
             if status not in ('tracking','expired','condition_ended','manual_removed'):fail('不支持的跟踪状态')
             sql+=' AND r.status=?';params.append(status)
         sql+=' ORDER BY r.created_at_ms DESC';data=rows(c,sql,params);market=get_market();items=[]
         from app.services.hot_browse import browse_scope, require_scope
         hot_scope=browse_scope(c,market,expected_day=day);current_memberships=topic_map(c,day)
-    entry_highs=load_entry_highs(data)
-    entry_lows=load_entry_lows(data)
+    bases={id(row):obj(row['entry_basis_json'],{}) for row in data}
+    entry_highs=load_entry_highs(data,bases=bases)
+    entry_lows=load_entry_lows(data,bases=bases)
     quotes=tracking_quotes(market,data,calendar,day)
+    # The final require_scope rejects publication changes during this request.
+    status_reader=getattr(market,'status',None)
+    market_status=status_reader() if callable(status_reader) else {}
     with connect() as c:
         prepared=_browse_inputs(c,data,day)
         for r in data:
             valuation_date=r['end_business_date'] if r['status']!='tracking' else day
-            item=_round_view(c,r,master,calendar,[],day,current_memberships=current_memberships,entry_high=entry_high_for(r,entry_highs),entry_low=entry_low_for(r,entry_lows),quote=quotes[(r['instrument_id'],valuation_date)],market=market,browse=prepared[r['round_id']])
+            item=_round_view(c,r,master,calendar,[],day,current_memberships=current_memberships,entry_high=entry_high_for(r,entry_highs),entry_low=entry_low_for(r,entry_lows),quote=quotes[(r['instrument_id'],valuation_date)],market=market,browse=prepared[r['round_id']],entry_basis=bases[id(r)],market_status=market_status,summary=view=='summary')
             if not triggered_only or item['alerts']:items.append(item)
     require_scope(hot_scope,market)
-    return {'items':items,'total':len(items),'counts':counts,'business_date':day,'hot_filter_scope':hot_scope,'current_topics_scope':'当前业务日有效的本地来源成员与人工修改；不是历史归属，未完整分类的缺席不能判为不属于。'}
+    return {'items':items,'total':len(items),'counts':counts,'business_date':day,'hot_filter_scope':hot_scope,'current_topics_scope':'当前业务日有效的本地来源成员与人工修改；不是历史归属，未完整分类的缺席不能判为不属于。'}|({'view':'summary'} if view=='summary' else {})
 
 def get_tracking(tid):
     with connect() as c:

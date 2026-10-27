@@ -128,9 +128,12 @@ def _queue_followup_once(job,completed_result=None):
     elif job['kind']=='increment' and parameters.get('data_chain_version')=='sector-charts-increment-v1':
         from app.core import get_market
         from app.services.sector_chart_batch_jobs import create_batch_job
+        from app.adapters.providers import validate_sector_tail_pacing
+        pacing_version=validate_sector_tail_pacing(parameters.get('sector_tail_request_policy_version'))
+        pacing_policy={'sector_tail_request_policy_version':pacing_version} if pacing_version is not None else {}
         child=create_batch_job(get_market(),target,request_key='sector-charts-after-sync:'+job['job_id'],mode='increment',
             chain_parameters={'increment_chain':True,'parent_sync_job_id':job['job_id'],
-                              'data_chain_version':'sector-charts-increment-v1',**fund_policy})
+                              'data_chain_version':'sector-charts-increment-v1',**fund_policy,**pacing_policy})
         message='主行情已发布，板块K线尾部增量已排队；只追加缺少交易日，再接续目标日盘面补充'
     elif job['kind']=='increment':
         child=_supplement_child({'operation':'market_supplement','year_history':False,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':job['job_id'],**fund_policy},target,'supplement-after-sync:'+job['job_id'])

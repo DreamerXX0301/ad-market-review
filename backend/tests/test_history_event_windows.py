@@ -88,7 +88,7 @@ def source_setup(monkeypatch, market, calendar, rows, event_offsets=(2,), *, day
         observed: pool(observed, [source_event(observed, SYMBOL if observed in selected else OTHER,
                                                prices[observed] if observed in selected else 10)])
         for observed in calendar[max(0, position-31):position+1]}}
-    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot: deepcopy(supplement))
+    monkeypatch.setattr(strategy_limits, 'load_supplement', lambda snapshot, **_kwargs: deepcopy(supplement))
     return supplement
 
 

@@ -144,11 +144,35 @@ def test_supplement_execution_does_not_add_policy_to_old_frozen_task(isolated,mo
     calls=[]
     monkeypatch.setattr(supplement,'refresh_for_market',lambda *args,**kwargs:calls.append(('refresh',kwargs)) or {'snapshot_id':'fixture','target_date':DAY})
     monkeypatch.setattr(retention,'collect_after_publication',lambda *args,**kwargs:calls.append(('gc',args)) or {'status':'completed'})
-    result=supplement.execute_supplement(task['job_id'])
+    events=[]
+    result=supplement.execute_supplement(task['job_id'],progress=lambda *args:events.append(args))
     assert ('retention_policy_version' in calls[0][1]) is authorized
     assert len(calls)==(2 if authorized else 1)
     assert ('retention_result' in result) is authorized
+    assert len(events)==int(authorized)
+    if authorized:
+        assert events[0][0]=='核验补充数据保留引用'
+        assert events[0][3]['supplement_published'] is True
     assert tasks.task_view(job['job_id'])['parameters']==parameters
+
+
+@pytest.mark.parametrize('error_type',[RuntimeError,tasks.TaskPaused,tasks.TaskCancelled])
+def test_post_publication_progress_failure_keeps_published_result_or_explicit_interrupt(isolated,monkeypatch,error_type):
+    import app.services.supplement_retention as retention
+    market=SimpleNamespace(status=lambda:{'snapshot_id':'fixture','data_end':DAY})
+    monkeypatch.setattr(supplement,'get_market',lambda:market)
+    published={'snapshot_id':'fixture','target_date':DAY,'quality':'partial','message':'already published'}
+    monkeypatch.setattr(supplement,'refresh_for_market',lambda *args,**kwargs:dict(published))
+    monkeypatch.setattr(retention,'collect_after_publication',lambda *args,**kwargs:pytest.fail('diagnostic failed before collector'))
+    task=tasks.create_task('source_check',{'operation':'market_supplement','retention_policy_version':retention_policy.VERSION},target_date=DAY)
+    tasks.claim_next('retention-fixture')
+    def failed_progress(*args):raise error_type('controlled diagnostic or interruption')
+    if error_type is RuntimeError:
+        result=supplement.execute_supplement(task['job_id'],progress=failed_progress)
+        assert all(result[key]==value for key,value in published.items())
+        assert result['retention_result']['status']=='warning'
+    else:
+        with pytest.raises(error_type):supplement.execute_supplement(task['job_id'],progress=failed_progress)
 
 
 def test_migration_025_adds_only_two_empty_tables_and_preserves_all_original_objects(tmp_path,monkeypatch):

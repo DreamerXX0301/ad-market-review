@@ -5,6 +5,8 @@ const values = [], refs = [], callbacks = [], effects = [], requests = [], liste
 let cursor = 0, scheduled = [], path = "/strategies";
 const same = (a,b) => a?.length === b?.length && a.every((v,i) => Object.is(v,b[i]));
 const hooks = {
+  createContext(initial) { return { value: initial }; },
+  useContext(context) { return context.value; },
   useState(initial) { const i=cursor++; if (!(i in values)) values[i]=typeof initial==="function"?initial():initial; return [values[i], next => {values[i]=typeof next==="function"?next(values[i]):next;}]; },
   useRef(initial) {const i=cursor++; return refs[i] ||= {current:initial};},
   useCallback(fn,deps) {const i=cursor++;if (!callbacks[i] || !same(callbacks[i].deps,deps)) callbacks[i]={fn,deps};return callbacks[i].fn;},
@@ -20,7 +22,7 @@ globalThis.window={
 globalThis.fetch=(url,options)=>new Promise(resolve=>requests.push({url,options,resolve,answered:false}));
 const encode=value=>"data:text/javascript;base64,"+Buffer.from(value).toString("base64");
 let source=ts.transpileModule(await fs.readFile(new URL("./api.ts",import.meta.url),"utf8"),{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText;
-source=source.replaceAll('"react"',JSON.stringify(encode('export const {useState,useRef,useEffect,useCallback}=globalThis.__incrementApiHooks;')))
+source=source.replaceAll('"react"',JSON.stringify(encode('export const {createContext,useContext,useState,useRef,useEffect,useCallback}=globalThis.__incrementApiHooks;')))
   .replaceAll('"../components/incrementSession"',JSON.stringify(encode('export function restoreIncrementSession(value){globalThis.__incrementApiRestored.push(value);}')));
 const {useApi}=await import(encode(source));
 function render(){cursor=0;const result=useApi(path);const pending=scheduled;scheduled=[];pending.forEach(fn=>fn());return result;}

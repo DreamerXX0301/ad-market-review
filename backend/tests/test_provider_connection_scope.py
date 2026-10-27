@@ -14,6 +14,7 @@ def transport(monkeypatch):
         clock['sleeps'].append(seconds); clock['now'] += seconds
     def handler(request):
         calls.append((clock['now'], request))
+        clock['now'] += clock.get('latency', 0)
         item = responses.pop(0) if responses else {'code': 0, 'data': {'item': []}}
         if isinstance(item, BaseException): raise item
         if isinstance(item, tuple): return httpx.Response(item[0], json=item[1])
@@ -146,3 +147,79 @@ def test_copied_context_cannot_reopen_completed_task_transport(transport):
     with pytest.raises(providers.ProviderError):
         copied.run(lambda: providers.ProviderClient('fuyao', 'fixture').request('/late'))
     assert len(clients) == 1 and clients[0].is_closed
+
+
+SECTOR_HISTORY = '/api/a-share-index/prices/historical'
+
+
+def test_new_frozen_tail_policy_keeps_710_serial_requests_and_global_start_budget(transport):
+    clock, clients, calls, _ = transport
+    clock['latency'] = .1
+    with providers.provider_connection_scope(), providers.sector_tail_request_scope(providers.SECTOR_TAIL_PACING_VERSION) as policy:
+        for index in range(710):
+            providers.ProviderClient('fuyao', 'fixture').request(SECTOR_HISTORY, {'thscode':str(index), 'interval':'1d'})
+        assert policy.attempts == 710
+    assert len(clients)==1 and clients[0].is_closed and len(calls)==710
+    assert all(b[0]-a[0]>=.6-1e-9 for a,b in zip(calls,calls[1:]))
+    assert calls[-1][0]-calls[0][0] == pytest.approx(709*.6)
+
+
+@pytest.mark.parametrize('status,code',[(401,None),(403,None),(429,None),(200,2001),(200,2003),(200,4001)])
+def test_new_tail_policy_stops_auth_permission_and_rate_refusals_without_retry(transport,status,code):
+    _, clients, calls, responses = transport
+    responses.append((status, {'code':code,'data':None}))
+    with providers.provider_connection_scope(), providers.sector_tail_request_scope(providers.SECTOR_TAIL_PACING_VERSION) as policy:
+        for _ in range(2):
+            with pytest.raises(providers.ProviderError):
+                providers.ProviderClient('fuyao','fixture').request(SECTOR_HISTORY)
+        assert policy.attempts==1
+    assert len(calls)==len(clients)==1 and clients[0].is_closed
+
+
+def test_new_tail_policy_preserves_three_transient_attempts_and_other_endpoint_policy(transport):
+    _, _, calls, responses=transport
+    responses.extend([(500,{}),(503,{})])
+    with providers.provider_connection_scope():
+        adapter=providers.ProviderClient('fuyao','fixture')
+        with providers.sector_tail_request_scope(providers.SECTOR_TAIL_PACING_VERSION) as policy:
+            adapter.request(SECTOR_HISTORY)
+            assert policy.attempts==3
+            adapter.request('/api/a-share/prices/historical')
+            assert policy.attempts==3
+        adapter.request(SECTOR_HISTORY)
+    assert [call[0] for call in calls]==pytest.approx([100,102,106,107.2,108.4])
+
+
+@pytest.mark.parametrize('error_type',[ValueError,RuntimeError])
+@pytest.mark.parametrize('during_retry',[False,True])
+def test_tail_wait_guard_propagates_and_scope_exit_restores_legacy_interval(transport,error_type,during_retry):
+    clock, _, calls, responses=transport
+    if during_retry:responses.append((503,{}))
+    def guard():
+        if clock['now']>=100.2:raise error_type('controlled guard')
+    with providers.provider_connection_scope():
+        adapter=providers.ProviderClient('fuyao','fixture')
+        with pytest.raises(error_type,match='controlled guard'):
+            with providers.sector_tail_request_scope(providers.SECTOR_TAIL_PACING_VERSION,guard):
+                adapter.request(SECTOR_HISTORY)
+                adapter.request(SECTOR_HISTORY)
+        adapter.request(SECTOR_HISTORY)
+    assert len(calls)==2 and calls[1][0]-calls[0][0]==pytest.approx(1.2)
+
+
+def test_legacy_policy_and_late_copied_scope_cannot_gain_new_pacing(transport):
+    _, _, calls, responses=transport
+    with providers.provider_connection_scope():
+        adapter=providers.ProviderClient('fuyao','fixture')
+        with providers.sector_tail_request_scope(None):
+            responses.extend([{'code':4001,'data':None},{'code':4001,'data':None}])
+            adapter.request(SECTOR_HISTORY)
+        assert len(calls)==3
+        with providers.sector_tail_request_scope(providers.SECTOR_TAIL_PACING_VERSION):
+            copied=copy_context()
+        with pytest.raises(providers.ProviderError,match='范围已结束'):
+            copied.run(lambda:adapter.request(SECTOR_HISTORY))
+        assert len(calls)==3
+    for version in ('future',False,0,{},[]):
+        with pytest.raises(ValueError):
+            with providers.sector_tail_request_scope(version):pass

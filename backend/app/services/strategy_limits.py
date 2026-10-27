@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import math
+import json
+import zlib
 from bisect import bisect_left
+from collections import OrderedDict
 from datetime import date, timedelta
+from hashlib import sha256
+from threading import RLock
 
 from app.services.chart_limits import _combine, _evidence
 from app.services.market_supplement import load_supplement
@@ -12,6 +17,51 @@ DAILY_LIMIT_FIELDS = {'limit_up', 'prev_limit_up'}
 COUNT_FIELD = 'limit_up_count_1y'
 LIMIT_FIELDS = DAILY_LIMIT_FIELDS | {COUNT_FIELD}
 BATCH_SIZE = 256
+_COUNT_CACHE_BYTES = 16 * 1024 * 1024
+_COUNT_CACHE_ENTRIES = 16384
+_count_cache = OrderedDict()
+_count_cache_size = 0
+_count_cache_lock = RLock()
+
+
+def _count_cached(key, value=None):
+    """Bounded disposable proof summaries; callers receive private dictionaries."""
+    global _count_cache_size
+    if key is None:
+        return None
+    if value is not None:
+        try:
+            plain = json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()
+        except (TypeError, ValueError):
+            return None
+        if len(plain) > 64 * 1024:
+            return None
+        encoded = zlib.compress(plain, 1)
+        with _count_cache_lock:
+            old = _count_cache.pop(key, None)
+            _count_cache_size -= len(old) if old is not None else 0
+            _count_cache[key] = encoded
+            _count_cache_size += len(encoded)
+            while len(_count_cache) > _COUNT_CACHE_ENTRIES or _count_cache_size > _COUNT_CACHE_BYTES:
+                _, removed = _count_cache.popitem(last=False)
+                _count_cache_size -= len(removed)
+        return None
+    with _count_cache_lock:
+        encoded = _count_cache.get(key)
+        if encoded is not None:
+            _count_cache.move_to_end(key)
+    if encoded is None:
+        return None
+    try:
+        inflater = zlib.decompressobj()
+        plain = inflater.decompress(encoded, 64 * 1024 + 1)
+        if len(plain) > 64 * 1024 or not inflater.eof or inflater.unused_data:
+            return None
+        return json.loads(plain)
+    except (zlib.error, UnicodeDecodeError, ValueError):
+        # A disposable in-memory summary must not turn a valid source into a
+        # failed rule. Recalculation replaces a damaged entry under the same key.
+        return None
 
 
 def count_window(day):
@@ -47,7 +97,11 @@ class LimitConditionEvidence:
         status = getattr(market, 'status', None)
         self.snapshot_id = status().get('snapshot_id') if callable(status) else None
         try:
-            self.supplement = load_supplement(self.snapshot_id) if self.snapshot_id else {}
+            # Evidence can span historical events and rolling natural years.
+            # Retain every saved date, but do not expand unrelated fund/sector
+            # objects whose availability cannot prove a closing-pool event.
+            self.supplement = load_supplement(self.snapshot_id,
+                fields=('public_pools', 'annual_pools', 'annual_down_pools')) if self.snapshot_id else {}
         except (OSError, ValueError):
             self.supplement = {'failure_reason': '补充索引缺失或未通过完整性校验'}
         if self.supplement.get('snapshot_id') not in (None, self.snapshot_id):
@@ -231,17 +285,54 @@ class LimitConditionEvidence:
         """Keep at most 256 securities' one-year quote dictionaries alive at once."""
         symbols = sorted(set(symbols)); result = {}
         if not symbols: return result
+        scope = self._count_cache_scope(market, day, calendar, include_daily) if histories is None else None
+        missing = []
+        for symbol in symbols:
+            cached = _count_cached((scope, symbol) if scope else None)
+            if cached is None:
+                missing.append(symbol)
+            else:
+                result[symbol] = cached
         start, _ = count_window(day)
         method = getattr(market, 'history_for_instruments', None)
-        for offset in range(0, len(symbols), BATCH_SIZE):
-            batch = symbols[offset:offset + BATCH_SIZE]
+        for offset in range(0, len(missing), BATCH_SIZE):
+            batch = missing[offset:offset + BATCH_SIZE]
             selected = {symbol: histories.get(symbol, []) for symbol in batch} if histories is not None else method(batch, start=start, end=day) if callable(method) else {}
             for symbol in batch:
                 quotes = quote_index(row for row in selected.get(symbol, []) if start <= str(row.get('date', row.get('trade_date', '')))[:10] <= day)
                 metrics = self.count_series(symbol, [day], calendar, quotes)[day]
                 if include_daily: metrics.update(self.metrics(symbol, day, calendar, quotes))
                 result[symbol] = metrics
-        return result
+                _count_cached((scope, symbol) if scope else None, metrics)
+        return {symbol: result[symbol] for symbol in symbols}
+
+    def _count_cache_scope(self, market, day, calendar, include_daily):
+        """Recheck source files before reuse, including unknown coverage results.
+
+        The constructor already reloads and validates the selected supplement
+        objects. Hash their actual contents (not just a job id) and all consumed
+        reference fields. Only the verified immutable market adapter can skip
+        raw quote reads; caller-supplied histories never use this cache.
+        """
+        verify = getattr(market, 'verify_condition_sources', None)
+        if not callable(verify) or self.supplement.get('failure_reason'):
+            return None
+        token = verify()  # A failed integrity check must never become a cache hit.
+        if (not isinstance(token, tuple) or len(token) != 5
+                or token[0] != 'verified-condition-sources-v1' or token[2] != self.snapshot_id
+                or not callable(getattr(market, 'history_for_instruments', None))):
+            return None
+        reference = {key: self.reference.get(key) for key in
+                     ('pool_history', 'pool_trade_date', 'limitup', 'limitdown',
+                      'pool_coverage', 'pool_quarantine')}
+        try:
+            content = json.dumps(['annual-limit-count-proof-v1', token, day, calendar,
+                                  bool(include_daily), reference, self.supplement],
+                                 ensure_ascii=False, sort_keys=True, separators=(',', ':'),
+                                 allow_nan=False).encode()
+        except (ValueError, TypeError):
+            return None
+        return sha256(content).hexdigest()
 
 
 def batch_quote_indexes(market, symbols, day, calendar, histories=None):

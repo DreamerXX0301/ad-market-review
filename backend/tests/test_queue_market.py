@@ -11,7 +11,7 @@ def ranking(monkeypatch):
         {'instrument_id':'600002.SH','name':'A','change_30d_pct':10,'change_pct':4,'limit_up_ytd':2,'topics':[{'name':'A'}]},
         {'instrument_id':'600003.SH','name':'C','change_30d_pct':None,'change_pct':None,'limit_up_ytd':3,'topics':[]},
     ]
-    monkeypatch.setattr(service,'panel',lambda day:(object(),{'snapshot_id':'fixture','data_end':day},day,{},[]))
+    monkeypatch.setattr(service,'panel',lambda day, **_:(object(),{'snapshot_id':'fixture','data_end':day},day,{},[]))
     monkeypatch.setattr(service,'cached_gainers',lambda *args:(rows,{}))
     return rows
 
@@ -47,7 +47,7 @@ def test_invalid_sort_is_rejected(ranking,field,order):
 def test_no_comparable_quotes_does_not_claim_broad_decline(monkeypatch):
     class Market:
         def breadth_history(self,day):return []
-    monkeypatch.setattr(service,'panel',lambda day:(Market(),{'snapshot_id':'fixture'},day,{},[]))
+    monkeypatch.setattr(service,'panel',lambda day, **_:(Market(),{'snapshot_id':'fixture'},day,{},[]))
     monkeypatch.setattr(service,'_breadth',lambda *args:{'up':0,'down':0,'flat':0,'unknown':5500})
     result=service.market_page('emotion','2025-10-20')
     assert result['summary']['temperature'] is None

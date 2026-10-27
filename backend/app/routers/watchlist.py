@@ -1,5 +1,6 @@
 """Personal watchlist routes, independent of strategy tracking lifecycles."""
 from fastapi import APIRouter, Body, Query
+from fastapi.responses import JSONResponse
 from app.services import watchlist
 
 router = APIRouter(prefix='/api/v1/watchlist', tags=['watchlist'])
@@ -7,7 +8,7 @@ router = APIRouter(prefix='/api/v1/watchlist', tags=['watchlist'])
 
 @router.get('')
 def list_items(query: str = Query('', max_length=200)):
-    return watchlist.list_items(query)
+    return JSONResponse(watchlist.list_items(query))
 
 
 @router.get('/ids')

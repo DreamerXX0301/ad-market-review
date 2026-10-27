@@ -115,14 +115,9 @@ export default function Watchlist({
     );
   useEffect(() => {
     const refresh = () => result.reload();
-    const onRoute = (event: Event) => {
-      if ((event as CustomEvent).detail === "watchlist") refresh();
-    };
     window.addEventListener(WATCHLIST_CHANGED, refresh);
-    window.addEventListener("workbench-route", onRoute);
     return () => {
       window.removeEventListener(WATCHLIST_CHANGED, refresh);
-      window.removeEventListener("workbench-route", onRoute);
     };
   }, [result.reload]);
   useEffect(() => {

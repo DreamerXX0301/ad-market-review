@@ -199,6 +199,31 @@ def plan_retention(root, calendar, target, *, protected_generations=(), max_file
                       max_inventory_files=MAX_INVENTORY_FILES, max_edges=MAX_EDGES, guard=guard, graph_directory=graph_directory)
 
 
+def _reference_pattern(identifiers):
+    """Factor literal prefixes without changing leftmost/longest matching.
+
+    Business JSON can span gigabytes. A flat alternation of hundreds of nearly
+    identical snapshot IDs retries every ID at common letters in numerical
+    payloads. Grouping the first eight characters lets the regex reject those
+    positions once per prefix. Longest-first insertion also keeps a short ID
+    after every longer ID that could match at the same position. No identifier
+    grammar or JSON field is excluded, including legacy/custom snapshot names.
+    """
+    tree = {}
+    for value in sorted(identifiers, key=len, reverse=True):
+        node = tree
+        for character in value[:8]:
+            node = node.setdefault(character, {})
+        node.setdefault(None, []).append(re.escape(value[8:]))
+    def expression(node):
+        # At most eight recursive levels, even for arbitrarily long legacy IDs.
+        # Nonempty branches precede an empty terminal to retain longest match.
+        branches = [re.escape(character)+expression(child) for character, child in node.items() if character is not None]
+        branches.extend(node.get(None, ()))
+        return branches[0] if len(branches)==1 else '(?:'+'|'.join(branches)+')'
+    return re.compile(expression(tree)) if tree else None
+
+
 def _database_scope(job_id):
     """Read only tiny identities plus streamed business strings; no JSON trees."""
     from app.services.market_storage_gc import _IGNORED, _closure
@@ -223,7 +248,7 @@ def _database_scope(job_id):
         identifiers = {row['snapshot_id'] for row in snapshots}
         generations = {json.loads(row['lineage_json']).get('market_snapshot_id') for row in snapshots}
         known = identifiers | {value for value in generations if isinstance(value, str)}
-        pattern = re.compile('|'.join(re.escape(value) for value in sorted(known, key=len, reverse=True))) if known else None
+        pattern = _reference_pattern(known)
         roots = {row[0] for row in connection.execute('SELECT snapshot_id FROM published_head')}
         roots.update(row[0] for row in connection.execute('SELECT snapshot_id FROM retention_pin WHERE expires_at_ms IS NULL OR expires_at_ms>?', (now_ms(),)))
         unicode_fallback = False
@@ -306,6 +331,13 @@ def collect_after_publication(job_id, market, document, guard=None):
     report = {'version': VERSION, 'status': 'skipped', 'removed_files': 0, 'removed_bytes': 0}
     plan = None
     reference_signature = None
+    def database_scope():
+        started_scope = time.perf_counter()
+        try:
+            return _database_scope(job_id)
+        finally:
+            report['database_scope_calls'] = report.get('database_scope_calls', 0) + 1
+            report['database_scope_ms'] = round(report.get('database_scope_ms', 0) + (time.perf_counter()-started_scope)*1000, 3)
     try:
         with supplement_access(exclusive=True, guard=guard), connect() as ledger:
             # This same connection performs every ledger write. Its data_version
@@ -318,7 +350,7 @@ def collect_after_publication(job_id, market, document, guard=None):
                     raise ValueError('删除边界不能持有SQLite事务')
                 current_version = ledger.execute('PRAGMA data_version').fetchone()[0]
                 if current_version != database_version:
-                    rechecked, blocked = _database_scope(job_id)
+                    rechecked, blocked = database_scope()
                     after_version = ledger.execute('PRAGMA data_version').fetchone()[0]
                     if blocked or rechecked['guard_signature'] != reference_signature or after_version != current_version:
                         raise ValueError('计划后业务引用、任务或pin发生变化，停止并保留原ledger待复核')
@@ -328,7 +360,7 @@ def collect_after_publication(job_id, market, document, guard=None):
                     report['benign_database_rechecks'] = report.get('benign_database_rechecks', 0) + 1
             if guard:
                 guard()
-            state, skipped = _database_scope(job_id)
+            state, skipped = database_scope()
             if skipped:
                 report['reason'] = skipped
                 return report
@@ -352,6 +384,7 @@ def collect_after_publication(job_id, market, document, guard=None):
                 return report
             plan = plan_retention(root, market.calendar(), target, protected_generations=state['protected_generations'], guard=guard,
                                   graph_directory=work_dir()/'.supplement-retention')
+            report['planning_ms'] = plan['elapsed_ms']
             head = plan['nodes']['head.json']
             if not any(plan['nodes'][key].get('snapshot_id') == document['snapshot_id'] for key, _ in head['references']):
                 raise ValueError('当前补充head不属于本次成功发布')
@@ -441,5 +474,5 @@ def collect_after_publication(job_id, market, document, guard=None):
                 # downgrade a successfully published supplement snapshot.
                 report['graph_cleanup_warning'] = str(error)
         report['elapsed_ms'] = round((time.perf_counter() - started) * 1000, 3)
-        _emit(job_id, 'info' if report['status'] == 'completed' else 'warn', '补充数据滚动清理：'+report['status'], report)
+        _emit(job_id, 'info' if report['status'] == 'completed' else 'warning', '补充数据滚动清理：'+report['status'], report)
     return report
