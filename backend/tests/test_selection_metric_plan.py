@@ -165,9 +165,15 @@ def test_warm_selection_keeps_full_candidates_and_entry_prices_without_full_hist
         'definition':{'any':[leaf(period='W'),boll_leaf()]}}).json()
     first=client.post('/api/v1/strategies/'+created['strategy_id']+'/runs',json={})
     assert first.status_code==200,first.text
+    # A separate strategy may reuse technical seeds, while the same successful
+    # strategy/configuration is now deliberately blocked for this business day.
+    other=client.post('/api/v1/strategies',json={'name':'共享暖指标证据','period':outer,
+        'definition':created['definition']}).json()
     monkeypatch.setattr(strategies,'selection_history_batch',lambda *a,**k:pytest.fail('warm run must not materialize complete history'))
-    second=client.post('/api/v1/strategies/'+created['strategy_id']+'/runs',json={})
+    second=client.post('/api/v1/strategies/'+other['strategy_id']+'/runs',json={})
     assert second.status_code==200,second.text
+    assert second.json()['run_id']!=first.json()['run_id']
+    assert second.json()['strategy_id']!=first.json()['strategy_id']
     assert first.json()['items']==second.json()['items']
     if outer in ('W','M'):assert all(start==end==market.entry for _,start,end in short)
 
@@ -178,8 +184,8 @@ def test_legacy_adapter_without_verifiable_source_closure_keeps_full_history_rea
     original=strategies.selection_history_batch;reads=[]
     def observed(*args,**kwargs):reads.append(args[1]);return original(*args,**kwargs)
     monkeypatch.setattr(strategies,'selection_history_batch',observed)
-    strategy=make_strategy(client,boll_leaf())
     for _ in range(2):
+        strategy=make_strategy(client,boll_leaf())
         response=client.post('/api/v1/strategies/'+strategy['strategy_id']+'/runs',json={})
         assert response.status_code==200,response.text
     assert len(reads)==2
@@ -197,13 +203,15 @@ def test_warm_run_rejects_bad_sources_and_source_token_change_recomputes(ws,monk
     monkeypatch.setattr(strategies,'selection_history_batch',observed)
     strategy=make_strategy(client,{'any':[leaf(),boll_leaf()]})
     first=client.post('/api/v1/strategies/'+strategy['strategy_id']+'/runs',json={}).json()
+    other=make_strategy(client,{'any':[leaf(),boll_leaf()]})
     token[0]='damaged'
     with pytest.raises(ValueError,match='source SHA mismatch'):
-        client.post('/api/v1/strategies/'+strategy['strategy_id']+'/runs',json={})
+        client.post('/api/v1/strategies/'+other['strategy_id']+'/runs',json={})
     assert len(reads)==1
     token[0]='new-source-context'
     next(row for row in market.data['600001.SH'] if row['date']==market.entry)['close']+=.25
-    second=client.post('/api/v1/strategies/'+strategy['strategy_id']+'/runs',json={}).json()
+    second=client.post('/api/v1/strategies/'+other['strategy_id']+'/runs',json={}).json()
+    assert second['run_id']!=first['run_id']
     assert len(reads)==2
     before=next(row for row in first['items'] if row['instrument_id']=='600001.SH')
     after=next(row for row in second['items'] if row['instrument_id']=='600001.SH')

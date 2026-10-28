@@ -350,6 +350,27 @@ for (const target of ["stock", "sector"]) {
   assert.match(html, /全部命中自动加入各自策略跟踪池/);
   assert.doesNotMatch(html, /<button[^>]*>(?:(?!<\/button>)[\s\S])*<input/);
 }
+const guardedHtml = renderToStaticMarkup(createElement(Toolbar, {
+  target: "stock",
+  strategies: [
+    { strategy_id: "done", run_availability: { state: "completed", can_run: false } },
+    { strategy_id: "ready", run_availability: { state: "ready", can_run: true } },
+    { strategy_id: "missing", run_availability: { state: "unavailable", can_run: false } },
+  ],
+  selection: new Set(["done", "ready", "missing"]),
+  onSelectAll: () => {}, onUpdated: () => {}, onOpenRun: () => {}, onBusyChange: () => {},
+}));
+assert.match(guardedHtml, /执行所选并跟踪（2）/);
+assert.match(guardedHtml, /一键执行并跟踪（2）/);
+assert.match(guardedHtml, /个策略已有今日结果，点击直接读取/);
+const savedOnlyHtml = renderToStaticMarkup(createElement(Toolbar, {
+  target: "stock", strategies: [{ strategy_id: "done", run_availability: { state: "completed", can_run: false } }],
+  selection: new Set(["done"]), onSelectAll: () => {}, onUpdated: () => {}, onOpenRun: () => {}, onBusyChange: () => {},
+}));
+assert.match(savedOnlyHtml, /查看所选今日结果（1）/);
+assert.match(savedOnlyHtml, /查看全部今日结果（1）/);
+assert.equal(batchTrackingSummary({ receipt_only: true, auto_add: false }).label, "今日已保存结果");
+assert.match(batchItemTrackingText({ result_reused: true }, false), /未重新计算或自动入池/);
 assert.equal(posts, 0);
 console.log(
   "Strategy batches: idempotent uncertain retries, isolated selection, serial/hidden-safe polling, terminal cleanup, saved-progress watermarks and shared stock/sector toolbar passed",

@@ -8,6 +8,7 @@ from app.domain.conditions import evaluate, metrics_for, specs, validate
 from app.services import strategy_limits
 from app.services.strategy_limits import LimitConditionEvidence, batch_quote_indexes, quote_index
 from test_workspace import ws, make_strategy, add_one, advance
+from test_selection_generation_guard import publish_revision
 
 
 SYMBOL = '600001.SH'
@@ -205,6 +206,7 @@ def test_strategy_execution_uses_daily_source_flags_and_freezes_evidence(ws, mon
     assert matched[0]['close_price'] == price
     # A source revision affects a later explicit run only, not saved selection evidence.
     supplement['annual_pools'][prior] = pool(prior, [])
+    publish_revision(market,'market_review','daily-source-revised')
     next_run = client.post('/api/v1/strategies/' + strategy['strategy_id'] + '/runs', json={}).json()
     candidate = next(row for row in next_run['items'] if row['instrument_id'] == SYMBOL)
     assert candidate['decision'] == 'unknown' and candidate['metrics']['prev_limit_up_date'] == prior

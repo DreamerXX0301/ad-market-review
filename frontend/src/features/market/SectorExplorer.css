@@ -1,0 +1,563 @@
+.sector-explorer {
+  gap: 16px;
+}
+.sector-explorer-controls {
+  display: grid;
+  gap: 12px;
+}
+.sector-explorer-control-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.sector-explorer-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 0;
+}
+.sector-explorer-source select {
+  max-width: 300px;
+  min-width: 0;
+}
+.sector-explorer-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 200px;
+}
+.sector-explorer-search input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+.sector-explorer-ranks {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  gap: 7px;
+}
+.sector-explorer-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.sector-explorer-grid {
+  display: grid;
+  grid-template-columns: minmax(290px, 0.35fr) minmax(0, 0.65fr);
+  align-items: start;
+  gap: 16px;
+}
+.sector-explorer-grid > *,
+.sector-explorer-grid .panel {
+  min-width: 0;
+}
+.sector-explorer-ranking .table-wrap {
+  overflow-x: auto;
+}
+.sector-explorer-ranking th,
+.sector-explorer-ranking td {
+  padding: 9px 8px;
+}
+.sector-explorer-scroll-ends {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.sector-explorer-scroll-ends .icon-btn {
+  width: 27px;
+  height: 27px;
+  padding: 4px;
+}
+.sector-explorer-ranking .market-table-heading {
+  max-width: 100%;
+  gap: 3px;
+}
+.sector-explorer-ranking .market-sort-heading {
+  min-width: 0;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.4;
+}
+.sector-explorer-ranking .market-sort-heading svg {
+  flex-shrink: 0;
+}
+.sector-explorer-ranking table {
+  table-layout: fixed;
+}
+.sector-explorer-ranking :is(th, td) {
+  min-width: 0;
+  max-width: none;
+  overflow-wrap: break-word;
+}
+.sector-explorer-ranking th:nth-child(1) {
+  width: 25%;
+}
+.sector-explorer-ranking th:nth-child(2) {
+  width: 14%;
+}
+.sector-explorer-ranking th:nth-child(3) {
+  width: 18%;
+}
+.sector-explorer-ranking th:nth-child(4) {
+  width: 12%;
+}
+.sector-explorer-ranking th:nth-child(5) {
+  width: 15%;
+}
+.sector-explorer-ranking th:nth-child(6) {
+  width: 16%;
+}
+.sector-explorer-ranking .sector-explorer-direction {
+  min-width: 0;
+  gap: 3px;
+}
+.sector-explorer-ranking .sector-explorer-direction > div {
+  min-width: 0;
+}
+.sector-explorer-ranking .sector-explorer-row-select {
+  min-width: 17px;
+}
+.sector-explorer-full-columns .sector-explorer-ranking table {
+  min-width: 700px;
+}
+.sector-mode-broken .sector-explorer-ranking table {
+  min-width: 320px;
+}
+.sector-mode-broken .sector-explorer-ranking th:first-child {
+  width: 32%;
+}
+.sector-mode-broken .sector-explorer-ranking th:not(:first-child) {
+  width: 17%;
+}
+.sector-explorer-full-columns:not(.sector-mode-broken)
+  .sector-explorer-ranking
+  th:first-child {
+  width: 23%;
+}
+.sector-explorer-full-columns:not(.sector-mode-broken)
+  .sector-explorer-ranking
+  th:not(:first-child) {
+  width: 11%;
+}
+.sector-explorer-observed-count {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 1px 3px;
+  font-size: 10px;
+}
+.sector-explorer-full-columns .sector-explorer-ranking :is(th, td):last-child {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--surface2);
+  box-shadow: -1px 0 0 var(--border);
+}
+.sector-explorer-full-columns .sector-explorer-ranking th:last-child {
+  z-index: 3;
+}
+.sector-explorer-full-columns
+  .sector-explorer-ranking
+  tr.selected
+  td:last-child {
+  background: color-mix(in srgb, var(--blue) 15%, var(--surface));
+}
+.sector-explorer-ranking :is(th, td):nth-child(2) {
+  white-space: nowrap;
+}
+.sector-explorer-activity-count {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 3px;
+  line-height: 1.4;
+}
+.sector-explorer-activity-count small {
+  font-size: 10px;
+}
+.sector-explorer-ranking td:not(:first-child) {
+  font-variant-numeric: tabular-nums;
+}
+.sector-explorer-ranking tbody tr {
+  cursor: pointer;
+}
+.sector-explorer-ranking tbody tr:hover {
+  background: var(--surface2);
+}
+.sector-explorer-ranking tbody tr.selected {
+  background: color-mix(in srgb, var(--blue) 15%, var(--surface));
+}
+.sector-explorer-direction {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 110px;
+}
+.sector-explorer-direction > span {
+  min-width: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.sector-explorer-row-select {
+  flex: 0 0 auto;
+  min-width: 22px;
+  padding: 2px 3px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.sector-explorer-row-select[aria-pressed="true"] {
+  color: var(--blue);
+}
+.sector-explorer-column-toggle {
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10px;
+}
+.sector-explorer-direction .market-topic-link {
+  font-size: 12px;
+  text-align: left;
+  white-space: normal;
+}
+.sector-explorer-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 11px;
+}
+.sector-explorer-ranking-note {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 10px;
+  color: var(--muted);
+}
+.sector-explorer-ranking-note summary {
+  cursor: pointer;
+}
+.sector-explorer-ranking-note p {
+  margin: 8px 0 0;
+  line-height: 1.6;
+}
+.sector-explorer-detail {
+  scroll-margin-top: 100px;
+  min-width: 0;
+}
+.sector-explorer-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sector-explorer-detail-metrics > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.sector-explorer-detail-metrics span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.sector-explorer-detail-metrics strong {
+  font-size: 18px;
+  font-weight: 600;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.sector-explorer-detail-metrics strong > span {
+  font-size: inherit;
+  color: inherit;
+}
+.sector-explorer-broken-structure {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sector-explorer-broken-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  font-size: 12px;
+}
+.sector-explorer-broken-heading > span,
+.sector-explorer-broken-structure > small,
+.sector-explorer-broken-structure > p {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.sector-explorer-broken-structure > p {
+  margin: 7px 0 3px;
+}
+.sector-explorer-broken-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-top: 9px;
+}
+.sector-explorer-broken-metrics > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+}
+.sector-explorer-broken-metrics > div > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.sector-explorer-broken-metrics strong {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.sector-explorer-broken-samples {
+  margin-top: 8px;
+  font-size: 11px;
+}
+.sector-explorer-broken-samples > summary {
+  color: var(--blue);
+  cursor: pointer;
+}
+.sector-explorer-broken-sample-list {
+  display: grid;
+  margin-top: 7px;
+}
+.sector-explorer-broken-sample {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 70px;
+  align-items: center;
+  gap: 5px 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.sector-explorer-broken-sample > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.sector-explorer-broken-sample > :last-child {
+  text-align: right;
+}
+.sector-explorer-broken-sample .link {
+  padding: 2px 0;
+  text-align: left;
+}
+.sector-explorer-evidence {
+  border-top: 1px solid var(--border-soft);
+  padding: 12px 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.sector-explorer-evidence summary,
+.sector-explorer-sources > summary {
+  cursor: pointer;
+}
+.sector-explorer-evidence .sector-activity-cell {
+  max-width: none;
+  margin-top: 14px;
+}
+.sector-explorer-sources {
+  padding: 8px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.sector-explorer-sources[open] > :not(summary) {
+  margin-top: 12px;
+}
+/* Only this route gets a viewport-height workspace. Other pages keep their scroll. */
+@media (min-width: 1101px) and (min-height: 640px) {
+  .app-layout[data-route="sectors"] > .app-main {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  .app-layout[data-route="sectors"] .topbar {
+    flex-shrink: 0;
+  }
+  .app-layout[data-route="sectors"] .page-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    width: 100%;
+    max-width: none;
+    padding-top: 12px;
+    padding-bottom: 6px;
+  }
+  .app-layout[data-route="sectors"] .page-container > :not(.workspace-page) {
+    flex-shrink: 0;
+  }
+  .app-layout[data-route="sectors"] .workspace-page:not([hidden]) {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+  }
+  .app-layout[data-route="sectors"] .sector-explorer {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    gap: 8px;
+  }
+  .sector-explorer > :not(.sector-explorer-grid) {
+    flex-shrink: 0;
+  }
+  .sector-explorer-grid {
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
+  }
+  .sector-explorer-ranking {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .sector-explorer-ranking > :not(.table-wrap) {
+    flex-shrink: 0;
+  }
+  .sector-explorer-ranking > .table-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+  .sector-explorer-ranking th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  .sector-explorer-detail {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+  .sector-explorer-detail > .panel {
+    overflow: visible;
+  }
+  .sector-explorer-detail > .panel > .panel-head {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background: var(--surface2);
+  }
+  .sector-explorer-sources {
+    max-height: 28dvh;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  .app-layout[data-route="sectors"] .workspace-footer {
+    margin-top: 6px;
+    padding: 4px 0 0;
+    row-gap: 0;
+  }
+}
+/* Keep the current metric readable next to the sidebar on a narrow desktop. */
+/* The seven-day column stays visible in the default compact view as well. */
+.sector-explorer-grid:not(.sector-explorer-full-columns):not(
+    .sector-mode-broken
+  )
+  .sector-explorer-ranking
+  :is(th, td):nth-child(5),
+.sector-explorer-grid:not(.sector-explorer-full-columns):not(
+    .sector-mode-broken
+  ):not(.sector-mode-amount)
+  .sector-explorer-ranking
+  :is(th, td):nth-child(3),
+.sector-explorer-grid:not(.sector-explorer-full-columns):not(
+    .sector-mode-broken
+  ):is(.sector-mode-amount, .sector-mode-activity)
+  .sector-explorer-ranking
+  :is(th, td):nth-child(4) {
+  display: none;
+}
+.sector-explorer-grid:not(.sector-explorer-full-columns):not(
+    .sector-mode-broken
+  ).sector-mode-amount
+  .sector-explorer-ranking
+  :is(th, td):nth-child(2) {
+  display: none;
+}
+@media (min-width: 1101px) and (max-width: 1350px) {
+  .sector-explorer-grid {
+    grid-template-columns: minmax(230px, 0.36fr) minmax(0, 0.64fr);
+    gap: 12px;
+  }
+  .sector-explorer-ranking :is(th, td) {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .sector-explorer-ranking .panel-head {
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+  .sector-explorer-ranking .panel-head p {
+    font-size: 10px;
+  }
+  .sector-explorer-detail .panel-head {
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+  .sector-explorer-detail-metrics {
+    gap: 8px;
+    padding: 12px;
+  }
+  .sector-explorer-detail-metrics strong {
+    font-size: 15px;
+  }
+  .sector-explorer-detail .market-members-inline {
+    padding: 10px;
+  }
+  .sector-explorer-broken-structure {
+    padding: 10px 12px;
+  }
+  .sector-explorer-broken-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+/* The app sidebar also consumes width; keep members readable in split windows. */
+@media (max-width: 1100px) {
+  .sector-explorer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .sector-explorer-source {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .sector-explorer-source select {
+    flex: 1;
+    max-width: 100%;
+  }
+  .sector-explorer-search {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .sector-explorer-detail-metrics {
+    padding: 13px;
+    gap: 8px;
+  }
+  .sector-explorer-detail-metrics strong {
+    font-size: 15px;
+  }
+}

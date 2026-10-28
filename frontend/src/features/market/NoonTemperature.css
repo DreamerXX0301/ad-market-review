@@ -1,0 +1,158 @@
+.noon-temperature {
+  min-width: 0;
+}
+.noon-temperature-body {
+  padding: 14px 18px 12px;
+  min-width: 0;
+}
+.noon-temperature-heading,
+.noon-temperature-reading,
+.noon-temperature-scale {
+  display: flex;
+  align-items: baseline;
+}
+.noon-temperature-heading {
+  justify-content: space-between;
+  gap: 14px;
+}
+.noon-temperature-reading {
+  gap: 7px;
+}
+.noon-temperature-reading strong {
+  color: var(--text);
+  font-size: 38px;
+  line-height: 1.1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.noon-temperature-warm .noon-temperature-reading strong,
+.noon-temperature-warm .noon-temperature-status b {
+  color: var(--red);
+}
+.noon-temperature-cool .noon-temperature-reading strong,
+.noon-temperature-cool .noon-temperature-status b {
+  color: var(--green);
+}
+.noon-temperature-unknown .noon-temperature-reading strong {
+  color: var(--muted);
+}
+.noon-temperature-reading > span,
+.noon-temperature-status small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.noon-temperature-status {
+  display: grid;
+  gap: 5px;
+  text-align: right;
+}
+.noon-temperature-status b {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.noon-temperature-meter {
+  position: relative;
+  height: 7px;
+  margin-top: 15px;
+  border-radius: 5px;
+  background: linear-gradient(
+    90deg,
+    var(--green),
+    color-mix(in srgb, var(--muted) 55%, var(--surface)) 50%,
+    var(--amber) 70%,
+    var(--red)
+  );
+}
+.noon-temperature-unknown .noon-temperature-meter {
+  opacity: 0.28;
+}
+.noon-temperature-meter > i {
+  position: absolute;
+  height: 13px;
+  width: 3px;
+  top: -3px;
+  border: 1px solid var(--surface);
+  border-radius: 2px;
+  transform: translateX(-50%);
+  background: var(--text);
+}
+.noon-temperature-scale {
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.noon-temperature-components {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+.noon-temperature-components > div {
+  display: grid;
+  grid-template-columns: 105px minmax(35px, 1fr) 27px;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.noon-temperature-components b {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.noon-temperature-component-track {
+  height: 4px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface2);
+}
+.noon-temperature-component-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+  opacity: 0.65;
+}
+.noon-temperature-gap,
+.noon-temperature-notice {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.noon-temperature-gap {
+  margin: 12px 0 0;
+}
+.noon-temperature-notice {
+  margin: 10px 0 0;
+}
+.noon-temperature-rules {
+  padding-top: 10px;
+  margin-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+.noon-temperature-rules summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.noon-temperature-rules summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.noon-temperature-rules ul {
+  display: grid;
+  gap: 9px;
+  padding-left: 15px;
+}
+.noon-temperature-rules li > * {
+  display: block;
+}
+.noon-temperature-rules b {
+  color: var(--text);
+  font-weight: 500;
+}

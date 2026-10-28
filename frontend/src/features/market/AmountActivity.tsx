@@ -23,6 +23,7 @@ export function AmountActivityCell({ activity }: { activity?: Row }) {
             className="amount-activity-repeat"
             title="在本次已观察榜单中重复出现两次及以上，不表示完整样本或未来走势"
           >
+            <span aria-hidden="true">★</span>
             持续活跃
           </span>
         )}

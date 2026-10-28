@@ -29,7 +29,12 @@ export function SectorActivityCell({ activity }: { activity?: Row }) {
                 ? "已观察未见"
                 : `${view.complete ? "" : "已观察"}${view.count}次`}
           </b>
-          {view.repeated && <i>持续活跃</i>}
+          {view.repeated && (
+            <span className="amount-activity-repeat">
+              <span aria-hidden="true">★</span>
+              持续活跃
+            </span>
+          )}
           {!view.complete && <small>{view.coverage}</small>}
         </div>
       ))}

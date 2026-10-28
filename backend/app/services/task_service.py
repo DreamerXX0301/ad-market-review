@@ -164,7 +164,8 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
         'selection': '板块策略筛选' if target == 'sector' else '个股策略选股',
         'source_check': {'sector_chart': '单板块历史K线', 'sector_charts': '板块K线尾部增量' if parameters.get('mode') == 'increment' else '全库板块历史K线',
                          'market_supplement': '盘面补充', 'dragon_tiger':'龙虎榜补齐', 'local_storage_conversion':'本地存储升级', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
-                         'strategy_batch_tracking': '板块命中自动入池' if target == 'sector' else '个股命中自动入池'}.get(operation, '数据来源任务'),
+                         'strategy_batch_tracking': '板块命中自动入池' if target == 'sector' else '个股命中自动入池',
+                         'noon_snapshot': '午评快照采集'}.get(operation, '数据来源任务'),
     }.get(item['kind'], '后台任务')
     # accepted_batches is a weighted percentage only after progress() reports.
     # A freshly started job with the schema default 0 has no measured progress.
@@ -274,6 +275,17 @@ def _increment_frozen_target(identifier, declared_target):
 def change_task(identifier: str, action: str):
     with connect() as batch_check:
         batch = batch_check.execute("SELECT kind,parameters_json FROM job WHERE job_id=?", (identifier,)).fetchone()
+    if batch and json.loads(batch['parameters_json']).get('operation')=='noon_snapshot':
+        if action=='retry':
+            raise HTTPException(409,'午评每天仅允许提交一次；失败、取消或到期清理后也不能新建第二次采集')
+        if action=='resume':
+            from .sync_clock import local_now
+            from .noon_collection import in_window
+            current=local_now()
+            with connect() as noon_check:
+                capture=noon_check.execute('SELECT trade_date FROM market_noon_capture WHERE job_id=?',(identifier,)).fetchone()
+            if (not capture or current.weekday()>=5 or not in_window(capture['trade_date'],current)):
+                raise HTTPException(409,'原午评已超出当天11:31至13:00前的采集窗口，不能继续或补造历史午评')
     if batch and json.loads(batch['parameters_json']).get('operation')=='local_storage_conversion' and action in ('pause','resume','retry'):
         raise HTTPException(422,'离线维护记录，请停止服务后使用存储转换工具，不在同步中心重跑')
     if batch and batch['kind']=='cleanup' and json.loads(batch['parameters_json']).get('operation')=='workspace_purge':
@@ -365,7 +377,7 @@ def claim_next(owner: str):
                     connection.execute("UPDATE job SET status='failed',phase='interrupted',finished_at_ms=?,error_summary='API计算进程中断，请手动重跑',lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?",(now_ms(),running['job_id']))
                     append_event(connection,running['job_id'],'interrupted','API计算租约已过期，请在原模块手动重跑','error')
                 else:
-                    if recoverable_selection or (running['kind']=='source_check' and json.loads(running['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_tracking','line_alert_check','listing_status_check','quote_gap_source_check')):
+                    if recoverable_selection or (running['kind']=='source_check' and json.loads(running['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_tracking','line_alert_check','listing_status_check','quote_gap_source_check','noon_snapshot')):
                         owner = owner+':'+new_id('attempt')
                     if recoverable_selection:
                         connection.execute("UPDATE job SET accepted_batches=0,phase='recovery' WHERE job_id=?", (running['job_id'],))
@@ -384,7 +396,7 @@ def claim_next(owner: str):
             queued = _next_queued(connection)
         if not queued:
             return None
-        if json.loads(queued['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_item','strategy_batch_tracking','line_alert_check','listing_status_check','quote_gap_source_check'):
+        if json.loads(queued['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_item','strategy_batch_tracking','line_alert_check','listing_status_check','quote_gap_source_check','noon_snapshot'):
             owner = owner+':'+new_id('attempt')
         connection.execute("UPDATE job SET status='running',phase='starting',lease_owner=?,lease_expires_at_ms=? WHERE job_id=?", (owner, now_ms() + 60_000, queued["job_id"]))
         append_event(connection, queued["job_id"], "starting", "工作进程已领取任务")

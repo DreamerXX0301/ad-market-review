@@ -18,6 +18,7 @@ const {
   incrementWindowView,
   initializationWindowView,
   dataTaskTitle,
+  dataNoonTaskControls,
   sectorChartsTaskProgress,
   sectorChartsStatusView,
   sectorChartsInitializationView,
@@ -32,6 +33,14 @@ const {
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
+for (const status of ["failed", "cancelled", "partial", "no_change", "succeeded", "paused"]) {
+  const task = { kind: "source_check", status, parameters: { operation: "noon_snapshot" } };
+  const controls = dataNoonTaskControls(task);
+  assert.equal(controls.canRetry, false, `noon ${status} must never offer a new task`);
+  assert.equal(controls.canResumeHere, false, "noon resume belongs to its own window-aware page");
+  assert.equal(dataTaskTitle(task), "午评快照采集");
+}
+assert.equal(dataNoonTaskControls({ kind: "source_check", parameters: { operation: "market_supplement" } }).canRetry, true);
 assert.equal(
   listingIdentityView({
     catalog_count: 5580,

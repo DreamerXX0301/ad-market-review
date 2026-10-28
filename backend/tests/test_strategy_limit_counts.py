@@ -10,6 +10,7 @@ from app.domain.conditions import evaluate, specs, validate
 from app.services import strategies, strategy_limits
 from app.services.strategy_limits import COUNT_FIELD, BATCH_SIZE, LimitConditionEvidence, count_window, quote_index
 from test_workspace import ws, make_strategy, add_one, advance
+from test_selection_generation_guard import publish_revision
 
 
 SYMBOL = '600001.SH'
@@ -254,6 +255,7 @@ def test_strategy_combines_count_with_today_yesterday_and_freezes_partial_eviden
     assert check['window_end'] < day and check['value_state'] == 'partial_bound'
     assert len(calls) == 1 # Count and today/yesterday share the same bounded read.
     document.clear()
+    publish_revision(market,'market_review','annual-count-source-cleared')
     later = client.post('/api/v1/strategies/' + strategy['strategy_id'] + '/runs', json={}).json()
     candidate = next(row for row in later['items'] if row['instrument_id'] == SYMBOL)
     assert candidate['decision'] == 'unknown'

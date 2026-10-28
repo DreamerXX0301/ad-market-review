@@ -72,6 +72,9 @@
 前端条件组的“快捷添加条件”默认收起且不预选模板。选择、修改参数、取消都不调用规则onChange；仅点“加入条件”才把预览的标准条件加入当前草稿，之后仍须保存策略。历史where/then各自有入口，单叶旧结构打开面板也不重写。all/any中的组合始终作为一个原子子组加入，不拆散到OR。
 
 - `GET/POST /strategies`、`GET/PATCH /strategies/{id}`：name、period=D/W/M、definition、policy、trade_rules、hot_universe；修改追加版本，旧运行冻结。
+- 个股策略列表及详情返回 `run_availability={can_run,state,business_date,completed_run_id,reason}`；`state` 为 `ready/completed/unavailable`。按当前已发布业务日核验，与盘面回看日期和电脑自然日期无关。同一策略在相同实际规则、周期、复权、热点范围、买卖参数、引擎及有效输入下已有成功完成结果时不可新建重复运行，零命中或候选含unknown也不等于任务失败。只改名称/跟踪政策、空保存或将数值3改为3.0不解锁；实质参数、新业务日、发布快照或本地题材修订变化可再次运行，改回当日曾成功执行的配置仍复用其已完成状态。
+- `POST /strategies/{id}/runs` 在现有 `BEGIN IMMEDIATE` 事务内、创建job及读取计算行情前核验。非冻结队列的新请求命中已完成同配置/输入时，事务外返回200原 `run_id` 与结果，响应额外标明 `result_reused:true/reuse_reason`；不新增job/run/candidate或运行选股计算。`can_run:false,state:completed`表示不需要再次计算，前端仍可点击“查看今日结果”。原 `request_key` 的幂等重放仍原样返回冻结原结果，不重算；失败/取消且尚无成功完成结果可以重试。新运行在 `universe_definition.selection_guard` 留小摘要，保存前复核输入代际及题材修订；旧运行按留存规则版本、发布代际和后续本地修订判断，不回写历史证据、不迁移业务库。
+- 新个股批次复用已完成相同配置的策略，只为待运行项创建筛选与跟踪任务；混合批次回执新增 `skipped_completed`、`skipped_completed_count`、`requested_count`，`total_count` 仅计实际排队项。全部已有结果时返回200只读回执：`receipt_only/result_reused:true`、稳定 `saved-results-*` 标识、`job_id:null/auto_add:false`、零新步骤，items引用原run/版本/业务日；不创建任何任务，不记录为新的持久化批次，前端可直接展开已保存结果。其 `total_count/completed_count` 表示可读取结果数，不表示新计算数。原批次请求重放与已冻结旧批次的继续仍保持原范围及原授权；板块策略不受此个股复用限制影响。已保存命中不会因为结果复用自动加入跟踪，需从原结果手动选择；同步后的重新筛选与自动加入跟踪继续由既有两个独立设置控制，不默认为用户开启。
 - 前端“复制策略”只深拷贝当前策略的 name（默认追加“副本”）、period、price_basis、definition、hot_universe、trade_rules 与 policy 的可编辑字段，不带 strategy_id、版本、自动运行配置、运行结果或跟踪记录。打开和取消仅改前端草稿；确认保存使用原 `POST /strategies`，创建独立标识、规则V1及政策V1，不 PATCH 原策略、不应用到原跟踪轮次、不自动运行。后续调整副本与原策略独立。
 - definition 为叶 `{field,op,value,period?}` / `{field,op,right_field,period?}`，或嵌套 `{all:[...]}` / `{any:[...]}`；兼容旧 logic/conditions 输入。
 - 普通叶默认策略周期，也可逐叶 D/W/M；W/M 使用最近应闭合且有效周期，不能缺最新后退到旧柱。固定日线字段必须 D。右字段只能是兼容白名单数值，常量专用字段不能当右字段。

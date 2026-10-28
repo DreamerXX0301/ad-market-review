@@ -1,0 +1,129 @@
+/* Embedded members use the existing quote/coverage cells without modal sizing. */
+.market-member-day-change {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.market-member-day-change .member-daily-limit .badge {
+  padding: 1px 5px;
+  font-size: 10px;
+}
+.market-members-inline {
+  min-width: 0;
+  padding: 10px 14px;
+  gap: 8px;
+}
+.market-members-inline > .member-dialog-toolbar {
+  position: static;
+  padding: 0;
+  box-shadow: none;
+}
+.market-members-inline .member-dialog-search-row {
+  gap: 10px;
+}
+.market-members-inline .member-dialog-search-row .member-dialog-field-search {
+  flex-basis: 160px;
+  max-width: none;
+}
+.market-members-inline .member-dialog-toolbar .member-dialog-field {
+  gap: 4px;
+}
+.market-members-inline .member-dialog-toolbar :is(input, select) {
+  height: 34px;
+}
+.market-members-inline .member-dialog-toolbar .result-toolbar {
+  margin-bottom: 8px;
+}
+.market-members-inline .member-dialog-search-row > .muted {
+  flex-basis: 100%;
+  padding-bottom: 0;
+  font-size: 11px;
+}
+.market-members-inline > .table-wrap {
+  flex: none;
+  min-height: 0;
+  max-height: none;
+  /* The parent owns vertical scrolling; don't trap a wheel over this x scroller. */
+  overscroll-behavior-y: auto;
+}
+.market-members-inline .table-wrap thead th {
+  position: static;
+  height: 34px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.market-members-inline .table-wrap td {
+  padding: 6px 10px;
+  line-height: 1.4;
+}
+.market-members-inline .stock-identity-cell {
+  gap: 2px;
+}
+.market-members-inline .member-dialog-toolbar .member-dialog-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+}
+.market-members-inline .member-dialog-field > span {
+  flex-shrink: 0;
+}
+.market-members-inline .member-dialog-field :is(input, select) {
+  flex: 1;
+  width: 0;
+}
+.market-members-inline .member-dialog-search-row {
+  align-items: center;
+}
+.market-members-inline
+  .member-dialog-search-row
+  > .member-dialog-field:not(.member-dialog-field-search) {
+  flex: 0 1 190px;
+}
+.market-members-inline .member-dialog-context {
+  gap: 6px;
+}
+.market-members-inline .member-context-item {
+  padding: 0;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+}
+.market-members-inline .member-context-item strong {
+  font-size: 11px;
+}
+.market-members-inline .market-members-board-filter button {
+  padding: 5px 9px;
+}
+.member-inline-board-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.member-inline-board-row .market-members-board-filter {
+  margin: 0;
+}
+.member-inline-board-row .market-members-metric-toggle {
+  align-self: center;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.market-members-inline .market-member-history small,
+.market-members-inline .market-member-recent small {
+  font-size: 11px;
+}
+.market-members-metric-toggle {
+  align-self: flex-end;
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (max-width: 640px) {
+  .market-members-inline {
+    padding: 12px;
+  }
+  .market-members-inline .member-dialog-search-row > .member-dialog-field {
+    flex-basis: 100%;
+  }
+}

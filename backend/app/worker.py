@@ -241,6 +241,53 @@ def _queue_local_sync_checks(job, completed_result=None):
                         {'check':name,'reason_code':type(error).__name__})
 
 
+def _noon_after_increment(job, completed_result=None):
+    """An independent, versioned cleanup cannot roll back an accepted market day."""
+    if job['kind']!='increment' or _parameters(job).get('noon_retention_policy')!='noon-retention-28d-v1':return
+    try:
+        from app.services.noon_retention import after_increment
+        return after_increment(job,completed_result)
+    except Exception as error:
+        logger.warning('午评到期清理暂未完成 %s %s',job['job_id'],type(error).__name__)
+        try:
+            with connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                tasks.append_event(connection,job['job_id'],'noon_retention_warning',
+                    '午评到期清理未完成，下次盘后增量补清；已发布行情保持有效','warning',
+                    {'error_type':type(error).__name__})
+        except Exception:
+            logger.warning('午评清理警告回执暂未保存 %s',job['job_id'])
+
+
+def _noon_close_after_increment(job, completed_result=None, *, allow_running=False, progress=None):
+    """A new manual plan derives local results before releasing its UI gate."""
+    if job['kind']!='increment' or _parameters(job).get('noon_close_policy')!='noon-close-v1':return
+    try:
+        from app.services.noon_close_service import after_increment
+        return after_increment(job,completed_result,allow_running=allow_running,progress=progress)
+    except (tasks.TaskPaused,tasks.TaskCancelled):
+        raise
+    except Exception as error:
+        logger.warning('午评收盘核验暂未完成 %s %s',job['job_id'],type(error).__name__)
+        try:
+            with connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                tasks.append_event(connection,job['job_id'],'noon_close_review_warning',
+                    '午评收盘核验未完成，下次成功盘后增量补做；已发布行情保持有效','warning',
+                    {'error_type':type(error).__name__})
+        except Exception:
+            logger.warning('午评收盘核验警告回执暂未保存 %s',job['job_id'])
+
+
+def _noon_close_after_supplement(job, progress=None):
+    parent_id=_parameters(job).get('parent_sync_job_id')
+    if not parent_id:return
+    with connect() as connection:
+        parent=connection.execute('SELECT * FROM job WHERE job_id=?',(parent_id,)).fetchone()
+    if parent and parent['kind']=='increment' and parent['status'] in ('succeeded','partial','no_change'):
+        return _noon_close_after_increment(dict(parent),progress=progress)
+
+
 @provider_connection_scope()
 def dispatch(job):
     with connect() as connection:
@@ -252,6 +299,8 @@ def dispatch(job):
         return
     if not state or state[0] in tasks.TERMINAL:
         if state and state[0] in ('succeeded','partial','no_change'):
+            _noon_close_after_increment(job)
+            _noon_after_increment(job)
             _queue_local_sync_checks(job)
             _queue_followup(job)
         return
@@ -264,7 +313,9 @@ def dispatch(job):
         from app.services.sync_service import execute_sync
         result=execute_sync(identifier,callback)
         status='no_change' if result.get('no_change') or result.get('status')=='no_change' else 'partial' if result.get('quality')=='partial' else 'succeeded'
+        _noon_close_after_increment(job,result,allow_running=True,progress=callback)
         tasks.finish(identifier,status,result.get('message','行情数据已校验并发布'))
+        _noon_after_increment(job,result)
         _queue_local_sync_checks(job,result)
         from app.services.workspace_automation import run_after_sync
         started=time.monotonic()
@@ -274,6 +325,13 @@ def dispatch(job):
             tasks.append_event(connection,identifier,'workspace_followup_timing','主行情已可用，本地策略与跟踪核对已结束；轻量核验已先排队',
                 details={'elapsed_ms':round((time.monotonic()-started)*1000),'queue_order':'local-checks-before-sector-chain-v1'})
         _queue_followup(job,result)
+    elif kind=='source_check' and _parameters(job).get('operation')=='noon_snapshot':
+        from app.services.noon_service import execute_capture
+        noon_callback=lambda stage,percent,message=None,details=None:tasks.progress(
+            identifier,stage,percent,message,details,lease_owner=job.get('lease_owner'))
+        result=execute_capture(job,noon_callback)
+        tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',
+                     result.get('message','午评快照已独立留存，缺口见详情'),lease_owner=job.get('lease_owner'))
     elif kind=='cleanup' and _parameters(job).get('operation')=='workspace_purge':
         from app.services.workspace_purge import execute
         execute(job)
@@ -310,6 +368,7 @@ def dispatch(job):
     elif kind=='source_check' and json.loads(job.get('parameters_json','{}')).get('operation')=='market_supplement':
         from app.services.market_supplement import execute_supplement
         result=execute_supplement(identifier,callback)
+        _noon_close_after_supplement(job,callback)
         tasks.finish(identifier,'partial' if result.get('quality')!='complete' else 'succeeded',result.get('message','盘面补充数据已核验'))
     elif kind=='source_check' and _parameters(job).get('operation')=='sector_chart':
         from app.services.sector_chart_jobs import execute_chart_job

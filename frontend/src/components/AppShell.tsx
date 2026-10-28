@@ -36,9 +36,10 @@ export const navigation = [
     label: "盘面研究",
     items: [
       { id: "market", name: "盘面总览", icon: BarChart3 },
+      { id: "noon", name: "午评快照", icon: Sun },
       { id: "indices", name: "指数行情", icon: ChartCandlestick },
       { id: "emotion", name: "市场情绪", icon: Activity },
-      { id: "sectors", name: "行业与题材", icon: Layers3 },
+      { id: "sectors", name: "行业与概念", icon: Layers3 },
       { id: "ladder", name: "涨停梯队", icon: Boxes },
       { id: "dragon-tiger", name: "龙虎榜", icon: ArrowLeftRight },
       { id: "gainers", name: "30日涨幅榜", icon: TrendingUp },
@@ -282,18 +283,22 @@ export default function AppShell({
         )}
         <div className="page-container">
           <ActiveTaskBanner onNavigate={onNavigate} />
-          {isMarket && date && dataDate && date !== dataDate && (
-            <div className="historical-banner">
-              <CalendarDays size={14} />
-              <span>
-                正在回看 <b>{date}</b> 的盘面快照
-              </span>
-              <span className="desktop-only">
-                仅作用于盘面研究，不改变策略、跟踪与回测
-              </span>
-              <button onClick={() => onDate(dataDate)}>回到最新</button>
-            </div>
-          )}
+          {isMarket &&
+            route !== "noon" &&
+            date &&
+            dataDate &&
+            date !== dataDate && (
+              <div className="historical-banner">
+                <CalendarDays size={14} />
+                <span>
+                  正在回看 <b>{date}</b> 的盘面快照
+                </span>
+                <span className="desktop-only">
+                  仅作用于盘面研究，不改变策略、跟踪与回测
+                </span>
+                <button onClick={() => onDate(dataDate)}>回到最新</button>
+              </div>
+            )}
           {children}
           <footer className="workspace-footer dreamer-footer">
             <span>

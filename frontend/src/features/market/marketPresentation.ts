@@ -298,6 +298,14 @@ const numericFields = new Set([
   "up_count",
   "down_count",
   "broken_count",
+  "_sector_activity_count",
+  "_sector_up_ratio",
+  "_sector_limit_sort",
+  "_sector_broken_sort",
+  "_sector_broken_rate_sort",
+  "_sector_touch_sort",
+  "_sector_broken_up_sort",
+  "drawdown_from_high_pct",
 ]);
 
 function textForSort(value: unknown): string | null {

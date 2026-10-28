@@ -26,6 +26,12 @@ const trackingCounts = [
 const validCount = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0;
 export function batchTrackingSummary(batch: Row) {
+  if (batch.receipt_only === true)
+    return {
+      automatic: false,
+      label: "今日已保存结果",
+      text: "直接读取原结果，未重新计算，也未自动加入跟踪池。",
+    };
   if (batch.auto_add !== true)
     return {
       automatic: false,
@@ -64,6 +70,7 @@ export function batchTrackingSummary(batch: Row) {
   };
 }
 export function batchItemTrackingText(item: Row, automatic: boolean) {
+  if (item.result_reused === true) return "已读取原结果 · 未重新计算或自动入池";
   if (!automatic) return "仅筛选，未自动入池";
   const counts = [
     ["matched_count", "命中"],

@@ -47,6 +47,7 @@ import {
 } from "../../components/UI";
 import {
   dataTaskTitle,
+  dataNoonTaskControls,
   sectorChartsTaskProgress,
   sectorChartsStatusView,
   sectorChartsInitializationView,
@@ -124,6 +125,7 @@ function TaskProgress({
   progress = Math.min(100, Math.max(0, progress));
   const logs = task.logs || task.events || [];
   const sectors = sectorChartsTaskProgress(task);
+  const noonControls = dataNoonTaskControls(task);
   return (
     <div className="task-progress">
       <div className="task-progress-head">
@@ -276,27 +278,32 @@ function TaskProgress({
                 </button>
               </>
             )}
-            {task.status === "paused" && !blockedSectorInitialization && (
-              <button
-                className="btn small"
-                disabled={
-                  blockedInitialization ||
-                  (sectorInitialTask && !sectorInitial.known)
-                }
-                title={
-                  blockedInitialization
-                    ? "主行情已发布，请使用增量或补充任务"
-                    : sectorInitialTask && !sectorInitial.known
-                      ? sectorInitial.reason
-                      : undefined
-                }
-                onClick={() => onAction(task.task_id || task.job_id, "resume")}
-              >
-                <Play size={13} />
-                继续原任务
-              </button>
-            )}
+            {task.status === "paused" &&
+              noonControls.canResumeHere &&
+              !blockedSectorInitialization && (
+                <button
+                  className="btn small"
+                  disabled={
+                    blockedInitialization ||
+                    (sectorInitialTask && !sectorInitial.known)
+                  }
+                  title={
+                    blockedInitialization
+                      ? "主行情已发布，请使用增量或补充任务"
+                      : sectorInitialTask && !sectorInitial.known
+                        ? sectorInitial.reason
+                        : undefined
+                  }
+                  onClick={() =>
+                    onAction(task.task_id || task.job_id, "resume")
+                  }
+                >
+                  <Play size={13} />
+                  继续原任务
+                </button>
+              )}
             {["failed", "partial", "cancelled"].includes(task.status) &&
+              noonControls.canRetry &&
               !blockedSectorInitialization && (
                 <button
                   className="btn small"
@@ -317,6 +324,11 @@ function TaskProgress({
                   创建重试任务
                 </button>
               )}
+            {noonControls.noon && (
+              <a className="btn small" href="#noon">
+                查看午评状态
+              </a>
+            )}
           </div>
         )}
       </div>
@@ -330,6 +342,9 @@ function TaskProgress({
         <p className="data-task-published-note">
           板块K线已初始化，此整库任务不再重复运行；部分历史边界缺口保留说明，之后通过盘后增量追加尾部报价。
         </p>
+      )}
+      {noonControls.notice && (
+        <p className="data-task-published-note">{noonControls.notice}</p>
       )}
     </div>
   );
@@ -540,6 +555,12 @@ export default function DataCenter({
         task.data?.task_id === id || task.data?.job_id === id
           ? task.data
           : recent.find((item) => (item.task_id || item.job_id) === id);
+      if (
+        actingTask &&
+        dataNoonTaskControls(actingTask).noon &&
+        ["retry", "resume"].includes(action)
+      )
+        throw new Error("午评每天只提交一次，请到午评页查看原任务与可用窗口。");
       if (
         ["retry", "resume"].includes(action) &&
         actingTask &&

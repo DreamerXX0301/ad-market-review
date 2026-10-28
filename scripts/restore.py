@@ -17,7 +17,7 @@ def verify_backup(bundle):
         path=safe_path(bundle,key)
         if key in expected:raise ValueError('Duplicate manifest file')
         if not path.is_file() or path.stat().st_size!=item['bytes'] or sha(path)!=item['sha256']:raise ValueError('Backup checksum mismatch: '+key)
-        if key not in ('business/app.sqlite3',) and not key.startswith(('published/','credentials/')):raise ValueError('Unexpected file category')
+        if key not in ('business/app.sqlite3',) and not key.startswith(('published/','credentials/','raw/noon/')):raise ValueError('Unexpected file category')
         if key.startswith('credentials/') and not (len(Path(key).parts)==2 and key.endswith('.enc')):raise ValueError('Only ciphertext files can be restored')
         expected.add(key)
     actual=set()
@@ -30,7 +30,12 @@ def verify_backup(bundle):
     declared_dragon={item['path'].removeprefix('published/'):item['sha256'] for item in manifest['files'] if item['path'].startswith('published/dragon-tiger/')}
     if dragon_tiger!=declared_dragon:raise ValueError('Dragon-tiger backup dependency closure differs from manifest')
     c=connect_sqlite(bundle/'business/app.sqlite3','ro')
-    try:check_db(c)
+    try:
+        check_db(c)
+        from noon_archive import inventory as noon_inventory
+        noon=noon_inventory(c,bundle/'raw')
+        declared_noon={item['path'].removeprefix('raw/'):item['sha256'] for item in manifest['files'] if item['path'].startswith('raw/noon/')}
+        if {key:value['stored_sha256'] for key,value in noon.items()}!=declared_noon:raise ValueError('Noon backup dependency closure differs from manifest')
     finally:c.close()
     return manifest
 
@@ -44,7 +49,7 @@ def perform_restore(bundle,target):
         for item in manifest['files']:
             src=safe_path(bundle,item['path']);dst=safe_path(stage,item['path']);dst.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(src,dst)
             if sha(dst)!=item['sha256']:raise ValueError('Restore copy verification failed')
-            if item['path'].startswith(('business/','credentials/')):dst.chmod(0o600)
+            if item['path'].startswith(('business/','credentials/','raw/noon/')):dst.chmod(0o600)
         c=connect_sqlite(stage/'business/app.sqlite3')
         try:
             now=time.time_ns()//1000000;c.execute('BEGIN IMMEDIATE')

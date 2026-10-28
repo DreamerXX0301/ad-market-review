@@ -1,0 +1,37 @@
+.noon-board-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 14px;
+}
+.noon-board-filter > span {
+  margin-right: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.noon-board-filter > .btn[aria-pressed="true"] {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 55%, var(--border));
+  background: color-mix(in srgb, var(--blue) 9%, transparent);
+}
+.noon-board-filter > small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  margin-left: 5px;
+}
+.noon-board-tag {
+  display: inline-block;
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--blue) 5%, transparent);
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: middle;
+}

@@ -182,3 +182,6 @@ def test_ci_test_image_includes_publication_checks():
     text=(ROOT/'deploy/Dockerfile.test').read_text()
     assert 'scripts/test_publish_image.py' in text and 'deploy/docker-compose.yml' in text
     assert '.github/workflows/publish-image.yml' in text
+    assert 'scripts/test_noon_archive.py' in text
+    assert 'scripts/test_noon_close_archive.py' in text
+    assert 'scripts/test_probe_intraday_sources.py' in text

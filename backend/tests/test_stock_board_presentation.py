@@ -166,8 +166,9 @@ def test_ladder_uses_existing_three_day_batch_and_verified_shape(one_price, kind
 
 
 def test_overview_decorates_only_two_top5_collections_in_one_small_batch(market, monkeypatch):
-    from app.services import market_feedback
+    from app.services import market_feedback, market_broken_boards
     monkeypatch.setattr(market_feedback, 'feedback_view', lambda *_: {})  # this test isolates the two top-5 collections
+    monkeypatch.setattr(market_broken_boards, 'build_analysis', lambda *_args, **_kwargs: {})
     monkeypatch.setattr(market_service, 'panel', lambda _, **_kwargs: (market, market.status(), TODAY, market.ref, market.rows()))
     monkeypatch.setattr(market_service, 'cached_gainers', lambda *_: ([], {}))
     monkeypatch.setattr(market_service, 'data_coverage', lambda *_: {})

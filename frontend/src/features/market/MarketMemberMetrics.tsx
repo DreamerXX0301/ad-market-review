@@ -39,7 +39,7 @@ export function MemberReturnCell({
   field,
 }: {
   row: Row;
-  field: "return_ytd_pct" | "return_mtd_pct";
+  field: "return_ytd_pct" | "return_mtd_pct" | "change_30d_pct";
 }) {
   const prefix = field.replace(/_pct$/, "");
   const coverage = row[prefix + "_coverage"] || {};

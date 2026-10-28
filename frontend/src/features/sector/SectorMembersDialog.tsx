@@ -42,6 +42,7 @@ export default function SectorMembersDialog({
   date,
   businessDate,
   initialScope = "latest",
+  contextNotice,
   onChart,
   onClose,
   onStock,
@@ -51,6 +52,7 @@ export default function SectorMembersDialog({
   date: string;
   businessDate?: string;
   initialScope?: "latest" | "historical";
+  contextNotice?: string;
   onChart?: (date?: string) => void;
   onClose: () => void;
   onStock: SectorMemberStockCallback;
@@ -84,6 +86,7 @@ export default function SectorMembersDialog({
       escapeUnderStock
     >
       <div className="modal-body sector-members-body">
+        {contextNotice && <Warning>{contextNotice}</Warning>}
         {onChart && (
           <div
             className="segmented global-sector-tabs"

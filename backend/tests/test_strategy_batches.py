@@ -114,6 +114,9 @@ def test_conflicts_and_invalid_requests(ws):
 def test_one_failure_keeps_other_results_and_old_success(ws):
     _, client = ws; one = make_strategy(client); two = make_strategy(client)
     previous = client.post('/api/v1/strategies/'+one['strategy_id']+'/runs', json={}).json()
+    # A previously successful definition is not queued again; change its input
+    # parameter before freezing this deliberate version-change failure case.
+    client.patch('/api/v1/strategies/'+one['strategy_id'], json={'definition': {'field': 'volume_ratio', 'op': '>=', 'value': 4}})
     batch = start(client, [one, two])
     # Editing after submission does not silently run a different rule version.
     client.patch('/api/v1/strategies/'+one['strategy_id'], json={'definition': {'field': 'close', 'op': '>', 'value': 0}})
@@ -299,6 +302,9 @@ def test_auto_tracking_skips_existing_and_manual_ignores_without_reset(ws):
     client.post('/api/v1/tracking-rounds/'+removed['round_id']+'/remove', json={})
     with core.connect() as c:
         before = [dict(row) for row in c.execute('SELECT * FROM tracking_round ORDER BY round_id')]
+    # Re-running requires a real parameter change. Both positive fixture prices
+    # remain eligible, so this still tests existing/ignored tracking behavior.
+    client.patch('/api/v1/strategies/'+strategy['strategy_id'], json={'definition': {'field': 'close', 'op': '>=', 'value': 0}})
     batch = start(client, [strategy]); drain(3)
     result = batches.get_batch(batch['batch_id']); item = result['items'][0]
     assert result['auto_add'] is True and result['plan_version'] == batches.PLAN_VERSION

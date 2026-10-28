@@ -2,6 +2,8 @@ type DataRow = Record<string, any>;
 
 export function dataTaskTitle(task: DataRow) {
   const operation = task.parameters?.operation;
+  if (task.kind === "source_check" && operation === "noon_snapshot")
+    return "午评快照采集";
   if (task.kind === "source_check" && operation === "local_coverage_check")
     return "本地数据核验";
   if (task.kind === "source_check" && operation === "quote_gap_source_check")
@@ -39,6 +41,24 @@ export function dataTaskTitle(task: DataRow) {
     task.stage ||
     "后台任务"
   );
+}
+
+/** A noon day keeps its original task permanently; retries must never create another. */
+export function dataNoonTaskControls(task: DataRow) {
+  const noon =
+    task.kind === "source_check" &&
+    (task.parameters?.operation === "noon_snapshot" ||
+      task.operation === "noon_snapshot");
+  return {
+    noon,
+    canRetry: !noon,
+    canResumeHere: !noon,
+    notice: noon
+      ? task.status === "paused"
+        ? "午评只能在原交易日午休窗口继续原任务，请到午评页核对窗口；不会新建采集。"
+        : "午评每天只提交一次，本日名额已占用，失败、取消或到期清理均不创建重试任务。"
+      : null,
+  };
 }
 
 const countOrUnknown = (value: unknown): number | null =>

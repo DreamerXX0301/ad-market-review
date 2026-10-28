@@ -115,6 +115,7 @@ const imports = {
     'export const INCREMENT_SESSION_EVENT="session",INCREMENT_SESSION_KEY="key";export const {readIncrementSession,restoreIncrementSession,acknowledgeIncrementSession}=globalThis.__incrementSession;',
   ),
   "./incrementProgress": encode(progress),
+  "./NoonProgressContent": encode("export default function Noon(){return '午评采集分支';}export const useNoonRunProgress=()=>globalThis.__noonGate||({session:null,data:null,error:\"\",retry(){}});"),
 };
 let source = ts
   .transpileModule(
@@ -198,6 +199,13 @@ try {
   assert.equal(current, null);
   assert.equal(root.inert, false);
   assert.equal(finished, 1);
+  globalThis.__noonGate={session:{date:"2026-10-28",requestKey:"noon"},data:null,error:"",retry(){}};
+  render();assert.equal(root.inert,true,"noon uses the existing workbench inert lock");
+  event({requestKey:"increment-second",createdAt:200});render();
+  assert.equal(root.inert,true,"increment takeover never releases the business surface");
+  delete globalThis.__noonGate;render();
+  assert.equal(root.inert,true,"noon ending cannot unlock a live increment");
+  event(null);render();assert.equal(root.inert,false,"the single lock restores only after both are finished");
 } finally {
   effects.forEach((effect) => effect?.cleanup?.());
   [

@@ -27,6 +27,9 @@
 -- 024_strategy_price_basis.sql sha256=5748f0fb752d29a285612882cc3ae4b25fc00d48952127766b2ea39e9afb5a62
 -- 025_supplement_retention.sql sha256=5bcb805d45f47345910720addd34a18a6a0eb0d107a84f025a6bd55912cfa4ed
 -- 026_line_alert_retention.sql sha256=07787747080918ba137ffc59d5dc026748decd230f89011cc013f84f1d99ed71
+-- 027_noon_snapshots.sql sha256=b7a436c0000e99fcc1b07b47e672699839766d5d0eab3372399f2887224811c9
+-- 028_noon_notes.sql sha256=2329076c224dbf65020be8174b98b833c2e49664f522ca6d4f3cb0b0ffe2ac81
+-- 029_noon_close_reviews.sql sha256=eaffb20a6c2ef7771fa8dc974be923984bf35ad42af5e6804d6675dd1ba6a9aa
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -250,6 +253,100 @@ CREATE TABLE market_mainline_revision (
  UNIQUE(trade_date,instrument_id,revision),
  CHECK((action='revoke' AND json_array_length(attributions_json)=0)
     OR (action='replace' AND json_array_length(attributions_json) BETWEEN 1 AND 12))
+) STRICT;
+
+CREATE TABLE market_noon_capture (
+ trade_date TEXT PRIMARY KEY CHECK(date(trade_date,'+0 days') IS trade_date),
+ job_id TEXT NOT NULL UNIQUE REFERENCES job(job_id),
+ request_key TEXT NOT NULL UNIQUE,
+ requested_at_ms INTEGER NOT NULL CHECK(requested_at_ms>0)
+) STRICT;
+
+CREATE TABLE market_noon_close_attempt (
+ snapshot_id TEXT PRIMARY KEY REFERENCES market_noon_snapshot(snapshot_id) ON DELETE CASCADE,
+ checked_sequence INTEGER NOT NULL CHECK(checked_sequence>0),
+ checked_at_ms INTEGER NOT NULL CHECK(checked_at_ms>0),
+ source_job_id TEXT NOT NULL REFERENCES job(job_id),
+ status TEXT NOT NULL CHECK(status IN('available','partial','waiting_close','warning')),
+ reason TEXT
+) STRICT;
+
+CREATE TABLE market_noon_close_item (
+ review_id TEXT NOT NULL REFERENCES market_noon_close_review(review_id) ON DELETE CASCADE,
+ snapshot_id TEXT NOT NULL REFERENCES market_noon_snapshot(snapshot_id) ON DELETE CASCADE,
+ instrument_id TEXT NOT NULL,
+ name TEXT NOT NULL,
+ board_key TEXT NOT NULL CHECK(board_key IN('main','chinext','star','beijing','unknown')),
+ transition TEXT NOT NULL,
+ final_board_count INTEGER,
+ afternoon_change_pct REAL,
+ close_change_pct REAL,
+ noon_change_pct REAL,
+ amount REAL,
+ sections_json TEXT NOT NULL CHECK(json_valid(sections_json) AND json_type(sections_json)='array'),
+ classification_keys_json TEXT NOT NULL CHECK(json_valid(classification_keys_json) AND json_type(classification_keys_json)='array'),
+ item_json TEXT NOT NULL CHECK(json_valid(item_json) AND json_type(item_json)='object' AND length(item_json)<=65536),
+ item_sha256 TEXT NOT NULL CHECK(length(item_sha256)=64 AND item_sha256 NOT GLOB '*[^0-9a-f]*'),
+ PRIMARY KEY(review_id,instrument_id)
+) STRICT;
+
+CREATE TABLE market_noon_close_review (
+ review_id TEXT PRIMARY KEY,
+ snapshot_id TEXT NOT NULL REFERENCES market_noon_snapshot(snapshot_id) ON DELETE CASCADE,
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ rule_version TEXT NOT NULL CHECK(rule_version='noon-close-v1'),
+ generated_at_ms INTEGER NOT NULL CHECK(generated_at_ms>0),
+ source_job_id TEXT NOT NULL REFERENCES job(job_id),
+ source_snapshot_id TEXT NOT NULL,
+ noon_sha256 TEXT NOT NULL CHECK(length(noon_sha256)=64 AND noon_sha256 NOT GLOB '*[^0-9a-f]*'),
+ close_input_sha256 TEXT NOT NULL CHECK(length(close_input_sha256)=64 AND close_input_sha256 NOT GLOB '*[^0-9a-f]*'),
+ result_sha256 TEXT NOT NULL CHECK(length(result_sha256)=64 AND result_sha256 NOT GLOB '*[^0-9a-f]*'),
+ state TEXT NOT NULL CHECK(state IN('available','partial')),
+ backfilled INTEGER NOT NULL CHECK(backfilled IN(0,1)),
+ input_json TEXT NOT NULL CHECK(json_valid(input_json) AND json_type(input_json)='object' AND length(input_json)<=8388608),
+ provenance_json TEXT NOT NULL CHECK(json_valid(provenance_json) AND json_type(provenance_json)='object' AND length(provenance_json)<=262144),
+ result_json TEXT NOT NULL CHECK(json_valid(result_json) AND json_type(result_json)='object' AND length(result_json)<=2097152),
+ UNIQUE(snapshot_id,revision),
+ UNIQUE(snapshot_id,noon_sha256,close_input_sha256,rule_version)
+) STRICT;
+
+CREATE TABLE market_noon_note (
+ note_id TEXT PRIMARY KEY,
+ snapshot_id TEXT NOT NULL REFERENCES market_noon_snapshot(snapshot_id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ body TEXT NOT NULL CHECK(length(body)<=4000),
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0),
+ UNIQUE(snapshot_id,revision)
+) STRICT;
+
+CREATE TABLE market_noon_purge (
+ snapshot_id TEXT PRIMARY KEY,
+ trade_date TEXT NOT NULL,
+ job_id TEXT NOT NULL REFERENCES job(job_id),
+ anchor_date TEXT NOT NULL,
+ cutoff_date TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN('planned','deleting','purged','protected','warning')),
+ manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json)),
+ removed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(removed_bytes>=0),
+ created_at_ms INTEGER NOT NULL,
+ finished_at_ms INTEGER,
+ reason TEXT
+) STRICT;
+
+CREATE TABLE market_noon_snapshot (
+ snapshot_id TEXT PRIMARY KEY,
+ trade_date TEXT NOT NULL UNIQUE REFERENCES market_noon_capture(trade_date),
+ job_id TEXT NOT NULL UNIQUE REFERENCES job(job_id),
+ collected_start_at TEXT NOT NULL,
+ collected_end_at TEXT NOT NULL,
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0),
+ quality TEXT NOT NULL CHECK(quality IN('complete','partial')),
+ content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+ payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='object' AND length(payload_json)<=8388608),
+ sources_json TEXT NOT NULL CHECK(json_valid(sources_json) AND json_type(sources_json)='array'),
+ CHECK(json_extract(payload_json,'$.date') IS trade_date),
+ CHECK(json_extract(payload_json,'$.version') IS 'noon-snapshot-v1')
 ) STRICT;
 
 CREATE TABLE market_sentiment_snapshot (
@@ -762,6 +859,14 @@ CREATE INDEX live_pins ON retention_pin(snapshot_id,expires_at_ms);
 
 CREATE INDEX mainline_by_date_known ON market_mainline_revision(trade_date,recorded_at_ms,instrument_id,revision);
 
+CREATE INDEX noon_close_by_date ON market_noon_close_review(trade_date DESC,revision DESC);
+
+CREATE INDEX noon_close_items_filter ON market_noon_close_item(review_id,board_key,transition,final_board_count DESC,instrument_id);
+
+CREATE INDEX noon_purge_by_date ON market_noon_purge(trade_date DESC,status);
+
+CREATE INDEX noon_snapshot_by_date ON market_noon_snapshot(trade_date DESC);
+
 CREATE UNIQUE INDEX one_accepted_batch ON sync_batch(job_id,capability,batch_key) WHERE status='accepted';
 
 CREATE UNIQUE INDEX one_active_logical_job ON job(logical_key) WHERE status IN ('queued','running','paused');
@@ -807,6 +912,14 @@ CREATE VIEW published_watermark AS SELECT h.module,h.scope_key,h.snapshot_id,
 
 CREATE TRIGGER advance_listing_status_revision AFTER INSERT ON listing_status_confirmation
 BEGIN INSERT INTO listing_status_revision VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
+
+CREATE TRIGGER append_noon_note BEFORE INSERT ON market_noon_note
+BEGIN
+ SELECT CASE WHEN NEW.revision!=coalesce((SELECT max(revision) FROM market_noon_note WHERE snapshot_id=NEW.snapshot_id),0)+1
+ THEN RAISE(ABORT,'noon note revision must append') END;
+ SELECT CASE WHEN NEW.recorded_at_ms<coalesce((SELECT max(recorded_at_ms) FROM market_noon_note WHERE snapshot_id=NEW.snapshot_id),0)
+ THEN RAISE(ABORT,'noon note clock moved backwards') END;
+END;
 
 CREATE TRIGGER append_only_capability_probe_delete BEFORE DELETE ON capability_probe BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
@@ -944,6 +1057,35 @@ CREATE TRIGGER gc_update_guard BEFORE UPDATE ON snapshot_gc WHEN NEW.state<>'ava
  THEN RAISE(ABORT,'head or live pin prevents garbage collection') END;
 END;
 
+CREATE TRIGGER guard_noon_close_attempt_delete BEFORE DELETE ON market_noon_close_attempt
+WHEN noon_purge_allowed(OLD.snapshot_id)!=1
+BEGIN SELECT RAISE(ABORT,'noon close attempt requires parent retention authorization'); END;
+
+CREATE TRIGGER guard_noon_close_delete BEFORE DELETE ON market_noon_close_review
+WHEN noon_purge_allowed(OLD.snapshot_id)!=1
+BEGIN SELECT RAISE(ABORT,'noon close requires parent retention authorization'); END;
+
+CREATE TRIGGER guard_noon_close_identity BEFORE INSERT ON market_noon_close_review
+WHEN NOT EXISTS(SELECT 1 FROM market_noon_snapshot s WHERE s.snapshot_id=NEW.snapshot_id
+ AND s.trade_date=NEW.trade_date AND s.content_sha256=NEW.noon_sha256)
+BEGIN SELECT RAISE(ABORT,'noon close identity mismatch'); END;
+
+CREATE TRIGGER guard_noon_close_item_delete BEFORE DELETE ON market_noon_close_item
+WHEN noon_purge_allowed(OLD.snapshot_id)!=1
+BEGIN SELECT RAISE(ABORT,'noon close item requires parent retention authorization'); END;
+
+CREATE TRIGGER guard_noon_close_item_identity BEFORE INSERT ON market_noon_close_item
+WHEN NOT EXISTS(SELECT 1 FROM market_noon_close_review r WHERE r.review_id=NEW.review_id AND r.snapshot_id=NEW.snapshot_id)
+BEGIN SELECT RAISE(ABORT,'noon close item identity mismatch'); END;
+
+CREATE TRIGGER guard_noon_note_delete BEFORE DELETE ON market_noon_note
+WHEN noon_purge_allowed(OLD.snapshot_id)!=1
+BEGIN SELECT RAISE(ABORT,'noon notes require worker retention authorization'); END;
+
+CREATE TRIGGER guard_noon_snapshot_delete BEFORE DELETE ON market_noon_snapshot
+WHEN noon_purge_allowed(OLD.snapshot_id)!=1
+BEGIN SELECT RAISE(ABORT,'noon snapshot requires worker retention authorization'); END;
+
 CREATE TRIGGER head_insert_gate BEFORE INSERT ON published_head BEGIN
  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM dataset_snapshot s WHERE s.snapshot_id=NEW.snapshot_id AND s.state='published' AND s.module=NEW.module AND s.scope_key=NEW.scope_key)
  THEN RAISE(ABORT,'head must reference matching published module and scope') END;
@@ -1036,6 +1178,40 @@ BEGIN SELECT RAISE(ABORT,'retain daily mainline audit'); END;
 
 CREATE TRIGGER retain_mainline_revision_update BEFORE UPDATE ON market_mainline_revision
 BEGIN SELECT RAISE(ABORT,'retain daily mainline audit'); END;
+
+CREATE TRIGGER retain_noon_capture_delete BEFORE DELETE ON market_noon_capture
+BEGIN SELECT RAISE(ABORT,'retain noon daily capture ledger'); END;
+
+CREATE TRIGGER retain_noon_capture_replace BEFORE INSERT ON market_noon_capture
+WHEN EXISTS(SELECT 1 FROM market_noon_capture WHERE trade_date=NEW.trade_date OR job_id=NEW.job_id OR request_key=NEW.request_key)
+BEGIN SELECT RAISE(ABORT,'retain noon daily capture ledger'); END;
+
+CREATE TRIGGER retain_noon_capture_update BEFORE UPDATE ON market_noon_capture
+BEGIN SELECT RAISE(ABORT,'retain noon daily capture ledger'); END;
+
+CREATE TRIGGER retain_noon_close_item_replace BEFORE INSERT ON market_noon_close_item
+WHEN EXISTS(SELECT 1 FROM market_noon_close_item WHERE review_id=NEW.review_id AND instrument_id=NEW.instrument_id)
+BEGIN SELECT RAISE(ABORT,'retain immutable noon close item'); END;
+
+CREATE TRIGGER retain_noon_close_item_update BEFORE UPDATE ON market_noon_close_item
+BEGIN SELECT RAISE(ABORT,'retain immutable noon close item'); END;
+
+CREATE TRIGGER retain_noon_close_replace BEFORE INSERT ON market_noon_close_review
+WHEN EXISTS(SELECT 1 FROM market_noon_close_review WHERE review_id=NEW.review_id)
+BEGIN SELECT RAISE(ABORT,'retain immutable noon close review'); END;
+
+CREATE TRIGGER retain_noon_close_update BEFORE UPDATE ON market_noon_close_review
+BEGIN SELECT RAISE(ABORT,'retain immutable noon close review'); END;
+
+CREATE TRIGGER retain_noon_note_update BEFORE UPDATE ON market_noon_note
+BEGIN SELECT RAISE(ABORT,'retain noon note audit'); END;
+
+CREATE TRIGGER retain_noon_snapshot_replace BEFORE INSERT ON market_noon_snapshot
+WHEN EXISTS(SELECT 1 FROM market_noon_snapshot WHERE snapshot_id=NEW.snapshot_id OR trade_date=NEW.trade_date OR job_id=NEW.job_id)
+BEGIN SELECT RAISE(ABORT,'retain noon immutable snapshot'); END;
+
+CREATE TRIGGER retain_noon_snapshot_update BEFORE UPDATE ON market_noon_snapshot
+BEGIN SELECT RAISE(ABORT,'retain noon immutable snapshot'); END;
 
 CREATE TRIGGER retain_published_snapshot_metadata BEFORE DELETE ON dataset_snapshot
 WHEN OLD.state='published' BEGIN SELECT RAISE(ABORT,'retain publication metadata; GC artifacts separately'); END;

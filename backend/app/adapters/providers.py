@@ -164,7 +164,7 @@ class ProviderClient:
         self.source_id, self.key = source_id, key
         self.last_request = 0.0
 
-    def request(self, path, params=None):
+    def request(self, path, params=None, *, before_attempt=None):
         if self.source_id != "tickflow-public" and not self.key:
             raise ProviderError("请先配置该来源的Key；注册免费Key不等于付费会员", 401)
         headers = {"User-Agent": "ShixuWorkbench/0.1", "Accept": "application/json"}
@@ -180,6 +180,10 @@ class ProviderClient:
                     delay = (1.2 if self.source_id == "fuyao" else 6.2) - (time.monotonic() - state['last_request'])
                     if delay > 0:
                         time.sleep(delay)
+                # Explicit callers may have a deadline/lease. Keep this outside
+                # the parsing retry catch so stopping cannot trigger another GET.
+                if before_attempt is not None:
+                    before_attempt()
                 try:
                     try:
                         response = client.get(self.BASES[self.source_id] + path, params=params, headers=headers)

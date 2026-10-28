@@ -62,6 +62,8 @@ playwright-report/
 !/docs/市场温度与下一交易日计划.md
 !/docs/连板高度板型与反馈.md
 !/docs/板块行情与成员档案.md
+!/docs/午评快照.md
+!/docs/炸板结构与后续反馈.md
 !/docs/research/
 /docs/research/*
 !/docs/research/BOLL收口突破离线研究.md

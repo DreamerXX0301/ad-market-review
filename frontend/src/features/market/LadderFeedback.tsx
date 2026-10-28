@@ -232,7 +232,9 @@ export function LadderFeedbackOverview({
                 <i className={item.key} />
                 {item.label}
               </dt>
-              <dd>{integer(item.count)}</dd>
+              <dd className={item.key === "unknown" ? "muted" : item.key}>
+                {integer(item.count)}
+              </dd>
             </div>
           ))}
         </dl>
@@ -270,8 +272,12 @@ export function LadderFeedbackOverview({
                       只
                     </span>
                     <small>
-                      涨 {integer(height.up)} / 跌 {integer(height.down)} / 平{" "}
-                      {integer(height.flat)} / 未知 {integer(height.unknown)}
+                      <span className="up">涨 {integer(height.up)}</span> /{" "}
+                      <span className="down">跌 {integer(height.down)}</span> /{" "}
+                      <span>平 {integer(height.flat)}</span> /{" "}
+                      <span className="muted">
+                        未知 {integer(height.unknown)}
+                      </span>
                     </small>
                   </div>
                   <div className="ladder-feedback-height-average">

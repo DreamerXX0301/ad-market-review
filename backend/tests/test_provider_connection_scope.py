@@ -100,6 +100,19 @@ def test_unauthorized_request_is_not_retried_and_closes_on_failure(transport):
     assert len(clients) == 1
 
 
+def test_explicit_attempt_guard_stops_retry_after_window_expires(transport):
+    from app.services.noon_collection import WindowExpired
+    clock, clients, calls, responses = transport
+    responses.append((429, {}))
+    def guard():
+        if clock['now'] >= 101:
+            raise WindowExpired('fixture noon deadline')
+    with pytest.raises(WindowExpired):
+        with providers.provider_connection_scope():
+            providers.ProviderClient('fuyao', 'fixture').request('/noon', before_attempt=guard)
+    assert len(calls) == 1 and clients[0].is_closed
+
+
 def test_empty_data_unknown_format_and_missing_key_never_become_valid_empty_results(transport):
     _, clients, calls, responses = transport
     with providers.provider_connection_scope():

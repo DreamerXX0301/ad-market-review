@@ -30,6 +30,7 @@ export function emotionSections(options: {
   outlook: boolean;
   statistics: boolean;
   feedback?: boolean;
+  brokenBoard?: boolean;
   history: boolean;
 }): EmotionSection[] {
   return [
@@ -46,6 +47,9 @@ export function emotionSections(options: {
       : []),
     ...(options.statistics
       ? [{ id: "emotion-short-term", label: "短线接力" }]
+      : []),
+    ...(options.brokenBoard
+      ? [{ id: "emotion-broken-board", label: "炸板结构" }]
       : []),
     ...(options.feedback
       ? [{ id: "emotion-ladder-feedback", label: "连板反馈" }]

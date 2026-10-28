@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -101,6 +101,7 @@ import StrategyBatchToolbar, {
 } from "./StrategyBatchToolbar";
 import StrategyResultTabs, { StrategyRunNotice } from "./StrategyResultTabs";
 import { strategyCopyDraft } from "./strategyCopy";
+import { stockRunGate } from "./stockRunAvailability";
 type StrategiesProps = {
   onStock: (id: string, navigation?: StockNavigation) => void;
   onNavigate: (route: string, context?: Row) => void;
@@ -452,7 +453,7 @@ function StockStrategies({
     [decision, setDecision] = useState("matched"),
     [selected, setSelected] = useState<Set<string>>(new Set()),
     [error, setError] = useState("");
-  const batchSelection = useBatchStrategySelection(strategies);
+  const batchSelection = useBatchStrategySelection(strategies, "stock");
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchRunRequest, setBatchRunRequest] = useState<Row | null>(null);
   const history = useApi<Row>(
@@ -462,6 +463,8 @@ function StockStrategies({
     strategies.find((s) => s.strategy_id === selectedId) || strategies[0];
   const saved = useSavedStrategyRun("stock", chosen, decision, dataDate);
   const { run, setRun } = saved;
+  const runGate = stockRunGate(chosen, dataDate, run);
+  const runSubmitting = useRef(false);
   const taskActivity = useTaskActivity();
   const runningChosen = strategyTaskBusy(taskActivity, chosen?.strategy_id);
   const runningElsewhere =
@@ -554,20 +557,29 @@ function StockStrategies({
     }
   }
   async function runStrategy() {
-    if (!chosen || busy || runningElsewhere || runningChosen || batchBusy)
+    if (
+      !chosen ||
+      runSubmitting.current ||
+      runGate.blocked ||
+      busy ||
+      (!runGate.completed && (runningElsewhere || runningChosen || batchBusy))
+    )
       return;
+    runSubmitting.current = true;
     const key = requestKey();
     const strategyId = chosen.strategy_id;
-    setBusy("run");
+    const readingSaved = runGate.completed;
+    setBusy(readingSaved ? "read-run" : "run");
     setError("");
-    startTaskRequest({
-      request_key: key,
-      kind: "selection",
-      title: "个股策略选股",
-      target_type: "stock",
-      strategy_id: strategyId,
-      strategy_name: chosen.name,
-    });
+    if (!readingSaved)
+      startTaskRequest({
+        request_key: key,
+        kind: "selection",
+        title: "个股策略选股",
+        target_type: "stock",
+        strategy_id: strategyId,
+        strategy_name: chosen.name,
+      });
     try {
       const data = await post(
         `/strategies/${strategyId}/runs?response_decision=matched`,
@@ -578,15 +590,50 @@ function StockStrategies({
       setRun(data);
       setDecision("matched");
       setSelected(new Set());
-      history.reload();
+      result.setData((current) =>
+        current
+          ? {
+              ...current,
+              items: list(current).map((item) =>
+                item.strategy_id === strategyId &&
+                item.version === data.strategy_version
+                  ? {
+                      ...item,
+                      latest_run: {
+                        run_id: data.run_id,
+                        business_date: data.business_date,
+                        status: "completed",
+                      },
+                      run_availability: {
+                        can_run: false,
+                        state: "completed",
+                        business_date: data.business_date,
+                        completed_run_id: data.run_id,
+                        reason:
+                          "本行情日相同规则已运行，可查看已保存结果；修改条件后可以重新运行。",
+                      },
+                    }
+                  : item,
+              ),
+            }
+          : current,
+      );
+      if (data.result_reused !== true) history.reload();
       result.reload();
+      const matched =
+        data.matched_count ??
+        list(data).filter((x) => x.decision === "matched").length;
       toast(
-        `运行完成：${data.matched_count ?? list(data).filter((x) => x.decision === "matched").length} 只满足`,
+        data.result_reused === true
+          ? `已读取今日结果：${matched} 只满足，未重新计算`
+          : `运行完成：${matched} 只满足`,
       );
     } catch (e: any) {
       setError(e.message);
+      if (e.status === 409) result.reload();
     } finally {
-      finishTaskRequest(key);
+      runSubmitting.current = false;
+      if (!readingSaved) finishTaskRequest(key);
       setBusy("");
     }
   }
@@ -696,7 +743,8 @@ function StockStrategies({
                       type="checkbox"
                       aria-label={`选择策略：${s.name}`}
                       checked={batchSelection.selected.has(s.strategy_id)}
-                      disabled={!!busy || batchBusy || !!s.archived}
+                      disabled={!!busy || batchBusy || stockRunGate(s).blocked}
+                      title={stockRunGate(s).reason || undefined}
                       onChange={() => batchSelection.toggle(s.strategy_id)}
                     />
                   </label>
@@ -795,30 +843,39 @@ function StockStrategies({
                   <button
                     className="btn primary"
                     disabled={
-                      !!busy || runningChosen || runningElsewhere || batchBusy
+                      !!busy ||
+                      (!runGate.completed &&
+                        (runningChosen || runningElsewhere || batchBusy)) ||
+                      runGate.blocked
                     }
                     onClick={runStrategy}
                     title={
-                      runningElsewhere && !runningChosen
+                      runGate.reason ||
+                      (runningElsewhere && !runningChosen
                         ? "已有任务运行，可在页面上方查看当前任务"
-                        : undefined
+                        : undefined)
                     }
                   >
-                    {busy === "run" || runningChosen ? (
+                    {busy === "run" || busy === "read-run" || runningChosen ? (
                       <Spinner />
                     ) : (
                       <Play size={14} />
                     )}
-                    {busy === "run" || runningChosen
-                      ? "选股运行中"
-                      : run || chosen.latest_run
-                        ? "刷新选股"
-                        : "运行选股"}
+                    {busy === "read-run"
+                      ? "读取今日结果中"
+                      : busy === "run" || runningChosen
+                        ? "选股运行中"
+                        : runGate.completed
+                          ? "查看今日结果"
+                          : "运行选股"}
                   </button>
                 </>
               }
             >
               <div className="saved-rule-summary">
+                {(runGate.blocked || runGate.completed) && (
+                  <p className="muted">{runGate.reason}</p>
+                )}
                 {chosen.hot_universe && (
                   <div>
                     <Check size={15} />

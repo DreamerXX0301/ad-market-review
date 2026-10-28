@@ -37,6 +37,13 @@ def connect_sqlite(path,mode='rw'):
 def check_db(c):
     if c.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise ValueError('SQLite integrity_check failed')
     if c.execute('PRAGMA foreign_key_check').fetchall():raise ValueError('SQLite foreign_key_check failed')
+    # Load only the pure validator from this release. Importing the application
+    # configuration could otherwise initialize an unrelated default data root.
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_noon_close_review'").fetchone():
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('backup_noon_close_integrity',ROOT/'backend/app/services/noon_close_integrity.py')
+        validator=importlib.util.module_from_spec(spec);spec.loader.exec_module(validator)
+        validator.validate_close_reviews(c)
 
 def retained_snapshots(c):
     return [dict(r) for r in c.execute("SELECT s.* FROM dataset_snapshot s LEFT JOIN snapshot_gc g USING(snapshot_id) WHERE s.state='published' AND (g.state IS NULL OR g.state='available')")]
@@ -183,6 +190,7 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
     db=Path(sqlite_path or os.environ.get('SHIXU_SQLITE_PATH') or data_dir/'business/app.sqlite3').expanduser().resolve()
     published=Path(published_dir or os.environ.get('SHIXU_PUBLISHED_DIR') or data_dir/'published').expanduser().resolve()
     credentials=Path(credential_dir or os.environ.get('SHIXU_CREDENTIAL_DIR') or data_dir/'credentials').expanduser().resolve()
+    raw=Path(os.environ.get('SHIXU_RAW_DIR') or data_dir/'raw').expanduser().absolute()
     if not db.is_file():raise ValueError('Source SQLite database does not exist')
     if db.is_symlink() or published.is_symlink() or credentials.is_symlink():raise ValueError('Symlink storage roots are not accepted')
     output.parent.mkdir(parents=True,exist_ok=True)
@@ -199,6 +207,8 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
         try:
             reject_incomplete_collection(copied)
             required,snapshots=needed_files(copied,published)
+            from noon_archive import inventory as noon_inventory,copy_sources as copy_noon_sources
+            noon_required=noon_inventory(copied,raw)
             # A publication could have committed between initial pins and the online snapshot.
             # Pin its exact captured dependencies before copying; unavailable files make backup fail.
             make_pins(source,snapshots,owner)
@@ -215,6 +225,7 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
             if supplement_files(published)!=supplement:raise ValueError('Public supplement changed during backup; wait for manual supplement sync to finish and retry')
             dragon_tiger={key:value for key,value in required.items() if key.startswith('dragon-tiger/')}
             if dragon_tiger_files(published)!=dragon_tiger:raise ValueError('Dragon-tiger changed during backup; wait for manual collection to finish and retry')
+            copy_noon_sources(noon_required,raw,stage)
             if latest:
                 generation=json.loads(latest[0]).get('market_snapshot_id')
                 if generation:
@@ -244,7 +255,7 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
             if path.is_symlink():raise ValueError('Symlink in backup staging directory')
             if finder_metadata(path):continue
             if path.is_file():files.append({'path':str(path.relative_to(stage)),'sha256':sha(path),'bytes':path.stat().st_size})
-        manifest={'format':'shixu-backup-v1','backup_id':owner,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),'sqlite_version':sqlite3.sqlite_version,'heads':heads,'retained_snapshot_count':len(snapshots),'credential_ciphertexts':credential_files,'master_key_included':False,'files':files,'notes':['Online SQLite backup; immutable file references pinned while copying','Optional public market-supplement JSON objects and mutable pointers copied only after checksum and stable-inventory verification','Optional dragon-tiger day/source CAS closure and resumable component pointers verified independently; no historical CAS directory scan','Bulk raw downloads and active DuckDB work files intentionally excluded','Do not change provider credentials during a backup; ciphertext storage is not cross-store versioned']}
+        manifest={'format':'shixu-backup-v1','backup_id':owner,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),'sqlite_version':sqlite3.sqlite_version,'heads':heads,'retained_snapshot_count':len(snapshots),'credential_ciphertexts':credential_files,'master_key_included':False,'files':files,'notes':['Online SQLite backup; immutable file references pinned while copying','Optional public market-supplement JSON objects and mutable pointers copied only after checksum and stable-inventory verification','Optional dragon-tiger day/source CAS closure and resumable component pointers verified independently; no historical CAS directory scan','Optional noon sources copied only from captured SQLite and exact manifest closure with stored/canonical checksums; no raw directory scan','Bulk raw downloads and active DuckDB work files intentionally excluded','Do not change provider credentials during a backup; ciphertext storage is not cross-store versioned']}
         (stage/'backup-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
         for f in stage.rglob('*'):
             if f.is_symlink():raise ValueError('Symlink in backup staging directory')

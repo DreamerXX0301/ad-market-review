@@ -21,6 +21,7 @@ _GENERATION=re.compile(r'market-[0-9a-f]{24}\Z')
 _IGNORED={'_schema_migration','dataset_snapshot','snapshot_artifact','snapshot_coverage','retention_pin','published_head','snapshot_gc',
           'job_event','sync_batch','market_storage_collection','market_storage_collection_file','workspace_purge','workspace_purge_file','workspace_purge_audit',
           'supplement_retention_run','supplement_retention_file'}
+_NOON_CLOSE_PROVENANCE = {'market_noon_close_review','market_noon_close_item','market_noon_close_attempt'}
 
 
 def _strings(value):
@@ -40,11 +41,15 @@ def _roots(connection,snapshots,now):
     identifiers={row['snapshot_id'] for row in snapshots};generations={json.loads(row['lineage_json']).get('market_snapshot_id') for row in snapshots}
     roots={row[0] for row in connection.execute('SELECT snapshot_id FROM published_head')}
     roots.update(row[0] for row in connection.execute('SELECT snapshot_id FROM retention_pin WHERE expires_at_ms IS NULL OR expires_at_ms>?',(now,)))
+    # Close-review inputs are independently retained inside SQLite. Their old
+    # generation identities are provenance, not a request to retain all files.
+    from app.services.noon_close_integrity import validate_close_reviews
+    validate_close_reviews(connection)
     # Metadata of completed sync jobs remains audit history. Only recoverable
     # task parameters/results have a live file dependency; reports and all saved
     # strategy/selection/tracking/watchlist/annotation rows are scanned below.
     for table, in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
-        if table.startswith('sqlite_') or table in _IGNORED:continue
+        if table.startswith('sqlite_') or table in _IGNORED or table in _NOON_CLOSE_PROVENANCE:continue
         columns=[row[1] for row in connection.execute('PRAGMA table_info("'+table.replace('"','""')+'")')]
         fields=[value for value in columns if 'snapshot' in value or value.endswith('_json')]
         if not fields:continue

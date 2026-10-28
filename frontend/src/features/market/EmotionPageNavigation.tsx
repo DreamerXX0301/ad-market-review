@@ -14,6 +14,7 @@ export default function EmotionPageNavigation({
   outlook,
   statistics,
   feedback = false,
+  brokenBoard = false,
   history,
   children,
 }: {
@@ -21,12 +22,14 @@ export default function EmotionPageNavigation({
   outlook: boolean;
   statistics: boolean;
   feedback?: boolean;
+  brokenBoard?: boolean;
   history: boolean;
   children: ReactNode;
 }) {
   const sections = useMemo(
-    () => emotionSections({ outlook, statistics, history, feedback }),
-    [outlook, statistics, history, feedback],
+    () =>
+      emotionSections({ outlook, statistics, history, feedback, brokenBoard }),
+    [outlook, statistics, history, feedback, brokenBoard],
   );
   const root = useRef<HTMLDivElement>(null);
   const selected = useRef<{

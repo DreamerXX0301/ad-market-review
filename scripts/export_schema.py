@@ -25,6 +25,7 @@ def connection():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA recursive_triggers=ON")
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 

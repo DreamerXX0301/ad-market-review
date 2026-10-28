@@ -19,6 +19,7 @@ from app.services.workspace_deletion import require_strategy_present,strategy_vi
 from app.services import strategy_hot_universe as hot_universe
 from app.services.condition_basis_cache import disk_session
 from app.services.selection_compute_pool import compute_session,current_session
+from app.services import stock_daily_once
 ENGINE_VERSION="workspace-v8-bounded-history-events"
 FORWARD_ENGINE_VERSION='workspace-v17-local-forward-prices-v1'
 PRICE_BASIS_CONTRACT='strategy-local-forward-v1'
@@ -109,13 +110,15 @@ def apply_tracking_policy(c,r,version,day,calendar,*,reason,scope='round'):
     insert(c,'tracking_event',dict(event_id=new_id('event'),event_key=new_id('policy-event'),round_id=r['round_id'],event_type='policy_change',business_date=day,data_snapshot_id=r['entry_snapshot_id'],data_state='not_applicable',outcome='not_applicable',trading_age=trading_age(calendar,r['entry_business_date'],day) or 0,evidence_json=js({'application_id':application_id,'previous_policy_version':r['current_policy_version'],'policy_version':version,'scope':scope,'effective_business_date':day,'reason':reason}),recorded_at_ms=recorded))
     return True
 
-def strategy_view(c,sid):
+def strategy_view(c,sid,*,run_context=None):
     r=one(c,'SELECT * FROM strategy WHERE strategy_id=?',(sid,),'策略不存在')
     v=one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,r['current_version']))
     p=one(c,'SELECT * FROM tracking_policy_version WHERE strategy_id=? AND policy_version=?',(sid,r['current_policy_version']))
     latest=c.execute('SELECT run_id,business_date,status FROM selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1',(sid,)).fetchone()
     following,custom=active_policy_scope(c,sid)
-    return {**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'price_basis':v.get('price_basis','none'),'price_basis_contract':PRICE_BASIS_CONTRACT if v.get('price_basis')=='forward' else None,'definition':obj(v['definition_json'],{}),'hot_universe':obj(v.get('hot_universe_json')),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid)}
+    result={**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'price_basis':v.get('price_basis','none'),'price_basis_contract':PRICE_BASIS_CONTRACT if v.get('price_basis')=='forward' else None,'definition':obj(v['definition_json'],{}),'hot_universe':obj(v.get('hot_universe_json')),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid)}
+    result['run_availability']=stock_daily_once.availability(c,result,context=run_context)
+    return result
 
 def list_strategies(deleted=False,limit=None,offset=0):
     if not isinstance(deleted,bool) or (limit is not None and (isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=100)) or isinstance(offset,bool) or not isinstance(offset,int) or offset<0:fail('策略列表分页参数无效')
@@ -125,7 +128,9 @@ def list_strategies(deleted=False,limit=None,offset=0):
         parameters=()
         if limit is not None:query+=' LIMIT ? OFFSET ?';parameters=(limit,offset)
         elif offset:query+=' LIMIT -1 OFFSET ?';parameters=(offset,)
-        data=[strategy_view(c,r[0]) for r in c.execute(query,parameters)]
+        ids=[r[0] for r in c.execute(query,parameters)]
+        run_context=stock_daily_once.read_context(c,strategy_ids=ids)
+        data=[strategy_view(c,sid,run_context=run_context) for sid in ids]
         total=c.execute('SELECT count(*) FROM strategy s LEFT JOIN strategy_deletion d USING(strategy_id) WHERE '+condition).fetchone()[0]
         return {'items':data,'total':total,'limit':limit,'offset':offset,'has_more':offset+len(data)<total}
 
@@ -193,16 +198,16 @@ def update_strategy(sid,payload):
         if 'policy' in payload:result['policy_application']={'scope':'active_default' if apply_active else 'future_only','effective_business_date':day,'applied_count':len(applied),'skipped_custom_count':len(custom) if apply_active else 0,'eligible_count':len(following),'applied_round_ids':applied,'requires_manual_review':bool(applied)}
         return result
 
-def ensure_evaluator_version(c,sid):
+def ensure_evaluator_version(c,sid,*,run_context=None):
     require_strategy_present(c,sid)
-    st=strategy_view(c,sid)
+    st=strategy_view(c,sid,run_context=run_context)
     old=one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,st['version']))
     desired=evaluator_for(st['definition'],st['period'],st.get('trade_rules'),st.get('hot_universe'),st.get('price_basis','none'))
     if old['evaluator_version']!=desired:
         version=c.execute('SELECT max(version)+1 FROM strategy_version WHERE strategy_id=?',(sid,)).fetchone()[0]
         insert(c,'strategy_version',dict(strategy_id=sid,version=version,**stored_period(st['period']),price_basis=st.get('price_basis','none'),definition_json=old['definition_json'],definition_sha256=old['definition_sha256'],trade_rules_json=old['trade_rules_json'],hot_universe_json=old.get('hot_universe_json'),evaluator_version=desired,recorded_at_ms=now_ms()))
         c.execute('UPDATE strategy SET current_version=? WHERE strategy_id=?',(version,sid))
-    return strategy_view(c,sid)
+    return strategy_view(c,sid,run_context=run_context)
 
 
 def seed_workspace(price_basis='none'):
@@ -371,6 +376,7 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
     payload=payload or {};key=str(payload.get('request_key') or new_id('selection-request'))
     if len(key)>200:fail('request_key过长')
     job_id=queued_job['job_id'] if queued_job else new_id('job');rid=new_id('run');owner=queued_job['lease_owner'] if queued_job else api_lease_owner()
+    reused_run_id=None;reuse_reason=None
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         from .increment_access import require_business_unlocked
@@ -379,19 +385,35 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
         found=c.execute('SELECT r.run_id,r.strategy_id FROM selection_run r JOIN job j USING(job_id) WHERE j.request_key=?',(key,)).fetchone()
         if found:
             if found['strategy_id']!=sid:fail('request_key已用于其他策略，不能复用。',409)
-            return get_run(found['run_id'],response_decision)
-        day=current(c);st=ensure_evaluator_version(c,sid)
-        if st['archived']:fail('策略已归档，不能运行')
-        deps,primary=freeze_inputs(c);topics=topic_map(c,day);topic_dependencies_=topic_dependencies(st['definition']);complete_topics=complete_topic_ids(c,topic_dependencies_)
-        from .strategy_batches import _topic_revision_signature
-        membership_signature=_topic_revision_signature(c) if st.get('hot_universe') else None
-        if queued_job:
-            from .strategy_batches import validate_item
-            validate_item(c,queued_job,st,day,deps,primary)
+            reused_run_id=found['run_id']
         else:
-            try:insert(c,'job',dict(job_id=job_id,request_key=key,logical_key=new_id('selection'),kind='selection',target_date=day,parameters_json=js({'strategy_id':sid,'version':st['version']}),parameters_hash=digest([sid,st['version'],day,deps]),status='running',phase='evaluating',lease_owner=owner,lease_expires_at_ms=now_ms()+120000,created_at_ms=now_ms()))
-            except sqlite3.IntegrityError:tasks.active_task_conflict(c)
-        log(c,job_id,'info','evaluating','正在按已发布行情计算策略条件')
+            day=current(c)
+            deps,primary=freeze_inputs(c)
+            run_context=stock_daily_once.read_context(c,day=day,dependencies=deps,primary_snapshot_id=primary,strategy_ids=[sid])
+            st=ensure_evaluator_version(c,sid,run_context=run_context)
+            if st['archived']:fail('策略已归档，不能运行')
+            admission=stock_daily_once.availability(c,st,context=run_context)
+            if admission['state']=='completed' and not queued_job:
+                reused_run_id=admission['completed_run_id'];reuse_reason=admission['reason']
+            else:
+                # Persisted batch items retain their explicitly frozen scope;
+                # admission filtering applies when a new batch is created.
+                if not queued_job:stock_daily_once.require_available(c,st,context=run_context)
+                topics=topic_map(c,day);topic_dependencies_=topic_dependencies(st['definition']);complete_topics=complete_topic_ids(c,topic_dependencies_)
+                from .strategy_batches import _topic_revision_signature
+                membership_signature=_topic_revision_signature(c) if st.get('hot_universe') else None
+                if queued_job:
+                    from .strategy_batches import validate_item
+                    validate_item(c,queued_job,st,day,deps,primary)
+                else:
+                    try:insert(c,'job',dict(job_id=job_id,request_key=key,logical_key=new_id('selection'),kind='selection',target_date=day,parameters_json=js({'strategy_id':sid,'version':st['version']}),parameters_hash=digest([sid,st['version'],day,deps]),status='running',phase='evaluating',lease_owner=owner,lease_expires_at_ms=now_ms()+120000,created_at_ms=now_ms()))
+                    except sqlite3.IntegrityError:tasks.active_task_conflict(c)
+                log(c,job_id,'info','evaluating','正在按已发布行情计算策略条件')
+    if reused_run_id:
+        # Result hydration may read the small identity directory, so it must run
+        # after the short write transaction has released its admission lock.
+        saved=get_run(reused_run_id,response_decision)
+        return {**saved,'result_reused':True,'reuse_reason':reuse_reason} if reuse_reason else saved
     stop_lease=(lambda:None) if queued_job else start_api_heartbeat(job_id,owner)
     def check_task(connection=None):
         if queued_job:
@@ -520,10 +542,12 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
             check_task(c)
             if current(c)!=day:fail('业务日已更新，请重新运行策略。',409)
             if freeze_inputs(c)!=(deps,primary):fail('行情或补充数据代际已更新，本次未保存混合来源结果，请重新运行策略。',409)
+            if stock_daily_once.revision_signature(c)!=run_context['topic_revision_signature']:fail('本地题材或成员已变化，本次未保存混合来源结果，请重新运行策略。',409)
             if membership_signature is not None and _topic_revision_signature(c)!=membership_signature:fail('本地题材或成员已变化，本次未保存混合热点范围；请重新运行策略。',409)
             universe_definition={'scope':'currently_imported_stock_master','count':len(result),'survivorship_warning':True,'candidate_storage_contract':'sparse-nonmatches-v1'}
             from app.domain.strategy_prices import VERSION as PRICE_CONTRACT
             universe_definition.update(requested_price_basis=price_basis,price_contract=PRICE_CONTRACT)
+            universe_definition['selection_guard']=stock_daily_once.evidence(run_context)
             if hot_evidence is not None:universe_definition['hot_universe']=hot_evidence
             signature=[deps,st['definition'],day]+([hot_evidence] if hot_evidence is not None else [])
             signature+=[{'price_basis':price_basis,'price_contract':PRICE_CONTRACT}]

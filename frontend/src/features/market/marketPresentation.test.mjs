@@ -25,6 +25,30 @@ const {
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
+// Explorer ratios must compare numerically, rather than as decimal text parts.
+assert.deepEqual(
+  sortMarketRows(
+    [
+      { _sector_up_ratio: 10.11 },
+      { _sector_up_ratio: null },
+      { _sector_up_ratio: 10.2 },
+      { _sector_up_ratio: "99" },
+    ],
+    { key: "_sector_up_ratio", order: "desc" },
+  ).map((row) => row._sector_up_ratio),
+  [10.2, 10.11, null, "99"],
+);
+assert.deepEqual(
+  sortMarketRows(
+    [
+      { _sector_activity_count: null },
+      { _sector_activity_count: 2 },
+      { _sector_activity_count: 0 },
+    ],
+    { key: "_sector_activity_count", order: "asc" },
+  ).map((row) => row._sector_activity_count),
+  [0, 2, null],
+);
 assert.equal(emotionStageSummary("普涨"), "上涨股票较多，市场广度较强。");
 assert.match(emotionStageSummary("待核验"), /不足/);
 assert.equal(/[≥≤<>]/.test(emotionStageSummary("高潮")), false);

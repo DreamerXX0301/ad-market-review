@@ -22,13 +22,16 @@ import {
   incrementReceiptForSession,
 } from "./incrementProgress";
 import "./IncrementProgressDialog.css";
+import NoonProgressContent, { useNoonRunProgress } from "./NoonProgressContent";
 
 export default function IncrementProgressDialog({
   onFinished,
   onBlockedChange,
+  onNoonFinished,
 }: {
   onFinished: () => void;
   onBlockedChange?: (blocked: boolean) => void;
+  onNoonFinished?: (task: Row) => void;
 }) {
   const [session, setSession] = useState(readIncrementSession);
   const [savedData, setData] = useState<Row | null>(null);
@@ -178,7 +181,10 @@ export default function IncrementProgressDialog({
     session?.createdAt,
     session?.rejection,
   ]);
-  const blocked = !!session || checking;
+  // One portal owns the workbench lock. Increment discovery/session wins the
+  // content branch; switching to noon must not restore inert or keyboard state.
+  const noon = useNoonRunProgress(onNoonFinished);
+  const blocked = !!session || checking || !!noon.session || noon.checking;
   useEffect(() => {
     onBlockedChange?.(blocked);
   }, [blocked, onBlockedChange]);
@@ -266,8 +272,8 @@ export default function IncrementProgressDialog({
       (active instanceof HTMLButtonElement && active.disabled)
     )
       dialog.current.focus();
-  }, [blocked, data?.status, actionBusy]);
-  if (!session && !checking) return null;
+  }, [blocked, data?.status, actionBusy, noon.data?.status]);
+  if (!session && !checking && !noon.session && !noon.checking) return null;
   const view = incrementProgressView(data);
   const elapsed = data
     ? clock.current.elapsed +
@@ -324,173 +330,184 @@ export default function IncrementProgressDialog({
         ref={dialog}
         tabIndex={-1}
       >
-        <header>
-          {view.done || unconfirmed ? (
-            data?.status === "succeeded" || data?.status === "no_change" ? (
-              <CheckCircle2 size={30} />
-            ) : (
-              <CircleAlert size={30} />
-            )
-          ) : (
-            <LoaderCircle size={30} className="spin" />
-          )}
-          <div>
-            <h2 id="increment-progress-title">
-              {!session
-                ? "正在确认工作台状态"
-                : unconfirmed
-                  ? "本次请求尚未确认"
-                  : data?.status === "stopping"
-                    ? "正在安全停止本次更新"
-                    : view.title}
-            </h2>
-            <p>
-              {view.done
-                ? "确认本次结果后即可继续操作"
-                : "更新期间暂时锁定工作台，请等待本次数据链结束"}
-            </p>
-          </div>
-        </header>
-        <div className="increment-progress-time">
-          <strong>已耗时 {duration(elapsed)}</strong>
-          <span>
-            {session
-              ? `开始于 ${dateTime(data?.created_at_ms || session.createdAt)}`
-              : "正在读取服务端增量会话"}
-          </span>
-        </div>
-        {!view.done && (
-          <div className="increment-progress-estimate">
-            {error || discoveryError ? (
-              "进度连接暂时中断，任务可能仍在后台执行；连接恢复后更新预计时间"
-            ) : view.estimate ? (
-              <>
-                预计还需 {duration(view.estimate.remaining_min_ms)}～
-                {duration(view.estimate.remaining_max_ms)}
-                <small>
-                  预计结束 {dateTime(view.estimate.expected_finish_at_ms)} ·
-                  基于 {view.estimate.sample_count} 次同类完整任务，仅供参考
-                </small>
-              </>
-            ) : (
-              data?.estimate?.reason || "正在确认本次任务，暂无法估计剩余时间"
-            )}
-          </div>
-        )}
-        {(error || discoveryError) && (
-          <div className="increment-progress-error" role="alert">
-            {error || discoveryError}
-            <button
-              className="btn small"
-              onClick={() => setRefresh((value) => value + 1)}
-            >
-              <RefreshCw size={14} />
-              重新读取
-            </button>
-          </div>
-        )}
-        <div className="increment-progress-current" aria-live="polite">
-          <div className="increment-progress-stage-heading">
-            <strong>
-              {view.active?.title || data?.message || "正在确认本次增量请求"}
-            </strong>
-            {!view.done && view.progress !== null && <b>{view.progress}%</b>}
-          </div>
-          <span>{view.active?.message || ""}</span>
-        </div>
-        {!view.done && (
-          <progress
-            aria-label="当前阶段进度"
-            max={100}
-            {...(view.progress === null ? {} : { value: view.progress })}
-          />
-        )}
-        {!!view.tasks.length && (
+        {!session && !checking && (noon.session || noon.checking) ? (
+          <NoonProgressContent value={noon} />
+        ) : (
           <>
-            <p className="increment-progress-plan">
-              {data?.attempt_task_id
-                ? "本次仅处理所选重试步骤及其已授权后续分支；原链其它未完成阶段仍保留。"
-                : "个股与指数行情 → 行业与题材板块K线 → 盘面补充 → 核验、发布与滚动清理"}
-            </p>
-            <small>
-              {view.completedLabel}
-              ；百分比只表示当前实际阶段，后续阶段尚未排队时继续等待
-            </small>
-            <ol className="increment-progress-tasks">
-              {view.tasks.map((task) => (
-                <li key={task.job_id}>
-                  <div>
-                    <strong>{task.title}</strong>
-                    <span>
-                      {task.historical_attempt ? "历史尝试 · " : ""}
-                      {statusText[task.status] || task.status}
-                      {typeof task.progress === "number"
-                        ? ` · ${task.progress}%`
-                        : ""}
-                    </span>
-                  </div>
-                  {task.message && <small>{task.message}</small>}
-                </li>
-              ))}
-            </ol>
+            <header>
+              {view.done || unconfirmed ? (
+                data?.status === "succeeded" || data?.status === "no_change" ? (
+                  <CheckCircle2 size={30} />
+                ) : (
+                  <CircleAlert size={30} />
+                )
+              ) : (
+                <LoaderCircle size={30} className="spin" />
+              )}
+              <div>
+                <h2 id="increment-progress-title">
+                  {!session
+                    ? "正在确认工作台状态"
+                    : unconfirmed
+                      ? "本次请求尚未确认"
+                      : data?.status === "stopping"
+                        ? "正在安全停止本次更新"
+                        : view.title}
+                </h2>
+                <p>
+                  {view.done
+                    ? "确认本次结果后即可继续操作"
+                    : "更新期间暂时锁定工作台，请等待本次数据链结束"}
+                </p>
+              </div>
+            </header>
+            <div className="increment-progress-time">
+              <strong>已耗时 {duration(elapsed)}</strong>
+              <span>
+                {session
+                  ? `开始于 ${dateTime(data?.created_at_ms || session.createdAt)}`
+                  : "正在读取服务端增量会话"}
+              </span>
+            </div>
+            {!view.done && (
+              <div className="increment-progress-estimate">
+                {error || discoveryError ? (
+                  "进度连接暂时中断，任务可能仍在后台执行；连接恢复后更新预计时间"
+                ) : view.estimate ? (
+                  <>
+                    预计还需 {duration(view.estimate.remaining_min_ms)}～
+                    {duration(view.estimate.remaining_max_ms)}
+                    <small>
+                      预计结束 {dateTime(view.estimate.expected_finish_at_ms)} ·
+                      基于 {view.estimate.sample_count} 次同类完整任务，仅供参考
+                    </small>
+                  </>
+                ) : (
+                  data?.estimate?.reason ||
+                  "正在确认本次任务，暂无法估计剩余时间"
+                )}
+              </div>
+            )}
+            {(error || discoveryError) && (
+              <div className="increment-progress-error" role="alert">
+                {error || discoveryError}
+                <button
+                  className="btn small"
+                  onClick={() => setRefresh((value) => value + 1)}
+                >
+                  <RefreshCw size={14} />
+                  重新读取
+                </button>
+              </div>
+            )}
+            <div className="increment-progress-current" aria-live="polite">
+              <div className="increment-progress-stage-heading">
+                <strong>
+                  {view.active?.title ||
+                    data?.message ||
+                    "正在确认本次增量请求"}
+                </strong>
+                {!view.done && view.progress !== null && (
+                  <b>{view.progress}%</b>
+                )}
+              </div>
+              <span>{view.active?.message || ""}</span>
+            </div>
+            {!view.done && (
+              <progress
+                aria-label="当前阶段进度"
+                max={100}
+                {...(view.progress === null ? {} : { value: view.progress })}
+              />
+            )}
+            {!!view.tasks.length && (
+              <>
+                <p className="increment-progress-plan">
+                  {data?.attempt_task_id
+                    ? "本次仅处理所选重试步骤及其已授权后续分支；原链其它未完成阶段仍保留。"
+                    : "个股与指数行情 → 行业与题材板块K线 → 盘面补充 → 核验、发布与滚动清理"}
+                </p>
+                <small>
+                  {view.completedLabel}
+                  ；百分比只表示当前实际阶段，后续阶段尚未排队时继续等待
+                </small>
+                <ol className="increment-progress-tasks">
+                  {view.tasks.map((task) => (
+                    <li key={task.job_id}>
+                      <div>
+                        <strong>{task.title}</strong>
+                        <span>
+                          {task.historical_attempt ? "历史尝试 · " : ""}
+                          {statusText[task.status] || task.status}
+                          {typeof task.progress === "number"
+                            ? ` · ${task.progress}%`
+                            : ""}
+                        </span>
+                      </div>
+                      {task.message && <small>{task.message}</small>}
+                    </li>
+                  ))}
+                </ol>
+              </>
+            )}
+            {!!data?.issues?.length && (
+              <div className="increment-progress-error">
+                {data.issues.join("；")}
+              </div>
+            )}
+            {view.done && (
+              <p className="increment-progress-result">
+                {data?.attempt_task_id
+                  ? "本次仅反映重试步骤及其已授权分支的结果；原增量的历史失败与其它未完成阶段仍保留。"
+                  : data?.status === "partial"
+                    ? "已发布的行情可以使用，来源缺口仍保留；详情可在数据中心查看。"
+                    : ["failed", "blocked", "cancelled", "paused"].includes(
+                          data?.status,
+                        )
+                      ? "已发布数据保留。确认后可到数据中心查看原因并手动处理，系统不会自动重启暂停或取消的任务。"
+                      : "本次主行情及已授权后续任务均已结束。"}
+              </p>
+            )}
+            {unconfirmed && (
+              <p className="increment-progress-result">
+                没有把失联或404当作完成，也不会重复提交。可以请服务端核查并关闭未接收的请求；若原请求迟到，将被服务端拒绝，不会另建任务。已有任务仍在执行时保持锁定。
+              </p>
+            )}
+            {!view.done && session?.taskId && data?.locked && (
+              <footer className="increment-progress-controls">
+                <span>已发布数据保留；安全停止后需确认结果。</span>
+                <button
+                  className="btn"
+                  disabled={!!actionBusy || data?.status === "stopping"}
+                  onClick={() => control("pause")}
+                >
+                  {actionBusy === "pause" ? "请求安全暂停…" : "暂停本次更新"}
+                </button>
+                <button
+                  className="btn"
+                  disabled={!!actionBusy || data?.status === "stopping"}
+                  onClick={() => control("cancel")}
+                >
+                  {actionBusy === "cancel" ? "请求安全取消…" : "取消本次更新"}
+                </button>
+              </footer>
+            )}
+            {(view.done || unconfirmed) && (
+              <footer>
+                <button
+                  className="btn primary"
+                  disabled={!!actionBusy}
+                  onClick={acknowledge}
+                >
+                  {actionBusy === "acknowledge"
+                    ? "服务端确认中…"
+                    : unconfirmed
+                      ? "核查并关闭未接收请求"
+                      : "确认结果，继续使用"}
+                </button>
+              </footer>
+            )}
           </>
-        )}
-        {!!data?.issues?.length && (
-          <div className="increment-progress-error">
-            {data.issues.join("；")}
-          </div>
-        )}
-        {view.done && (
-          <p className="increment-progress-result">
-            {data?.attempt_task_id
-              ? "本次仅反映重试步骤及其已授权分支的结果；原增量的历史失败与其它未完成阶段仍保留。"
-              : data?.status === "partial"
-                ? "已发布的行情可以使用，来源缺口仍保留；详情可在数据中心查看。"
-                : ["failed", "blocked", "cancelled", "paused"].includes(
-                      data?.status,
-                    )
-                  ? "已发布数据保留。确认后可到数据中心查看原因并手动处理，系统不会自动重启暂停或取消的任务。"
-                  : "本次主行情及已授权后续任务均已结束。"}
-          </p>
-        )}
-        {unconfirmed && (
-          <p className="increment-progress-result">
-            没有把失联或404当作完成，也不会重复提交。可以请服务端核查并关闭未接收的请求；若原请求迟到，将被服务端拒绝，不会另建任务。已有任务仍在执行时保持锁定。
-          </p>
-        )}
-        {!view.done && session?.taskId && data?.locked && (
-          <footer className="increment-progress-controls">
-            <span>已发布数据保留；安全停止后需确认结果。</span>
-            <button
-              className="btn"
-              disabled={!!actionBusy || data?.status === "stopping"}
-              onClick={() => control("pause")}
-            >
-              {actionBusy === "pause" ? "请求安全暂停…" : "暂停本次更新"}
-            </button>
-            <button
-              className="btn"
-              disabled={!!actionBusy || data?.status === "stopping"}
-              onClick={() => control("cancel")}
-            >
-              {actionBusy === "cancel" ? "请求安全取消…" : "取消本次更新"}
-            </button>
-          </footer>
-        )}
-        {(view.done || unconfirmed) && (
-          <footer>
-            <button
-              className="btn primary"
-              disabled={!!actionBusy}
-              onClick={acknowledge}
-            >
-              {actionBusy === "acknowledge"
-                ? "服务端确认中…"
-                : unconfirmed
-                  ? "核查并关闭未接收请求"
-                  : "确认结果，继续使用"}
-            </button>
-          </footer>
         )}
       </div>
     </div>,

@@ -15,6 +15,17 @@ import {
 import type { StockNavigation } from "./components/stockNavigation";
 import { MarketOverview, MarketPage } from "./features/market/Market";
 import DragonTiger from "./features/market/DragonTiger";
+import NoonReview from "./features/market/NoonReview";
+import {
+  noonCalendarDates,
+  noonChartDate,
+  noonInitialDate,
+  noonSectorSelection,
+} from "./features/market/noonPresentation";
+import {
+  noonCloseChartDate,
+  noonCloseSectorSelection,
+} from "./features/market/noonCloseNavigation";
 import Topics from "./features/topics/Topics";
 import Strategies from "./features/strategies/Strategies";
 import Tracking from "./features/tracking/Tracking";
@@ -29,6 +40,13 @@ import SectorMembersDialog from "./features/sector/SectorMembersDialog";
 import { globalSectorSelection } from "./components/searchPresentation";
 import { marketInstallationState } from "./components/marketInstallation";
 import IncrementProgressDialog from "./components/IncrementProgressDialog";
+type SectorSelection = NonNullable<ReturnType<typeof globalSectorSelection>> & {
+  topic: {
+    noon_scope_notice?: string;
+    noon_snapshot_date?: string;
+    noon_chart_as_of?: string;
+  };
+};
 // Opening a stock drawer keeps the active market list's inputs unchanged.
 const MemoMarketPage = memo(MarketPage);
 const currentRoute = () => {
@@ -69,7 +87,7 @@ export default function App() {
   const [incrementBlocked, setIncrementBlocked] = useState(true);
   const [route, setRoute] = useState(currentRoute),
     [visited, setVisited] = useState<string[]>([currentRoute()]),
-    [date, setDate] = useState(""),
+    [date, setDate] = useState(() => noonInitialDate(location.hash)),
     [stock, setStock] = useState<{
       id: string;
       asOf?: string;
@@ -77,13 +95,13 @@ export default function App() {
       navigation?: StockNavigation;
     } | null>(null),
     [context, setContext] = useState<Record<string, Row>>({}),
-    [sector, setSector] =
-      useState<ReturnType<typeof globalSectorSelection>>(null),
+    [sector, setSector] = useState<SectorSelection | null>(null),
     [theme, setTheme] = useState(readInitialTheme),
     [toast, setToast] = useState<{ message: string; kind: string } | null>(
       null,
     );
   const previousPublishedDate = useRef<string | undefined>(undefined);
+  const noonDates = useApi<Row>(route === "noon" ? "/market/noon/dates" : null);
   const notify = useCallback(
     (message: string, kind = "success") => setToast({ message, kind }),
     [],
@@ -139,16 +157,28 @@ export default function App() {
     );
   }, [route]);
   const dates = [...(bootstrap.data?.market_dates || [])].sort();
+  const shellDates =
+    route === "noon" ? noonCalendarDates(dates, noonDates.data) : dates;
+  const noonChartAsOf = noonChartDate(dates, date);
   const openStock = useCallback(
-    (id: string, navigation?: StockNavigation) =>
+    (id: string, navigation?: StockNavigation) => {
+      if (route === "noon" && !noonChartAsOf) {
+        notify("该午评日期之前没有已发布收盘行情，不能打开历史图表。", "error");
+        return;
+      }
       setStock(
         stockSelectionForOpen(
           id,
           navigation,
-          marketRoutes.has(route) ? date || undefined : undefined,
+          route === "noon"
+            ? noonChartAsOf || undefined
+            : marketRoutes.has(route)
+              ? date || undefined
+              : undefined,
         ),
-      ),
-    [route, date],
+      );
+    },
+    [route, date, noonChartAsOf, notify],
   );
   const openTrackedStock = useCallback(
     (id: string, round: Row, navigation?: StockNavigation) => {
@@ -159,6 +189,17 @@ export default function App() {
     },
     [],
   );
+  const openNoonCloseStock = (id: string, closeDay: string) => {
+    const asOf = noonCloseChartDate(dates, date, closeDay);
+    if (!asOf || route !== "noon") {
+      notify(
+        "该日收盘行情尚未发布或与当前回看日期不符，暂不能打开图表。",
+        "error",
+      );
+      return;
+    }
+    setStock(stockSelectionForOpen(id, undefined, asOf));
+  };
   const openSectorMemberStock = useCallback(
     (id: string, asOf: string, navigation?: StockNavigation) => {
       // A sector's index entry price must never become a member stock's baseline.
@@ -219,8 +260,74 @@ export default function App() {
             />
           </Panel>
         );
+      if (key !== "noon" && date && !dates.includes(date))
+        return (
+          <Panel title="该日盘后行情尚未发布">
+            <Empty
+              title={`${date} 尚无已发布的盘后行情`}
+              description="当前共享观察日可能只有午评快照。午间最新价不会替代收盘价，其他盘面不会悄悄回退到更早一天。"
+              action={
+                <div className="button-group">
+                  <button className="btn" onClick={() => navigate("noon")}>
+                    查看当日午评
+                  </button>
+                  <button
+                    className="btn primary"
+                    onClick={() =>
+                      bootstrap.data?.data_date &&
+                      setDate(bootstrap.data.data_date)
+                    }
+                  >
+                    回到已发布盘后日
+                  </button>
+                </div>
+              }
+            />
+          </Panel>
+        );
     }
     switch (key) {
+      case "noon":
+        return (
+          <NoonReview
+            date={date}
+            onDate={setDate}
+            onDatesChanged={noonDates.reload}
+            onStock={openStock}
+            chartDate={noonChartAsOf || undefined}
+            onCloseStock={openNoonCloseStock}
+            onCloseSector={(row, view, closeDay) => {
+              const next = noonCloseSectorSelection(
+                row,
+                date,
+                dates,
+                closeDay,
+                view,
+              );
+              if (!next) {
+                notify(
+                  "收盘回看缺少明确板块来源或同日已发布行情，暂不能打开详情。",
+                  "error",
+                );
+                return;
+              }
+              setStock(null);
+              setSector(next);
+            }}
+            onSector={(row, view) => {
+              const next = noonSectorSelection(row, date, dates, view);
+              if (!next) {
+                notify(
+                  "该板块缺少明确来源代码或午评之前的已发布行情，暂不能打开详情。",
+                  "error",
+                );
+                return;
+              }
+              setStock(null);
+              setSector(next);
+            }}
+          />
+        );
       case "market":
       case "indices":
         return (
@@ -301,7 +408,7 @@ export default function App() {
           onNavigate={navigate}
           date={date}
           onDate={setDate}
-          dates={dates}
+          dates={shellDates}
           dataDate={bootstrap.data?.data_date}
           dataLoading={bootstrap.loading}
           dataError={!!bootstrap.error}
@@ -349,7 +456,9 @@ export default function App() {
                 topicCode: sector.topic.topic_code,
                 name: sector.topic.name,
                 proxy: false,
-                notice: `当前目录中的${sector.topic.kind === "industry" ? "行业" : "概念"}板块；历史成分需单独核验`,
+                notice:
+                  sector.topic.noon_scope_notice ||
+                  `当前目录中的${sector.topic.kind === "industry" ? "行业" : "概念"}板块；历史成分需单独核验`,
               }}
               date={sector.date}
               onClose={() => setSector(null)}
@@ -360,7 +469,9 @@ export default function App() {
               topic={sector.topic}
               date={sector.date}
               businessDate={bootstrap.data?.data_date}
+              contextNotice={sector.topic.noon_scope_notice}
               initialScope={
+                !sector.topic.noon_snapshot_date &&
                 sector.date === bootstrap.data?.data_date
                   ? "latest"
                   : "historical"
@@ -369,12 +480,25 @@ export default function App() {
               onChart={(asOf) =>
                 setSector({
                   ...sector,
-                  date: asOf || sector.date,
+                  date:
+                    sector.topic.noon_chart_as_of &&
+                    (asOf || sector.date) > sector.topic.noon_chart_as_of
+                      ? sector.topic.noon_chart_as_of
+                      : asOf || sector.date,
                   view: "chart",
                 })
               }
               onStock={(id, quoteDate, navigation) =>
-                setStock(stockSelectionForOpen(id, navigation, quoteDate))
+                setStock(
+                  stockSelectionForOpen(
+                    id,
+                    navigation,
+                    sector.topic.noon_chart_as_of &&
+                      quoteDate > sector.topic.noon_chart_as_of
+                      ? sector.topic.noon_chart_as_of
+                      : quoteDate,
+                  ),
+                )
               }
             />
           ))}
@@ -398,6 +522,12 @@ export default function App() {
         )}
         <IncrementProgressDialog
           onBlockedChange={setIncrementBlocked}
+          onNoonFinished={(task) => {
+            if (typeof task.target_date === "string") setDate(task.target_date);
+            noonDates.reload();
+            window.dispatchEvent(new Event("workbench-noon-unlocked"));
+            navigate("noon");
+          }}
           onFinished={() => {
             window.dispatchEvent(new Event("workbench-increment-unlocked"));
             bootstrap.reload();

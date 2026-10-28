@@ -1,5 +1,7 @@
 # Analytics API v1
 
+炸板结构、题材分布和昨日炸板反馈的追加只读字段见[炸板研究契约](broken-board-analysis.md)。
+
 根路径 `/api/v1`。成功直接返回业务对象；列表通常为 `{items,total}`，错误为 HTTP 4xx/5xx 与 `{detail}`。数值未知为 null，条件为 true/false/null；百分比 `3.2` 表示 `3.2%`。所有 GET 只读本地已发布数据，不触发来源取数。工作区写接口见 [Workspace API](workspace-api.md)。
 
 ## 日期、身份与覆盖

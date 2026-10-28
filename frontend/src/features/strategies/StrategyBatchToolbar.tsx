@@ -27,11 +27,21 @@ import {
   batchItemTrackingText,
 } from "./strategyBatches";
 import type { StrategyTarget } from "./strategyBatches";
+import {
+  stockRunGate,
+  stockRunnableStrategies,
+  stockSelectableStrategies,
+} from "./stockRunAvailability";
 import "./StrategyBatchToolbar.css";
 
-export function useBatchStrategySelection(strategies: Row[]) {
+export function useBatchStrategySelection(
+  strategies: Row[],
+  target: StrategyTarget = "sector",
+) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const ids = strategies
+  const ids = (
+    target === "stock" ? stockSelectableStrategies(strategies) : strategies
+  )
     .filter((item) => !item.archived)
     .map((item) => String(item.strategy_id));
   const signature = JSON.stringify(ids);
@@ -47,7 +57,9 @@ export function useBatchStrategySelection(strategies: Row[]) {
     selected,
     ids,
     toggle: (id: string) =>
-      setSelected((old) => nextStrategySelection(old, [id], !old.has(id))),
+      setSelected((old) =>
+        ids.includes(id) ? nextStrategySelection(old, [id], !old.has(id)) : old,
+      ),
     setAll: (checked: boolean) =>
       setSelected((old) => nextStrategySelection(old, ids, checked)),
   };
@@ -79,10 +91,31 @@ export default function StrategyBatchToolbar({
     [error, setError] = useState(""),
     [pending, setPending] = useState(""),
     [selectedBatch, setSelectedBatch] = useState("");
-  const ids = strategies
+  const [reusedReceipt, setReusedReceipt] = useState<Row | null>(null);
+  const completedCount =
+    target === "stock"
+      ? strategies.filter(
+          (item) => !item.archived && stockRunGate(item).completed,
+        ).length
+      : 0;
+  const ids = (
+    target === "stock" ? stockSelectableStrategies(strategies) : strategies
+  )
     .filter((item) => !item.archived)
     .map((item) => String(item.strategy_id));
   const selectedIds = ids.filter((id) => selection.has(id));
+  const computeIds =
+    target === "stock"
+      ? stockRunnableStrategies(strategies).map((item) =>
+          String(item.strategy_id),
+        )
+      : ids;
+  const selectedComputeCount = computeIds.filter((id) =>
+    selection.has(id),
+  ).length;
+  const historyBatches = reusedReceipt
+    ? mergeBatch(batches, reusedReceipt)
+    : batches;
   const label = target === "stock" ? "个股" : "行业 / 概念";
   const callbacks = useRef({ onUpdated, onOpenRun, onBusyChange });
   callbacks.current = { onUpdated, onOpenRun, onBusyChange };
@@ -91,7 +124,7 @@ export default function StrategyBatchToolbar({
     mounted = useRef(true);
   const active = batches.find(batchActive),
     current =
-      batches.find((item) => item.batch_id === selectedBatch) ||
+      historyBatches.find((item) => item.batch_id === selectedBatch) ||
       active ||
       batches[0];
   const batchBusy = !!active || !!pending;
@@ -157,6 +190,9 @@ export default function StrategyBatchToolbar({
     submitting.current = true;
     setPending("submit");
     setError("");
+    const readingSaved =
+      target === "stock" &&
+      (scope === "all" ? computeIds.length === 0 : selectedComputeCount === 0);
     const attempt = batchRequest(
       request.current,
       target,
@@ -166,24 +202,36 @@ export default function StrategyBatchToolbar({
       requestKey,
     );
     request.current = attempt;
-    startTaskRequest({
-      request_key: attempt.body.request_key,
-      kind: "selection_batch",
-      target_type: target,
-      title: `批量${label}策略`,
-    });
+    if (!readingSaved)
+      startTaskRequest({
+        request_key: attempt.body.request_key,
+        kind: "selection_batch",
+        target_type: target,
+        title: `批量${label}策略`,
+      });
     try {
       const batch = await post("/strategy-batches", attempt.body);
       if (mounted.current) {
-        setBatches((old) => mergeBatch(old, batch));
+        if (batch.receipt_only === true) setReusedReceipt(batch);
+        else {
+          setReusedReceipt(null);
+          setBatches((old) => mergeBatch(old, batch));
+          void feed.refresh();
+        }
         setSelectedBatch(batch.batch_id || "");
         request.current = null;
-        void feed.refresh();
+        callbacks.current.onUpdated();
       }
     } catch (problem: any) {
-      if (mounted.current) setError(problem.message);
+      if (mounted.current) {
+        setError(problem.message);
+        if (problem.status === 409) {
+          callbacks.current.onUpdated();
+          void feed.refresh();
+        }
+      }
     } finally {
-      finishTaskRequest(attempt.body.request_key);
+      if (!readingSaved) finishTaskRequest(attempt.body.request_key);
       submitting.current = false;
       if (mounted.current) setPending("");
     }
@@ -262,8 +310,10 @@ export default function StrategyBatchToolbar({
           onClick={() => execute("selected")}
         >
           {pending === "submit" ? <Spinner /> : <Play size={14} />}
-          执行所选并跟踪（
-          {selectedIds.length}）
+          {target === "stock" && selectedComputeCount === 0
+            ? "查看所选今日结果"
+            : "执行所选并跟踪"}
+          （{selectedIds.length}）
         </button>
         <button
           className="btn primary"
@@ -271,47 +321,76 @@ export default function StrategyBatchToolbar({
           onClick={() => execute("all")}
         >
           <Layers3 size={14} />
-          一键执行并跟踪（{ids.length}）
+          {target === "stock" && computeIds.length === 0
+            ? "查看全部今日结果"
+            : "一键执行并跟踪"}
+          （{ids.length}）
         </button>
       </div>
+      {completedCount > 0 && (
+        <p className="muted">
+          本行情日已有 {completedCount}{" "}
+          个策略已有今日结果，点击直接读取；仅新增、修改规则或数据变化的策略重新计算。已保存命中不会因此自动加入跟踪。
+        </p>
+      )}
       {current && (
         <div className={`strategy-batch-progress ${current.status}`}>
           <div className="strategy-batch-progress-heading">
-            <strong>{batchStatusLabel(current.status)}</strong>
+            <strong>
+              {current.receipt_only
+                ? "已读取今日结果"
+                : batchStatusLabel(current.status)}
+            </strong>
             <span
               className={`strategy-batch-mode ${tracking?.automatic ? "automatic" : "legacy"}`}
             >
               {tracking?.label}
             </span>
             <span>
-              {current.business_date} · 已处理 {current.completed_count ?? 0}/
-              {current.total_count ?? "—"} · 成功 {current.succeeded_count ?? 0}
-              {Number.isSafeInteger(current.completed_steps) &&
-              Number.isSafeInteger(current.total_steps) &&
-              current.total_steps > 0
-                ? ` · 步骤 ${current.completed_steps}/${current.total_steps}`
-                : ""}
-              {current.failed_count ? ` · 失败 ${current.failed_count}` : ""}
-              {current.cancelled_count
-                ? ` · 取消 ${current.cancelled_count}`
-                : ""}
+              {current.receipt_only ? (
+                `${current.business_date} · ${current.total_count} 个已保存结果 · 未新建任务`
+              ) : (
+                <>
+                  {current.business_date} · 已处理{" "}
+                  {current.completed_count ?? 0}/{current.total_count ?? "—"} ·
+                  成功 {current.succeeded_count ?? 0}
+                  {Number.isSafeInteger(current.completed_steps) &&
+                  Number.isSafeInteger(current.total_steps) &&
+                  current.total_steps > 0
+                    ? ` · 步骤 ${current.completed_steps}/${current.total_steps}`
+                    : ""}
+                  {current.failed_count
+                    ? ` · 失败 ${current.failed_count}`
+                    : ""}
+                  {current.cancelled_count
+                    ? ` · 取消 ${current.cancelled_count}`
+                    : ""}
+                </>
+              )}
             </span>
             <b>
-              {measured === null
-                ? "进度待回报"
-                : `${Number(measured.toFixed(1))}%`}
+              {current.receipt_only
+                ? "已保存"
+                : measured === null
+                  ? "进度待回报"
+                  : `${Number(measured.toFixed(1))}%`}
             </b>
           </div>
           <p
             className={`strategy-batch-tracking-summary ${tracking?.automatic ? "automatic" : "legacy"}`}
           >
             {tracking?.text}
+            {!current.receipt_only &&
+              current.skipped_completed_count > 0 &&
+              ` · 另有 ${current.skipped_completed_count} 个今日结果可直接查看`}
           </p>
-          <progress
-            max={100}
-            {...(measured === null ? {} : { value: measured })}
-            aria-label="批量策略真实进度"
-          />
+          {!current.receipt_only && (
+            <progress
+              max={100}
+              {...(measured === null ? {} : { value: measured })}
+              aria-label="批量策略真实进度"
+            />
+          )}
           <div className="strategy-batch-current">
             <span>
               {current.current_strategy
@@ -356,17 +435,22 @@ export default function StrategyBatchToolbar({
                 取消批次
               </button>
             )}
-            <button
-              className="icon-btn"
-              title="读取批次状态"
-              aria-label="读取批次状态"
-              disabled={!!pending}
-              onClick={() => void feed.refresh()}
-            >
-              <RefreshCw size={13} />
-            </button>
+            {!current.receipt_only && (
+              <button
+                className="icon-btn"
+                title="读取批次状态"
+                aria-label="读取批次状态"
+                disabled={!!pending}
+                onClick={() => void feed.refresh()}
+              >
+                <RefreshCw size={13} />
+              </button>
+            )}
           </div>
-          <details>
+          <details
+            key={current.batch_id}
+            open={current.receipt_only ? true : undefined}
+          >
             <summary>查看每个策略的执行结果</summary>
             <div className="strategy-batch-items">
               {list(current.items).map((item, index) => (
@@ -375,7 +459,7 @@ export default function StrategyBatchToolbar({
                   <div>
                     <strong>{item.name}</strong>
                     <small>
-                      规则 V{item.version} ·{" "}
+                      {item.version != null ? `规则 V${item.version} · ` : ""}
                       {item.stage || batchStatusLabel(item.status)}
                       {item.error ? ` · ${item.error}` : ""}
                     </small>
@@ -387,7 +471,9 @@ export default function StrategyBatchToolbar({
                     </small>
                   </div>
                   <span className={`strategy-batch-item-state ${item.status}`}>
-                    {batchStatusLabel(item.status)}
+                    {item.result_reused
+                      ? "已保存"
+                      : batchStatusLabel(item.status)}
                   </span>
                   {item.run_id && (
                     <button
@@ -402,9 +488,30 @@ export default function StrategyBatchToolbar({
               ))}
             </div>
           </details>
+          {!current.receipt_only && current.skipped_completed_count > 0 && (
+            <details>
+              <summary>
+                查看已有今日结果（{current.skipped_completed_count}）
+              </summary>
+              <div className="strategy-batch-items">
+                {list(current.skipped_completed).map((item) => (
+                  <div key={item.strategy_id}>
+                    <strong>{item.name}</strong>
+                    <small>已保存 · 未重新计算或自动入池</small>
+                    <button
+                      className="btn small"
+                      onClick={() => callbacks.current.onOpenRun(item)}
+                    >
+                      查看结果
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       )}
-      {batches.length > 1 && (
+      {historyBatches.length > 1 && (
         <label className="strategy-batch-history">
           批次记录
           <select
@@ -412,11 +519,15 @@ export default function StrategyBatchToolbar({
             value={current?.batch_id || ""}
             onChange={(event) => setSelectedBatch(event.target.value)}
           >
-            {batches.map((batch) => (
+            {historyBatches.map((batch) => (
               <option key={batch.batch_id} value={batch.batch_id}>
                 {batch.business_date} · {batchStatusLabel(batch.status)} ·{" "}
                 {batch.completed_count}/{batch.total_count} ·{" "}
-                {batch.auto_add === true ? "筛选并跟踪" : "仅筛选"}
+                {batch.receipt_only
+                  ? "已保存结果"
+                  : batch.auto_add === true
+                    ? "筛选并跟踪"
+                    : "仅筛选"}
               </option>
             ))}
           </select>

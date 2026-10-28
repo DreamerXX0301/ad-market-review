@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { list, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
+import type { Column } from "../../components/UI";
 import {
   createStockNavigation,
   type StockNavigation,
@@ -16,7 +17,9 @@ import {
 import { num, percent, tone } from "../../lib/format";
 import MarketDataCoverage from "./MarketDataCoverage";
 import WatchlistButton from "../watchlist/WatchlistButton";
+import MemberDailyLimitBadge from "./MemberDailyLimitBadge";
 import "../sector/MemberDialog.css";
+import "./TopicMembersContent.css";
 import { SortableMarketTable } from "./MarketTable";
 import { filterMarketMembers } from "./marketPresentation";
 import {
@@ -32,19 +35,34 @@ import {
   MemberRecentLimitCell,
 } from "./MarketMemberMetrics";
 
-export default function TopicMembersDialog({
-  topic,
-  date,
-  onClose,
-  onStock,
-  onChart,
-}: {
+type TopicMembersContentProps = {
   topic: Row;
   date: string;
-  onClose: () => void;
   onStock: (id: string, navigation?: StockNavigation) => void;
   onChart?: () => void;
-}) {
+  compact?: boolean;
+  /** Only the modal wrapper supplies a close action and its existing footer. */
+  onClose?: () => void;
+};
+
+const compactMemberColumns = new Set([
+  "name",
+  "board",
+  "change_pct",
+  "change_30d_pct",
+  "limit_up_ytd",
+]);
+
+/** One read model serves the existing dialog and the inline sector explorer. */
+export function TopicMembersContent({
+  topic,
+  date,
+  onStock,
+  onChart,
+  compact = false,
+  onClose,
+}: TopicMembersContentProps) {
+  const [showAllMetrics, setShowAllMetrics] = useState(false);
   const [query, setQuery] = useState("");
   const [board, setBoard] = useState("all");
   const [scope, setScope] = useState<TopicMemberScope>("historical");
@@ -61,14 +79,123 @@ export default function TopicMembersDialog({
   const filtered = filterMarketMembers(items, query, board);
   const snapshotDay =
     data?.membership_snapshot_day || data?.membership_observed_date;
+  const columns: Column[] = [
+    { key: "name" },
+    {
+      key: "board",
+      title: "上市板块",
+      render: (_value: unknown, row: Row) => <MemberBoardCell row={row} />,
+    },
+    {
+      key: "change_pct",
+      title: scope === "latest" ? "行情日涨幅" : "所选日涨幅",
+      render: (value: unknown, row: Row) => (
+        <div className="market-member-day-change">
+          <span
+            className={tone(value)}
+            title={
+              row.quote_available === false
+                ? "该日缺少可核验报价，未使用其它日报价替代"
+                : `报价日 ${row.quote_date || quoteDate || "未知"}`
+            }
+          >
+            {percent(value)}
+          </span>
+          <MemberDailyLimitBadge row={row} date={quoteDate || date} />
+        </div>
+      ),
+    },
+    {
+      key: "change_30d_pct",
+      title: "近30交易日涨幅",
+      render: (_value: unknown, row: Row) => (
+        <MemberReturnCell row={row} field="change_30d_pct" />
+      ),
+    },
+    {
+      key: "return_ytd_pct",
+      title: "年内涨幅",
+      render: (_value: unknown, row: Row) => (
+        <MemberReturnCell row={row} field="return_ytd_pct" />
+      ),
+    },
+    {
+      key: "return_mtd_pct",
+      title: "本月涨幅",
+      render: (_value: unknown, row: Row) => (
+        <MemberReturnCell row={row} field="return_mtd_pct" />
+      ),
+    },
+    {
+      key: "limit_up_ytd",
+      title: "年内涨停次数",
+      render: (_value: unknown, row: Row) => <MemberYearLimitCell row={row} />,
+    },
+    {
+      key: "last_limit_up_date",
+      title: "最近涨停 / 交易日距离",
+      render: (_value: unknown, row: Row) => (
+        <MemberRecentLimitCell row={row} date={quoteDate || date} />
+      ),
+    },
+    { key: "close", title: "收盘价" },
+    { key: "amount", title: "成交额" },
+    {
+      key: "turnover_rate",
+      title: "换手率",
+      render: (value: unknown, row: Row) => (
+        <span
+          className={
+            typeof value === "number" && Number.isFinite(value) ? "" : "muted"
+          }
+          title={[
+            row.turnover_rate_reason ||
+              (value == null
+                ? "该日换手率缺少可核验来源，未补0"
+                : "所选盘面日换手率"),
+            row.turnover_rate_source
+              ? "来源 " + row.turnover_rate_source
+              : null,
+          ]
+            .filter(Boolean)
+            .join("；")}
+        >
+          {typeof value === "number" && Number.isFinite(value)
+            ? num(value, 2) + "%"
+            : "—"}
+        </span>
+      ),
+    },
+    { key: "quote_date", title: "报价日" },
+    {
+      key: "actions",
+      title: "自选",
+      sortable: false,
+      render: (_value: unknown, row: Row) => (
+        <WatchlistButton
+          instrumentId={row.instrument_id}
+          sourceKind="sector"
+          sourceId={topic.topic_code || topic.topic_id}
+          sourceName={topic.name}
+          observedDate={quoteDate || undefined}
+          compact
+        />
+      ),
+    },
+  ];
+  const visibleColumns =
+    compact && !showAllMetrics
+      ? columns.filter((column) => compactMemberColumns.has(column.key))
+      : columns;
   return (
-    <Modal
-      title={`${topic.name || "分类"} · 成分股`}
-      onClose={onClose}
-      wide
-      escapeUnderStock
-    >
-      <div className="modal-body market-members-body">
+    <>
+      <div
+        className={
+          compact
+            ? "market-members-body market-members-inline"
+            : "modal-body market-members-body"
+        }
+      >
         {onChart && (
           <div
             className="segmented global-sector-tabs"
@@ -199,28 +326,40 @@ export default function TopicMembersDialog({
                   : "成员数量待核验"}
             </span>
           </div>
-          <div
-            className="market-members-board-filter"
-            role="group"
-            aria-label="按上市板块筛选成分股"
-          >
-            {[
-              ["all", "全部"],
-              ["main", "主板"],
-              ["chinext", "创业板"],
-              ["star", "科创板"],
-              ["beijing", "北交所"],
-              ["unknown", "未知"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                className={board === value ? "active" : ""}
-                aria-pressed={board === value}
-                onClick={() => setBoard(value)}
-              >
-                {label}
-              </button>
-            ))}
+          <div className={compact ? "member-inline-board-row" : undefined}>
+            <div
+              className="market-members-board-filter"
+              role="group"
+              aria-label="按上市板块筛选成分股"
+            >
+              {[
+                ["all", "全部"],
+                ["main", "主板"],
+                ["chinext", "创业板"],
+                ["star", "科创板"],
+                ["beijing", "北交所"],
+                ["unknown", "未知"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  className={board === value ? "active" : ""}
+                  aria-pressed={board === value}
+                  onClick={() => setBoard(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {compact && (
+              <label className="checkbox-label market-members-metric-toggle">
+                <input
+                  type="checkbox"
+                  checked={showAllMetrics}
+                  onChange={(event) => setShowAllMetrics(event.target.checked)}
+                />
+                完整指标
+              </label>
+            )}
           </div>
         </div>
         {!path ? (
@@ -236,7 +375,8 @@ export default function TopicMembersDialog({
               scope +
               (topic.topic_id || topic.topic_code || topic.name) +
               query +
-              board
+              board +
+              (compact && !showAllMetrics ? "compact" : "full")
             }
             rows={filtered}
             defaultSort={{ key: "change_pct", order: "desc" }}
@@ -245,106 +385,7 @@ export default function TopicMembersDialog({
                 ? `当前成员按 ${quoteDate || "已核验行情日"} 报价排序；成员采集日独立标明，不表示过去归属`
                 : `仅对 ${date} 已留存成员和该日已返回报价排序，不使用今日成员回填历史；缺失报价不补0`
             }
-            columns={[
-              { key: "name" },
-              {
-                key: "board",
-                title: "上市板块",
-                render: (_value: unknown, row: Row) => (
-                  <MemberBoardCell row={row} />
-                ),
-              },
-              {
-                key: "change_pct",
-                title: scope === "latest" ? "行情日涨幅" : "所选日涨幅",
-                render: (value: unknown, row: Row) => (
-                  <span
-                    className={tone(value)}
-                    title={
-                      row.quote_available === false
-                        ? "该日缺少可核验报价，未使用其它日报价替代"
-                        : `报价日 ${row.quote_date || quoteDate || "未知"}`
-                    }
-                  >
-                    {percent(value)}
-                  </span>
-                ),
-              },
-              {
-                key: "return_ytd_pct",
-                title: "年内涨幅",
-                render: (_value: unknown, row: Row) => (
-                  <MemberReturnCell row={row} field="return_ytd_pct" />
-                ),
-              },
-              {
-                key: "return_mtd_pct",
-                title: "本月涨幅",
-                render: (_value: unknown, row: Row) => (
-                  <MemberReturnCell row={row} field="return_mtd_pct" />
-                ),
-              },
-              {
-                key: "limit_up_ytd",
-                title: "年内涨停次数",
-                render: (_value: unknown, row: Row) => (
-                  <MemberYearLimitCell row={row} />
-                ),
-              },
-              {
-                key: "last_limit_up_date",
-                title: "最近涨停 / 交易日距离",
-                render: (_value: unknown, row: Row) => (
-                  <MemberRecentLimitCell row={row} date={quoteDate || date} />
-                ),
-              },
-              { key: "close", title: "收盘价" },
-              { key: "amount", title: "成交额" },
-              {
-                key: "turnover_rate",
-                title: "换手率",
-                render: (value: unknown, row: Row) => (
-                  <span
-                    className={
-                      typeof value === "number" && Number.isFinite(value)
-                        ? ""
-                        : "muted"
-                    }
-                    title={[
-                      row.turnover_rate_reason ||
-                        (value == null
-                          ? "该日换手率缺少可核验来源，未补0"
-                          : "所选盘面日换手率"),
-                      row.turnover_rate_source
-                        ? "来源 " + row.turnover_rate_source
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join("；")}
-                  >
-                    {typeof value === "number" && Number.isFinite(value)
-                      ? num(value, 2) + "%"
-                      : "—"}
-                  </span>
-                ),
-              },
-              { key: "quote_date", title: "报价日" },
-              {
-                key: "actions",
-                title: "自选",
-                sortable: false,
-                render: (_value: unknown, row: Row) => (
-                  <WatchlistButton
-                    instrumentId={row.instrument_id}
-                    sourceKind="sector"
-                    sourceId={topic.topic_code || topic.topic_id}
-                    sourceName={topic.name}
-                    observedDate={quoteDate || undefined}
-                    compact
-                  />
-                ),
-              },
-            ]}
+            columns={visibleColumns}
             onStock={quoteDate ? onStock : undefined}
             onStockNavigate={
               quoteDate
@@ -378,15 +419,42 @@ export default function TopicMembersDialog({
           />
         )}
       </div>
-      <div className="modal-footer">
-        <span className="muted">
-          默认按行情日涨幅降序；点击股票查看 {quoteDate || "已核验行情日"}{" "}
-          截止K线。
-        </span>
-        <button className="btn" onClick={onClose}>
-          关闭
-        </button>
-      </div>
+      {onClose && (
+        <div className="modal-footer">
+          <span className="muted">
+            默认按行情日涨幅降序；点击股票查看 {quoteDate || "已核验行情日"}{" "}
+            截止K线。
+          </span>
+          <button className="btn" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function TopicMembersDialog({
+  topic,
+  date,
+  onClose,
+  onStock,
+  onChart,
+}: TopicMembersContentProps & { onClose: () => void }) {
+  return (
+    <Modal
+      title={`${topic.name || "分类"} · 成分股`}
+      onClose={onClose}
+      wide
+      escapeUnderStock
+    >
+      <TopicMembersContent
+        topic={topic}
+        date={date}
+        onStock={onStock}
+        onChart={onChart}
+        onClose={onClose}
+      />
     </Modal>
   );
 }

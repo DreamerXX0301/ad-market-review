@@ -226,7 +226,7 @@ def _reference_pattern(identifiers):
 
 def _database_scope(job_id):
     """Read only tiny identities plus streamed business strings; no JSON trees."""
-    from app.services.market_storage_gc import _IGNORED, _closure
+    from app.services.market_storage_gc import _IGNORED, _NOON_CLOSE_PROVENANCE, _closure
     from app.services.workspace_common import current
     with connect() as connection:
         connection.execute('BEGIN')
@@ -251,9 +251,11 @@ def _database_scope(job_id):
         pattern = _reference_pattern(known)
         roots = {row[0] for row in connection.execute('SELECT snapshot_id FROM published_head')}
         roots.update(row[0] for row in connection.execute('SELECT snapshot_id FROM retention_pin WHERE expires_at_ms IS NULL OR expires_at_ms>?', (now_ms(),)))
+        from app.services.noon_close_integrity import validate_close_reviews
+        validate_close_reviews(connection)
         unicode_fallback = False
         for (table,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
-            if table.startswith('sqlite_') or table in _IGNORED or table in ('supplement_retention_run', 'supplement_retention_file'):
+            if table.startswith('sqlite_') or table in _IGNORED or table in _NOON_CLOSE_PROVENANCE or table in ('supplement_retention_run', 'supplement_retention_file'):
                 continue
             quoted_table = '"'+table.replace('"', '""')+'"'
             fields = [row[1] for row in connection.execute('PRAGMA table_info('+quoted_table+')') if 'snapshot' in row[1] or row[1].endswith('_json')]

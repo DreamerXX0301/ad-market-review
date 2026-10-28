@@ -137,10 +137,14 @@ def test_forward_strategy_warm_history_skips_full_reads_and_keeps_full_checks(ws
     path='/api/v1/strategies/'+created.json()['strategy_id']+'/runs'
     cold=client.post(path,json={});assert cold.status_code==200,cold.text
     assert cache.cache_stats()['entries']==2
+    other=client.post('/api/v1/strategies',json={'name':'共享暖历史窗口','price_basis':'forward','definition':event(.5)})
+    assert other.status_code==200,other.text
+    warm_path='/api/v1/strategies/'+other.json()['strategy_id']+'/runs'
     def never(*args,**kwargs):pytest.fail('warm verified summary/history must not reread full quotes or actions')
     monkeypatch.setattr(market,'bars',never)
     monkeypatch.setattr(market,'actions_for_instruments',never)
-    warm=client.post(path,json={});assert warm.status_code==200,warm.text
+    warm=client.post(warm_path,json={});assert warm.status_code==200,warm.text
+    assert warm.json()['run_id']!=cold.json()['run_id']
     for old,new in zip(cold.json()['items'],warm.json()['items']):
         assert {k:v for k,v in old.items() if k!='run_id'}=={k:v for k,v in new.items() if k!='run_id'}
 

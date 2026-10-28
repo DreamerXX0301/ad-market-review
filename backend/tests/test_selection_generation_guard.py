@@ -23,6 +23,11 @@ def test_same_day_generation_switch_rejects_new_run_and_preserves_saved_run(ws,m
     strategy=make_strategy(client)
     saved=client.post('/api/v1/strategies/'+strategy['strategy_id']+'/runs',json={}).json()
     before=client.get('/api/v1/strategy-runs/'+saved['run_id']).json()
+    # A genuine rule edit admits a new run; switching a published input during
+    # that admitted computation must still fail without rewriting the old run.
+    changed_rule=client.patch('/api/v1/strategies/'+strategy['strategy_id'],
+        json={'definition':{'field':'volume_ratio','op':'>=','value':2.5}})
+    assert changed_rule.status_code==200,changed_rule.text
     old_evaluate=strategies.evaluate;changed=False
     def evaluate(*args,**kwargs):
         nonlocal changed

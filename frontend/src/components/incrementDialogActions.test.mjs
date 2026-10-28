@@ -45,6 +45,7 @@ const replacements = {
   "../lib/format": encode("export const dateTime=String,duration=String,statusText={};"),
   "./incrementSession": sessionProbe,
   "./incrementProgress": encode(progressSource),
+  "./NoonProgressContent": encode("export default function Noon(){return '午评采集分支';}export const useNoonRunProgress=()=>globalThis.__noonGate||({session:null,data:null,error:\"\",retry(){}});"),
 };
 let source = ts.transpileModule(await fs.readFile(new URL("./IncrementProgressDialog.tsx", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -109,5 +110,13 @@ assert.deepEqual(requests, [["/sync/session/acknowledge", {
 }]]);
 assert.deepEqual(cleared, ["unreceived"]);
 assert.ok(requests.every(([path]) => !/sync\/tasks|resume|retry/.test(path)));
+globalThis.__noonGate={session:{date:"2026-10-28",requestKey:"noon"},data:null,error:"",retry(){}};
+const noonOnly=render(null,null);
+assert.match(noonOnly,/午评采集分支/);
+assert.equal((noonOnly.match(/increment-progress-backdrop/g)||[]).length,1,"noon reuses the sole lock portal");
+const both=render(active);
+assert.ok(!both.includes("午评采集分支"),"increment owns the content when both tasks exist");
+assert.match(both,/正在更新盘后数据/);
+delete globalThis.__noonGate;
 delete globalThis.document;
 console.log("Increment dialog actions: server acknowledgement, failed confirmation, safe controls and unreceived request closure passed");

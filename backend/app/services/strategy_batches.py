@@ -49,6 +49,46 @@ def _request(payload):
     return target, scope, ids, key
 
 
+def _saved_results_receipt(connection, completed, day, request_key):
+    """Expose retained results without inventing jobs, calculations or tracking."""
+    identifiers = [item['run_id'] for item in completed]
+    records = {row['run_id']: dict(row) for row in connection.execute(
+        '''SELECT r.run_id,r.strategy_version,r.created_at_ms,r.completed_at_ms,
+                  (SELECT e.details_json FROM job_event e
+                   WHERE e.job_id=r.job_id AND e.stage='completed'
+                   ORDER BY e.seq DESC LIMIT 1) completion_json
+           FROM selection_run r WHERE r.run_id IN ('''+','.join('?' for _ in identifiers)+')', identifiers)}
+    items = []
+    for index, completed_item in enumerate(completed):
+        record = records[completed_item['run_id']]
+        summary = json.loads(record['completion_json']) if record['completion_json'] else {}
+        matched = summary.get('matched')
+        if isinstance(matched, bool) or not isinstance(matched, int) or matched < 0:
+            matched = None
+        items.append({**completed_item, 'version': record['strategy_version'], 'sequence': index+1,
+                      'job_id': None, 'tracking_job_id': None, 'status': 'no_change',
+                      'stage': '今日已保存结果，未自动入池', 'progress': 100,
+                      'selection_status': 'no_change', 'tracking_status': None,
+                      'result_reused': True, 'matched_count': matched,
+                      'added_count': None, 'skipped_count': None, 'ignored_count': None, 'error': None})
+    stamp = max(record['completed_at_ms'] or record['created_at_ms'] for record in records.values())
+    return {'batch_id': 'saved-results-'+digest([day, identifiers])[:32],
+            'job_id': None, 'request_key': request_key, 'target_type': 'stock',
+            'receipt_only': True, 'result_reused': True, 'status': 'no_change',
+            'business_date': day, 'items': items, 'auto_add': False, 'plan_version': None,
+            'mode_label': '今日已保存结果，未自动入池',
+            'message': '所选策略当前条件已有今日结果，直接查看原结果；未新建筛选任务或自动加入跟踪。',
+            'skipped_completed': completed, 'skipped_completed_count': len(completed),
+            'requested_count': len(completed), 'total_count': len(items),
+            'completed_count': len(items), 'succeeded_count': len(items),
+            'failed_count': 0, 'cancelled_count': 0, 'current_strategy': None,
+            'matched_count': (sum(item['matched_count'] or 0 for item in items)
+                              if any(item['matched_count'] is not None for item in items) else None),
+            'added_count': None, 'skipped_count': None, 'ignored_count': None,
+            'completed_steps': 0, 'total_steps': 0, 'progress': 100,
+            'created_at_ms': stamp, 'finished_at_ms': stamp}
+
+
 def create_batch(payload):
     target, scope, ids, key = _request(payload)
     request = {'target_type': target, 'scope': scope, 'strategy_ids': ids}
@@ -65,12 +105,6 @@ def create_batch(payload):
             if previous['kind'] != 'source_check' or previous_parameters.get('operation') != OPERATION or previous_parameters.get('request_signature') != expected:
                 raise HTTPException(409, '此请求标识已用于不同任务，请使用新的请求标识')
             return _view(connection, previous)
-        running = connection.execute("SELECT 1 FROM job WHERE status='running' LIMIT 1").fetchone()
-        if running: tasks.active_task_conflict(connection)
-        existing = connection.execute("SELECT * FROM job WHERE kind='source_check' AND status IN ('queued','running','paused') AND json_extract(parameters_json,'$.operation')=? ORDER BY created_at_ms LIMIT 1", (OPERATION,)).fetchone()
-        if existing:
-            active = _view(connection, existing)
-            raise HTTPException(409, {'message': f'已有策略批次未结束：{active["completed_count"]}/{active["total_count"]}。请查看原批次，继续或取消后再新建。', 'batch_id': existing['job_id']})
         table = 'strategy' if target == 'stock' else 'sector_strategy'
         if scope == 'all':
             ids = [row['strategy_id'] for row in connection.execute('SELECT strategy_id FROM '+table+' WHERE archived=0 ORDER BY created_at_ms,strategy_id')]
@@ -80,7 +114,10 @@ def create_batch(payload):
         local_inputs = {'topic_revision_signature': _topic_revision_signature(connection)} if target == 'stock' else {}
         if target == 'stock':
             from .strategies import ensure_evaluator_version
-            read_strategy = lambda identifier: ensure_evaluator_version(connection, identifier)
+            from .stock_daily_once import availability, read_context
+            eligibility = read_context(connection, day=day, dependencies=dependencies,
+                                       primary_snapshot_id=primary, strategy_ids=ids)
+            read_strategy = lambda identifier: ensure_evaluator_version(connection, identifier, run_context=eligibility)
         else:
             from .sector_strategies import _view as sector_view, _version, EVALUATOR_VERSION
             def read_strategy(identifier):
@@ -89,11 +126,36 @@ def create_batch(payload):
                     _version(connection, identifier, strategy['version']+1, strategy)
                     strategy = sector_view(connection, identifier)
                 return strategy
-        frozen = []
+        frozen = []; skipped_completed = []
         for identifier in ids:
             strategy = read_strategy(identifier)
             if strategy['archived']: raise HTTPException(409, '已归档策略不能加入批量运行')
+            if target == 'stock':
+                state = availability(connection, strategy, context=eligibility)
+                if state['state'] == 'completed':
+                    skipped_completed.append({'strategy_id': identifier, 'name': strategy['name'],
+                                              'run_id': state['completed_run_id'], 'business_date': day})
+                    continue
+                if not state['can_run']:
+                    raise HTTPException(409, {'message': state['reason'] or '当前个股策略暂不能运行，请刷新后重试',
+                                              'strategy_id': identifier, 'business_date': day})
             frozen.append({'strategy_id': identifier, 'name': strategy['name'], 'version': strategy['version']})
+        if skipped_completed:
+            run_ids = [item['run_id'] for item in skipped_completed]
+            versions = {row['run_id']: row['strategy_version'] for row in connection.execute(
+                'SELECT run_id,strategy_version FROM selection_run WHERE run_id IN ('+','.join('?' for _ in run_ids)+')', run_ids)}
+            for item in skipped_completed:
+                item['version'] = versions[item['run_id']]
+        if not frozen:
+            return _saved_results_receipt(connection, skipped_completed, day, key)
+        # Reading existing results above has no execution conflict. New work
+        # still follows the single worker and unfinished-batch admission rules.
+        running = connection.execute("SELECT 1 FROM job WHERE status='running' LIMIT 1").fetchone()
+        if running: tasks.active_task_conflict(connection)
+        existing = connection.execute("SELECT * FROM job WHERE kind='source_check' AND status IN ('queued','running','paused') AND json_extract(parameters_json,'$.operation')=? ORDER BY created_at_ms LIMIT 1", (OPERATION,)).fetchone()
+        if existing:
+            active = _view(connection, existing)
+            raise HTTPException(409, {'message': f'已有策略批次未结束：{active["completed_count"]}/{active["total_count"]}。请查看原批次，继续或取消后再新建。', 'batch_id': existing['job_id']})
         identifier = new_id('strategy-batch'); stamp = now_ms()
         for index, strategy in enumerate(frozen):
             job_id = new_id('job'); request_key = f'{identifier}:{index+1}'
@@ -115,11 +177,14 @@ def create_batch(payload):
         parameters = {'operation': OPERATION, 'target_type': target, 'scope': scope, 'auto_add': True, 'plan_version': PLAN_VERSION,
                       'request_signature': signature, 'business_date': day, 'input_snapshots': dependencies,
                       'primary_snapshot_id': primary, 'items': frozen, **local_inputs}
+        if target == 'stock':
+            parameters.update(skipped_completed=skipped_completed, requested_count=len(ids))
         # Parent is inserted last. The queue also explicitly withholds parents
         # until every persisted child is terminal, independent of timestamps.
         connection.execute("INSERT INTO job(job_id,request_key,logical_key,kind,target_date,parameters_json,parameters_hash,status,planned_batches,created_at_ms) VALUES(?,?,?,'source_check',?,?,?,'queued',100,?)",
                            (identifier, key, identifier, day, dumps(parameters), digest(parameters), stamp))
-        tasks.append_event(connection, identifier, 'queued', f'已保存{len(frozen)}个策略的筛选及自动入池顺序；已跟踪与手工忽略项跳过', details={'actual_completed_batches': 0, 'actual_total_batches': len(frozen)})
+        skipped_notice = f'；已跳过{len(skipped_completed)}个当日同规则已完成策略' if skipped_completed else ''
+        tasks.append_event(connection, identifier, 'queued', f'已保存{len(frozen)}个策略的筛选及自动入池顺序；已跟踪与手工忽略项跳过'+skipped_notice, details={'actual_completed_batches': 0, 'actual_total_batches': len(frozen)})
         return _view(connection, connection.execute('SELECT * FROM job WHERE job_id=?', (identifier,)).fetchone())
 
 
@@ -174,6 +239,10 @@ def _view(connection, parent):
     if status == 'queued' and (current_item or completed_steps): status = 'running'
     return {'batch_id': parent['job_id'], 'job_id': parent['job_id'], 'request_key': parent['request_key'], 'target_type': parameters['target_type'],
             'status': status, 'business_date': parameters['business_date'], 'items': items,
+            **({'skipped_completed': parameters.get('skipped_completed', []),
+                'skipped_completed_count': len(parameters.get('skipped_completed', [])),
+                'requested_count': parameters.get('requested_count', len(items)+len(parameters.get('skipped_completed', [])))}
+               if parameters['target_type'] == 'stock' else {}),
             'auto_add': automatic,
             'plan_version': parameters.get('plan_version'),
             **{key: (sum(item[key] or 0 for item in items) if any(item[key] is not None for item in items) else None)

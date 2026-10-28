@@ -48,6 +48,8 @@ import LimitLadder from "./LimitLadder";
 import TopicMembersDialog from "./TopicMembersDialog";
 import { latestMemberTopicCode } from "./topicMemberScope";
 import SectorChartDialog from "./SectorChartDialog";
+import SectorExplorer from "./SectorExplorer";
+import BrokenBoardAnalysis, { BrokenBoardSummary } from "./BrokenBoardAnalysis";
 import { sectorChartTarget } from "./sectorChartPresentation";
 import type { SectorChartSelection } from "./sectorChartPresentation";
 import { ExplainedMetric, MetricHelp } from "./MetricHelp";
@@ -297,9 +299,9 @@ export function MarketOverview({
             sub="专门事件数据 · 缺失不推算"
           />
           <Stat
-            label="炸板家数"
+            label="炸板池样本"
             value={integer(data?.broken_count)}
-            sub="日内触板后未封住"
+            sub="来源当日池 · 非开板总次数"
           />
           <Stat
             label="行情覆盖"
@@ -360,6 +362,14 @@ export function MarketOverview({
           firstBoardCoverage={data.first_board_feedback_coverage || {}}
           date={date}
           snapshotId={data.snapshot_id}
+        />
+      )}
+      {!indicesOnly && data?.broken_board_analysis && (
+        <BrokenBoardSummary
+          data={data.broken_board_analysis}
+          date={date}
+          snapshotId={data.snapshot_id}
+          onStock={onStock}
         />
       )}
       {!indicesOnly && (
@@ -440,7 +450,7 @@ export function MarketOverview({
           </div>
           <div className="two-col">
             <Panel
-              title="分歧最大 · 炸板池前五"
+              title="炸板池前五"
               subtitle="当日炸板池样本 · 按开板次数、成交额排序"
             >
               <SortableMarketTable
@@ -561,7 +571,7 @@ const pageDetails: Record<
     columns: ["name", "value", "change_pct", "description"],
   },
   sectors: {
-    title: "行业与题材强弱",
+    title: "行业与概念强弱",
     desc: "分类体系与成员范围明确，行业和概念不混为同一种排名。",
     columns: [
       "name",
@@ -808,6 +818,9 @@ export function MarketPage({
   const isQuoteBoard = route === "sectors" || conceptFlow;
   const quoteSummary = sectorQuoteSummary(tableData, kind, level);
   const fundsSummary = industryFundsSummary(data);
+  const breadthHistoryToday = (data?.history || []).find(
+    (row: Row) => row.date === date,
+  );
   const entries = Object.entries(summary)
     .filter(
       () =>
@@ -862,6 +875,7 @@ export function MarketPage({
           outlook={!!data?.market_outlook}
           statistics={!!data?.sentiment}
           feedback={!!data}
+          brokenBoard={!!data?.broken_board_analysis}
           history={data?.history?.length > 0}
         >
           {result.error && (
@@ -942,6 +956,14 @@ export function MarketPage({
               </Panel>
             )
           )}
+          {data?.broken_board_analysis && (
+            <BrokenBoardAnalysis
+              data={data.broken_board_analysis}
+              date={date}
+              snapshotId={data.snapshot_id}
+              onStock={onStock}
+            />
+          )}
           {data && (
             <section
               id="emotion-ladder-feedback"
@@ -959,16 +981,36 @@ export function MarketPage({
             </section>
           )}
           {data?.history?.length > 0 && (
-            <details className="market-emotion-details" id="emotion-history">
+            <details
+              className="market-emotion-details"
+              id="emotion-history"
+              open
+            >
               <summary>展开沪深市场广度历史走势</summary>
               <Panel
                 title="沪深市场广度走势"
                 subtitle="已留存沪深可比样本，不含北交所 · 上涨 / 下跌家数 · 参考线 500 / 3,000"
               >
+                <div
+                  className="market-breadth-latest"
+                  aria-label="当前观察日市场广度"
+                >
+                  <strong>{date} · 当前观察日</strong>
+                  <span className="up">
+                    上涨家数 <b>{integer(breadthHistoryToday?.up)}</b>
+                  </span>
+                  <span className="down">
+                    下跌家数 <b>{integer(breadthHistoryToday?.down)}</b>
+                  </span>
+                  {!breadthHistoryToday && (
+                    <span className="muted">该日广度待核验</span>
+                  )}
+                </div>
                 <EChart
                   height={310}
                   option={{
                     animation: false,
+                    color: ["#ed6865", "#39bc9b"],
                     tooltip: { trigger: "axis", confine: true },
                     legend: {
                       data: ["上涨家数", "下跌家数"],
@@ -996,6 +1038,7 @@ export function MarketPage({
                         type: "line",
                         showSymbol: false,
                         data: (data?.history || []).map((r: Row) => r.up),
+                        itemStyle: { color: "#ed6865" },
                         lineStyle: { color: "#ed6865", width: 1.5 },
                         markLine: {
                           symbol: "none",
@@ -1010,6 +1053,7 @@ export function MarketPage({
                         type: "line",
                         showSymbol: false,
                         data: (data?.history || []).map((r: Row) => r.down),
+                        itemStyle: { color: "#39bc9b" },
                         lineStyle: { color: "#39bc9b", width: 1.2 },
                       },
                     ],
@@ -1021,6 +1065,17 @@ export function MarketPage({
           {data?.sentiment && <EmotionSources sentiment={data.sentiment} />}
         </EmotionPageNavigation>
       </div>
+    );
+  if (route === "sectors")
+    return (
+      <SectorExplorer
+        date={date}
+        data={data}
+        loading={result.loading}
+        error={result.error}
+        onReload={result.reload}
+        onStock={onStock}
+      />
     );
   return (
     <div className="page-stack">

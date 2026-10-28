@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import ts from "typescript";
+
+const source = await fs.readFile(new URL("./noonReadingScroll.ts", import.meta.url),"utf8");
+const compiled = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText;
+const {noonReadingScrollOwner,noonReadingActivationLine,noonReadingAtLine,noonManualScrollKey}=await import("data:text/javascript;base64,"+Buffer.from(compiled).toString("base64"));
+const document={body:{},documentElement:{},defaultView:{getComputedStyle(node){return {overflowY:node.overflow};}}};
+function node(overflow,parentElement,scrollHeight=2000,clientHeight=800){return {overflow,parentElement,scrollHeight,clientHeight,ownerDocument:document};}
+const main=node("visible",document.body), shell=node("visible",main), page=node("visible",shell);
+assert.equal(noonReadingScrollOwner(page),null,"the current document-scrolling AppShell never treats .app-main's moving bounding rect as a viewport");
+main.overflow="auto";
+assert.equal(noonReadingScrollOwner(page),main,"a future constrained AppShell uses its actual element scroll owner");
+const nested=node("scroll",main); shell.parentElement=nested;
+assert.equal(noonReadingScrollOwner(page),nested,"the nearest actual scroll owner wins");
+nested.scrollHeight=nested.clientHeight;
+assert.equal(noonReadingScrollOwner(page),main,"an overflow declaration without scrollable content is not the owner");
+assert.equal(noonReadingActivationLine(0,81,0),109);
+assert.equal(noonReadingActivationLine(-2400,81,0),109,"document movement cannot drag the active threshold off-screen");
+assert.equal(noonReadingActivationLine(150,81,60),238,"nested visible viewport and compact guide are respected");
+const anchors=[{id:"overview",top:-2400},{id:"previous",top:-800},{id:"ladder",top:103},{id:"directions",top:1400},{id:"afternoon",top:2400}];
+assert.equal(noonReadingAtLine(anchors,109),"ladder");
+assert.equal(noonReadingAtLine(anchors.map(row=>({...row,top:row.top+700})),109),"previous","scrolling upward follows the actual preceding section");
+assert.equal(noonReadingAtLine(anchors.map(row=>({...row,top:row.top-1400})),109),"directions");
+assert.equal(noonReadingAtLine([{id:"first",top:500},{id:"last",top:710}],109,800),"last","the final visible section can be selected when the document cannot scroll it to the top");
+assert.equal(noonReadingAtLine([],109),null);
+assert.equal(noonReadingAtLine([{id:"bad",top:NaN}],109),null);
+for(const key of ["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," ","Tab"]) assert.equal(noonManualScrollKey({key}),true,key);
+assert.equal(noonManualScrollKey({key:"ArrowDown",altKey:true}),false,"Alt+arrows remain explicit reading navigation");
+assert.equal(noonManualScrollKey({key:"ArrowDown"},true),false,"editing does not cancel reading navigation through a caret key");
+assert.equal(noonManualScrollKey({key:"ArrowDown",ctrlKey:true}),false);
+assert.equal(noonManualScrollKey({key:"a"}),false);
+console.log("noon scrollspy: document/element ownership, stable viewport threshold, upward/downward/end positions and manual intent passed");
