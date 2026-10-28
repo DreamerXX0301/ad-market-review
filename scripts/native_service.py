@@ -91,6 +91,29 @@ class Process:
     token: str
 
 
+def linux_lock_owners(lines, identity):
+    """Kernel FLOCK owners, not processes that merely have the file open."""
+    owners = set()
+    for line in lines.splitlines():
+        fields = line.split()
+        if len(fields) < 8 or fields[1] == '->':
+            continue  # A blocked waiter does not own the lock.
+        device = fields[5].split(':')
+        if len(device) != 3:
+            continue
+        try:
+            actual = (int(device[0], 16), int(device[1], 16), int(device[2]))
+        except ValueError:
+            continue
+        if actual != identity:
+            continue
+        require(fields[1:4] == ['FLOCK', 'ADVISORY', 'WRITE'] and fields[6:8] == ['0', 'EOF'],
+                'worker 数据锁不是可核验的完整文件 FLOCK 写锁')
+        require(fields[4].isdigit() and int(fields[4]) > 0, 'worker 数据锁缺少可核验的进程所有者')
+        owners.add(int(fields[4]))
+    return sorted(owners)
+
+
 class Inspector:
     """Read process identity internally; never print commands or environments."""
 
@@ -105,7 +128,7 @@ class Inspector:
         return not state or state.startswith('Z')
 
     def read(self, pid):
-        if type(pid) is not int or pid <= 1:
+        if type(pid) is not int or pid <= 0:
             return None
         if self.dead(pid):
             return None
@@ -165,7 +188,9 @@ class Inspector:
 
     def workers(self, workspace):
         result = []
-        for line in self.run(['ps', '-axo', 'pid=,command=']).splitlines():
+        # Linux otherwise truncates long release paths at the terminal width,
+        # hiding the trailing module name and missing an existing writer.
+        for line in self.run(['ps', '-ww', '-axo', 'pid=,command=']).splitlines():
             if '-m app.worker' not in line:
                 continue
             process = self.read(int(line.strip().split(None, 1)[0]))
@@ -176,6 +201,12 @@ class Inspector:
         return result
 
     def lock_holders(self, path):
+        if sys.platform.startswith('linux'):
+            metadata = Path(path).stat()
+            identity = (os.major(metadata.st_dev), os.minor(metadata.st_dev), metadata.st_ino)
+            # Docker/PID namespaces can make lsof's fd list differ from lock
+            # ownership. Missing or unreadable kernel evidence fails closed.
+            return linux_lock_owners(Path('/proc/locks').read_text(), identity)
         return sorted({int(line[1:]) for line in self.run(['lsof', '-nP', '-Fp', str(path)]).splitlines()
                        if line.startswith('p') and int(line[1:]) != os.getpid()})
 

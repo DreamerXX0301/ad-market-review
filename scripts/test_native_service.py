@@ -117,6 +117,7 @@ def test_cold_start_status_and_idempotent_repeat_preserve_database(installation,
     monkeypatch.setenv('http_proxy', 'http://127.0.0.1:9')
     monkeypatch.setenv('NO_PROXY', '')
     monkeypatch.setenv('no_proxy', '')
+    monkeypatch.setenv('COLUMNS', '40')
     item = installation
     before = native.sha(item['database'])
     first = item['service']().execute('start')
@@ -316,3 +317,72 @@ def test_process_exiting_between_ps_and_cwd_is_not_a_foreign_process(monkeypatch
 
     monkeypatch.setattr(inspector, 'run', run)
     assert inspector.read(os.getpid()) is None
+
+
+def test_linux_kernel_lock_owner_is_not_a_file_opener():
+    lines = '1: FLOCK ADVISORY WRITE 42 00:af:99 0 EOF\n2: -> FLOCK ADVISORY WRITE 88 00:af:99 0 EOF\n'
+    assert native.linux_lock_owners(lines, (0, 175, 99)) == [42]
+    assert native.linux_lock_owners(lines, (0, 175, 100)) == []
+
+
+@pytest.mark.parametrize('record', ['OFDLCK ADVISORY WRITE -1', 'POSIX ADVISORY WRITE 42', 'FLOCK ADVISORY READ 42'])
+def test_linux_unsupported_or_ownerless_lock_refused(record):
+    with pytest.raises(native.ServiceError, match='锁'):
+        native.linux_lock_owners('1: ' + record + ' 00:af:99 0 EOF', (0, 175, 99))
+
+
+def test_linux_pid_one_is_inspected_instead_of_treated_as_dead(monkeypatch):
+    if not sys.platform.startswith('linux'):
+        pytest.skip('Linux PID namespace boundary')
+    process = native.Inspector().read(1)
+    assert process and process.pid == 1
+
+
+def test_linux_extra_open_file_descriptor_is_not_a_second_lock_owner(installation):
+    if not sys.platform.startswith('linux'):
+        pytest.skip('Linux kernel FLOCK ownership boundary')
+    item = installation
+    first = item['service']().execute('start')
+    lock = item['data'] / 'work/worker.lock'
+    opener = native.subprocess.Popen([sys.executable, '-c',
+        "import sys,time; f=open(sys.argv[1],'rb'); print('ready',flush=True); time.sleep(60)", str(lock)],
+        stdout=native.subprocess.PIPE, text=True)
+    try:
+        assert opener.stdout.readline().strip() == 'ready'
+        again = item['service']().execute('start')
+        assert opener.poll() is None
+    finally:
+        opener.terminate()
+        opener.wait(timeout=4)
+    assert again['processes'] == first['processes'] and again['started'] == []
+
+
+def test_foreign_true_lock_owner_is_never_stopped(installation):
+    path = installation['data'] / 'work/worker.lock'
+    holder = native.subprocess.Popen([sys.executable, '-c',
+        "import fcntl,sys,time; f=open(sys.argv[1],'a+b'); fcntl.flock(f,fcntl.LOCK_EX); print('ready',flush=True); time.sleep(60)", str(path)],
+        stdout=native.subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == 'ready'
+        with pytest.raises(native.ServiceError, match='锁'):
+            installation['service']().execute('start')
+        assert holder.poll() is None
+    finally:
+        holder.terminate()
+        holder.wait(timeout=4)
+
+
+def test_linux_unreadable_lock_evidence_fails_closed(installation, monkeypatch):
+    path = installation['data'] / 'work/worker.lock'
+    path.touch()
+    original = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if str(self) == '/proc/locks':
+            raise PermissionError('synthetic namespace restriction')
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(native.sys, 'platform', 'linux')
+    monkeypatch.setattr(Path, 'read_text', read_text)
+    with pytest.raises(PermissionError):
+        native.Inspector().lock_holders(path)
