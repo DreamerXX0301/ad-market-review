@@ -139,8 +139,13 @@ def read_view(day=None):
         configured = _configured(connection)
         initialized = tasks.initialization_state(connection)['main_published']
         dates = _dates(connection)
+        from app.services.auction_automation import activity_fields
+        automatic = activity_fields(connection, ledger['job_id']) if ledger else {}
     state = 'available' if retained else job['status'] if job else 'not_collected'
     can_retry = bool(window['allowed'] and configured and initialized and state == 'failed')
+    waiting_retry = automatic.get('automation_state') == 'waiting_retry' and automatic.get('automatic_control') is True
+    if waiting_retry:
+        can_retry = False
     can_resume = bool(window['allowed'] and configured and initialized and state == 'paused')
     reason = window['reason']
     if ledger and retained:
@@ -149,6 +154,8 @@ def read_view(day=None):
         reason = '当天竞价任务已显式取消，不自动继续或创建第二个任务'
     elif ledger:
         reason = '当天已有原任务；失败可在原09:25至09:30窗口手动重试，暂停仅手动继续'
+        if waiting_retry:
+            reason = '自动计划正在等待来源终态后有界重试原任务；可显式暂停或取消，不重复创建'
     elif not initialized:
         reason = '请先完成行情初始化，以便冻结严格前日背景'
     elif not configured:
@@ -158,13 +165,14 @@ def read_view(day=None):
             'capture_window': window, 'capture_reason': reason,
             'can_capture': bool(window['allowed'] and not ledger and configured and initialized),
             'can_retry': can_retry, 'can_resume': can_resume, 'locked_for_day': ledger is not None, 'state': state,
+            **automatic,
             'task': tasks.task_view(ledger['job_id']) if ledger else None,
             'snapshot': _snapshot_view(retained), 'available_dates': dates,
             'preparation': preparation_view(day, now) if retained is None else None,
             'scope': '手动冻结的最多100只观察股票竞价样本；不代表全市场，不产生策略或跟踪信号。'}
 
 
-def create_capture(payload):
+def create_capture(payload, *, automation=None):
     if not isinstance(payload, dict) or set(payload) - {'date', 'request_key', 'instrument_ids'}:
         raise HTTPException(422, '竞价采集只接受日期、请求标识与可选完整股票代码数组')
     day = day_value(payload.get('date', now_china().date().isoformat()))
@@ -178,6 +186,10 @@ def create_capture(payload):
             connection.execute('BEGIN IMMEDIATE')
             from app.services.increment_access import require_business_unlocked
             require_business_unlocked(connection)
+            automatic = None
+            if automation is not None:
+                from app.services.auction_automation import creation_authorization
+                automatic = creation_authorization(connection, automation, day)
             prior = connection.execute('SELECT * FROM job WHERE request_key=?', (request_key,)).fetchone()
             if prior:
                 parameters = json.loads(prior['parameters_json'])
@@ -199,6 +211,8 @@ def create_capture(payload):
                 params = {'operation': 'auction_snapshot', 'version': VERSION, 'source_id': 'fuyao',
                           'date': day, 'window_end_at': window['end_at'], 'stage': 'final',
                           'instrument_ids': instruments, 'max_symbols': MAX_SYMBOLS}
+                if automatic:
+                    params.update(automatic=True, automation=automatic)
                 identifier = new_id('job')
                 stamp = int(now_china().timestamp() * 1000)
                 logical = digest({'kind': 'source_check', 'target_date': day, 'parameters': params})
@@ -206,8 +220,15 @@ def create_capture(payload):
                     parameters_hash,status,planned_batches,created_at_ms) VALUES(?,?,?,'source_check',?,?,?,'queued',100,?)''',
                     (identifier, request_key, logical, day, dumps(params), digest(params), stamp))
                 connection.execute('INSERT INTO market_auction_capture VALUES(?,?,?,?)', (day, identifier, request_key, stamp))
-                tasks.append_event(connection, identifier, 'queued', '盘前竞价已手动提交，等待唯一工作进程核验终态',
-                                   details={'operation': 'auction_snapshot', 'target_date': day})
+                if automatic:
+                    from app.services.auction_automation import bind_created
+                    connection.execute("UPDATE job SET requested_by='auction_automation' WHERE job_id=?", (identifier,))
+                    bind_created(connection, identifier, automatic, day)
+                tasks.append_event(connection, identifier, 'queued', '已开启的自动计划登记本日竞价，等待唯一worker核验终态'
+                                   if automatic else '盘前竞价已手动提交，等待唯一工作进程核验终态',
+                                   details={'operation': 'auction_snapshot', 'target_date': day,
+                                            'authorization': 'auction_automation' if automatic else 'manual',
+                                            'automation_revision': automatic['revision'] if automatic else None})
     except sqlite3.IntegrityError:
         raise HTTPException(409, '当天竞价已由另一请求提交，请刷新查看原任务') from None
     return tasks.task_view(identifier)
@@ -237,6 +258,8 @@ def requeue_capture(identifier, action):
         expected = 'failed' if action == 'retry' else 'paused'
         if row['status'] != expected:
             raise HTTPException(409, '失败任务请手动重试，暂停任务请手动继续；活动任务不重复提交')
+        from app.services.auction_automation import manual_takeover
+        manual_takeover(connection, identifier)
         connection.execute("""UPDATE job SET status='queued',phase='queued',accepted_batches=0,
             error_summary=NULL,finished_at_ms=NULL,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?""", (identifier,))
         tasks.append_event(connection, identifier, 'queued', '用户手动重试原竞价任务，保留首次冻结名单与前日材料'
@@ -379,6 +402,40 @@ def _freeze_inputs(job, market, previous, known_at, adapter):
 
 
 def execute_capture(job, callback=None):
+    """Automatic attempts reuse the exact manual collector with explicit origin."""
+    if isinstance(job, str):
+        with connect() as connection:
+            saved = connection.execute('SELECT * FROM job WHERE job_id=?', (job,)).fetchone()
+        if not saved:
+            raise ValueError('竞价任务不存在')
+        job = dict(saved)
+    with connect() as connection:
+        retained = connection.execute('SELECT 1 FROM market_auction_snapshot WHERE job_id=?', (job['job_id'],)).fetchone()
+    if retained:
+        return _execute_capture(job, callback)
+    from app.services import auction_automation as automatic
+    enabled = automatic.begin_attempt(job)
+    try:
+        result = _execute_capture(job, callback)
+    except automatic.AuctionNonTradingDay:
+        if not enabled:
+            raise
+        automatic.record_outcome(job, 'skipped')
+        return {'status': 'no_change', 'quality': 'partial', 'message': '来源交易日历确认今天非交易日，自动竞价已跳过'}
+    except automatic.AuctionNotReady:
+        if enabled:
+            automatic.record_outcome(job, 'not_ready')
+        raise
+    except Exception:
+        if enabled:
+            automatic.record_outcome(job, 'failed')
+        raise
+    if enabled:
+        automatic.record_outcome(job, 'available')
+    return result
+
+
+def _execute_capture(job, callback=None):
     if isinstance(job, str):
         with connect() as connection:
             saved = connection.execute('SELECT * FROM job WHERE job_id=?', (job,)).fetchone()
@@ -410,7 +467,10 @@ def execute_capture(job, callback=None):
     except ValueError:
         raise ValueError('竞价来源交易日历结构或日期未通过核验，未请求竞价报价') from None
     if day not in calendar:
-        raise ValueError('来源交易日历不含今天，未采集竞价；节假日不能生成盘前快照')
+        if not calendar or not any(value < day for value in calendar) or not any(value > day for value in calendar):
+            raise ValueError('来源交易日历不含今天且无法证明覆盖今天，保留日历缺口，不认定为非交易日或请求报价')
+        from app.services.auction_automation import AuctionNonTradingDay
+        raise AuctionNonTradingDay('来源交易日历不含今天，未采集竞价；节假日不能生成盘前快照')
     previous = next((value for value in reversed(calendar) if value < day), None)
     if previous is None:
         raise ValueError('来源日历无法确定严格前一交易日，未生成竞价快照')
@@ -425,6 +485,11 @@ def execute_capture(job, callback=None):
     received = collector.sources[-1]['received_at']
     quotes = normalize_snapshot(body, symbols, day, received)
     if not (quotes.get('summary') or {}).get('valid'):
+        data = body.get('data') if isinstance(body, dict) and body.get('code') == 0 else None
+        if (isinstance(data, dict) and quotes.get('source_timestamp', {}).get('state') == 'observed'
+                and (data.get('data_status') == 'not_ready' or data.get('auction_phase') in ('live', 'closed'))):
+            from app.services.auction_automation import AuctionNotReady
+            raise AuctionNotReady('来源竞价终态尚未就绪，未保存成功快照；仅已开启的自动计划可在原窗口有界重试')
         raise ValueError('来源竞价终态尚未就绪或没有有效报价，未保存成功快照；可在09:30前手动重试原任务')
     for item in quotes.get('gaps') or []:
         collector.gap('auction', item if isinstance(item, str) else item.get('reason', '竞价报价存在缺口'))

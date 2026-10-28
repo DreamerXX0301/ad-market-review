@@ -184,6 +184,9 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
         'target_date': item['target_date'], 'created_at_ms': item['created_at_ms'],
         'finished_at_ms': item['finished_at_ms'],
     }
+    if item['kind']=='source_check' and operation=='auction_snapshot':
+        from .auction_automation import activity_fields
+        receipt.update(activity_fields(connection,item['job_id'],parameters=parameters))
     if expand_batch and operation == 'strategy_batch' and item['kind'] == 'source_check':
         from .strategy_batches import _view as batch_view
         batch = batch_view(connection, row)
@@ -238,9 +241,10 @@ def _summary_task_view(connection,row,observed):
 def task_activity():
     """Active work is never hidden behind a history page; recent terminals are bounded."""
     with connect() as connection:
-        active_filter = "status IN ('running','queued') AND NOT (status='queued' AND coalesce(json_extract(parameters_json,'$.operation'),'') IN ('strategy_batch_item','strategy_batch_tracking'))"
+        auction_waiting = "status='failed' AND EXISTS(SELECT 1 FROM market_auction_automation_run ar WHERE ar.job_id=job.job_id AND ar.state='waiting_retry' AND ar.automatic_control=1)"
+        active_filter = "(status IN ('running','queued') OR ("+auction_waiting+")) AND NOT (status='queued' AND coalesce(json_extract(parameters_json,'$.operation'),'') IN ('strategy_batch_item','strategy_batch_tracking'))"
         active = connection.execute('SELECT * FROM job WHERE '+active_filter+" ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END,created_at_ms LIMIT 200").fetchall()
-        recent = connection.execute("SELECT * FROM job WHERE status NOT IN ('running','queued') ORDER BY coalesce(finished_at_ms,created_at_ms) DESC,created_at_ms DESC,rowid DESC LIMIT 5").fetchall()
+        recent = connection.execute("SELECT * FROM job WHERE status NOT IN ('running','queued') AND NOT ("+auction_waiting+") ORDER BY coalesce(finished_at_ms,created_at_ms) DESC,created_at_ms DESC,rowid DESC LIMIT 5").fetchall()
         return {'items': [_activity_view(connection, row) for row in active+recent],
                 'active_count': connection.execute('SELECT count(*) FROM job WHERE '+active_filter).fetchone()[0],
                 'observed_at_ms': now_ms()}
@@ -275,6 +279,10 @@ def _increment_frozen_target(identifier, declared_target):
 def change_task(identifier: str, action: str):
     with connect() as batch_check:
         batch = batch_check.execute("SELECT kind,parameters_json FROM job WHERE job_id=?", (identifier,)).fetchone()
+    if batch and json.loads(batch['parameters_json']).get('operation')=='auction_snapshot' and action in ('pause','cancel'):
+        from .auction_automation import stop_waiting
+        stopped=stop_waiting(identifier,action)
+        if stopped is not None:return stopped
     if batch and json.loads(batch['parameters_json']).get('operation')=='auction_snapshot' and action in ('retry','resume'):
         from .auction_service import requeue_capture
         return requeue_capture(identifier, action)

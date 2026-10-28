@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Sunrise,
 } from "lucide-react";
-import { post, requestKey, useApi, usePageActive } from "../../lib/api";
+import { api, post, requestKey, useApi, usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
   Badge,
@@ -22,6 +22,8 @@ import CopyStockCode from "../../components/CopyStockCode";
 import { amount, integer, num, percent, tone } from "../../lib/format";
 import { noonClock, noonLines, noonRows } from "./noonPresentation";
 import {
+  auctionAutomaticToday,
+  auctionAutomationView,
   auctionCanAct,
   auctionCaptureState,
   auctionCodes,
@@ -32,6 +34,15 @@ import {
   auctionSortRows,
   auctionStates,
 } from "./auctionPresentation";
+import AuctionAutomation from "./AuctionAutomation";
+import {
+  beginAuctionRun,
+  acceptAuctionRun,
+  adoptExistingAuctionRun,
+  auctionRequestRejected,
+  releaseAuctionRun,
+} from "../../components/auctionRunLock";
+import { refreshTaskActivity } from "../../components/taskActivity";
 import "./AuctionReview.css";
 
 const COLUMNS = [
@@ -85,10 +96,14 @@ export default function AuctionReview({
   const result = useApi<Row>(
     `/market/auction${date ? `?date=${encodeURIComponent(date)}` : ""}`,
   );
+  const automaticResult = useApi<Row>("/market/auction/automation");
+  const automation = auctionAutomationView(automaticResult.data);
   const active = usePageActive();
   const notify = useToast();
   const view = result.data?.date === date || !date ? result.data : null;
   const selected = date || view?.date || "";
+  const automaticToday =
+    auctionAutomaticToday(automation) && selected === automation?.today;
   const payload = auctionPayload(view, selected);
   const [closeOpen, setCloseOpen] = useState(false);
   const closeResult = useApi<Row>(
@@ -119,7 +134,12 @@ export default function AuctionReview({
   const currentDay = useRef(selected);
   currentDay.current = selected;
   const parsed = auctionCodes(codes);
-  const control = auctionCaptureState(view, selected, pendingDay === selected);
+  const control = auctionCaptureState(
+    view,
+    selected,
+    pendingDay === selected,
+    automation,
+  );
   const busy = pendingDay === selected;
   const taskId = view?.task?.task_id || view?.task?.job_id;
   useEffect(() => {
@@ -138,6 +158,47 @@ export default function AuctionReview({
     const timer = window.setInterval(result.reload, 20000);
     return () => window.clearInterval(timer);
   }, [active, view?.today, view?.state, selected, result.reload]);
+  useEffect(() => {
+    const unlocked = () => {
+      result.reload();
+      automaticResult.reload();
+      onDatesChanged?.();
+    };
+    window.addEventListener("workbench-auction-unlocked", unlocked);
+    return () =>
+      window.removeEventListener("workbench-auction-unlocked", unlocked);
+  }, [result.reload, automaticResult.reload, onDatesChanged]);
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(automaticResult.reload, 15000);
+    return () => window.clearInterval(timer);
+  }, [active, automaticResult.reload]);
+  useEffect(() => {
+    if (automation?.last_run?.date === selected) result.reload();
+  }, [
+    selected,
+    automation?.last_run?.job_id,
+    automation?.last_run?.state,
+    automation?.last_run?.attempts,
+    result.reload,
+  ]);
+  async function rejectedRun(day: string, key: string, error: any) {
+    if (!auctionRequestRejected(error)) return;
+    try {
+      const checked = await api<Row>(
+        `/market/auction?date=${encodeURIComponent(day)}`,
+      );
+      if (
+        checked.date === day &&
+        checked.task &&
+        adoptExistingAuctionRun(key, checked.task)
+      )
+        return;
+    } catch {
+      /* A definite rejection still releases this local pending request. */
+    }
+    releaseAuctionRun(key);
+  }
   async function capture() {
     if (
       submitting.current ||
@@ -157,13 +218,17 @@ export default function AuctionReview({
       ids: parsed.ids,
     });
     try {
-      await post("/market/auction/jobs", {
+      beginAuctionRun(day, saved.key);
+      const task = await post("/market/auction/jobs", {
         date: day,
         request_key: saved.key,
         ...(saved.ids.length ? { instrument_ids: saved.ids } : {}),
       });
+      acceptAuctionRun(saved.key, task);
+      refreshTaskActivity();
       onDatesChanged?.();
     } catch (error: any) {
+      await rejectedRun(day, saved.key, error);
       if ([400, 401, 403, 409, 422].includes(error.status))
         delete keys.current[day];
       if (currentDay.current === day)
@@ -181,8 +246,15 @@ export default function AuctionReview({
     submitting.current = true;
     setPendingDay(day);
     setSubmitError("");
+    const key =
+      view?.task?.request_key || keys.current[day]?.key || requestKey();
     try {
-      await post(`/tasks/${encodeURIComponent(taskId)}/${action}`);
+      if (action === "retry" || action === "resume")
+        beginAuctionRun(day, key, view!.task);
+      const task = await post(`/tasks/${encodeURIComponent(taskId)}/${action}`);
+      if (action === "retry" || action === "resume")
+        acceptAuctionRun(key, task);
+      refreshTaskActivity();
       notify(
         action === "retry"
           ? "原竞价任务已重新排队，仍使用冻结名单。"
@@ -194,6 +266,8 @@ export default function AuctionReview({
       );
       onDatesChanged?.();
     } catch (error: any) {
+      if (action === "retry" || action === "resume")
+        await rejectedRun(day, key, error);
       if (currentDay.current === day)
         setSubmitError(error.message || "任务操作未完成，请刷新状态。");
     } finally {
@@ -265,7 +339,10 @@ export default function AuctionReview({
       <div className="auction-page-head">
         <div>
           <div className="auction-eyebrow">
-            <Sunrise size={16} /> 开盘前五分钟 · 终态观察
+            <Sunrise size={16} />{" "}
+            {automaticToday
+              ? "服务自动采集 · 终态观察"
+              : "开盘前五分钟 · 终态观察"}
           </div>
           <h1>盘前竞价</h1>
           <p>昨天怎么看，今天竞价怎样，开盘后继续核对什么。</p>
@@ -292,7 +369,12 @@ export default function AuctionReview({
           <button
             className="btn primary"
             onClick={capture}
-            disabled={control.disabled || !!parsed.error || result.loading}
+            disabled={
+              control.disabled ||
+              !!parsed.error ||
+              result.loading ||
+              !automation
+            }
           >
             <Sunrise size={15} />
             {control.label}
@@ -317,6 +399,17 @@ export default function AuctionReview({
       )}
       {submitError && <ErrorBox message={submitError} retry={result.reload} />}
       {result.loading && !view && <Loading />}
+      <AuctionAutomation
+        value={automaticResult.data}
+        loading={automaticResult.loading}
+        error={automaticResult.error}
+        reload={automaticResult.reload}
+        onSaved={(value) => {
+          automaticResult.setData(value);
+          refreshTaskActivity();
+          result.reload();
+        }}
+      />
       <div className="auction-method-strip">
         <div>
           <span>01</span>
@@ -325,8 +418,14 @@ export default function AuctionReview({
         </div>
         <div>
           <span>02</span>
-          <strong>09:25后核对</strong>
-          <p>手动留存终态，比较高低开、竞价额与来源量比。</p>
+          <strong>
+            {automaticToday ? "等待服务09:25后核对" : "09:25后核对"}
+          </strong>
+          <p>
+            {automaticToday
+              ? "服务会自动留存终态，无需守着页面再点一次。"
+              : "手动留存终态，比较高低开、竞价额与来源量比。"}
+          </p>
         </div>
         <div>
           <span>03</span>
@@ -404,7 +503,7 @@ export default function AuctionReview({
           </div>
         </Panel>
       )}
-      {!payload && (
+      {!payload && !automaticToday && (
         <Panel
           title="这次看哪些股票"
           subtitle="最多100只；只观察冻结的候选样本，不代表全市场。"
@@ -501,12 +600,16 @@ export default function AuctionReview({
           <Empty
             title={
               state === "not_collected"
-                ? "先留下一份真实的竞价观察"
+                ? automaticToday
+                  ? "已安排今天的自动竞价"
+                  : "先留下一份真实的竞价观察"
                 : auctionStates[state]
             }
             description={
               state === "not_collected"
-                ? "在交易日09:25后手动采集。没有留存的历史竞价保持空白，当前报价不会补成历史结果。"
+                ? automaticToday
+                  ? "服务运行时，约09:25:05起在09:30前自动采集。浏览器可以关闭，结果就绪后回来查看；错过窗口不补造。"
+                  : "在交易日09:25后手动采集。没有留存的历史竞价保持空白，当前报价不会补成历史结果。"
                 : "当前没有可用的竞价正文。窗口内可按任务状态继续或重试原任务；窗口结束后保留缺口。"
             }
           />
@@ -1092,7 +1195,7 @@ export default function AuctionReview({
         </>
       )}
       <p className="auction-boundary-note">
-        观察边界：这是一次手动终态快照，不提供09:20—09:24的挂单轨迹，也不据未匹配量推断净流入或封单方向。读取页面不会自动采集或开启实时行情。
+        观察边界：竞价只留存当日终态，不提供09:20—09:24的挂单轨迹，也不据未匹配量推断净流入或封单方向。页面只读取设置与结果；服务自动采集遵循已保存授权，不依赖浏览器保持打开。
       </p>
     </div>
   );

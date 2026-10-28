@@ -23,15 +23,20 @@ import {
 } from "./incrementProgress";
 import "./IncrementProgressDialog.css";
 import NoonProgressContent, { useNoonRunProgress } from "./NoonProgressContent";
+import AuctionProgressContent, {
+  useAuctionRunProgress,
+} from "./AuctionProgressContent";
 
 export default function IncrementProgressDialog({
   onFinished,
   onBlockedChange,
   onNoonFinished,
+  onAuctionFinished,
 }: {
   onFinished: () => void;
   onBlockedChange?: (blocked: boolean) => void;
   onNoonFinished?: (task: Row) => void;
+  onAuctionFinished?: (task: Row) => void;
 }) {
   const [session, setSession] = useState(readIncrementSession);
   const [savedData, setData] = useState<Row | null>(null);
@@ -184,7 +189,13 @@ export default function IncrementProgressDialog({
   // One portal owns the workbench lock. Increment discovery/session wins the
   // content branch; switching to noon must not restore inert or keyboard state.
   const noon = useNoonRunProgress(onNoonFinished);
-  const blocked = !!session || checking || !!noon.session || noon.checking;
+  const auction = useAuctionRunProgress(onAuctionFinished);
+  const blocked =
+    !!session ||
+    checking ||
+    !!noon.session ||
+    noon.checking ||
+    !!auction.session;
   useEffect(() => {
     onBlockedChange?.(blocked);
   }, [blocked, onBlockedChange]);
@@ -272,8 +283,21 @@ export default function IncrementProgressDialog({
       (active instanceof HTMLButtonElement && active.disabled)
     )
       dialog.current.focus();
-  }, [blocked, data?.status, actionBusy, noon.data?.status]);
-  if (!session && !checking && !noon.session && !noon.checking) return null;
+  }, [
+    blocked,
+    data?.status,
+    actionBusy,
+    noon.data?.status,
+    auction.data?.status,
+  ]);
+  if (
+    !session &&
+    !checking &&
+    !noon.session &&
+    !noon.checking &&
+    !auction.session
+  )
+    return null;
   const view = incrementProgressView(data);
   const elapsed = data
     ? clock.current.elapsed +
@@ -332,6 +356,8 @@ export default function IncrementProgressDialog({
       >
         {!session && !checking && (noon.session || noon.checking) ? (
           <NoonProgressContent value={noon} />
+        ) : !session && !checking && auction.session ? (
+          <AuctionProgressContent value={auction} />
         ) : (
           <>
             <header>

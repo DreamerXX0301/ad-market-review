@@ -330,7 +330,7 @@ def dispatch(job):
         auction_callback=lambda stage,percent,message=None,details=None:tasks.progress(
             identifier,stage,percent,message,details,lease_owner=job.get('lease_owner'))
         result=execute_capture(job,auction_callback)
-        tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',
+        tasks.finish(identifier,'no_change' if result.get('status')=='no_change' else 'succeeded' if result.get('quality')=='complete' else 'partial',
                      result.get('message','竞价终态已独立留存，缺口见详情'),lease_owner=job.get('lease_owner'))
     elif kind=='source_check' and _parameters(job).get('operation')=='noon_snapshot':
         from app.services.noon_service import execute_capture
@@ -428,6 +428,13 @@ def run(once=False):
                     logger.warning('本地核验补漏稍后重试 %s %s',name,type(error).__name__)
             recover_followups()
             job=tasks.claim_next(owner)
+            if not job:
+                try:
+                    from app.services.auction_automation import tick
+                    tick()
+                except Exception as error:
+                    logger.warning('自动竞价计划核验稍后重试 %s',type(error).__name__)
+                job=tasks.claim_next(owner)
             if not job:
                 if once:return
                 stop.wait(1.5);continue

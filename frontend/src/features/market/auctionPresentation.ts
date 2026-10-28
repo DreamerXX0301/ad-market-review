@@ -67,6 +67,7 @@ export function auctionCaptureState(
   view: AuctionRow | null,
   date: string,
   pending = false,
+  automation?: AuctionRow | null,
 ) {
   if (pending)
     return {
@@ -90,6 +91,13 @@ export function auctionCaptureState(
           : view.state === "available"
             ? "本日竞价已冻结，历史查看只读取这份留存。"
             : "沿用本日原任务，暂停和取消不会自动继续。",
+    };
+  if (auctionAutomaticToday(automation || null) && date === automation?.today)
+    return {
+      disabled: true,
+      label: "等待服务自动采集",
+      reason:
+        "已按服务授权安排本日竞价；无需再次手动提交，可在自动采集设置中关闭后改手动。",
     };
   const allowed =
     date === view.today &&
@@ -259,4 +267,29 @@ export function auctionPreviousFocus(payload: AuctionRow | null) {
       target.notes.push({ label: "原关注依据", text: row.reason });
   }
   return { previous, retained, lines, items: [...focus.values()] };
+}
+
+/** Global service authorization is separate from the shared historical view date. */
+export function auctionAutomationView(value: AuctionRow | null) {
+  if (
+    !value ||
+    value.version !== "auction-automation-v1" ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 0 ||
+    !["off", "once", "daily"].includes(value.mode) ||
+    typeof value.today !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value.today)
+  )
+    return null;
+  return value;
+}
+
+export function auctionAutomaticToday(value: AuctionRow | null): boolean {
+  const automation = auctionAutomationView(value);
+  return (
+    !!automation &&
+    automation.enabled === true &&
+    (automation.mode === "daily" ||
+      (automation.mode === "once" && automation.date === automation.today))
+  );
 }

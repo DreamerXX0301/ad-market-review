@@ -46,6 +46,7 @@ const replacements = {
   "./incrementSession": sessionProbe,
   "./incrementProgress": encode(progressSource),
   "./NoonProgressContent": encode("export default function Noon(){return '午评采集分支';}export const useNoonRunProgress=()=>globalThis.__noonGate||({session:null,data:null,error:\"\",retry(){}});"),
+  "./AuctionProgressContent": encode(`export default function Auction(){return "竞价采集分支";}export const useAuctionRunProgress=()=>globalThis.__auctionGate||({session:null,data:null,error:"",retry(){}});`),
 };
 let source = ts.transpileModule(await fs.readFile(new URL("./IncrementProgressDialog.tsx", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -118,5 +119,14 @@ const both=render(active);
 assert.ok(!both.includes("午评采集分支"),"increment owns the content when both tasks exist");
 assert.match(both,/正在更新盘后数据/);
 delete globalThis.__noonGate;
+globalThis.__auctionGate={session:{date:"2026-10-29",requestKey:"auction"},data:{status:"waiting_retry"},error:"",retry(){}};
+const auctionOnly=render(null,null);
+assert.match(auctionOnly,/竞价采集分支/);
+assert.equal((auctionOnly.match(/increment-progress-backdrop/g)||[]).length,1,"auction reuses the same single modal portal");
+assert.doesNotMatch(render(active),/竞价采集分支/,"increment retains priority over auction");
+delete globalThis.__auctionGate;
+globalThis.__auctionGate={session:null,checking:true,data:null,error:"",retry(){}};
+assert.equal(render(null,null),"","unconfirmed auction discovery never adds an empty initial lock");
+delete globalThis.__auctionGate;
 delete globalThis.document;
 console.log("Increment dialog actions: server acknowledgement, failed confirmation, safe controls and unreceived request closure passed");

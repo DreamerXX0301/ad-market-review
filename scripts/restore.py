@@ -58,6 +58,13 @@ def perform_restore(bundle,target):
             c.execute('UPDATE job SET lease_owner=NULL,lease_expires_at_ms=NULL')
             c.execute("UPDATE sync_batch SET status='cancelled' WHERE status='running'")
             c.execute("DELETE FROM retention_pin WHERE owner_kind='request' OR (owner_kind='backup' AND owner_id=?)",(manifest['backup_id'],))
+            automation_disabled=False
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_automation'").fetchone():
+                c.execute("UPDATE market_auction_automation SET mode='off',trade_date=NULL,revision=revision+1,updated_at_ms=? WHERE singleton=1",(now,))
+                c.execute("""UPDATE market_auction_automation_run SET automatic_control=0,retry_after_at_ms=NULL,
+                    state=CASE WHEN state IN ('queued','running','waiting_retry') THEN 'paused' ELSE state END,
+                    reason='恢复副本已关闭自动竞价，原日台账保留；需在此副本明确重新开启',updated_at_ms=?""",(now,))
+                automation_disabled=True
             for job_id in interrupted:
                 seq=c.execute('SELECT coalesce(max(seq),0)+1 FROM job_event WHERE job_id=?',(job_id,)).fetchone()[0]
                 c.execute('INSERT INTO job_event VALUES(?,?,?,?,?,?,?)',(job_id,seq,now,'warning','restored','备份恢复后等待用户手动继续；未复用旧进程租约',json.dumps({'backup_id':manifest['backup_id']})))
@@ -65,7 +72,7 @@ def perform_restore(bundle,target):
         except BaseException:c.rollback();raise
         finally:c.close()
         for folder in ('published','credentials','raw','work'): (stage/folder).mkdir(exist_ok=True)
-        result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts'))}
+        result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts')),'auction_automation_disabled':automation_disabled}
         (stage/'restore-report.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
         os.replace(stage,target)
         return {**result,'target':str(target)}

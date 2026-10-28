@@ -76,3 +76,14 @@ assert.equal(auctionPreviousFocus({ ...frozen, previous_review: { ...original, r
 assert.equal(auctionPreviousFocus({ ...frozen, previous_review: { ...original, state: "background_only" } }).items.length, 0, "price background never becomes an original judgment");
 assert.equal(auctionPreviousFocus({ ...frozen, quotes: { items: [] } }).items[0].quote, null, "missing auction quote stays unknown");
 console.log("auction prior review: exact previous date, original words, code-bound facts, absent judgment and future material isolation passed");
+const { auctionAutomaticToday, auctionAutomationView } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
+const automation={version:'auction-automation-v1',revision:0,mode:'daily',today:day,enabled:true};
+assert.equal(auctionAutomationView(null),null);
+assert.equal(auctionAutomationView({...automation,revision:-1}),null);
+assert.equal(auctionAutomaticToday(automation),true);
+assert.equal(auctionAutomaticToday({...automation,enabled:false}),false);
+assert.equal(auctionAutomaticToday({...automation,mode:'once',date:'2026-10-28'}),false);
+assert.equal(auctionAutomaticToday({...automation,mode:'once',date:day}),true);
+assert.equal(auctionCaptureState(fresh,day,false,automation).disabled,true,'automatic schedule suppresses redundant manual start');
+assert.equal(auctionCaptureState({...fresh,date:'2026-10-28'},'2026-10-28',false,automation).disabled,true,'history never becomes an automatic current-day run');
+console.log('Auction automatic display: global authorization is independent of shared historical date and cannot double-start today passed');

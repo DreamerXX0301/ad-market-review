@@ -31,6 +31,7 @@
 -- 028_noon_notes.sql sha256=2329076c224dbf65020be8174b98b833c2e49664f522ca6d4f3cb0b0ffe2ac81
 -- 029_noon_close_reviews.sql sha256=eaffb20a6c2ef7771fa8dc974be923984bf35ad42af5e6804d6675dd1ba6a9aa
 -- 030_auction_snapshots.sql sha256=f831a6d60212da8ce48ad741ff6f072fa26540c47774f79c1d0d90e0c3dd7330
+-- 031_auction_automation.sql sha256=6d97ff9659516d97acef4a8f99f69ee7dcd902f55036479229e537c820b37375
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -237,6 +238,33 @@ CREATE TABLE listing_status_summary (
  presence_json TEXT NOT NULL CHECK(json_valid(presence_json)),
  checked_at_ms INTEGER NOT NULL,
  UNIQUE(primary_snapshot_id,market_snapshot_id,business_date,manual_revision,reference_hash)
+) STRICT;
+
+CREATE TABLE market_auction_automation (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ version TEXT NOT NULL CHECK(version='auction-automation-v1'),
+ revision INTEGER NOT NULL CHECK(revision>=0),
+ mode TEXT NOT NULL CHECK(mode IN('off','once','daily')),
+ trade_date TEXT CHECK(trade_date IS NULL OR date(trade_date,'+0 days') IS trade_date),
+ instrument_ids_json TEXT NOT NULL CHECK(json_valid(instrument_ids_json) AND json_type(instrument_ids_json)='array' AND json_array_length(instrument_ids_json)<=100),
+ updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>=0),
+ CHECK((mode='once' AND trade_date IS NOT NULL) OR (mode IN('off','daily') AND trade_date IS NULL))
+) STRICT;
+
+CREATE TABLE market_auction_automation_run (
+ trade_date TEXT PRIMARY KEY CHECK(date(trade_date,'+0 days') IS trade_date),
+ job_id TEXT UNIQUE REFERENCES job(job_id),
+ schedule_revision INTEGER NOT NULL CHECK(schedule_revision>0),
+ state TEXT NOT NULL CHECK(state IN('queued','running','waiting_retry','available','failed','paused','cancelled','skipped','expired')),
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3),
+ automatic_control INTEGER NOT NULL DEFAULT 1 CHECK(automatic_control IN(0,1)),
+ last_attempt_owner TEXT,
+ last_attempt_at_ms INTEGER,
+ retry_after_at_ms INTEGER,
+ outcome TEXT CHECK(outcome IS NULL OR outcome IN('not_ready','failed','available','skipped','stopped')),
+ reason TEXT,
+ created_at_ms INTEGER NOT NULL CHECK(created_at_ms>0),
+ updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>0)
 ) STRICT;
 
 CREATE TABLE market_auction_capture (
@@ -855,6 +883,8 @@ CREATE TABLE workspace_purge_file (
 
 CREATE INDEX artifact_content_references ON snapshot_artifact(sha256);
 
+CREATE INDEX auction_automation_run_latest ON market_auction_automation_run(trade_date DESC);
+
 CREATE INDEX auction_snapshot_by_date ON market_auction_snapshot(trade_date DESC);
 
 CREATE INDEX backtest_deletion_strategy_batch ON backtest_deletion(strategy_deletion_id);
@@ -976,6 +1006,10 @@ CREATE TRIGGER append_only_tracking_policy_application_update BEFORE UPDATE ON t
 CREATE TRIGGER append_only_tracking_policy_version_delete BEFORE DELETE ON tracking_policy_version WHEN workspace_purge_allowed('strategy',OLD.strategy_id)=0 BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
 
 CREATE TRIGGER append_only_tracking_policy_version_update BEFORE UPDATE ON tracking_policy_version BEGIN SELECT RAISE(ABORT,'append-only evidence; create a new version'); END;
+
+CREATE TRIGGER auction_automation_revision BEFORE UPDATE ON market_auction_automation
+WHEN NEW.singleton<>OLD.singleton OR NEW.version<>OLD.version OR NEW.revision<>OLD.revision+1
+BEGIN SELECT RAISE(ABORT,'auction automation requires the next revision'); END;
 
 CREATE TRIGGER backtest_dependency_gate BEFORE INSERT ON backtest_run BEGIN
  SELECT CASE WHEN json_type(NEW.input_snapshots_json)<>'object' OR EXISTS(
@@ -1190,6 +1224,17 @@ BEGIN
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM snapshot_artifact WHERE snapshot_id=NEW.snapshot_id) THEN RAISE(ABORT,'published snapshot requires artifacts') END;
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM snapshot_coverage WHERE snapshot_id=NEW.snapshot_id) THEN RAISE(ABORT,'published snapshot requires coverage') END;
 END;
+
+CREATE TRIGGER retain_auction_automation_config BEFORE DELETE ON market_auction_automation
+BEGIN SELECT RAISE(ABORT,'disable auction automation instead of deleting configuration'); END;
+
+CREATE TRIGGER retain_auction_automation_run_delete BEFORE DELETE ON market_auction_automation_run
+BEGIN SELECT RAISE(ABORT,'retain auction automation daily receipt'); END;
+
+CREATE TRIGGER retain_auction_automation_run_identity BEFORE UPDATE ON market_auction_automation_run
+WHEN NEW.trade_date<>OLD.trade_date OR NEW.schedule_revision<>OLD.schedule_revision
+ OR (OLD.job_id IS NOT NULL AND NEW.job_id IS NOT OLD.job_id)
+BEGIN SELECT RAISE(ABORT,'retain auction automation day and original job'); END;
 
 CREATE TRIGGER retain_auction_capture_delete BEFORE DELETE ON market_auction_capture
 BEGIN SELECT RAISE(ABORT,'retain auction daily capture ledger'); END;

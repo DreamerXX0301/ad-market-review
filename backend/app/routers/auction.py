@@ -13,6 +13,18 @@ def dates():
     return JSONResponse(json_clean(service.list_dates()))
 
 
+@router.get('/automation')
+def automation_view():
+    from app.services.auction_automation import read_view
+    return JSONResponse(json_clean(read_view()))
+
+
+@router.post('/automation')
+def automation_config(payload: dict = Body(...)):
+    from app.services.auction_automation import update_config
+    return JSONResponse(json_clean(update_config(payload)))
+
+
 @router.get('/close-review')
 def close_review(date: str):
     from app.services.auction_close_review import read_close_review

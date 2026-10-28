@@ -546,6 +546,12 @@ export default function App() {
         )}
         <IncrementProgressDialog
           onBlockedChange={setIncrementBlocked}
+          onAuctionFinished={(task) => {
+            if (typeof task.target_date === "string") setDate(task.target_date);
+            auctionDates.reload();
+            window.dispatchEvent(new Event("workbench-auction-unlocked"));
+            navigate("auction");
+          }}
           onNoonFinished={(task) => {
             if (typeof task.target_date === "string") setDate(task.target_date);
             noonDates.reload();

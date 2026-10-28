@@ -116,6 +116,7 @@ const imports = {
   ),
   "./incrementProgress": encode(progress),
   "./NoonProgressContent": encode("export default function Noon(){return '午评采集分支';}export const useNoonRunProgress=()=>globalThis.__noonGate||({session:null,data:null,error:\"\",retry(){}});"),
+  "./AuctionProgressContent": encode(`export default function Auction(){return "竞价采集分支";}export const useAuctionRunProgress=()=>globalThis.__auctionGate||({session:null,data:null,error:"",retry(){}});`),
 };
 let source = ts
   .transpileModule(
@@ -206,6 +207,15 @@ try {
   delete globalThis.__noonGate;render();
   assert.equal(root.inert,true,"noon ending cannot unlock a live increment");
   event(null);render();assert.equal(root.inert,false,"the single lock restores only after both are finished");
+  globalThis.__auctionGate={session:{date:"2026-10-29",requestKey:"auction"},data:{status:"waiting_retry"},error:"",retry(){}};
+  render();assert.equal(root.inert,true,"automatic auction and retry wait use the shared inert lock");
+  event({requestKey:"increment-third",createdAt:300});render();
+  delete globalThis.__auctionGate;render();assert.equal(root.inert,true,"auction ending cannot unlock a live increment");
+  event(null);render();assert.equal(root.inert,false,"the lock restores only after the last owner ends");
+  globalThis.__auctionGate={session:null,checking:true,data:null,error:"",retry(){}};
+  render();assert.equal(root.inert,false,"auction settings discovery without a verified task does not inert the app");
+  delete globalThis.__auctionGate;
+
 } finally {
   effects.forEach((effect) => effect?.cleanup?.());
   [

@@ -102,6 +102,9 @@ try {
     ),
   );
   const date = boot.data_date;
+  const auctionAutomation = await get("/market/auction/automation");
+  check("auction service automation has explicit authorization and revision", auctionAutomation.version === "auction-automation-v1" && Number.isSafeInteger(auctionAutomation.revision) && auctionAutomation.revision >= 0 && ["off", "once", "daily"].includes(auctionAutomation.mode) && typeof auctionAutomation.enabled === "boolean");
+  check("auction service automation is independent of historical view", isDate(auctionAutomation.today) && auctionAutomation.timezone === "Asia/Shanghai" && auctionAutomation.start_time === "09:25:05" && auctionAutomation.end_time === "09:30:00" && typeof auctionAutomation.worker?.alive === "boolean");
   const auctionDates = await get("/market/auction/dates");
   check("auction retained dates and explicit today", Array.isArray(auctionDates.dates) && auctionDates.dates.every(isDate) && isDate(auctionDates.today));
   const auction = await get(`/market/auction?date=${auctionDates.today}`);
