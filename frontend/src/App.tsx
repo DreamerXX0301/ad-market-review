@@ -16,6 +16,8 @@ import type { StockNavigation } from "./components/stockNavigation";
 import { MarketOverview, MarketPage } from "./features/market/Market";
 import DragonTiger from "./features/market/DragonTiger";
 import NoonReview from "./features/market/NoonReview";
+import AuctionReview from "./features/market/AuctionReview";
+import { auctionInitialDate } from "./features/market/auctionPresentation";
 import {
   noonCalendarDates,
   noonChartDate,
@@ -87,7 +89,9 @@ export default function App() {
   const [incrementBlocked, setIncrementBlocked] = useState(true);
   const [route, setRoute] = useState(currentRoute),
     [visited, setVisited] = useState<string[]>([currentRoute()]),
-    [date, setDate] = useState(() => noonInitialDate(location.hash)),
+    [date, setDate] = useState(
+      () => auctionInitialDate(location.hash) || noonInitialDate(location.hash),
+    ),
     [stock, setStock] = useState<{
       id: string;
       asOf?: string;
@@ -102,6 +106,9 @@ export default function App() {
     );
   const previousPublishedDate = useRef<string | undefined>(undefined);
   const noonDates = useApi<Row>(route === "noon" ? "/market/noon/dates" : null);
+  const auctionDates = useApi<Row>(
+    route === "auction" ? "/market/auction/dates" : null,
+  );
   const notify = useCallback(
     (message: string, kind = "success") => setToast({ message, kind }),
     [],
@@ -158,19 +165,23 @@ export default function App() {
   }, [route]);
   const dates = [...(bootstrap.data?.market_dates || [])].sort();
   const shellDates =
-    route === "noon" ? noonCalendarDates(dates, noonDates.data) : dates;
+    route === "noon"
+      ? noonCalendarDates(dates, noonDates.data)
+      : route === "auction"
+        ? noonCalendarDates(dates, auctionDates.data)
+        : dates;
   const noonChartAsOf = noonChartDate(dates, date);
   const openStock = useCallback(
     (id: string, navigation?: StockNavigation) => {
-      if (route === "noon" && !noonChartAsOf) {
-        notify("该午评日期之前没有已发布收盘行情，不能打开历史图表。", "error");
+      if (["noon", "auction"].includes(route) && !noonChartAsOf) {
+        notify("该观察日期之前没有已发布收盘行情，不能打开历史图表。", "error");
         return;
       }
       setStock(
         stockSelectionForOpen(
           id,
           navigation,
-          route === "noon"
+          ["noon", "auction"].includes(route)
             ? noonChartAsOf || undefined
             : marketRoutes.has(route)
               ? date || undefined
@@ -260,14 +271,17 @@ export default function App() {
             />
           </Panel>
         );
-      if (key !== "noon" && date && !dates.includes(date))
+      if (key !== "noon" && key !== "auction" && date && !dates.includes(date))
         return (
           <Panel title="该日盘后行情尚未发布">
             <Empty
               title={`${date} 尚无已发布的盘后行情`}
-              description="当前共享观察日可能只有午评快照。午间最新价不会替代收盘价，其他盘面不会悄悄回退到更早一天。"
+              description="当前共享观察日可能只有竞价或午评快照。盘前、午间报价不会替代收盘价，其他盘面不会悄悄回退到更早一天。"
               action={
                 <div className="button-group">
+                  <button className="btn" onClick={() => navigate("auction")}>
+                    查看当日竞价
+                  </button>
                   <button className="btn" onClick={() => navigate("noon")}>
                     查看当日午评
                   </button>
@@ -287,6 +301,16 @@ export default function App() {
         );
     }
     switch (key) {
+      case "auction":
+        return (
+          <AuctionReview
+            date={date}
+            onDate={setDate}
+            onDatesChanged={auctionDates.reload}
+            onStock={openStock}
+            chartDate={noonChartAsOf || undefined}
+          />
+        );
       case "noon":
         return (
           <NoonReview

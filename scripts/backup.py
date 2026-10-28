@@ -44,6 +44,11 @@ def check_db(c):
         spec=importlib.util.spec_from_file_location('backup_noon_close_integrity',ROOT/'backend/app/services/noon_close_integrity.py')
         validator=importlib.util.module_from_spec(spec);spec.loader.exec_module(validator)
         validator.validate_close_reviews(c)
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_snapshot'").fetchone():
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('backup_auction_integrity',ROOT/'backend/app/services/auction_integrity.py')
+        validator=importlib.util.module_from_spec(spec);spec.loader.exec_module(validator)
+        validator.validate_snapshots(c)
 
 def retained_snapshots(c):
     return [dict(r) for r in c.execute("SELECT s.* FROM dataset_snapshot s LEFT JOIN snapshot_gc g USING(snapshot_id) WHERE s.state='published' AND (g.state IS NULL OR g.state='available')")]
@@ -63,6 +68,27 @@ def make_pins(c,snapshots,owner):
             c.execute("INSERT INTO retention_pin(pin_id,snapshot_id,owner_kind,owner_id,created_at_ms) VALUES(?,?,'backup',?,?) ON CONFLICT(snapshot_id,owner_kind,owner_id) DO NOTHING",('backup_pin_'+uuid.uuid4().hex,r['snapshot_id'],owner,now))
         c.commit()
     except BaseException:c.rollback();raise
+
+
+def backup_sqlite_snapshot(source,destination,*,pages=512,sleep=.05,progress=None):
+    """Copy one committed read snapshot despite concurrent WAL heartbeats.
+
+    Without an explicit read transaction, each backup step may see a newer
+    source version and restart the copy. Pin a read view after backup pins
+    were committed; WAL writers may still commit while this view is copied.
+    Release it before validation or any later pin writes, including failures.
+    """
+    if source.in_transaction:
+        raise ValueError('SQLite backup requires a connection with no active transaction')
+    source.execute('BEGIN')
+    try:
+        # BEGIN alone is deferred. This bounded read establishes the actual
+        # WAL snapshot without touching business rows or taking a write lock.
+        source.execute('SELECT name FROM sqlite_master LIMIT 1').fetchone()
+        source.backup(destination,pages=pages,sleep=sleep,progress=progress)
+    finally:
+        source.rollback()
+
 
 def supplement_files(published):
     """Freeze and validate the optional public supplement tree before copying.
@@ -201,7 +227,7 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
         make_pins(source,retained_snapshots(source),owner)
         (stage/'business').mkdir()
         dest=sqlite3.connect(stage/'business/app.sqlite3')
-        try:source.backup(dest,pages=512,sleep=.05);check_db(dest)
+        try:backup_sqlite_snapshot(source,dest);check_db(dest)
         finally:dest.close()
         copied=connect_sqlite(stage/'business/app.sqlite3','ro')
         try:

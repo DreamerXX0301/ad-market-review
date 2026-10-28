@@ -18,6 +18,7 @@ import {
   Search,
   ShieldAlert,
   Sun,
+  Sunrise,
   Star,
   Target,
   TrendingUp,
@@ -36,6 +37,7 @@ export const navigation = [
     label: "盘面研究",
     items: [
       { id: "market", name: "盘面总览", icon: BarChart3 },
+      { id: "auction", name: "盘前竞价", icon: Sunrise },
       { id: "noon", name: "午评快照", icon: Sun },
       { id: "indices", name: "指数行情", icon: ChartCandlestick },
       { id: "emotion", name: "市场情绪", icon: Activity },
@@ -285,6 +287,7 @@ export default function AppShell({
           <ActiveTaskBanner onNavigate={onNavigate} />
           {isMarket &&
             route !== "noon" &&
+            route !== "auction" &&
             date &&
             dataDate &&
             date !== dataDate && (

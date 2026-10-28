@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 29,
+  "migration_version": 30,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -114,15 +114,19 @@
     {
       "name": "029_noon_close_reviews.sql",
       "sha256": "eaffb20a6c2ef7771fa8dc974be923984bf35ad42af5e6804d6675dd1ba6a9aa"
+    },
+    {
+      "name": "030_auction_snapshots.sql",
+      "sha256": "f831a6d60212da8ce48ad741ff6f072fa26540c47774f79c1d0d90e0c3dd7330"
     }
   ],
   "counts": {
-    "table": 61,
-    "index": 37,
+    "table": 63,
+    "index": 38,
     "view": 1,
-    "trigger": 124
+    "trigger": 131
   },
-  "schema_sha256": "74ad1cd9f3a4239aad4a827a4c8e8266396b707c869879ed8867edff613b03da",
+  "schema_sha256": "169d600a925590650cc1bd9c09a226fb3ad8fe463587fc420b5e40076bb40ad4",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -1680,6 +1684,163 @@
         }
       ],
       "triggers": []
+    },
+    "market_auction_capture": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "request_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "requested_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "job",
+          "from": "job_id",
+          "to": "job_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "retain_auction_capture_delete",
+        "retain_auction_capture_replace",
+        "retain_auction_capture_update"
+      ]
+    },
+    "market_auction_snapshot": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "collected_start_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "collected_end_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "recorded_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "quality",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "content_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "payload_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "job",
+          "from": "job_id",
+          "to": "job_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "market_auction_capture",
+          "from": "trade_date",
+          "to": "trade_date",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "guard_auction_snapshot_identity",
+        "retain_auction_snapshot_delete",
+        "retain_auction_snapshot_replace",
+        "retain_auction_snapshot_update"
+      ]
     },
     "market_mainline_revision": {
       "columns": [

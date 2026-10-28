@@ -102,6 +102,11 @@ try {
     ),
   );
   const date = boot.data_date;
+  const auctionDates = await get("/market/auction/dates");
+  check("auction retained dates and explicit today", Array.isArray(auctionDates.dates) && auctionDates.dates.every(isDate) && isDate(auctionDates.today));
+  const auction = await get(`/market/auction?date=${auctionDates.today}`);
+  check("auction local read date and manual window", auction.date === auctionDates.today && typeof auction.can_capture === "boolean" && typeof auction.capture_window?.allowed === "boolean" && auction.capture_window?.timezone === "Asia/Shanghai");
+  check("auction snapshot identity and public evidence metadata", auction.snapshot === null || (auction.snapshot.date === auction.date && auction.snapshot.payload?.date === auction.date && auction.snapshot.payload?.version === "auction-snapshot-v1" && !Object.hasOwn(auction.snapshot.payload, "evidence")));
   const overview = await get("/market/overview?date=" + date);
   const watchlist = await get("/watchlist");
   page("personal watchlist", watchlist);

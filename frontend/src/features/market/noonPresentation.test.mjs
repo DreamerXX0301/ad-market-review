@@ -82,6 +82,6 @@ assert.deepEqual(noonPreviousText({ summary: ["昨天保存原文"], payload: { 
 assert.equal(noonPreviousFacts({ date: "2026-10-27", state: "background_only", payload: { date: "2026-10-27", mode: "previous_session_price_facts", up: 2 } }).up, 2);
 assert.equal(noonPreviousFacts({ date: "2026-10-27", state: "background_only", payload: { date: "2026-10-26", mode: "previous_session_price_facts", up: 2 } }), null);
 const app = await fs.readFile(new URL("../../App.tsx", import.meta.url), "utf8");
-assert.match(app, /key !== "noon" && date && !dates\.includes\(date\)/);
+assert.match(app, /key !== "noon" && key !== "auction" && date && !dates\.includes\(date\)/);
 assert.match(app, /marketDates=\{dates\}/, "noon-only dates must not expand backtest inputs");
 console.log("noon presentation: daily lock, unknown data, date isolation, frozen context passed");

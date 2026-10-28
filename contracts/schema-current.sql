@@ -30,6 +30,7 @@
 -- 027_noon_snapshots.sql sha256=b7a436c0000e99fcc1b07b47e672699839766d5d0eab3372399f2887224811c9
 -- 028_noon_notes.sql sha256=2329076c224dbf65020be8174b98b833c2e49664f522ca6d4f3cb0b0ffe2ac81
 -- 029_noon_close_reviews.sql sha256=eaffb20a6c2ef7771fa8dc974be923984bf35ad42af5e6804d6675dd1ba6a9aa
+-- 030_auction_snapshots.sql sha256=f831a6d60212da8ce48ad741ff6f072fa26540c47774f79c1d0d90e0c3dd7330
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -236,6 +237,27 @@ CREATE TABLE listing_status_summary (
  presence_json TEXT NOT NULL CHECK(json_valid(presence_json)),
  checked_at_ms INTEGER NOT NULL,
  UNIQUE(primary_snapshot_id,market_snapshot_id,business_date,manual_revision,reference_hash)
+) STRICT;
+
+CREATE TABLE market_auction_capture (
+ trade_date TEXT PRIMARY KEY CHECK(date(trade_date,'+0 days') IS trade_date),
+ job_id TEXT NOT NULL UNIQUE REFERENCES job(job_id),
+ request_key TEXT NOT NULL UNIQUE,
+ requested_at_ms INTEGER NOT NULL CHECK(requested_at_ms>0)
+) STRICT;
+
+CREATE TABLE market_auction_snapshot (
+ snapshot_id TEXT PRIMARY KEY,
+ trade_date TEXT NOT NULL UNIQUE REFERENCES market_auction_capture(trade_date),
+ job_id TEXT NOT NULL UNIQUE REFERENCES job(job_id),
+ collected_start_at TEXT NOT NULL,
+ collected_end_at TEXT NOT NULL,
+ recorded_at_ms INTEGER NOT NULL CHECK(recorded_at_ms>0),
+ quality TEXT NOT NULL CHECK(quality IN('complete','partial')),
+ content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+ payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='object' AND length(payload_json)<=4194304),
+ CHECK(json_extract(payload_json,'$.date') IS trade_date),
+ CHECK(json_extract(payload_json,'$.version') IS 'auction-snapshot-v1')
 ) STRICT;
 
 CREATE TABLE market_mainline_revision (
@@ -833,6 +855,8 @@ CREATE TABLE workspace_purge_file (
 
 CREATE INDEX artifact_content_references ON snapshot_artifact(sha256);
 
+CREATE INDEX auction_snapshot_by_date ON market_auction_snapshot(trade_date DESC);
+
 CREATE INDEX backtest_deletion_strategy_batch ON backtest_deletion(strategy_deletion_id);
 
 CREATE INDEX candidates_by_result ON selection_candidate(run_id,decision);
@@ -1057,6 +1081,10 @@ CREATE TRIGGER gc_update_guard BEFORE UPDATE ON snapshot_gc WHEN NEW.state<>'ava
  THEN RAISE(ABORT,'head or live pin prevents garbage collection') END;
 END;
 
+CREATE TRIGGER guard_auction_snapshot_identity BEFORE INSERT ON market_auction_snapshot
+WHEN NOT EXISTS(SELECT 1 FROM market_auction_capture c WHERE c.trade_date=NEW.trade_date AND c.job_id=NEW.job_id)
+BEGIN SELECT RAISE(ABORT,'auction capture identity mismatch'); END;
+
 CREATE TRIGGER guard_noon_close_attempt_delete BEFORE DELETE ON market_noon_close_attempt
 WHEN noon_purge_allowed(OLD.snapshot_id)!=1
 BEGIN SELECT RAISE(ABORT,'noon close attempt requires parent retention authorization'); END;
@@ -1162,6 +1190,26 @@ BEGIN
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM snapshot_artifact WHERE snapshot_id=NEW.snapshot_id) THEN RAISE(ABORT,'published snapshot requires artifacts') END;
   SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM snapshot_coverage WHERE snapshot_id=NEW.snapshot_id) THEN RAISE(ABORT,'published snapshot requires coverage') END;
 END;
+
+CREATE TRIGGER retain_auction_capture_delete BEFORE DELETE ON market_auction_capture
+BEGIN SELECT RAISE(ABORT,'retain auction daily capture ledger'); END;
+
+CREATE TRIGGER retain_auction_capture_replace BEFORE INSERT ON market_auction_capture
+WHEN EXISTS(SELECT 1 FROM market_auction_capture WHERE trade_date=NEW.trade_date OR job_id=NEW.job_id OR request_key=NEW.request_key)
+BEGIN SELECT RAISE(ABORT,'retain auction daily capture ledger'); END;
+
+CREATE TRIGGER retain_auction_capture_update BEFORE UPDATE ON market_auction_capture
+BEGIN SELECT RAISE(ABORT,'retain auction daily capture ledger'); END;
+
+CREATE TRIGGER retain_auction_snapshot_delete BEFORE DELETE ON market_auction_snapshot
+BEGIN SELECT RAISE(ABORT,'retain immutable auction snapshot'); END;
+
+CREATE TRIGGER retain_auction_snapshot_replace BEFORE INSERT ON market_auction_snapshot
+WHEN EXISTS(SELECT 1 FROM market_auction_snapshot WHERE snapshot_id=NEW.snapshot_id OR trade_date=NEW.trade_date OR job_id=NEW.job_id)
+BEGIN SELECT RAISE(ABORT,'retain immutable auction snapshot'); END;
+
+CREATE TRIGGER retain_auction_snapshot_update BEFORE UPDATE ON market_auction_snapshot
+BEGIN SELECT RAISE(ABORT,'retain immutable auction snapshot'); END;
 
 CREATE TRIGGER retain_line_alert_delete BEFORE DELETE ON line_alert_event
 WHEN line_alert_expiry_allowed(OLD.annotation_id,OLD.event_id)=0

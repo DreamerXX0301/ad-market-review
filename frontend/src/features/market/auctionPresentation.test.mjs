@@ -1,0 +1,78 @@
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import ts from "typescript";
+const code = await fs.readFile(new URL("./auctionPresentation.ts", import.meta.url), "utf8");
+const compiled = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
+const { auctionNumber, auctionInitialDate, auctionCodes, auctionPayload, auctionCaptureState, auctionCanAct, auctionShouldPoll, auctionSortRows } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
+const day = "2026-10-29";
+assert.equal(auctionInitialDate("#auction?date=" + day), day);
+assert.equal(auctionInitialDate("#auction?date=2024-02-29"), "2024-02-29");
+for (const hash of ["#auction", "#market?date=" + day, "#auction?date=2026-02-30", "#auction?date=2026-2-3", "#noon?date=" + day]) assert.equal(auctionInitialDate(hash), "");
+assert.deepEqual(auctionCodes(" 600519.sh,000001.SZ\n600519.SH；830001.BJ， 000002.SZ ").ids, ["600519.SH", "000001.SZ", "830001.BJ", "000002.SZ"]);
+assert.deepEqual(auctionCodes(""), { ids: [], error: "" });
+assert.match(auctionCodes("600519").error, /完整代码/);
+assert.match(auctionCodes("000001.TI").error, /完整代码/);
+assert.match(auctionCodes(Array(101).fill("000001.SZ").join(",")).error, /最多/);
+assert.equal(auctionCodes(Array(100).fill("000001.SZ").join(",")).ids.length, 1);
+assert.equal(auctionNumber(0), 0);
+for (const value of [null, "0", NaN, Infinity, true]) assert.equal(auctionNumber(value), null);
+const fresh = { date: day, today: day, state: "not_collected", can_capture: true, capture_window: { allowed: true } };
+assert.equal(auctionCaptureState(fresh, day).disabled, false);
+assert.equal(auctionCaptureState(fresh, "2026-10-28").disabled, true);
+assert.equal(auctionCaptureState({ ...fresh, today: "2026-10-30" }, day).disabled, true);
+assert.equal(auctionCaptureState({ ...fresh, capture_window: { allowed: false, reason: "窗口已结束" } }, day).reason, "窗口已结束");
+assert.equal(auctionCaptureState(fresh, day, true).disabled, true);
+for (const state of ["queued", "running", "paused", "failed", "cancelled", "available"]) assert.equal(auctionCaptureState({ ...fresh, state }, day).disabled, true, `${state} cannot create a second task`);
+const task = { task_id: "fixture-original-task" };
+const failed = { ...fresh, state: "failed", task, can_retry: true };
+assert.equal(auctionCanAct(failed, day, "retry"), true);
+assert.equal(auctionCanAct({ ...failed, can_retry: false }, day, "retry"), false);
+assert.equal(auctionCanAct({ ...failed, capture_window: { allowed: false } }, day, "retry"), false);
+assert.equal(auctionCanAct({ ...failed, today: "2026-10-30" }, day, "retry"), false);
+const paused = { ...fresh, state: "paused", task, can_resume: true };
+assert.equal(auctionCanAct(paused, day, "resume"), true);
+assert.equal(auctionCanAct({ ...paused, today: "2026-10-30" }, day, "resume"), false);
+assert.equal(auctionCanAct(paused, day, "cancel"), true);
+assert.equal(auctionCanAct(paused, day, "pause"), false);
+assert.equal(auctionCanAct({ ...fresh, task, state: "running" }, day, "pause"), true);
+assert.equal(auctionCanAct({ ...failed, state: "cancelled" }, day, "retry"), false);
+assert.equal(auctionShouldPoll({ ...fresh, state: "queued" }, day), true);
+assert.equal(auctionShouldPoll({ ...fresh, state: "running" }, "2026-10-28"), false);
+assert.equal(auctionShouldPoll(paused, day), false);
+const payload = { date: day, version: "auction-snapshot-v1", quotes: { items: [] } };
+const retained = { ...fresh, state: "available", snapshot: { date: day, payload } };
+assert.equal(auctionPayload(retained, day), payload);
+assert.equal(auctionPayload(retained, "2026-10-28"), null);
+assert.equal(auctionPayload({ ...retained, snapshot: { date: day, payload: { ...payload, date: "2026-10-28" } } }, day), null);
+assert.equal(auctionPayload({ ...retained, snapshot: { date: "2026-10-28", payload } }, day), null);
+assert.equal(auctionPayload({ ...retained, snapshot: { date: day, payload: { ...payload, version: "other" } } }, day), null);
+const samples = [{ auction_pct: null }, { auction_pct: 0 }, { auction_pct: -2 }, { auction_pct: 4 }, { auction_pct: "99" }];
+assert.deepEqual(auctionSortRows(samples, "auction_pct", "desc").map(row => row.auction_pct), [4, 0, -2, null, "99"]);
+assert.deepEqual(auctionSortRows(samples, "auction_pct", "asc").map(row => row.auction_pct), [-2, 0, 4, null, "99"]);
+assert.deepEqual(samples.map(row => row.auction_pct), [null, 0, -2, 4, "99"]);
+console.log("auction presentation: manual capture, original-task controls, date isolation, explicit sample parsing and unknown-last sorting passed");
+const { auctionPreviousFocus } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
+const original = {
+  date: "2026-10-28", state: "retained", recorded_at_ms: Date.parse("2026-10-28T18:00:00+08:00"),
+  payload: { atmosphere: { summary: "原留存氛围" }, watchlist: { stocks: [{ instrument_id: "600519.SH", name: "合成测试", trigger: "原观察条件", invalidations: ["原失效条件"] }] } },
+  observations: [{ instrument_id: "600519.SH", mainline: "昨日原主线", latest_price: 9999, reason: "午间缺报措辞不得显示" }],
+  mainlines: [{ date: "2026-10-28", instrument_id: "600519.SH", display_mainline: "原手动主线", recorded_at_ms: Date.parse("2026-10-28T17:00:00+08:00"), attributions: [{ user_note: "我的原判断", source_reason: "原来源转述", source_name: "原来源" }] }],
+  summary: ["原留存氛围"],
+};
+const frozen = { date: day, previous_date: "2026-10-28", collected_start_at: `${day}T09:25:10+08:00`, previous_review: original, quotes: { items: [{ instrument_id: "600519.SH", auction_price: 100, auction_pct: 2 }] } };
+const context = auctionPreviousFocus(frozen);
+assert.equal(context.retained, true);
+assert.equal(context.items.length, 1);
+assert.equal(context.items[0].quote.auction_price, 100, "join only this auction quote, never noon fields");
+assert.equal(context.items[0].mainline, "原手动主线");
+assert.deepEqual(context.items[0].notes.map(row => row.label), ["我的判断", "来源转述"]);
+assert.deepEqual(context.items[0].triggers, ["原观察条件"]);
+assert.deepEqual(context.items[0].invalidations, ["原失效条件"]);
+assert.equal(context.items[0].reason, undefined);
+assert.equal(context.items[0].latest_price, undefined);
+assert.deepEqual(context.lines, ["原留存氛围"]);
+assert.equal(auctionPreviousFocus({ ...frozen, previous_date: "2026-10-27" }).previous, null, "mismatched retained date stays unavailable");
+assert.equal(auctionPreviousFocus({ ...frozen, previous_review: { ...original, recorded_at_ms: Date.parse(`${day}T10:00:00+08:00`) } }).previous, null, "future saved judgment must not enter the auction context");
+assert.equal(auctionPreviousFocus({ ...frozen, previous_review: { ...original, state: "background_only" } }).items.length, 0, "price background never becomes an original judgment");
+assert.equal(auctionPreviousFocus({ ...frozen, quotes: { items: [] } }).items[0].quote, null, "missing auction quote stays unknown");
+console.log("auction prior review: exact previous date, original words, code-bound facts, absent judgment and future material isolation passed");

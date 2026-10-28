@@ -325,6 +325,13 @@ def dispatch(job):
             tasks.append_event(connection,identifier,'workspace_followup_timing','主行情已可用，本地策略与跟踪核对已结束；轻量核验已先排队',
                 details={'elapsed_ms':round((time.monotonic()-started)*1000),'queue_order':'local-checks-before-sector-chain-v1'})
         _queue_followup(job,result)
+    elif kind=='source_check' and _parameters(job).get('operation')=='auction_snapshot':
+        from app.services.auction_service import execute_capture
+        auction_callback=lambda stage,percent,message=None,details=None:tasks.progress(
+            identifier,stage,percent,message,details,lease_owner=job.get('lease_owner'))
+        result=execute_capture(job,auction_callback)
+        tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',
+                     result.get('message','竞价终态已独立留存，缺口见详情'),lease_owner=job.get('lease_owner'))
     elif kind=='source_check' and _parameters(job).get('operation')=='noon_snapshot':
         from app.services.noon_service import execute_capture
         noon_callback=lambda stage,percent,message=None,details=None:tasks.progress(
