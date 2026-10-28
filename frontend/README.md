@@ -4,9 +4,9 @@ React、TypeScript、Vite 与 ECharts 实现盘面研究、个股/板块策略�
 
 产品入口和首次配置见[项目 README](../README.md)，部署与更新见[版本升级与回滚](../docs/版本升级与回滚.md)。
 
-0.1.9发行源码以 [v0.1.9 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.9)为准，已实现范围见[版本记录](../CHANGELOG.md#v018)。构建成功不证明镜像已可用，实际镜像可用性与摘要以[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.9)、[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)及本版 `release-image.json` 为准；核对其中完整 `git_commit`，不沿用旧版回执。
+0.1.13发行源码以 [v0.1.13 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.13)为准，功能和schema29升级边界见[版本记录](../CHANGELOG.md#v0113)。镜像摘要、双架构及容器检查见[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.13)的`release-image.json`；构建成功不等于现用实例已更新。
 
-0.1.9是盘后增量Parquet写出内存热修复，前端行为沿用0.1.7已交付的图表、分类结果读取和整链进度锁；不增加界面功能或新的重试接口。前端与API及唯一worker按同一冻结提交发布，schema仍为025。升级验收前保留原失败会话及锁；验收后仅在用户明确授权时，按原有界面语义确认最新失败结果，再重试最新根任务，不能把更早失败根当成该次重试。
+本版包括行业与概念联动、个股同日已完成结果直接查看、炸板本批股票均值与板别筛选、手动午评和收盘回看。前端、API和唯一worker来自同一冻结提交；旧运行与午间事实不改写，缺少快照或收盘证据保持明确空态。已发布行情日与午评自然日期分别说明，用户查看不会自动创建取数或策略任务。
 
 ## 本地开发
 
@@ -28,27 +28,27 @@ npm run build
 
 ## 模块
 
-| 目录 / 文件 | 职责 |
-| --- | --- |
-| `src/App.tsx` | 路由与详情装配、主题、页面状态及明确日期的股票浏览 |
-| `src/components/AppShell.tsx` | 分组导航、盘面日期和顶部全局搜索 |
-| `src/components/InstrumentSearch.tsx` | 默认股票/指数搜索；仅顶部显式启用行业/概念，避免研究输入误选板块 |
-| `src/components/Charts.tsx` | 日/周/月 K、均线、成交量/MACD/KDJ、缩放、十字线、价格与指标口径、股票抽屉 |
+| 目录 / 文件                            | 职责                                                                               |
+| -------------------------------------- | ---------------------------------------------------------------------------------- |
+| `src/App.tsx`                          | 路由与详情装配、主题、页面状态及明确日期的股票浏览                                 |
+| `src/components/AppShell.tsx`          | 分组导航、盘面日期和顶部全局搜索                                                   |
+| `src/components/InstrumentSearch.tsx`  | 默认股票/指数搜索；仅顶部显式启用行业/概念，避免研究输入误选板块                   |
+| `src/components/Charts.tsx`            | 日/周/月 K、均线、成交量/MACD/KDJ、缩放、十字线、价格与指标口径、股票抽屉          |
 | `src/components/StockLimitSummary.tsx` | 按观察日显示年内/30交易日涨幅、年内涨停次数和最近确认日期；指数/板块不调用个股统计 |
-| `src/components/UI.tsx` | 表格、全量已加载记录排序后分页、空态、质量提示、任务及弹窗 |
-| `src/lib/api.ts` | 同源请求、旧响应取消、请求身份隔离、按业务页面重新核验 |
-| `src/features/market` | 盘面八页、阶段解释、全展开梯队、行业/概念 K 线与历史成员详情 |
-| `src/features/topics` | 当前研究分类、交并集查股、批量多归属、来源/人工覆盖及修订记录 |
-| `src/features/strategies` | 个股范围、日/周/月条件、独立历史事件绑定、白名单规则、候选和可选同步后计算 |
-| `src/features/tracking` | 个股轮次、提醒/结束条件、触发过滤、移除与历史 |
-| `src/features/sector` | 独立板块策略、规则编辑、跟踪、真实计算进度和当前/历史成员浏览 |
-| `src/features/research` | 指定标的后手动研究、材料覆盖、留存报告及行情截止日 |
-| `src/features/backtests` | 个股回测区间、可用性、统计、权益和交易/订单/成交/持仓 |
-| `src/features/data` / `sources` | 手动初始化和尾部增量、阶段/历史/一次性初始化状态、凭据提交及能力验证 |
+| `src/components/UI.tsx`                | 表格、全量已加载记录排序后分页、空态、质量提示、任务及弹窗                         |
+| `src/lib/api.ts`                       | 同源请求、旧响应取消、请求身份隔离、按业务页面重新核验                             |
+| `src/features/market`                  | 盘面页面、阶段解释、梯队、行业/概念联动、历史成员、手动午评与收盘回看              |
+| `src/features/topics`                  | 当前研究分类、交并集查股、批量多归属、来源/人工覆盖及修订记录                      |
+| `src/features/strategies`              | 个股范围、日/周/月条件、独立历史事件绑定、白名单规则、候选和可选同步后计算         |
+| `src/features/tracking`                | 个股轮次、提醒/结束条件、触发过滤、移除与历史                                      |
+| `src/features/sector`                  | 独立板块策略、规则编辑、跟踪、真实计算进度和当前/历史成员浏览                      |
+| `src/features/research`                | 指定标的后手动研究、材料覆盖、留存报告及行情截止日                                 |
+| `src/features/backtests`               | 个股回测区间、可用性、统计、权益和交易/订单/成交/持仓                              |
+| `src/features/data` / `sources`        | 手动初始化和尾部增量、阶段/历史/一次性初始化状态、凭据提交及能力验证               |
 
 ## 交互与数据约束
 
-- 盘面八页共享选择日期；策略、跟踪、题材、研究、回测、数据和来源配置使用独立业务状态。历史研究报告的图表与统计遵守报告行情截止日。
+- 盘面页面共享选择日期；策略、跟踪、题材、研究、回测、数据和来源配置使用独立业务状态。历史研究报告的图表与统计遵守报告行情截止日。
 - 个股和板块策略的定义、结果、跟踪轮次分别保存。板块成员打开个股时传明确行情日，不能附带板块入池点位或自动建立个股跟踪。
 - 普通条件可继承策略默认日/完整周/完整月，也可逐叶指定周期。定义缺少 `period` 时继承默认周期；固定日线条件不随全局周/月切换。周期标签、右值及依据必须与实际计算一致。
 - “历史事件＋当前条件”中每个节点独立绑定事件。新增事件条件按日线配置；复杂规则打开后取消不提交修改，不展平嵌套布尔组。
