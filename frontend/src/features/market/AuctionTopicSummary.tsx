@@ -181,10 +181,6 @@ export default function AuctionTopicSummary({
                               <span>{row.name}</span>
                             </button>
                             <AuctionCopyText
-                              text={String(row.name || row.topic_code)}
-                              label={`复制组名 ${row.name}`}
-                            />
-                            <AuctionCopyText
                               text={String(row.topic_code)}
                               label={`复制${row.kind === "industry" ? "行业" : "概念"}代码 ${row.topic_code}`}
                             />
