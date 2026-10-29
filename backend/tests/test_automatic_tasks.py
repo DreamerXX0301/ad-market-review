@@ -191,6 +191,7 @@ def test_after_close_reuses_complete_chain_and_transactional_workbench_lock(sche
     assert params['noon_close_policy'] == 'noon-close-v1'
     assert params['line_alert_check_version'] == 'explicit-local-line-alert-v1'
     assert params['noon_retention_policy'] == 'noon-retention-28d-v1'
+    assert params['auction_retention_policy'] == 'auction-retention-28d-v1'
     with core.connect() as connection:
         assert sync_progress.lock_record(connection)['root_task_id'] == created
     assert not any(job['kind'] in ('selection', 'tracking_review') for job in actual_jobs())

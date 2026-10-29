@@ -6,13 +6,16 @@ API 根路径 `/api/v1`，snake_case；成功直接返回业务对象，列表�
 
 | 页面/入口 | 主要 API | 日期域 |
 | --- | --- | --- |
-| 盘面总览、指数、情绪、行业题材、梯队、涨幅榜、异动、资金 | `/overview`、`/market/{kind}`、chart | 共享盘面观察日 |
+| 盘面总览、指数、情绪、行业与概念、梯队、涨幅榜、异动 | `/overview`、`/market/{kind}`、chart | 共享盘面观察日 |
+| 盘前竞价 | `/market/auction`、`/market/auction/dates`、`/market/auction/automation` | 共享盘面观察日；竞价使用本次冻结时点，正式历史图严格早于该日；自动竞价配置不随观察日改变 |
+| 午评快照与收盘回看 | `/market/noon`、`/market/noon/dates`、`/market/noon/{snapshot_id}/sector-members`、`/market/noon/close-review` | 共享盘面观察日；午间报价绑定原快照，收盘回看另核验同日已发布行情 |
 | 题材库 | `/topics`、`/topic-members` | 当前分类与业务日报价，成员采集日另示 |
 | 个股策略/跟踪 | `/strategies`、`/strategy-runs`、`/tracking-*` | 当前业务日或冻结运行/轮次 |
 | 板块策略/跟踪 | `/sector-strategies`、`/sector-strategy-runs`、`/sector-tracking-*` | 独立板块业务与冻结证据 |
 | 个股研究 | `/research/jobs` | 指定标的手动运行，材料时间与行情截止分别显示 |
 | 个股回测 | `/backtests` | 本次独立起止日及预热范围 |
 | 数据中心/来源 | `/data/status`、`/tasks`、`/sources` | 同步任务冻结目标日及当前能力验证 |
+| 数据中心自动午评/盘后设置 | `GET/PUT /settings/automatic-tasks` | 独立于盘面观察日的全局配置；按服务器北京时间有效窗口执行 |
 
 切换盘面日期不改策略日期、跟踪进度或回测区间。从盘面打开详情保持该观察日；从冻结选股结果连续浏览保持运行 business_date；跟踪导航按当前筛选/排序列表，保留每股当前轮次的价格锚点。股票切换须清旧名/旧数据，不把前一只的报告或事件价短暂展示给新标的。
 
@@ -24,7 +27,8 @@ API 根路径 `/api/v1`，snake_case；成功直接返回业务对象，列表�
 - 全局检索仅支持已有名称/代码；没有拼音保证。板块点击传明确 topic_code，不能用名称拼接代码或向股票 chart 发请求。
 - 板块 K 与成员独立入口；members_available=false 不应禁用已有真实板块 K。
 - `/sectors/{topic_code}/members` 不需要跟踪轮次。latest 默认当前业务日报价，可对应较新的真实成员采集日；historical 只读所选日档案。两个日期醒目标明，历史缺档不回填当前成员。
-- 成员显示 board_label、年内/30日收益、年内涨停次数与最近确认日期，另有本月收益时不能替代 30 日。它们共用 `/instruments/{id}/summary` 语义；未知显示原因，下界不写成精确次数。
+- 盘后成员显示 board_label、年内/30日收益、年内涨停次数与最近确认日期，另有本月收益时不能替代 30 日。它们共用 `/instruments/{id}/summary` 语义；未知显示原因，下界不写成精确次数。
+- `NoonSectorDialog`是独立的[同快照午间成员详情](noon-sector-members.md)：成员价幅只取原`{snapshot_id}`中的午间报价，不套用通用收盘`summary`，也不拿最新或昨日收盘价补缺报。午间报价日与成员名单留存日分别展示；板块及个股正式K线背景严格早于午评日，不拼入午间报价。六个上市板块快捷按钮复用服务端`board`筛选，切换回第一页，保留搜索、排序与快照身份；板别未知和报价未知分别处理。
 - 个股与研究行情摘要显示五项：今日涨幅、年内涨停次数、最近确认涨停日期、年内涨幅、近30交易日涨幅。今日按摘要观察日的 `change_pct` 显示，历史观察日标明日期；不随图表周/月切换改用周期涨幅。缺少精确前一市场交易日或可比公司行动证据时显示待核验，不填 0。
 - 30日涨幅榜、资金轮动、行业题材成员、搜索、自选和策略共用StockDrawer基础布局、详情/摘要数据及个股图表偏好；只保留各自观察日、已加载筛选排序列表和真实策略/自选事件上下文。普通盘面/成员导航分别标记market/members，不冒充策略或跟踪来源，不携带意外策略checks或事件基准。每次换股按完整代码和日期隔离旧响应。
 - 详情头部统一读取 `current_topics/current_industries/current_topics_observed_date/current_topics_scope`，按当前业务日有效题材/人工归属展示，来源采集日期独立说明，与自选同口径；回看历史也明确“当前归属，非历史归因”，原观察日topics不被覆盖。缺字段为待核验，空数组为暂无已知归属，不能解释为没有分类。股票未加入自选或没有策略记录时仍有基础行情资料，不因此创建业务事件。
@@ -88,9 +92,11 @@ API 根路径 `/api/v1`，snake_case；成功直接返回业务对象，列表�
 | --- | --- |
 | 主初始化 | 读取 initialization.can_initialize；主发布成功后禁重建，不用 market.ready 猜附属链全部成功 |
 | 板块全库首次 | 读取 sector_charts.initialization；collection_complete 可在质量 partial 时成功锁定，首日来源缺口不等于需重拉 |
-| 盘后增量 | 当前日 18:00 后手动提交；新链跟进板块尾部及当日补充，不给用户再点整库初始化 |
+| 盘后增量 | 默认当前日18:00后手动提交；显式启用自动计划后的创建见下文，新链及整库初始化保护不变 |
 | 单板块历史 K | GET 先读缓存；缺缓存显示明确加载按钮，POST 后轮询精确 topic_code/as_of/target_date 任务 |
 | 题材全量与盘面补充 | 用户显式提交；分别显示真实覆盖和缺口，不与主初始化混成一个成功图标 |
+
+数据中心的[自动午评与盘后计划](automatic-review-tasks.md)新安装默认关闭。设置卡只GET/PUT配置，保留两个开关、北京时间和修订号冲突保护；保存成功不表示任务已创建或执行，不由浏览器计时取数。显式开启后唯一worker仅在当日有效窗口内创建任务，初始化和跨日历史补跑仍不自动发起；失败、暂停、取消不自动重试或继续。自动盘后沿用原会话发现、全站锁与完成结果确认，未确认上一轮时等待，不替用户确认。[自动竞价](auction-snapshots.md)使用其独立配置与原任务授权规则，两类设置不混用。
 
 任务 progress/stage_progress 为 0–100 百分比；无真实百分比只显示排队或不确定进度，不使用计时假增长。批次数使用 actual_completed_batches/actual_total_batches，不能将加权 accepted_batches 冒充实际页数。
 

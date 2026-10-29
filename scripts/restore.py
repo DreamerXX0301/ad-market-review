@@ -1,9 +1,38 @@
 #!/usr/bin/env python3
 """Restore a checksummed backup into a new data root; never merge or overwrite."""
 from __future__ import annotations
-import argparse,json,os,shutil,sqlite3,tempfile,time,uuid
+import argparse,json,os,re,shutil,sqlite3,tempfile,time,uuid
 from pathlib import Path
 from backup import sha,safe_path,connect_sqlite,check_db,finder_metadata,dragon_tiger_files
+
+def disable_automatic_review(connection, now):
+    """A restored copy must not inherit permission to create new daily jobs.
+
+    Keep the original times, receipts and calendar evidence. Advancing only the
+    configuration revision also invalidates any pre-restore submission claim.
+    This standalone archive tool must not import/initialize the application.
+    """
+    key='automatic-review-config-v1'
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='platform_setting'").fetchone():return False
+    row=connection.execute('SELECT value_json FROM platform_setting WHERE key=?',(key,)).fetchone()
+    if row is None:return False
+    try:config=json.loads(row[0])
+    except (TypeError,ValueError) as error:raise ValueError('Invalid automatic review configuration in backup') from error
+    if not isinstance(config,dict) or type(config.get('revision')) is not int or config['revision']<0:
+        raise ValueError('Invalid automatic review revision in backup')
+    for kind in ('noon','after_close'):
+        value=config.get(kind)
+        if not isinstance(value,dict) or set(value)!={'enabled','time'} or type(value.get('enabled')) is not bool:
+            raise ValueError('Invalid automatic review switches in backup')
+        clock=value['time']
+        if (not isinstance(clock,str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',clock)
+                or kind=='noon' and not '11:31'<=clock<'13:00' or kind=='after_close' and clock<'18:00'):
+            raise ValueError('Invalid automatic review time in backup')
+        value['enabled']=False
+    config['revision']+=1
+    connection.execute('UPDATE platform_setting SET value_json=?,updated_at_ms=? WHERE key=?',
+                       (json.dumps(config,ensure_ascii=False,sort_keys=True,separators=(',',':')),now,key))
+    return True
 
 def verify_backup(bundle):
     bundle=Path(bundle).expanduser().resolve()
@@ -58,6 +87,7 @@ def perform_restore(bundle,target):
             c.execute('UPDATE job SET lease_owner=NULL,lease_expires_at_ms=NULL')
             c.execute("UPDATE sync_batch SET status='cancelled' WHERE status='running'")
             c.execute("DELETE FROM retention_pin WHERE owner_kind='request' OR (owner_kind='backup' AND owner_id=?)",(manifest['backup_id'],))
+            automatic_review_disabled=disable_automatic_review(c,now)
             automation_disabled=False
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_automation'").fetchone():
                 c.execute("UPDATE market_auction_automation SET mode='off',trade_date=NULL,revision=revision+1,updated_at_ms=? WHERE singleton=1",(now,))
@@ -72,7 +102,7 @@ def perform_restore(bundle,target):
         except BaseException:c.rollback();raise
         finally:c.close()
         for folder in ('published','credentials','raw','work'): (stage/folder).mkdir(exist_ok=True)
-        result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts')),'auction_automation_disabled':automation_disabled}
+        result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts')),'auction_automation_disabled':automation_disabled,'automatic_review_disabled':automatic_review_disabled}
         (stage/'restore-report.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
         os.replace(stage,target)
         return {**result,'target':str(target)}
