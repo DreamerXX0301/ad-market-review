@@ -1,4 +1,4 @@
-"""Pure auction validation: only ready final responses may become observations.
+"""Pure auction validation: only verified final state pairs become observations.
 
 The provider timestamp describes response assembly, never an individual quote.
 Prices are unadjusted yuan, auction volume is lots of 100 shares, amounts yuan,
@@ -19,6 +19,9 @@ FIELDS = ('auction_price', 'auction_pct', 'auction_amount', 'auction_volume',
           'auction_turnover_pct', 'auction_yesterday_ratio_pct', 'auction_volume_ratio',
           'pre_close_price')
 SCOPE = '仅为本次冻结候选样本，不代表全市场；缺报不认定为停牌。'
+# Both pairs have independent source-shape evidence. Keep the original phase
+# and status rather than broadening either value into a standalone whitelist.
+FINAL_SOURCE_STATES = (('final', 'ready'), ('matched', 'final'))
 
 
 def number(value, *, positive=False, nonnegative=False):
@@ -142,8 +145,8 @@ def normalize_snapshot(body, instrument_ids, day, received_at):
                         'auction_yesterday_ratio_pct': 'percent', 'auction_volume_ratio': 'ratio'},
               'quote_as_of': None}
     reason = None
-    if data.get('auction_phase') != 'final' or data.get('data_status') != 'ready':
-        reason = '来源尚非ready终态；即使字段有数值也不能当作本日有效竞价。'
+    if (data.get('auction_phase'), data.get('data_status')) not in FINAL_SOURCE_STATES:
+        reason = '来源状态组合尚非已核验终态；即使字段有数值也不能当作本日有效竞价。'
     elif timestamp['state'] != 'observed':
         reason = '来源响应组装日期或时段未通过核验，未据此认定逐票行情新鲜。'
     elif not isinstance(data.get('item'), list) or len(data['item']) > 100:

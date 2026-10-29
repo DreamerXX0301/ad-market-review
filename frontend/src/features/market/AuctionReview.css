@@ -314,6 +314,175 @@
   max-height: 340px;
   overflow: auto;
 }
+.auction-background-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 5px 0;
+}
+.auction-background-tag {
+  --tag-color: var(--muted);
+  color: var(--tag-color);
+  background: color-mix(in srgb, var(--tag-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-color) 25%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10px;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+.auction-background-tag.limit-up {
+  --tag-color: var(--red);
+}
+.auction-background-tag.break {
+  --tag-color: var(--amber);
+}
+.auction-background-tag.watch {
+  --tag-color: var(--blue);
+}
+.auction-background-tag.focus {
+  --tag-color: var(--accent-secondary);
+}
+.auction-board-count {
+  color: var(--red);
+  white-space: nowrap;
+}
+.auction-topic-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-topic-scroll {
+  max-height: 440px;
+  overflow: auto;
+}
+.auction-topic-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.auction-topic-table th,
+.auction-topic-table td {
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: right;
+  vertical-align: top;
+}
+.auction-topic-table th:first-child,
+.auction-topic-table td:first-child {
+  text-align: left;
+}
+.auction-topic-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface2);
+  color: var(--muted);
+  z-index: 1;
+}
+.auction-topic-table th .auction-sort {
+  margin-left: auto;
+}
+.auction-topic-table td small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+}
+.auction-topic-stocks summary {
+  cursor: pointer;
+}
+.auction-topic-stocks > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 320px;
+  gap: 6px 12px;
+  padding-top: 8px;
+}
+.auction-topic-note {
+  padding: 10px 18px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.auction-feedback-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+  gap: 12px;
+  padding: 15px 18px;
+}
+.auction-feedback-card {
+  --feedback-color: var(--muted);
+  border: 1px solid
+    color-mix(in srgb, var(--feedback-color) 25%, var(--border-soft));
+  border-top: 2px solid var(--feedback-color);
+  border-radius: 6px;
+  padding: 13px;
+  background: color-mix(in srgb, var(--feedback-color) 4%, var(--surface2));
+}
+.auction-feedback-card.positive {
+  --feedback-color: var(--red);
+}
+.auction-feedback-card.negative {
+  --feedback-color: var(--green);
+}
+.auction-feedback-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--feedback-color);
+  font-size: 13px;
+}
+.auction-feedback-card > p {
+  margin: 7px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-feedback-average {
+  font-size: 11px;
+  margin: 10px 0;
+  color: var(--muted);
+}
+.auction-feedback-average strong {
+  margin-left: 5px;
+  font-size: 16px;
+}
+.auction-feedback-card details {
+  font-size: 11px;
+}
+.auction-feedback-card summary {
+  cursor: pointer;
+  color: var(--subtle);
+}
+.auction-feedback-stocks {
+  max-height: 220px;
+  overflow: auto;
+  padding-top: 8px;
+}
+.auction-feedback-stocks > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+}
+.auction-feedback-foot {
+  padding: 0 18px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+}
+.auction-feedback-foot p {
+  width: 100%;
+  margin: 0;
+}
 .auction-benchmark-list > div {
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border-soft);
@@ -767,4 +936,25 @@
   .auction-automation-head > .auction-head-actions {
     margin-top: 5px;
   }
+}
+.auction-resonance-order {
+  margin: 12px 0;
+}
+.auction-resonance-table {
+  min-width: 720px;
+}
+.auction-resonance-anchor {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+}
+.auction-resonance-anchor strong {
+  margin-right: 10px;
+}
+.auction-resonance-anchor p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
 }

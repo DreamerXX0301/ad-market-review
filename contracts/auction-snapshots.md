@@ -11,6 +11,8 @@
 - `GET /api/v1/market/auction/close-review?date=YYYY-MM-DD`：独立盘后只读核对，用户展开时读取。没有竞价留存不倒造；未到当日15:00或同日盘后数据未发布时`pending`。仅读取已发布的同日未复权Parquet，不联网、不写回原竞价。见下文。
 - `GET /api/v1/market/auction/automation`：只读服务自动采集配置、当前worker心跳、下次候选时间及最近日运行回执。它是全局配置，不跟随盘面历史观察日改变。读取不创建任务。
 - `POST /api/v1/market/auction/automation`：接受`mode:'off/once/daily',date?,instrument_ids?,expected_revision`。`once`绑定服务器今天，`daily`仅在用户明确开启后授权后续逐日竞价。代码与手动入口同样最多100个；缺省使用默认样本规则。配置使用修订号乐观锁，过期409，关闭可撤销后续自动触发。
+- `GET /api/v1/market/auction/topic-summary?date=YYYY-MM-DD`：只读派生题材/行业样本股数、有效/缺失报价数和等权平均竞价涨幅，返回原成员代际、来源SHA及成员日期。只用原快照明确来源，不读取当前成员补历史。
+- `GET /api/v1/market/auction/feedback?date=YYYY-MM-DD`：只用冻结的严格前日事件和本次竞价，分组展示延续、修复、转弱与未知，不联网、不改变策略或快照。
 
 `capture_window={allowed,reason,start_at,end_at,timezone:'Asia/Shanghai',calendar_verified}`。仅今天 `09:25:00 <= time < 09:30:00` 可以手动创建和执行。API先排除周末，worker通过真实来源交易日历核实今天及严格前一交易日。每次实际HTTP尝试之前、响应收到之后均检查窗口与租约；窗口外响应丢弃，不能用盘中最新价或历史开盘价补造。
 
@@ -48,7 +50,7 @@
 - `/api/a-share/auction/snapshot?thscodes=...&stage=final`
 - `/api/a-share/auction/short-term-benchmark?date=YYYY-MM-DD`
 
-快照只有 `auction_phase='final'` 且 `data_status='ready'` 时才允许使用数值。**非就绪响应即使价格、成交等字段全部非空，也全部保持未知**。来源 `timestamp` 是响应组装时刻，只核实日期、时段与非未来，不当作逐证券报价时间；`quote_at/quote_as_of`保留null。没有连续时序，不推断9:20至9:24撤单、抢筹或封单稳定；未匹配量无方向，不推导净流入。
+快照只接受两个已核验的精确终态组合：`(auction_phase='final',data_status='ready')`及真实服务返回的`(auction_phase='matched',data_status='final')`。两个字段必须成对匹配，原件及展示均保留来源原值，不能先改写字段再校验。交叉错组、`closed/live/not_ready`等其余组合仍拒绝。**非就绪响应即使价格、成交等字段全部非空，也全部保持未知**。来源 `timestamp` 是响应组装时刻，只核实日期、时段与非未来，不当作逐证券报价时间；`quote_at/quote_as_of`保留null。没有连续时序，不推断9:20至9:24撤单、抢筹或封单稳定；未匹配量无方向，不推导净流入。
 
 `payload={version:'auction-snapshot-v1',date,collected_start_at,collected_end_at,previous_date,universe,quotes,benchmark,previous_review,analysis,gaps,sources,evidence}`。
 
@@ -64,6 +66,24 @@
 `summary={requested,valid,missing,up,down,flat,median_pct,amount,amount_valid,scope}`。高低平开与中位数仅使用有效价幅，金额仅累加量额已核验部分，覆盖分母分别显示。无有效样本时统计值为null，非0。
 
 `benchmark={date,state,items:[{instrument_id,name,auction_pct,tags}],reason,scope}`。必须返回明确本日 `date/date_ms`；空结果、错日、缺少有效记录保持未知，不自动回退。来源短线样本与标签单列，不当作全市场、个人样本的完整基准或买卖信号。
+
+来源短线基准支持按竞价涨幅高→低、低→高独立切换，默认高→低；未知始终排末，0是有效值。排序只改显示副本，不改原来源顺序、标签、冻结正文、SHA或主竞价表排序状态。全无有效报价时，任务追加有界`auction_quote_rejected`诊断：阶段和状态各最多40字符、时间核验状态、请求/有效数量及最多5条缺口摘要。未知标记组合明确说明不支持，与未就绪分开；日志不留失败原响应、Key或完整代码名单。
+
+### 昨日事件与今日竞价反馈
+
+`feedback.version='auction-feedback-v1'`。以0为明确高/平/低开边界，对原名单中前日已核验涨停/炸板样本分组：昨日炸板→今日高开（修复观察）、昨日涨停→今日低开（转弱观察）、昨日涨停→今日高开（延续观察）、昨日炸板→今日低开（弱势延续），两类前日事件的平开分别待确认。缺少前日事件、当次报价缺失和前日两池冲突分开未知；不从竞价涨幅猜昨日事件，不用今日板数倒推昨日，也不把未知算成平开。
+
+组包含`key,title,interpretation,count,valid_count,missing_count,median_auction_pct,average_auction_pct,items`，均值分母为该组有效报价，列表只取原100只交集。`coverage`区分已分类与未知；分组用于观察相对昨收定价，不自动判全天强弱、兑现或交易信号。昨日市场广度等冻结事实可作为独立背景，不据此断言个股被大盘拖累；没有已保存的文字预期不补造“昨日预期涨停”。
+
+### 原成员档案的题材数量与均幅
+
+`topic-summary.version='auction-topic-summary-v1'`。新任务在首次冻结输入时保存`market_context={source_snapshot_id,data_end,source,known_at_ms}`，成功正文携带该对象；旧冻结任务不扩大输入。旧正文只允许使用已经明确记录的前日事实代际；没有明确可核验代际保持unknown。
+
+来源链为原代际→SQLite已发布topics快照及catalog manifest SHA→reference文件的SQL SHA/大小→有界topics CAS分片的SQL及内部SHA。只读取原指定代际最多1500组、一份有界成员分片；不跟当前head，不遍历历史。来源、代码、类别、成员日期分别核验，晚于前日的成员拒绝，同名不同代码不合并。原件丢失、SHA错或锚点不唯一均保留未知，不修改原竞价正文或SHA。
+
+组含`topic_code,name,kind,source,members_observed_date,sample_count,valid_count,missing_count,average_auction_pct,instrument_ids,members_complete`。样本股数为原名单与已核验成员交集，均幅仅除以有效报价数，缺失不补0；不完整成员的数量标已确认下界≥N。题材和行业可分别按数量/均幅排序，单组数量可展开股票。一个股票可属于多个组，组内去重，组间数量不可相加成去重总数；不是全板块家数或板块指数收益。成员档案日与竞价日醒目标明。
+
+入选背景的可见标签缩写为“昨日涨停”“昨日炸板”“自选”“昨日关注/主线”等，分别用红、黄、蓝、紫区分；完整来源措辞保留在悬浮提示和冻结证据中，不改写数据。
 
 ## 原件、存储与备份
 
@@ -86,3 +106,10 @@ GET验正文SHA及每份来源原件SHA、大小、参数、时窗和sources闭�
 专项覆盖真实曾出现的“非就绪但全部有数值”、量额/涨幅对账、窗口/跨日/节假日/跨窗响应、手动重试和暂停取消、候选冻结、原判断实际时点、请求幂等并发、原件闭包与标准恢复、GET零网络、日线与策略数据不变、未知排序、图表前日截止和盘后核对。
 
 来源：[同花顺集合竞价API](https://fuyao.aicubes.cn/docs/api-reference/auction/)、[上交所2026年交易规则](https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml)、[深交所竞价撤单说明](https://investor.szse.cn/institute/video/classroom/knowledge/t20100721_537821.html)。真实终态验收须在当日合法窗口手动执行；自动测试和非就绪通路探测不等于真实竞价已采集或有效性已经获证。
+# 题材共振派生视图
+
+`GET /api/v1/market/auction/resonance?date=YYYY-MM-DD` 返回 `auction-resonance-v1`。只读原竞价正文及题材汇总所核验的原成员代际，复用其SQLite发布锚点和SHA；不联网、不取当前归属、不修改原快照。
+
+有效竞价按涨幅降序、代码升序取前20只，实际不足20时保留真实数量；这只是相对排名，弱市也可能包含低开。分组至少匹配3只冻结候选。每组给出有效/缺失数量、前列命中数、均幅、中位数、高开占比和竞价额有效覆盖；`up_ratio`、`top_share`、`top_ratio`单位均为0—1比例，分别以本组有效报价、全部前列实际数量、本组有效报价为分母。`concentration_lift = top_ratio / (前列实际数量 / 全部有效竞价数量)`，单位为倍数，缺分母保持未知。前端默认按集中倍数排序，只列命中至少2只前列股票的前15组，支持均幅、命中数排序；不能把宽标签高命中数直接称为板块整体强势。
+
+`anchors.state=unknown`、列表为空：当前快照没有已核验的今日涨停价与一字时序/报价证据，不能以接近10%竞价涨幅、昨日标签或题材词认定今日一字涨停，也不生成剔除锚股后的强度结论。所有分组仅代表本次候选交集，不代表全市场或完整板块；成员档案日期单独显示。

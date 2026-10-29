@@ -289,7 +289,7 @@ def _reconcile(connection, run, config, current):
         return
     retained = connection.execute('SELECT 1 FROM market_auction_snapshot WHERE job_id=?', (run['job_id'],)).fetchone()
     if retained:
-        connection.execute("UPDATE market_auction_automation_run SET state='available',retry_after_at_ms=NULL,updated_at_ms=? WHERE trade_date=?", (stamp(current), run['trade_date']))
+        connection.execute("UPDATE market_auction_automation_run SET state='available',retry_after_at_ms=NULL,reason='竞价终态已留存，请查看结果',updated_at_ms=? WHERE trade_date=?", (stamp(current), run['trade_date']))
         return
     if job['status'] in ('paused','cancelled'):
         connection.execute('UPDATE market_auction_automation_run SET state=?,automatic_control=0,retry_after_at_ms=NULL,updated_at_ms=? WHERE trade_date=?',

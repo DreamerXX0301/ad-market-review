@@ -24,6 +24,7 @@ import { noonClock, noonLines, noonRows } from "./noonPresentation";
 import {
   auctionAutomaticToday,
   auctionAutomationView,
+  auctionBackgroundTags,
   auctionCanAct,
   auctionCaptureState,
   auctionCodes,
@@ -35,6 +36,9 @@ import {
   auctionStates,
 } from "./auctionPresentation";
 import AuctionAutomation from "./AuctionAutomation";
+import AuctionTopicSummary from "./AuctionTopicSummary";
+import AuctionFeedback from "./AuctionFeedback";
+import AuctionResonance from "./AuctionResonance";
 import {
   beginAuctionRun,
   acceptAuctionRun,
@@ -77,6 +81,27 @@ function sourceName(row: Row) {
     row.name ||
     row.endpoint ||
     "来源请求"
+  );
+}
+
+function BackgroundTags({ reasons }: { reasons: unknown }) {
+  const tags = auctionBackgroundTags(reasons);
+  return (
+    <div className="auction-background-tags">
+      {tags.length ? (
+        tags.map((tag) => (
+          <span
+            key={tag.source}
+            className={`auction-background-tag ${tag.tone}`}
+            title={tag.source}
+          >
+            {tag.label}
+          </span>
+        ))
+      ) : (
+        <span className="auction-muted">关注</span>
+      )}
+    </div>
   );
 }
 
@@ -129,6 +154,9 @@ export default function AuctionReview({
     key: "auction_pct",
     direction: "desc",
   });
+  const [benchmarkDirection, setBenchmarkDirection] = useState<"asc" | "desc">(
+    "desc",
+  );
   const submitting = useRef(false);
   const keys = useRef<Record<string, { key: string; ids: string[] }>>({});
   const currentDay = useRef(selected);
@@ -297,6 +325,11 @@ export default function AuctionReview({
     ]),
   ];
   const benchmark = payload?.benchmark || {};
+  const benchmarkRows = auctionSortRows(
+    noonRows(benchmark.items),
+    "auction_pct",
+    benchmarkDirection,
+  );
   const analysis = noonLines(payload?.analysis);
   const previousFocus = auctionPreviousFocus(payload);
   const preparation =
@@ -661,6 +694,11 @@ export default function AuctionReview({
               {view?.snapshot?.quality === "complete" ? "核验通过" : "部分可用"}
             </Badge>
           </div>
+          <AuctionFeedback
+            date={selected}
+            onStock={onStock}
+            chartDate={chartDate}
+          />
           <Panel
             title="昨日复盘 → 今日竞价"
             subtitle="引用采集开始前已经保存的严格前一交易日材料，原判断与本次事实并列。"
@@ -843,9 +881,7 @@ export default function AuctionReview({
                           {percent(auctionNumber(row.auction_pct))}
                         </strong>
                       </div>
-                      <p>
-                        {noonLines(row.reasons).join(" · ") || "冻结候选样本"}
-                      </p>
+                      <BackgroundTags reasons={row.reasons} />
                       <span>
                         竞价价 {num(auctionNumber(row.auction_price))}元 ·
                         竞价额 {amount(auctionNumber(row.auction_amount))}
@@ -863,6 +899,18 @@ export default function AuctionReview({
               )}
             </div>
           </Panel>
+          <AuctionResonance
+            date={date}
+            quotes={noonRows(payload.quotes?.items)}
+            onStock={onStock}
+            chartDate={chartDate}
+          />
+          <AuctionTopicSummary
+            date={selected}
+            quotes={noonRows(payload.quotes?.items)}
+            onStock={onStock}
+            chartDate={chartDate}
+          />
           <Panel
             title="竞价观察单"
             subtitle={
@@ -925,10 +973,10 @@ export default function AuctionReview({
                     <tr key={row.instrument_id}>
                       <td>{identity(row)}</td>
                       <td className="auction-background">
-                        {noonLines(row.reasons).join(" · ") || "自定义关注"}
+                        <BackgroundTags reasons={row.reasons} />
                         {auctionNumber(row.previous_board_count) != null && (
-                          <small>
-                            昨日 {integer(row.previous_board_count)} 板
+                          <small className="auction-board-count">
+                            昨日{integer(row.previous_board_count)}板
                           </small>
                         )}
                       </td>
@@ -980,12 +1028,32 @@ export default function AuctionReview({
             </Panel>
             <Panel
               title="来源短线基准"
+              actions={
+                <div className="button-group" aria-label="来源短线基准涨幅排序">
+                  <button
+                    className={`btn small${benchmarkDirection === "desc" ? " active" : ""}`}
+                    aria-pressed={benchmarkDirection === "desc"}
+                    onClick={() => setBenchmarkDirection("desc")}
+                    disabled={!benchmarkRows.length}
+                  >
+                    <ArrowDown size={12} /> 高 → 低
+                  </button>
+                  <button
+                    className={`btn small${benchmarkDirection === "asc" ? " active" : ""}`}
+                    aria-pressed={benchmarkDirection === "asc"}
+                    onClick={() => setBenchmarkDirection("asc")}
+                    disabled={!benchmarkRows.length}
+                  >
+                    <ArrowUp size={12} /> 低 → 高
+                  </button>
+                </div>
+              }
               subtitle="服务端标签单独展示，不等同于本次候选或全市场。"
             >
               <div className="auction-panel-body">
-                {noonRows(benchmark.items).length ? (
+                {benchmarkRows.length ? (
                   <div className="auction-benchmark-list">
-                    {noonRows(benchmark.items).map((row) => (
+                    {benchmarkRows.map((row) => (
                       <div key={row.instrument_id}>
                         <div>
                           {identity(row)}

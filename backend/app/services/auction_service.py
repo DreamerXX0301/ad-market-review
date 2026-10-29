@@ -350,7 +350,7 @@ def _universe(market, explicit, previous, known_at):
 def _compact_previous(previous, universe):
     symbols = {row['instrument_id'] for row in universe['items']}
     fields = ('date', 'state', 'snapshot_id', 'recorded_at_ms', 'content_sha256', 'known_at_ms',
-              'payload', 'mainlines', 'summary', 'gaps')
+              'payload', 'background', 'mainlines', 'summary', 'gaps')
     result = {key: previous.get(key) for key in fields}
     result['observations'] = [{key: row.get(key) for key in ('instrument_id', 'name', 'mainline',
         'source_note', 'previous_close', 'previous_date')} for row in (previous.get('observations') or []) if isinstance(row, dict)]
@@ -383,6 +383,11 @@ def _freeze_inputs(job, market, previous, known_at, adapter):
     universe = _universe(market, params.get('instrument_ids', []), context, known_at)
     frozen = {'previous_date': previous, 'known_at_ms': known_at, 'universe': universe,
               'previous_review': _compact_previous(context, universe)}
+    status_reader = getattr(market, 'status', None)
+    status = status_reader() if callable(status_reader) else {}
+    if isinstance(status, dict) and isinstance(status.get('snapshot_id'), str):
+        frozen['market_context'] = {'source_snapshot_id': status['snapshot_id'],
+            'data_end': status.get('data_end'), 'source': status.get('source'), 'known_at_ms': known_at}
     if contains_secret(frozen, getattr(adapter, 'key', None)):
         raise ValueError('竞价背景包含凭据回显，未冻结输入')
     params['frozen_inputs'] = frozen
@@ -435,6 +440,24 @@ def execute_capture(job, callback=None):
     return result
 
 
+def _record_quote_rejection(job, quotes, reason_code, message):
+    """Keep bounded validation metadata, never failed raw bodies or identities."""
+    def short(value, maximum):
+        return ' '.join(value.split())[:maximum] if isinstance(value, str) else 'unknown'
+    summary = quotes.get('summary') or {}
+    details = {'reason_code': reason_code,
+               'auction_phase': short(quotes.get('auction_phase'), 40),
+               'data_status': short(quotes.get('data_status'), 40),
+               'source_timestamp_state': short((quotes.get('source_timestamp') or {}).get('state'), 40),
+               'requested': summary.get('requested'), 'valid': summary.get('valid'),
+               'gaps': [short(value, 160) for value in (quotes.get('gaps') or [])[:5] if isinstance(value, str)]}
+    with connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        state = connection.execute('SELECT status,lease_owner FROM job WHERE job_id=?', (job['job_id'],)).fetchone()
+        if state and state['status'] == 'running' and state['lease_owner'] == job.get('lease_owner'):
+            tasks.append_event(connection, job['job_id'], 'auction_quote_rejected', message, 'warning', details)
+
+
 def _execute_capture(job, callback=None):
     if isinstance(job, str):
         with connect() as connection:
@@ -480,17 +503,30 @@ def _execute_capture(job, callback=None):
     symbols = [row['instrument_id'] for row in universe['items']]
     if not symbols:
         raise ValueError('没有可冻结的自选或严格前日已核验事件样本，请在原窗口前准备观察名单')
-    from app.services.auction_analysis import normalize_snapshot, normalize_benchmark, build_analysis
+    from app.services.auction_analysis import FINAL_SOURCE_STATES, normalize_snapshot, normalize_benchmark, build_analysis
     body = collector.request('auction', '/api/a-share/auction/snapshot', {'thscodes': ','.join(symbols), 'stage': 'final'})
     received = collector.sources[-1]['received_at']
     quotes = normalize_snapshot(body, symbols, day, received)
     if not (quotes.get('summary') or {}).get('valid'):
         data = body.get('data') if isinstance(body, dict) and body.get('code') == 0 else None
-        if (isinstance(data, dict) and quotes.get('source_timestamp', {}).get('state') == 'observed'
-                and (data.get('data_status') == 'not_ready' or data.get('auction_phase') in ('live', 'closed'))):
+        phase = data.get('auction_phase') if isinstance(data, dict) else None
+        status = data.get('data_status') if isinstance(data, dict) else None
+        pending = isinstance(data, dict) and (status == 'not_ready' or phase in ('live', 'closed') and status == 'ready')
+        if data is None:
+            reason_code, message = 'response_unavailable', '没有取得可核验竞价响应，未保存成功快照；缺口见本次核验摘要'
+        elif (phase, status) not in FINAL_SOURCE_STATES and not pending:
+            reason_code, message = 'unsupported_final_markers', '来源竞价终态标记不支持，未采用响应中的报价；具体标记见本次核验摘要'
+        elif quotes.get('source_timestamp', {}).get('state') != 'observed':
+            reason_code, message = 'invalid_timestamp', '来源竞价响应时点未通过核验，未保存成功快照；时点状态见本次核验摘要'
+        elif pending:
+            reason_code, message = 'not_ready', '来源竞价终态尚未就绪，未保存成功快照；仅已开启的自动计划可在原窗口有界重试'
+        else:
+            reason_code, message = 'no_valid_quotes', '来源竞价终态没有有效报价，未保存成功快照；缺口见本次核验摘要'
+        _record_quote_rejection(job, quotes, reason_code, message)
+        if reason_code == 'not_ready':
             from app.services.auction_automation import AuctionNotReady
-            raise AuctionNotReady('来源竞价终态尚未就绪，未保存成功快照；仅已开启的自动计划可在原窗口有界重试')
-        raise ValueError('来源竞价终态尚未就绪或没有有效报价，未保存成功快照；可在09:30前手动重试原任务')
+            raise AuctionNotReady(message)
+        raise ValueError(message)
     for item in quotes.get('gaps') or []:
         collector.gap('auction', item if isinstance(item, str) else item.get('reason', '竞价报价存在缺口'))
     benchmark_body = None
@@ -502,6 +538,7 @@ def _execute_capture(job, callback=None):
     payload = {'version': VERSION, 'date': day, 'collected_start_at': collector.started_at,
                'collected_end_at': collector.last_accepted_at, 'previous_date': frozen['previous_date'],
                'universe': universe, 'quotes': quotes, 'benchmark': benchmark,
+               'market_context': frozen.get('market_context'),
                'previous_review': frozen['previous_review'], 'analysis': build_analysis(quotes, universe) + [
                    '金额为集合竞价成交额，不称资金净流入；没有连续竞价过程，不推断撤单、抢筹或封单稳定。'],
                'gaps': collector.gaps, 'sources': collector.sources, 'evidence': collector.evidence}

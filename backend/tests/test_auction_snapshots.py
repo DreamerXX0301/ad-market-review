@@ -337,11 +337,65 @@ def test_rejected_source_response_never_enters_snapshot_or_task_parameters(isola
             return {'code': 0, 'data': {'echo': isolated.source.key if mode == 'secret' else 'x' * (1024 * 1024 + 1)}}
     isolated.source.hook = invalid
     job = claim(isolated)
-    with pytest.raises(ValueError, match='尚未就绪'):
+    with pytest.raises(ValueError, match='没有取得可核验竞价响应'):
         service.execute_capture(job)
     with core.connect() as connection:
         assert connection.execute('SELECT count(*) FROM market_auction_snapshot').fetchone()[0] == 0
         assert isolated.source.key not in connection.execute('SELECT parameters_json FROM job').fetchone()[0]
+        logs = ' '.join(row[0] for row in connection.execute('SELECT details_json FROM job_event'))
+        assert isolated.source.key not in logs
+
+
+@pytest.mark.parametrize('phase,status,changes,reason_code,message', [
+    ('unrecognized_terminal_phase', 'ready', {}, 'unsupported_final_markers', '终态标记不支持'),
+    ('matched', 'ready', {}, 'unsupported_final_markers', '终态标记不支持'),
+    ('final', 'final', {}, 'unsupported_final_markers', '终态标记不支持'),
+    ('closed', 'not_ready', {}, 'not_ready', '尚未就绪'),
+    ('live', 'ready', {}, 'not_ready', '尚未就绪'),
+    ('final', 'ready', {'timestamp': int((NOW + timedelta(seconds=6)).timestamp() * 1000)}, 'invalid_timestamp', '时点未通过'),
+    ('matched', 'final', {'invalid_price': True}, 'no_valid_quotes', '没有有效报价'),
+])
+def test_failed_quote_keeps_only_bounded_validation_diagnostic(isolated, phase, status, changes, reason_code, message):
+    def response(path, params):
+        if path.endswith('/auction/snapshot'):
+            codes = params['thscodes'].split(',')
+            values = [quote(code, **({'auction_pct': 999} if changes.get('invalid_price') else {})) for code in codes]
+            return {'code': 0, 'data': {'timestamp': changes.get('timestamp', int(NOW.timestamp() * 1000)),
+                    'auction_phase': phase, 'data_status': status, 'item': values, 'total': len(values),
+                    'arbitrary_untrusted_payload': 'Do not retain this failed raw body'}}
+    isolated.source.hook = response
+    job = claim(isolated)
+    with pytest.raises(ValueError, match=message):
+        service.execute_capture(job)
+    diagnostics = [event for event in tasks.task_view(job['job_id'])['logs'] if event['stage'] == 'auction_quote_rejected']
+    assert len(diagnostics) == 1
+    event = diagnostics[0]; details = event['details']
+    assert details['reason_code'] == reason_code and message in event['message']
+    assert details['auction_phase'] == phase and details['data_status'] == status
+    assert details['source_timestamp_state'] == ('future' if reason_code == 'invalid_timestamp' else 'observed')
+    assert details['requested'] == 2 and details['valid'] == 0
+    assert 0 < len(details['gaps']) <= 5 and all(len(gap) <= 160 for gap in details['gaps'])
+    encoded = json.dumps(details, ensure_ascii=False)
+    assert len(encoded.encode()) < 2048
+    assert 'arbitrary_untrusted_payload' not in encoded and 'body' not in details
+    assert not any(code in encoded for code in ('600001.SH', '000001.SZ'))
+    assert list(core.raw_dir().iterdir()) == []
+    assert service.read_view(DAY)['snapshot'] is None
+
+
+def test_diagnostic_phase_and_status_are_bounded_plain_metadata(isolated):
+    def response(path, params):
+        if path.endswith('/auction/snapshot'):
+            return {'code': 0, 'data': {'timestamp': int(NOW.timestamp() * 1000),
+                    'auction_phase': 'unknown\n' * 30, 'data_status': 'unsupported\t' * 20,
+                    'total': 1, 'item': [quote()]}}
+    isolated.source.hook = response
+    job = claim(isolated)
+    with pytest.raises(ValueError, match='终态标记不支持'):
+        service.execute_capture(job)
+    details = next(event['details'] for event in tasks.task_view(job['job_id'])['logs'] if event['stage'] == 'auction_quote_rejected')
+    assert len(details['auction_phase']) <= 40 and len(details['data_status']) <= 40
+    assert '\n' not in details['auction_phase'] and '\t' not in details['data_status']
 
 
 def test_collector_total_evidence_budget_and_transport_retry_guard(isolated):

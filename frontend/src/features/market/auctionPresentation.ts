@@ -4,6 +4,35 @@ type AuctionRow = Record<string, any>;
 export const auctionNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
+/** Compact display labels keep the original evidence wording in their tooltip. */
+export function auctionBackgroundTags(value: unknown) {
+  const labels: Record<string, { label: string; tone: string }> = {
+    严格前日已核验涨停: { label: "昨日涨停", tone: "limit-up" },
+    严格前日已核验炸板: { label: "昨日炸板", tone: "break" },
+    采集开始前已加入自选: { label: "自选", tone: "watch" },
+    用户明确指定: { label: "自定义", tone: "watch" },
+    严格前日已留存复盘关注股: { label: "昨日关注", tone: "focus" },
+    严格前日已留存观察: { label: "昨日观察", tone: "focus" },
+    严格前日已留存逐股主线: { label: "昨日主线", tone: "focus" },
+  };
+  const reasons = Array.isArray(value)
+    ? [
+        ...new Set(
+          value
+            .filter(
+              (item): item is string =>
+                typeof item === "string" && !!item.trim(),
+            )
+            .map((item) => item.trim()),
+        ),
+      ]
+    : [];
+  return reasons.map((source) => ({
+    ...(labels[source] || { label: source, tone: "neutral" }),
+    source,
+  }));
+}
+
 export function auctionInitialDate(hash: string): string {
   const [route, search = ""] = hash.replace(/^#/, "").split("?", 2);
   if (route !== "auction") return "";

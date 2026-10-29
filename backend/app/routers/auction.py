@@ -31,6 +31,24 @@ def close_review(date: str):
     return JSONResponse(json_clean(read_close_review(date)))
 
 
+@router.get('/topic-summary')
+def topic_summary(date: str):
+    from app.services.auction_topic_summary import read_view
+    return JSONResponse(json_clean(read_view(date)))
+
+
+@router.get('/feedback')
+def feedback(date: str):
+    from app.services.auction_feedback import read_view
+    return JSONResponse(json_clean(read_view(date)))
+
+
+@router.get('/resonance')
+def resonance(date: str):
+    from app.services.auction_resonance import read_view
+    return JSONResponse(json_clean(read_view(date)))
+
+
 @router.get('')
 def view(date: str | None = None):
     return JSONResponse(json_clean(service.read_view(date)))

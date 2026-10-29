@@ -48,8 +48,29 @@ def test_price_pct_lot_amount_and_percent_values_reconcile_without_scaling():
     assert value['summary']['median_pct'] == 5
 
 
+@pytest.mark.parametrize('phase,status', [('final', 'ready'), ('matched', 'final')])
+def test_verified_final_source_pairs_keep_original_values_and_reconcile_prices_and_lots(phase, status):
+    values = [quote(auction_price=4.19, pre_close_price=4.31, auction_pct=-2.78,
+                    auction_volume=12982, auction_amount=5439458),
+              quote(CODES[1], auction_price=10, pre_close_price=10, auction_pct=0,
+                    auction_volume=0, auction_amount=0)]
+    body = envelope(values, auction_phase=phase, data_status=status)
+    original = deepcopy(body)
+    value = normalize(body, CODES)
+    assert body == original
+    assert value['state'] == 'observed' and value['summary']['valid'] == 2
+    assert value['auction_phase'] == phase and value['data_status'] == status
+    assert value['items'][0]['auction_pct'] == -2.78
+    assert value['items'][0]['unit_check']['state'] == 'verified'
+    assert value['items'][0]['auction_amount'] == 5439458
+    assert value['items'][1]['auction_amount'] == 0
+    assert all(row['quote_at'] is None for row in value['items'])
+
+
 @pytest.mark.parametrize('phase,status', [('closed', 'not_ready'), ('final', 'not_ready'),
-                                         ('live', 'ready'), ('closed', 'ready'), ('', 'ready')])
+    ('live', 'ready'), ('closed', 'ready'), ('', 'ready'), ('matched', 'ready'),
+    ('final', 'final'), ('matched', 'not_ready'), ('live', 'final'), ('closed', 'final'),
+    ('matched', ''), (None, 'final'), ('matched', None), ([], 'final'), ('matched', {})])
 def test_nonempty_not_ready_values_never_become_observed(phase, status):
     value = normalize(envelope(auction_phase=phase, data_status=status))
     assert value['state'] == 'unknown'
@@ -57,6 +78,14 @@ def test_nonempty_not_ready_values_never_become_observed(phase, status):
     assert value['summary']['valid'] == 0
     assert value['summary']['up'] is None
     assert value['summary']['amount'] is None
+
+
+@pytest.mark.parametrize('changes', [{'timestamp': None},
+    {'timestamp': int((RECEIVED - timedelta(days=1)).timestamp() * 1000)},
+    {'timestamp': int(RECEIVED.replace(minute=30).timestamp() * 1000)}])
+def test_matched_final_still_requires_verified_same_day_capture_timestamp(changes):
+    value = normalize(envelope(auction_phase='matched', data_status='final', **changes))
+    assert value['summary']['valid'] == 0 and value['state'] == 'unknown'
 
 
 @pytest.mark.parametrize('stamp', [None, True, math.nan, -1, 10**1000,
