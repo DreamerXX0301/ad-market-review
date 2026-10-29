@@ -10,7 +10,11 @@
 }
 .auction-page-reader-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
+  min-width: 0;
+}
+.auction-page-reader-main > * {
   min-width: 0;
 }
 .auction-page-reader-main [id] {
