@@ -345,8 +345,17 @@ def test_standard_backup_restore_preserves_tombstones_and_old_evidence(creation_
     bundle = tmp_path.parent/(tmp_path.name+'-backup')
     target = tmp_path.parent/(tmp_path.name+'-restored')
     perform_backup(tmp_path, bundle, credential_dir=tmp_path/'credentials')
-    perform_restore(bundle, target)
+    restored = perform_restore(bundle, target)
     with sqlite3.connect(target/'business/app.sqlite3') as connection:
+        # Recovery invalidates automatic submission permission even when the
+        # archived auction switch was already off. All other business evidence,
+        # including deletion tombstones, must remain byte-for-byte equivalent.
+        columns = [row[1] for row in connection.execute('PRAGMA table_info(market_auction_automation)')]
+        prior = dict(zip(columns, evidence['market_auction_automation'][0]))
+        assert prior['mode'] == 'off' and prior['trade_date'] is None
+        expected = {**prior, 'revision': prior['revision']+1, 'updated_at_ms': restored['restored_at_ms']}
+        evidence['market_auction_automation'] = [tuple(expected[column] for column in columns)]
+        assert restored['auction_automation_disabled'] is True
         assert {table: connection.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall() for table in tables} == evidence
         assert connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall() == triggers
         assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
