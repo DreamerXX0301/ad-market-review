@@ -11,6 +11,7 @@ from contextlib import contextmanager
 import ctypes
 from dataclasses import dataclass
 import datetime as dt
+import errno
 import fcntl
 import hashlib
 import json
@@ -114,6 +115,44 @@ def linux_lock_owners(lines, identity):
     return sorted(owners)
 
 
+def darwin_process_args(pid, token, *, read_token, is_dead, library=None):
+    """Retry bounded buffer races and locally observed startup EIO; verify fully."""
+    library = library if library is not None else ctypes.CDLL(None, use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 49, pid)  # KERN_PROCARGS2
+    for attempt in range(3):
+        # exec() may enlarge argv/environment between the size and value reads.
+        # A retry must query a fresh size without accepting a reused PID.
+        if attempt and read_token() != token:
+            if is_dead():
+                return None
+            raise ServiceError('进程在身份核验期间发生变化')
+        size = ctypes.c_size_t()
+        ctypes.set_errno(0)
+        first = library.sysctl(mib, 3, None, ctypes.byref(size), None, 0)
+        error = ctypes.get_errno()
+        if first != 0:
+            if is_dead():
+                return None
+            if error in (errno.ENOMEM, errno.EIO) and attempt < 2:
+                continue
+            raise ServiceError('无法核验既有进程的运行路径')
+        buffer = ctypes.create_string_buffer(size.value)
+        ctypes.set_errno(0)
+        second = library.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0)
+        error = ctypes.get_errno()
+        if second != 0:
+            if is_dead():
+                return None
+            if error in (errno.ENOMEM, errno.EIO) and attempt < 2:
+                continue
+            raise ServiceError('进程在身份核验期间发生变化')
+        if not token or read_token() != token:
+            if is_dead():
+                return None
+            raise ServiceError('进程在身份核验期间发生变化')
+        return buffer.raw[:size.value]
+
+
 class Inspector:
     """Read process identity internally; never print commands or environments."""
 
@@ -135,19 +174,11 @@ class Inspector:
         token = self.run(['ps', '-p', str(pid), '-o', 'lstart=']).strip()
         try:
             if sys.platform == 'darwin':
-                library = ctypes.CDLL(None, use_errno=True)
-                mib = (ctypes.c_int * 3)(1, 49, pid)  # KERN_PROCARGS2
-                size = ctypes.c_size_t()
-                first = library.sysctl(mib, 3, None, ctypes.byref(size), None, 0)
-                if first != 0 and self.dead(pid):
+                raw = darwin_process_args(pid, token,
+                    read_token=lambda: self.run(['ps', '-p', str(pid), '-o', 'lstart=']).strip(),
+                    is_dead=lambda: self.dead(pid))
+                if raw is None:
                     return None
-                require(first == 0, '无法核验既有进程的运行路径')
-                buffer = ctypes.create_string_buffer(size.value)
-                second = library.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0)
-                if second != 0 and self.dead(pid):
-                    return None
-                require(second == 0, '进程在身份核验期间发生变化')
-                raw = buffer.raw[:size.value]
                 argc = struct.unpack_from('i', raw)[0]
                 offset = raw.index(b'\0', 4) + 1
                 while offset < len(raw) and raw[offset] == 0:
@@ -395,7 +426,12 @@ class NativeService:
                     deadline = time.monotonic() + self.timeout
                     while True:
                         require(child.poll() is None, '新进程启动失败，请查看 native-service-logs')
-                        process = self.inspector.read(child.pid)
+                        try:
+                            process = self.inspector.read(child.pid)
+                        except ServiceError:
+                            if child.poll() is not None:
+                                raise ServiceError('新进程启动失败，请查看 native-service-logs') from None
+                            raise  # A live, unverifiable process must still fail closed.
                         ready = process and self.matches(process, role)
                         if role == 'api':
                             ready = ready and self.inspector.listeners(self.port) == [child.pid] and self.health()

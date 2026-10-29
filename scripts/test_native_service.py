@@ -1,5 +1,7 @@
 """Synthetic native startup checks: no real deployment, data or provider access."""
 import concurrent.futures
+import ctypes
+import errno
 import fcntl
 import importlib.util
 import json
@@ -72,9 +74,16 @@ def installation(tmp_path):
         connection.execute("INSERT INTO preserved_fact VALUES('unchanged')")
     key = tmp_path / 'external-original-key'
     key.write_text('synthetic-file-not-a-real-provider-key')
-    with socket.socket() as probe:
-        probe.bind(('127.0.0.1', 0))
-        port = probe.getsockname()[1]
+    for _ in range(20):
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
+            # An IPv6-only listener can share an IPv4 ephemeral candidate;
+            # production deliberately rejects any listener on its chosen port.
+            if not native.Inspector().listeners(port):
+                break
+    else:
+        pytest.fail('未找到合成测试专用的空闲端口')
     manifest_path = root / 'release/candidate-manifest.json'
     control = root / 'data/work/runtime/local-service.json'
     control.parent.mkdir(parents=True)
@@ -235,6 +244,33 @@ def test_existing_api_survives_new_worker_failure(installation):
     assert list(new.children) == ['worker']
 
 
+@pytest.mark.parametrize('exited', [True, False])
+def test_owned_child_inspection_error_only_normalized_after_confirmed_exit(installation, monkeypatch, exited):
+    service = installation['service']()
+
+    class Child:
+        pid = 123
+        checks = 0
+
+        def poll(self):
+            self.checks += 1
+            return 1 if exited and self.checks > 1 else None
+
+    child = Child()
+    monkeypatch.setattr(service, 'inspect', lambda: {})
+    monkeypatch.setattr(service, 'spawn', lambda _role: child)
+    monkeypatch.setattr(service, 'clean_own_failed_start', lambda: None)
+
+    def refuse(_pid):
+        raise native.ServiceError('synthetic-unverifiable-identity')
+
+    monkeypatch.setattr(service.inspector, 'read', refuse)
+    expected = '启动失败' if exited else 'synthetic-unverifiable-identity'
+    with pytest.raises(native.ServiceError, match=expected):
+        service.execute('start')
+    assert child.checks == 2
+
+
 def test_identity_requires_data_key_and_start_token(installation):
     service = installation['service']()
     service.load()
@@ -317,6 +353,82 @@ def test_process_exiting_between_ps_and_cwd_is_not_a_foreign_process(monkeypatch
 
     monkeypatch.setattr(inspector, 'run', run)
     assert inspector.read(os.getpid()) is None
+
+
+class ProcargsSysctl:
+    """Only synthetic bytes and errno; never read a real process environment."""
+
+    def __init__(self, outcomes):
+        self.outcomes = iter(outcomes)
+        self.calls = []
+
+    def sysctl(self, mib, count, buffer, size, _new, _new_size):
+        stage = 'size' if buffer is None else 'value'
+        self.calls.append((stage, mib[2]))
+        expected, result, length, error = next(self.outcomes)
+        assert stage == expected and count == 3
+        size._obj.value = length
+        ctypes.set_errno(error)
+        if result == 0 and buffer is not None:
+            ctypes.memmove(buffer, b'x' * length, length)
+        return result
+
+
+def procargs_call(library, *, tokens=None, dead=False):
+    values = iter(tokens or ['same-token'] * 4)
+    return native.darwin_process_args(123, 'same-token', read_token=lambda: next(values),
+                                      is_dead=lambda: dead, library=library)
+
+
+@pytest.mark.parametrize('error', [errno.ENOMEM, errno.EIO])
+def test_darwin_procargs_transient_error_requeries_size_before_success(error):
+    library = ProcargsSysctl([('size', 0, 4, 0), ('value', -1, 8, error),
+                             ('size', 0, 8, 0), ('value', 0, 8, 0)])
+    assert procargs_call(library) == b'x' * 8
+    assert library.calls == [('size', 123), ('value', 123)] * 2
+
+
+def test_darwin_procargs_size_enomem_is_also_bounded_to_fresh_query():
+    library = ProcargsSysctl([('size', -1, 0, errno.ENOMEM),
+                             ('size', 0, 4, 0), ('value', 0, 4, 0)])
+    assert procargs_call(library) == b'x' * 4
+    assert library.calls == [('size', 123), ('size', 123), ('value', 123)]
+
+
+@pytest.mark.parametrize('error', [errno.ENOMEM, errno.EIO])
+def test_darwin_procargs_persistent_error_is_bounded_and_fails_closed(error):
+    library = ProcargsSysctl([('size', 0, 4, 0), ('value', -1, 8, error)] * 3)
+    with pytest.raises(native.ServiceError, match='身份核验'):
+        procargs_call(library)
+    assert len(library.calls) == 6
+
+
+@pytest.mark.parametrize('error', [errno.EPERM, errno.EACCES, errno.EINVAL])
+def test_darwin_procargs_other_errors_are_not_retried(error):
+    library = ProcargsSysctl([('size', 0, 4, 0), ('value', -1, 4, error)])
+    with pytest.raises(native.ServiceError, match='身份核验'):
+        procargs_call(library)
+    assert len(library.calls) == 2
+
+
+@pytest.mark.parametrize('error', [errno.ENOMEM, errno.EIO])
+def test_darwin_procargs_reused_pid_is_refused_before_retry(error):
+    library = ProcargsSysctl([('size', 0, 4, 0), ('value', -1, 8, error)])
+    with pytest.raises(native.ServiceError, match='身份核验'):
+        procargs_call(library, tokens=['different-token'])
+    assert len(library.calls) == 2
+
+
+def test_darwin_procargs_start_token_is_rechecked_after_success():
+    library = ProcargsSysctl([('size', 0, 4, 0), ('value', 0, 4, 0)])
+    with pytest.raises(native.ServiceError, match='身份核验'):
+        procargs_call(library, tokens=['different-token'])
+
+
+def test_darwin_procargs_exited_process_still_returns_none():
+    library = ProcargsSysctl([('size', 0, 4, 0), ('value', -1, 4, errno.ESRCH)])
+    assert procargs_call(library, dead=True) is None
+    assert len(library.calls) == 2
 
 
 def test_linux_kernel_lock_owner_is_not_a_file_opener():
