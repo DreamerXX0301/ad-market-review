@@ -51,6 +51,8 @@ def append_event(connection, job_id: str, stage: str, message: str, level="info"
 
 
 def create_task(kind: str, parameters: dict, target_date: str | None = None, request_key: str | None = None, retry_of: str | None = None, *, chain_parent_id: str | None = None) -> dict:
+    if kind == 'source_check' and parameters.get('operation') == 'auction_snapshot':
+        raise HTTPException(403, '竞价只能由唯一worker的每天自动计划登记，不接受通用任务手动创建')
     request_key = request_key or new_id("request")
     if not isinstance(request_key,str) or not 1<=len(request_key)<=200:
         raise HTTPException(422,'请求标识须为1至200字符')
@@ -275,7 +277,7 @@ def _increment_frozen_target(identifier, declared_target):
         if declared_target is not None and target!=declared_target:raise ValueError()
         return target
     except (OSError,ValueError,TypeError,AttributeError):
-        raise HTTPException(409,'增量任务检查点缺失有效冻结日期或与任务冲突，请核对后在18:00后新建重试')
+        raise HTTPException(409,'增量任务检查点缺失有效冻结日期或与任务冲突，请核对后在17:00后新建重试')
 
 
 def change_task(identifier: str, action: str):

@@ -29,9 +29,9 @@ MAX_CALENDAR_DAYS = 4096
 KINDS = ('noon', 'after_close')
 _creation_guard = ContextVar('automatic_review_creation_guard', default=None)
 DEFAULTS = {'noon': {'enabled': False, 'time': '12:05'},
-            'after_close': {'enabled': False, 'time': '18:30'}}
+            'after_close': {'enabled': False, 'time': '17:00'}}
 POLICY = {'check_interval_seconds': CHECK_SECONDS, 'noon_window_start': '11:31',
-          'noon_window_end': '13:00', 'after_close_not_before': '18:00',
+          'noon_window_end': '13:00', 'after_close_not_before': '17:00',
           'catchup': '仅当天有效窗口补跑；跨零点不追历史，午评13:00后不补',
           'calendar_requests_per_day': 1, 'initialization': 'manual',
           'stopped_tasks': '失败、暂停或取消交由用户处理，不自动重试或继续',
@@ -61,7 +61,7 @@ def _settings(connection):
 
 
 def _validate(payload):
-    if not isinstance(payload, dict) or set(payload) - {*KINDS, 'expected_revision'} or not set(KINDS) <= set(payload):
+    if not isinstance(payload, dict) or set(payload) - {*KINDS, 'expected_revision', 'auction', 'expected_auction_revision'} or not set(KINDS) <= set(payload):
         raise HTTPException(422, '请提供午评和盘后两项完整配置')
     result = {}
     for kind in KINDS:
@@ -73,12 +73,21 @@ def _validate(payload):
             raise HTTPException(422, '时间须为北京时间HH:mm')
         if kind == 'noon' and not '11:31' <= clock < '13:00':
             raise HTTPException(422, '午评时间须在北京时间11:31至13:00前')
-        if kind == 'after_close' and clock < '18:00':
-            raise HTTPException(422, '盘后增量时间不能早于北京时间18:00')
+        if kind == 'after_close' and clock < '17:00':
+            raise HTTPException(422, '盘后增量时间不能早于北京时间17:00')
         result[kind] = dict(value)
     expected = payload.get('expected_revision')
     if 'expected_revision' in payload and (type(expected) is not int or expected < 0):
         raise HTTPException(422, '配置版本须为非负整数')
+    if 'auction' in payload:
+        auction = payload['auction']
+        if not isinstance(auction, dict) or set(auction) != {'enabled'} or type(auction['enabled']) is not bool:
+            raise HTTPException(422, '竞价设置只接受enabled布尔开关，时间固定09:25:05且名单自动生成')
+        revision = payload.get('expected_auction_revision')
+        if type(revision) is not int or revision < 0:
+            raise HTTPException(422, '保存竞价开关须提供当前expected_auction_revision')
+    elif 'expected_auction_revision' in payload:
+        raise HTTPException(422, '竞价配置版本须与竞价开关一起提供')
     return result
 
 
@@ -97,8 +106,10 @@ def read_settings():
             job = connection.execute('SELECT status FROM job WHERE job_id=?', (item.get('task_id'),)).fetchone() if item.get('task_id') else None
             visible['task_status'] = job[0] if job else None
             checks[kind] = visible
+        from .auction_automation import settings_view
+        auction = settings_view(connection)
     return {**settings, 'timezone': 'Asia/Shanghai', 'now': local_now().isoformat(),
-            'last_checks': checks, 'policy': dict(POLICY)}
+            'last_checks': checks, 'policy': dict(POLICY), 'auction': auction}
 
 
 def configure(payload):
@@ -110,6 +121,10 @@ def configure(payload):
         current = _settings(connection)
         if payload.get('expected_revision', current['revision']) != current['revision']:
             raise HTTPException(409, '自动复盘设置已在其他窗口修改，请刷新后保存')
+        if 'auction' in payload:
+            from .auction_automation import configure_in_transaction
+            configure_in_transaction(connection, enabled=payload['auction']['enabled'],
+                                     expected_revision=payload['expected_auction_revision'])
         if any(values[key] != current[key] for key in KINDS):
             _save(connection, CONFIG_KEY, {'revision': current['revision'] + 1, **values})
     return read_settings()
@@ -119,7 +134,9 @@ def enabled():
     """Legacy status projection: local configuration, never calendar or tasks."""
     with connect() as connection:
         settings = _settings(connection)
-    return any(settings[kind]['enabled'] for kind in KINDS)
+        from .auction_automation import _config, _legacy_configuration
+        auction = _config(connection)
+    return any(settings[kind]['enabled'] for kind in KINDS) or auction['mode'] == 'daily' and not _legacy_configuration(auction)
 
 
 def request_key(kind, day):
@@ -139,10 +156,16 @@ def due_state(kind, config, observed):
     return 'due'
 
 
-def _state(connection, kind, day, state, reason, observed, *, task_id=None, **extra):
+def _state(connection, kind, day, state, reason, observed, *, task_id=None, claim_token=None, **extra):
     states = _json(connection, STATE_KEY, {})
     item = {'date': day, 'state': state, 'reason': reason, 'task_id': task_id, **extra}
     previous = states.get(kind, {})
+    # A concurrent preflight/calendar status cannot erase the submitter's live
+    # claim between its reservation and the actual task creation transaction.
+    if (previous.get('date') == day and previous.get('state') == 'claiming'
+            and previous.get('lease_until_ms', 0) > int(observed.timestamp() * 1000)
+            and previous.get('token') != claim_token):
+        return previous
     # Do not write a periodic timestamp for an unchanged disabled/blocked state.
     if {key: value for key, value in previous.items() if key != 'checked_at'} != item:
         states[kind] = {**item, 'checked_at': observed.isoformat()}
@@ -334,7 +357,7 @@ class AutomaticReviewScheduler:
                         connection.execute('BEGIN IMMEDIATE')
                         current = _json(connection, STATE_KEY, {}).get(kind, {})
                         if current.get('token') == claim:
-                            _state(connection, kind, day, 'submitted', '自动计划已关联当天任务，沿用原进度和结果确认', observed, task_id=task['job_id'])
+                            _state(connection, kind, day, 'submitted', '自动计划已关联当天任务，沿用原进度和结果确认', observed, task_id=task['job_id'], claim_token=claim)
                         tasks.append_event(connection, task['job_id'], 'automatic_schedule', '已启用的每日自动计划关联本任务；原冻结数据链和策略设置保持不变',
                                            details={'version': VERSION, 'schedule': kind, 'date': day,
                                                     'configuration_revision': config['revision'], 'timezone': 'Asia/Shanghai', 'scheduled_time': config[kind]['time'],
@@ -356,7 +379,7 @@ class AutomaticReviewScheduler:
                         else:
                             state, reason = 'failed', '当天自动提交未完成，不自动反复重试；请使用手动入口检查'
                         _state(connection, kind, day, state, reason, observed,
-                               task_id=existing['job_id'] if existing else None)
+                               task_id=existing['job_id'] if existing else None, claim_token=claim)
             return {'checked': True, 'created': created}
         finally:
             self.lock.release()

@@ -24,9 +24,10 @@ def _bundle_sha(bundle):
 
 
 @pytest.mark.parametrize('switches', [(True, True), (True, False), (False, True), (False, False)])
-def test_restore_disables_both_automatic_systems_without_rewriting_originals(source, tmp_path, switches):
+@pytest.mark.parametrize('close_time', ['17:00', '18:00', '18:30', '19:15'])
+def test_restore_disables_both_automatic_systems_without_rewriting_originals(source, tmp_path, switches, close_time):
     config = {'revision': 7, 'noon': {'enabled': switches[0], 'time': '12:22'},
-              'after_close': {'enabled': switches[1], 'time': '19:15'}}
+              'after_close': {'enabled': switches[1], 'time': close_time}}
     state = {'noon': {'date': '2026-10-19', 'state': 'claiming', 'token': 'synthetic-claim'},
              'after_close': {'date': '2026-10-18', 'state': 'submitted', 'task_id': 'active'}}
     calendar = {'date': '2026-10-19', 'state': 'ready', 'source_sha256': 'a' * 64,
@@ -97,7 +98,7 @@ def test_malformed_config_rejects_restore_without_modifying_bundle(source, tmp_p
               'after_close': {'enabled': True, 'time': '18:30'}}
     if damage == 'revision': config['revision'] = True
     if damage == 'switch': config['noon']['enabled'] = 'yes'
-    if damage == 'time': config['after_close']['time'] = '17:59'
+    if damage == 'time': config['after_close']['time'] = '16:59'
     value = json.dumps([] if damage == 'structure' else config)
     with connect_sqlite(source / 'business/app.sqlite3') as connection:
         connection.executescript((ROOT / 'backend/app/migrations/003_platform.sql').read_text())

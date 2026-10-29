@@ -17,6 +17,10 @@ import { MetricHelp } from "./MetricHelp";
 import { MemberBoardCell } from "./MarketMemberMetrics";
 import {
   BROKEN_BOARD_BOARD_FILTERS,
+  brokenBoardPreviousEvent,
+  brokenBoardFilterPrevious,
+  brokenBoardHeightCounts,
+  brokenBoardSortByPrevious,
   brokenBoardContext,
   brokenBoardCurrentItems,
   brokenBoardDrawdown,
@@ -36,6 +40,7 @@ import {
 } from "./brokenBoardPresentation";
 import type {
   BrokenBoardBoardFilter,
+  BrokenBoardHeightFilter,
   BrokenBoardMembershipKind,
 } from "./brokenBoardPresentation";
 import "./BrokenBoardAnalysis.css";
@@ -408,6 +413,12 @@ export default function BrokenBoardAnalysis({
   } | null>(null);
   const boardFilter =
     boardSelection?.scope === filterScope ? boardSelection.value : "all";
+  const [heightSelection, setHeightSelection] = useState<{
+    scope: string;
+    value: BrokenBoardHeightFilter;
+  } | null>(null);
+  const heightFilter =
+    heightSelection?.scope === filterScope ? heightSelection.value : "all";
   const detailRef = useRef<HTMLDetailsElement>(null);
   const context = brokenBoardContext(data, date, snapshotId);
   const report = useApi<Row>(
@@ -418,12 +429,17 @@ export default function BrokenBoardAnalysis({
   );
   useEffect(() => {
     setDetailMode("current");
+    setHistorySelection(null);
+    setTopicSelection(null);
+    setBoardSelection(null);
+    setHeightSelection(null);
   }, [scope]);
   const selectHistory = (day: string) => {
     setHistorySelection({ scope, date: day });
     setDetailMode("current");
     setTopicSelection(null);
     setBoardSelection(null);
+    setHeightSelection(null);
     if (detailRef.current) detailRef.current.open = true;
     requestAnimationFrame(() =>
       detailRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }),
@@ -464,11 +480,29 @@ export default function BrokenBoardAnalysis({
     detailMode === "current" ? selectedDate : feedback.previousDate || "";
   const allDetailItems =
     detailMode === "current" ? currentItems : feedback.items;
-  const detailItems = brokenBoardFilterItems(
+  const eventPrevious =
+    detailMode === "current"
+      ? detailContext?.current?.previous_event_date
+      : feedback.previousDate;
+  const detailItems = brokenBoardSortByPrevious(
+    brokenBoardFilterPrevious(
+      brokenBoardFilterItems(
+        allDetailItems,
+        membershipDate,
+        topicFilter,
+        boardFilter,
+      ),
+      selectedDate,
+      heightFilter,
+      eventPrevious,
+    ),
+    selectedDate,
+    eventPrevious,
+  );
+  const heightCounts = brokenBoardHeightCounts(
     allDetailItems,
-    membershipDate,
-    topicFilter,
-    boardFilter,
+    selectedDate,
+    eventPrevious,
   );
   const distributionData =
     detailMode === "current"
@@ -680,6 +714,7 @@ export default function BrokenBoardAnalysis({
                 setDetailMode("current");
                 setTopicSelection(null);
                 setBoardSelection(null);
+                setHeightSelection(null);
               }}
             >
               {selectedDate === date ? "今日炸板" : `${selectedDate} 炸板`}{" "}
@@ -697,6 +732,7 @@ export default function BrokenBoardAnalysis({
                 setDetailMode("previous");
                 setTopicSelection(null);
                 setBoardSelection(null);
+                setHeightSelection(null);
               }}
             >
               昨日炸板今日反馈{" "}
@@ -763,17 +799,76 @@ export default function BrokenBoardAnalysis({
                   </button>
                 ))}
               </div>
-              {(topicFilter || boardFilter !== "all") && (
+              <div
+                className="broken-board-board-filter broken-board-height-filter"
+                role="group"
+                aria-label="筛选昨日板型"
+              >
+                <span>昨日板型</span>
+                {heightCounts.map((option) => (
+                  <button
+                    type="button"
+                    key={option.value}
+                    className={heightFilter === option.value ? "active" : ""}
+                    aria-pressed={heightFilter === option.value}
+                    onClick={() =>
+                      setHeightSelection({
+                        scope: filterScope,
+                        value:
+                          heightFilter === option.value &&
+                          option.value !== "all"
+                            ? "all"
+                            : option.value,
+                      })
+                    }
+                  >
+                    {option.label} <b>{integer(option.count)}</b>
+                  </button>
+                ))}
+              </div>
+              <p className="broken-board-note">
+                只标记严格前一交易日已核验板型，不推算冲击几板；未标记包含昨日无事件及证据未齐，快捷数量保持本队列范围。
+              </p>
+              {(topicFilter ||
+                boardFilter !== "all" ||
+                heightFilter !== "all") && (
                 <p className="broken-board-note">
                   明细筛选后 {integer(detailItems.length)} /{" "}
                   {integer(allDetailItems.length)} 只；上方总体统计保持原队列。
                 </p>
               )}
               <SortableMarketTable
-                key={`${selectedDate}:${snapshotId || ""}:${detailMode}:${boardFilter}:${topicFilter?.key || "all"}`}
+                key={`${selectedDate}:${snapshotId || ""}:${detailMode}:${boardFilter}:${heightFilter}:${topicFilter?.key || "all"}`}
                 rows={detailItems}
                 columns={[
                   { key: "name", title: "股票 / 代码" },
+                  {
+                    key: "previous_board_count",
+                    title: "昨日板型",
+                    render: (_value, row) => {
+                      const prior = brokenBoardPreviousEvent(
+                        row,
+                        selectedDate,
+                        eventPrevious,
+                      );
+                      return prior.label ? (
+                        <Badge tone={prior.height == null ? "warn" : "neutral"}>
+                          <span
+                            title={`严格前一交易日 ${prior.date} 已核验事实，不代表今日晋级`}
+                          >
+                            {prior.label}
+                          </span>
+                        </Badge>
+                      ) : (
+                        <span
+                          className="muted"
+                          title={prior.reason || "昨日无已确认板型或证据未齐"}
+                        >
+                          —
+                        </span>
+                      );
+                    },
+                  },
                   {
                     key: "board_label",
                     title: "上市板块",
@@ -876,16 +971,10 @@ export default function BrokenBoardAnalysis({
                 ]}
                 sortScope={
                   detailMode === "current"
-                    ? `当前返回的${selectedDate}收盘炸板已核验样本；按回落百分比排序`
-                    : "当前返回的昨日炸板已核验样本；统计不随排序和分页变化"
+                    ? `当前返回的${selectedDate}收盘炸板已核验样本；默认昨日板高降序、同高度今日涨幅降序`
+                    : "当前返回的昨日炸板已核验样本；默认昨日板型及今日涨幅降序，统计不随排序和分页变化"
                 }
-                defaultSort={{
-                  key:
-                    detailMode === "current"
-                      ? "drawdown_from_high_pct"
-                      : "change_pct",
-                  order: "asc",
-                }}
+                defaultSort={{ key: "previous_board_count", order: "desc" }}
                 pageSize={10}
                 emptyTitle={
                   detailMode === "current"
@@ -904,7 +993,7 @@ export default function BrokenBoardAnalysis({
                     id,
                     createStockNavigation(orderedRows, {
                       source: "market",
-                      scopeKey: `emotion:broken-board:${selectedDate}:${snapshotId || ""}:${detailMode}:${boardFilter}:${topicFilter?.key || "all"}`,
+                      scopeKey: `emotion:broken-board:${selectedDate}:${snapshotId || ""}:${detailMode}:${boardFilter}:${heightFilter}:${topicFilter?.key || "all"}`,
                       label:
                         detailMode === "current"
                           ? `${selectedDate} 炸板 · 回落观察`

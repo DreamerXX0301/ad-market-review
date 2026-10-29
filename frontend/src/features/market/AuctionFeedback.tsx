@@ -12,6 +12,12 @@ import AuctionClassifications from "./AuctionClassifications";
 import AuctionCopyText from "./AuctionCopyText";
 import CopyStockCode from "../../components/CopyStockCode";
 import AuctionAssociationSummary from "./AuctionAssociationSummary";
+import AuctionHeightFilters from "./AuctionHeightFilters";
+import AuctionStockBadges from "./AuctionStockBadges";
+import {
+  auctionSortByHeight,
+  type AuctionHeightKey,
+} from "./auctionHeightPresentation";
 
 const TYPES: Record<string, { title: string; color: string }> = {
   limit_up_open: { title: "一字涨停开", color: "limit-up-open" },
@@ -34,6 +40,9 @@ export default function AuctionFeedback({
   selectedKey,
   selectedIds = null,
   onAssociationSelect,
+  heightRows = [],
+  selectedHeight = "all",
+  onHeightSelect,
 }: {
   date: string;
   onStock?: (id: string) => void;
@@ -42,6 +51,9 @@ export default function AuctionFeedback({
   selectedKey?: string;
   selectedIds?: ReadonlySet<string> | null;
   onAssociationSelect?: (key: string) => void;
+  heightRows?: Row[];
+  selectedHeight?: AuctionHeightKey;
+  onHeightSelect?: (key: AuctionHeightKey) => void;
 }) {
   const result = useApi<Row>(
     `/market/auction/feedback?date=${encodeURIComponent(date)}`,
@@ -51,6 +63,9 @@ export default function AuctionFeedback({
       ? result.data
       : null;
   const sourceGroups = noonRows(view?.groups);
+  const sourceByCode = new Map(
+    heightRows.map((row) => [row.instrument_id, row]),
+  );
   const limitUpOpen = sourceGroups.find(
     (group) => group.key === "limit_up_open",
   );
@@ -91,8 +106,15 @@ export default function AuctionFeedback({
   return (
     <Panel
       title="昨日 → 今日：强弱对照"
-      subtitle="一字涨停开置前，其余按竞价均幅由高到低；点选行业概念后同步重排。"
+      subtitle="保留强弱分类；组内先按昨日板高、再按竞价涨幅降序。板高与行业概念可组合筛选。"
     >
+      {onHeightSelect && (
+        <AuctionHeightFilters
+          rows={heightRows}
+          value={selectedHeight}
+          onChange={onHeightSelect}
+        />
+      )}
       <AuctionAssociationSummary
         view={topicView}
         date={date}
@@ -101,7 +123,7 @@ export default function AuctionFeedback({
       />
       {selectedIds && (
         <p className="auction-topic-note">
-          仅显示所选行业概念对应股票，卡片数量与均幅按当前子集统计；再点选中卡片可恢复全部。
+          卡片数量与均幅按当前板高、行业概念的交集统计；再点选中的快捷按钮可取消该条件。
         </p>
       )}
       {result.loading && !view && <Loading />}
@@ -176,15 +198,16 @@ export default function AuctionFeedback({
                 </p>
               ) : noonRows(group.items).length > 0 ? (
                 <details
-                  key={`${date}:${selectedKey || "all"}`}
+                  key={`${date}:${selectedKey || "all"}:${selectedHeight}`}
                   open={!!selectedIds}
                 >
                   <summary>查看本组股票</summary>
                   <div className="auction-feedback-stocks">
-                    {auctionSortRows(
-                      noonRows(group.items),
-                      "auction_pct",
-                      "desc",
+                    {auctionSortByHeight(
+                      noonRows(group.items).map((row) => ({
+                        ...sourceByCode.get(row.instrument_id),
+                        ...row,
+                      })),
                     ).map((row) => (
                       <div
                         key={row.instrument_id}
@@ -206,6 +229,7 @@ export default function AuctionFeedback({
                             {percent(auctionNumber(row.auction_pct))}
                           </span>
                         </div>
+                        <AuctionStockBadges row={row} />
                         <AuctionClassifications
                           view={topicView}
                           date={date}

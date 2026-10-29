@@ -227,7 +227,10 @@ def _queue_local_sync_checks(job, completed_result=None):
     except Exception:
         logger.warning('本地核验未排队 %s：同步日期未能冻结',job['job_id'])
         return
-    for name,callback in (('line_alerts',line_alerts.after_sync),('listing_status',listing_status.after_sync)):
+    from app.services.sync_workspace_followup import enabled
+    checks=(('listing_status',listing_status.after_sync),) if enabled(parameters) else (
+        ('line_alerts',line_alerts.after_sync),('listing_status',listing_status.after_sync))
+    for name,callback in checks:
         try:callback(job)
         except Exception as error:
             # An isolated local check must not suppress the other child or the
@@ -306,6 +309,14 @@ def _noon_close_after_supplement(job, progress=None):
         return _noon_close_after_increment(dict(parent),progress=progress)
 
 
+def _workspace_after_data(job):
+    from app.services.sync_workspace_followup import run
+    root_id=job['job_id'] if job['kind']=='increment' else _parameters(job).get('parent_sync_job_id')
+    if root_id:
+        try:return run(root_id)
+        except (tasks.TaskPaused,tasks.TaskCancelled):return None
+
+
 @provider_connection_scope()
 def dispatch(job):
     with connect() as connection:
@@ -322,6 +333,7 @@ def dispatch(job):
             _auction_after_increment(job)
             _queue_local_sync_checks(job)
             _queue_followup(job)
+            _workspace_after_data(job)
         return
     if state[0]=='paused':raise tasks.TaskPaused()
     _authorize_chain(job)
@@ -337,14 +349,17 @@ def dispatch(job):
         _noon_after_increment(job,result)
         _auction_after_increment(job,result)
         _queue_local_sync_checks(job,result)
-        from app.services.workspace_automation import run_after_sync
-        started=time.monotonic()
-        run_after_sync(identifier)
-        with connect() as connection:
-            connection.execute('BEGIN IMMEDIATE')
-            tasks.append_event(connection,identifier,'workspace_followup_timing','主行情已可用，本地策略与跟踪核对已结束；轻量核验已先排队',
-                details={'elapsed_ms':round((time.monotonic()-started)*1000),'queue_order':'local-checks-before-sector-chain-v1'})
+        from app.services.sync_workspace_followup import enabled
+        if not enabled(_parameters(job)):
+            from app.services.workspace_automation import run_after_sync
+            started=time.monotonic()
+            run_after_sync(identifier)
+            with connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                tasks.append_event(connection,identifier,'workspace_followup_timing','主行情已可用，本地策略与跟踪核对已结束；轻量核验已先排队',
+                    details={'elapsed_ms':round((time.monotonic()-started)*1000),'queue_order':'local-checks-before-sector-chain-v1'})
         _queue_followup(job,result)
+        _workspace_after_data(job)
     elif kind=='source_check' and _parameters(job).get('operation')=='auction_snapshot':
         from app.services.auction_service import execute_capture
         auction_callback=lambda stage,percent,message=None,details=None:tasks.progress(
@@ -397,6 +412,7 @@ def dispatch(job):
         result=execute_supplement(identifier,callback)
         _noon_close_after_supplement(job,callback)
         tasks.finish(identifier,'partial' if result.get('quality')!='complete' else 'succeeded',result.get('message','盘面补充数据已核验'))
+        _workspace_after_data(job)
     elif kind=='source_check' and _parameters(job).get('operation')=='sector_chart':
         from app.services.sector_chart_jobs import execute_chart_job
         result=execute_chart_job(identifier,callback)
@@ -449,6 +465,11 @@ def run(once=False):
                 except Exception as error:
                     logger.warning('本地核验补漏稍后重试 %s %s',name,type(error).__name__)
             recover_followups()
+            try:
+                from app.services.sync_workspace_followup import recover as recover_workspace
+                recover_workspace()
+            except Exception as error:
+                logger.warning('同步后计算阶段补漏暂未完成 %s',type(error).__name__)
             try:automatic_scheduler.tick()
             except Exception as error:
                 logger.warning('自动复盘检查暂未完成 %s',type(error).__name__)

@@ -33,6 +33,10 @@ const {
   brokenBoardVisibleTopicCount: visibleTopicCount,
   brokenBoardDetailCount: detailCount,
   brokenBoardBoard: board,
+  brokenBoardPreviousEvent: priorEvent,
+  brokenBoardHeightCounts: priorCounts,
+  brokenBoardFilterPrevious: priorFilter,
+  brokenBoardSortByPrevious: priorSort,
   BROKEN_BOARD_BOARD_FILTERS: boardOptions,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(source).toString("base64")
@@ -724,4 +728,116 @@ assert.deepEqual(prior.items[0], {
 });
 console.log(
   "Broken-board presentation: dated generation, complete/partial pools, zero denominator, history gaps, invalid cohorts and stock navigation identity passed",
+);
+
+const priorRow = (id, state, height, change, extra = {}) => ({
+  instrument_id: id,
+  date,
+  previous_event_version: "broken-board-prior-events-v1",
+  previous_event_date: previous,
+  previous_event_source: "fuyao",
+  previous_state: state,
+  previous_board_count: height,
+  change_pct: change,
+  ...extra,
+});
+assert.equal(
+  priorEvent(priorRow("600001.SH", "limit_up", 1, 2), date, previous).label,
+  "昨日首板",
+);
+assert.equal(
+  priorEvent(priorRow("600001.SH", "limit_up", 8, 2), date, previous).label,
+  "昨日8板",
+);
+assert.equal(
+  priorEvent(priorRow("600001.SH", "limit_break", 8, 2), date, previous).label,
+  "昨日炸板",
+  "a broken board never inherits an attempted height",
+);
+for (const row of [
+  priorRow("600001.SH", "unknown", 3, 2),
+  priorRow("600001.SH", "none", 3, 2),
+  priorRow("600001.SH", "conflict", 3, 2),
+  priorRow("600001.SH", "limit_up", null, 2),
+  priorRow("600001.SH", "limit_up", 0, 2),
+  priorRow("600001.SH", "limit_up", "3", 2),
+  priorRow("600001.SH", "limit_up", 1.5, 2),
+  priorRow("600001.SH", "limit_up", true, 2),
+  priorRow("600001.SH", "limit_up", 3, 2, { previous_event_date: date }),
+  priorRow("600001.SH", "limit_up", 3, 2, {
+    previous_event_date: "2026-10-23",
+  }),
+  priorRow("600001.SH", "limit_up", 3, 2, { previous_event_version: "old" }),
+  priorRow("600001.SH", "limit_up", 3, 2, { previous_event_source: "unknown" }),
+])
+  assert.equal(
+    priorEvent(row, date, previous).label,
+    null,
+    "no missing, stale, conflicting or unverified board is marked",
+  );
+assert.equal(
+  priorEvent(priorRow("600001.SH", "limit_up", 3, 2), "invalid", previous)
+    .label,
+  null,
+);
+const eventRows = [
+  priorRow("600001.SH", "limit_up", 2, -1),
+  priorRow("600002.SH", "limit_up", 2, 4),
+  priorRow("600003.SH", "limit_up", 8, 0),
+  priorRow("600004.SH", "limit_break", null, -5),
+  priorRow("600005.SH", "none", null, 10),
+  priorRow("600006.SH", "unknown", null, null),
+  priorRow("600007.SH", "limit_up", 1, 0),
+];
+const beforeEvents = structuredClone(eventRows);
+assert.deepEqual(
+  priorSort(eventRows, date, previous).map((row) => row.instrument_id),
+  [
+    "600003.SH",
+    "600002.SH",
+    "600001.SH",
+    "600007.SH",
+    "600004.SH",
+    "600005.SH",
+    "600006.SH",
+  ],
+);
+assert.deepEqual(
+  priorFilter(eventRows, date, "2", previous).map((row) => row.instrument_id),
+  ["600001.SH", "600002.SH"],
+);
+assert.equal(
+  priorFilter(eventRows, date, "5+", previous)[0].previous_board_count,
+  8,
+);
+assert.equal(
+  priorFilter(eventRows, date, "broken", previous)[0].instrument_id,
+  "600004.SH",
+);
+assert.equal(priorFilter(eventRows, date, "unmarked", previous).length, 2);
+assert.deepEqual(
+  priorCounts(eventRows, date, previous).map((row) => row.count),
+  [7, 1, 2, 0, 0, 1, 1, 2],
+);
+assert.deepEqual(
+  eventRows,
+  beforeEvents,
+  "board filters, counts and sorting preserve original cohort facts",
+);
+const combinedRows = eventRows.map((row, index) => ({
+  ...row,
+  board: index % 2 ? "star" : "main",
+}));
+assert.deepEqual(
+  priorFilter(
+    filterItems(combinedRows, date, null, "star"),
+    date,
+    "2",
+    previous,
+  ).map((row) => row.instrument_id),
+  ["600002.SH"],
+  "listing board and previous type are an intersection",
+);
+console.log(
+  "Broken-board prior event badges: strict dated source facts, exact heights, no attempted promotion, missing/conflicts, local counts, intersection and height/change stable ordering passed",
 );

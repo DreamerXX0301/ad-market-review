@@ -54,8 +54,13 @@ def install_source(environment, phase, status):
 
 def create_automatic(environment, codes):
     config = automation.read_view()
-    automation.update_config({'mode': 'daily', 'expected_revision': config['revision'],
-                              'instrument_ids': codes})
+    # Default candidates come from saved pre-start watchlist, never manual IDs.
+    with core.connect() as connection:
+        for index, code in enumerate(codes):
+            connection.execute('''INSERT INTO watchlist_item(instrument_id,source_kind,source_name,
+                added_business_date,event_basis_json,created_at_ms) VALUES(?,'stock','合成默认名单',?,'{}',?)''',
+                (code, DAY, int(environment.clock[0].timestamp()*1000)-index-1))
+    automation.update_config({'mode': 'daily', 'expected_revision': config['revision']})
     assert environment.source.calls == []
     automation.tick()
     assert environment.source.calls == []

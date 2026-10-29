@@ -39,6 +39,7 @@ def _chain(connection, root):
         events = connection.execute("""SELECT stage,details_json FROM job_event WHERE job_id=?
             AND (stage IN ('chain_authorized','followup_queued','chain_blocked',
                 'line_alert_check_queued','listing_status_check_queued','increment_retry_queued')
+                OR stage IN ('workspace_followup_started','workspace_followup_completed','workspace_followup_blocked')
                 OR stage LIKE 'local_check_queue_error:%') ORDER BY seq LIMIT 128""", (identifier,)).fetchall()
         stages = {event['stage'] for event in events}
         for event in events:
@@ -55,6 +56,12 @@ def _chain(connection, root):
                 waiting.append(identifier)
             parameters = json.loads(row['parameters_json'])
             if row['kind'] == 'increment':
+                from .sync_workspace_followup import enabled, COMPLETE, BLOCKED
+                if enabled(parameters):
+                    if BLOCKED in stages:
+                        problems.append('本次数据或同步后计算存在缺口，策略/提醒未全部执行；见任务记录')
+                    elif COMPLETE not in stages:
+                        waiting.append(identifier)
                 for marker, stage, label in (
                     ('line_alert_check_version', 'line_alert_check_queued', '划线提醒'),
                     ('listing_status_check_version', 'listing_status_check_queued', '上市身份'),
@@ -198,6 +205,12 @@ def worker_released(identifier=None, *, recovered=False):
         root = connection.execute('SELECT * FROM job WHERE job_id=?', (saved['root_task_id'],)).fetchone()
         if root is None:
             return
+        if recovered:
+            from .sync_workspace_followup import active, RELEASED
+            if active(connection, root['job_id']):
+                append_event(connection, root['job_id'], RELEASED,
+                             '唯一工作进程已重新取得执行锁，旧同步后计算已退出',
+                             details={'recovered_under_exclusive_worker_lock': True})
         items = _chain(connection, root)[0]
         for item in items:
             if identifier is not None and item['job_id'] != identifier:
@@ -235,8 +248,15 @@ def _chain_state(connection, root):
         stopped = connection.execute("SELECT max(seq) FROM job_event WHERE job_id=? AND stage='increment_stop_requested'", (item['job_id'],)).fetchone()[0]
         if stopped and not connection.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='increment_worker_released' AND seq>? LIMIT 1", (item['job_id'], stopped)).fetchone():
             draining.append(item['job_id'])
+    from .sync_workspace_followup import active
+    workspace_active=active(connection, root['job_id'])
+    if stop:
+        if workspace_active and root['job_id'] not in draining:
+            draining.append(root['job_id'])
     if draining:
         status, done = 'stopping', False
+    elif workspace_active:
+        status, done = 'running', False
     elif any('记录缺失' in problem or '超过核验上限' in problem for problem in problems):
         status, done = 'unknown', False
     elif stop and not any(item['status'] in ('queued', 'running') for item in effective):

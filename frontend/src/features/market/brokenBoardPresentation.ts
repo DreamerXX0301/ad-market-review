@@ -59,6 +59,129 @@ export function brokenBoardBoard(
     : "unknown";
 }
 
+export const BROKEN_BOARD_HEIGHT_FILTERS = [
+  { value: "all", label: "全部" },
+  { value: "1", label: "昨日首板" },
+  { value: "2", label: "昨日二板" },
+  { value: "3", label: "昨日三板" },
+  { value: "4", label: "昨日四板" },
+  { value: "5+", label: "昨日五板及以上" },
+  { value: "broken", label: "昨日炸板" },
+  { value: "unmarked", label: "未标记" },
+] as const;
+export type BrokenBoardHeightFilter =
+  (typeof BROKEN_BOARD_HEIGHT_FILTERS)[number]["value"];
+
+/** No older event, unverified height, or failed limit attempt becomes a board. */
+export function brokenBoardPreviousEvent(
+  input: unknown,
+  date: string,
+  previousDate?: unknown,
+) {
+  const row = record(input) || {};
+  const valid =
+    dated(date) &&
+    row.previous_event_source === "fuyao" &&
+    row.previous_event_version === "broken-board-prior-events-v1" &&
+    dated(row.previous_event_date) &&
+    row.previous_event_date < date &&
+    (previousDate === undefined || row.previous_event_date === previousDate) &&
+    (row.date == null || row.date === date);
+  const height =
+    valid &&
+    row.previous_state === "limit_up" &&
+    finite(row.previous_board_count) &&
+    Number.isSafeInteger(row.previous_board_count) &&
+    row.previous_board_count >= 1
+      ? row.previous_board_count
+      : null;
+  const broken = valid && row.previous_state === "limit_break";
+  return {
+    height,
+    key:
+      height != null
+        ? height >= 5
+          ? "5+"
+          : String(height)
+        : broken
+          ? "broken"
+          : "unmarked",
+    label:
+      height != null
+        ? height === 1
+          ? "昨日首板"
+          : `昨日${height}板`
+        : broken
+          ? "昨日炸板"
+          : null,
+    reason: text(row.previous_event_reason),
+    date: valid ? row.previous_event_date : null,
+    state: valid ? row.previous_state : "unknown",
+  };
+}
+
+export function brokenBoardFilterPrevious(
+  items: Row[],
+  date: string,
+  value: BrokenBoardHeightFilter,
+  previousDate?: unknown,
+) {
+  return value === "all"
+    ? items
+    : items.filter(
+        (row) =>
+          brokenBoardPreviousEvent(row, date, previousDate).key === value,
+      );
+}
+
+export function brokenBoardHeightCounts(
+  items: Row[],
+  date: string,
+  previousDate?: unknown,
+) {
+  return BROKEN_BOARD_HEIGHT_FILTERS.map((option) => ({
+    ...option,
+    count: brokenBoardFilterPrevious(items, date, option.value, previousDate)
+      .length,
+  }));
+}
+
+/** Default order: confirmed heights, yesterday's broken boards, then unmarked. */
+export function brokenBoardSortByPrevious(
+  items: Row[],
+  date: string,
+  previousDate?: unknown,
+) {
+  return items
+    .map((row, index) => ({
+      row,
+      index,
+      prior: brokenBoardPreviousEvent(row, date, previousDate),
+    }))
+    .sort((a, b) => {
+      if (a.prior.height == null && b.prior.height != null) return 1;
+      if (a.prior.height != null && b.prior.height == null) return -1;
+      if (
+        a.prior.height != null &&
+        b.prior.height != null &&
+        a.prior.height !== b.prior.height
+      )
+        return b.prior.height - a.prior.height;
+      if (
+        a.prior.height == null &&
+        b.prior.height == null &&
+        (a.prior.key === "broken") !== (b.prior.key === "broken")
+      )
+        return a.prior.key === "broken" ? -1 : 1;
+      const av = finite(a.row.change_pct) ? a.row.change_pct : null,
+        bv = finite(b.row.change_pct) ? b.row.change_pct : null;
+      if (av == null && bv != null) return 1;
+      if (av != null && bv == null) return -1;
+      return (bv ?? 0) - (av ?? 0) || a.index - b.index;
+    })
+    .map(({ row, prior }) => ({ ...row, previous_board_count: prior.height }));
+}
+
 /** Keep a ranked prefix of complete chips; never expose a clipped last chip. */
 export function brokenBoardVisibleTopicCount(
   availableWidth: number,

@@ -1,0 +1,99 @@
+.auction-height-filter {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.auction-height-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.auction-height-heading strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.auction-height-heading > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-height-options {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 9px;
+}
+.auction-height-option {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.auction-height-option > span {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 12px;
+}
+.auction-height-option b {
+  color: var(--blue);
+  font-variant-numeric: tabular-nums;
+}
+.auction-height-option small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-height-option em {
+  font-style: normal;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.auction-height-option.is-selected {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 13%, var(--surface2));
+}
+.auction-height-option:hover {
+  border-color: var(--blue);
+}
+.auction-height-option:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.auction-height-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--blue) 50%, var(--border));
+  border-radius: 5px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 8%, var(--surface2));
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.auction-height-sort-note {
+  padding: 9px 18px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (max-width: 1450px) {
+  .auction-height-options {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .auction-height-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .auction-height-filter {
+    padding: 12px;
+  }
+}

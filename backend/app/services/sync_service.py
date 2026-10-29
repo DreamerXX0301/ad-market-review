@@ -247,7 +247,7 @@ def execute_sync(job_id,progress=None):
     provider=params.get('source_id') or setting('active_source','fuyao')
     if provider!='fuyao':raise ValueError('当前全市场初始化/增量仅已适配扶摇批量数据；TickFlow可用于个别历史核验，不能冒充全市场快速同步')
     # Recover the frozen plan before credentials/network access. A new increment
-    # starts only after 18:00; a paused older-date plan may resume unchanged.
+    # starts only after17:00; a paused older-date plan may resume unchanged.
     collector=Collector(job_id,None,progress)
     plan=collector.state.get('plan')
     if plan:
@@ -279,7 +279,7 @@ def execute_sync(job_id,progress=None):
         if window=='near-five-years' or (kind=='increment' and current.reference().get('coverage',{}).get('index_request_plan')==INDEX_REQUEST_PLAN):
             plan['index_request_plan']=INDEX_REQUEST_PLAN
             plan['index_request_begin']=wanted if kind=='initialise' else max(begin,source_calendar[0])
-        plan['completion_cutoff']='18:00 Asia/Shanghai'
+        plan['completion_cutoff']='17:00 Asia/Shanghai'
         plan['storage_layout']='market-partitions-v1'
         collector.state['plan']=plan;atomic_json(collector.state_path,collector.state)
     target,begin=plan['target'],plan['begin']

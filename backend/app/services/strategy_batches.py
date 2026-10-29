@@ -91,6 +91,9 @@ def _saved_results_receipt(connection, completed, day, request_key):
 
 def create_batch(payload):
     target, scope, ids, key = _request(payload)
+    if target == 'stock':
+        from .stock_daily_once import prepare_inputs
+        prepared_inputs = prepare_inputs(ids if scope == 'selected' else None)
     request = {'target_type': target, 'scope': scope, 'strategy_ids': ids}
     signature = digest({**request, 'auto_add': True, 'plan_version': PLAN_VERSION})
     with connect() as connection:
@@ -116,7 +119,8 @@ def create_batch(payload):
             from .strategies import ensure_evaluator_version
             from .stock_daily_once import availability, read_context
             eligibility = read_context(connection, day=day, dependencies=dependencies,
-                                       primary_snapshot_id=primary, strategy_ids=ids)
+                                       primary_snapshot_id=primary, strategy_ids=ids,
+                                       prepared_inputs=prepared_inputs)
             read_strategy = lambda identifier: ensure_evaluator_version(connection, identifier, run_context=eligibility)
         else:
             from .sector_strategies import _view as sector_view, _version, EVALUATOR_VERSION
@@ -126,7 +130,7 @@ def create_batch(payload):
                     _version(connection, identifier, strategy['version']+1, strategy)
                     strategy = sector_view(connection, identifier)
                 return strategy
-        frozen = []; skipped_completed = []
+        frozen = []; skipped_completed = []; supplement_inputs = {}
         for identifier in ids:
             strategy = read_strategy(identifier)
             if strategy['archived']: raise HTTPException(409, '已归档策略不能加入批量运行')
@@ -139,6 +143,8 @@ def create_batch(payload):
                 if not state['can_run']:
                     raise HTTPException(409, {'message': state['reason'] or '当前个股策略暂不能运行，请刷新后重试',
                                               'strategy_id': identifier, 'business_date': day})
+                from .stock_daily_once import supplemental_inputs
+                supplement_inputs[identifier] = supplemental_inputs(connection, strategy, eligibility)
             frozen.append({'strategy_id': identifier, 'name': strategy['name'], 'version': strategy['version']})
         if skipped_completed:
             run_ids = [item['run_id'] for item in skipped_completed]
@@ -165,6 +171,9 @@ def create_batch(payload):
                           'sequence': index+1,
                           'strategy_id': strategy['strategy_id'], 'version': strategy['version'],
                           'business_date': day, 'input_snapshots': dependencies, 'primary_snapshot_id': primary, **local_inputs}
+            supplementary = supplement_inputs.get(strategy['strategy_id'], {})
+            if 'supplement_input' in supplementary:
+                parameters['selection_supplement_input'] = supplementary['supplement_input']
             connection.execute("INSERT INTO job(job_id,request_key,logical_key,kind,target_date,parameters_json,parameters_hash,status,planned_batches,created_at_ms) VALUES(?,?,?,'selection',?,?,?,'queued',100,?)",
                                (job_id, request_key, request_key, day, dumps(parameters), digest(parameters), stamp))
             tasks.append_event(connection, job_id, 'queued', f'批量选股 {index+1}/{len(frozen)} · {strategy["name"]}，等待顺序执行')
@@ -271,7 +280,7 @@ def list_batches(target_type, limit=10):
         return {'items': [_view(connection, row) for row in records], 'total': len(records)}
 
 
-def validate_item(connection, job, strategy, day, dependencies, primary):
+def validate_item(connection, job, strategy, day, dependencies, primary, *, run_context=None):
     actual = check_item_lease(job, connection)
     parameters = _parameters(actual)
     parent = connection.execute('SELECT status FROM job WHERE job_id=?', (parameters['batch_job_id'],)).fetchone()
@@ -280,6 +289,8 @@ def validate_item(connection, job, strategy, day, dependencies, primary):
         raise HTTPException(409, '策略规则版本已变化，本项未运行；其他策略按原顺序继续')
     if parameters['business_date'] != day or parameters['input_snapshots'] != dependencies or parameters['primary_snapshot_id'] != primary:
         raise HTTPException(409, '行情日期或输入快照已变化，本项未运行，请按当前行情新建批次')
+    from .stock_daily_once import require_batch_inputs
+    require_batch_inputs(connection, parameters, run_context or {})
 
 
 def check_item_lease(job, connection):

@@ -73,7 +73,8 @@
 
 - `GET/POST /strategies`、`GET/PATCH /strategies/{id}`：name、period=D/W/M、definition、policy、trade_rules、hot_universe；修改追加版本，旧运行冻结。
 - 个股策略列表及详情返回 `run_availability={can_run,state,business_date,completed_run_id,reason}`；`state` 为 `ready/completed/unavailable`。按当前已发布业务日核验，与盘面回看日期和电脑自然日期无关。同一策略在相同实际规则、周期、复权、热点范围、买卖参数、引擎及有效输入下已有成功完成结果时不可新建重复运行，零命中或候选含unknown也不等于任务失败。只改名称/跟踪政策、空保存或将数值3改为3.0不解锁；实质参数、新业务日、发布快照或本地题材修订变化可再次运行，改回当日曾成功执行的配置仍复用其已完成状态。
-- `POST /strategies/{id}/runs` 在现有 `BEGIN IMMEDIATE` 事务内、创建job及读取计算行情前核验。非冻结队列的新请求命中已完成同配置/输入时，事务外返回200原 `run_id` 与结果，响应额外标明 `result_reused:true/reuse_reason`；不新增job/run/candidate或运行选股计算。`can_run:false,state:completed`表示不需要再次计算，前端仍可点击“查看今日结果”。原 `request_key` 的幂等重放仍原样返回冻结原结果，不重算；失败/取消且尚无成功完成结果可以重试。新运行在 `universe_definition.selection_guard` 留小摘要，保存前复核输入代际及题材修订；旧运行按留存规则版本、发布代际和后续本地修订判断，不回写历史证据、不迁移业务库。
+- `POST /strategies/{id}/runs` 使用 `stock-daily-once-v2` 同日复用契约：先在写事务外准备补充依赖证明，再在现有短 `BEGIN IMMEDIATE` 事务内、创建job前核验已发布代际、本地题材修订及已验证文件身份。非冻结队列的新请求命中已完成同配置/输入时，事务外返回200原 `run_id` 与结果，响应额外标明 `result_reused:true/reuse_reason`；不新增job/run/candidate或运行选股计算。`can_run:false,state:completed`表示不需要再次计算，前端仍可点击“查看今日结果”。原 `request_key` 的幂等重放仍原样返回冻结原结果，不因后来输入变化而改算；失败/取消且尚无成功完成结果可以重试。
+- 涨停、前日涨停、滚动一年涨停次数、历史涨停事件和热点范围依赖实际已发布的 `public_pools/annual_pools/annual_down_pools`。`universe_definition.selection_guard.supplement_input` 保存小型SHA证明；主行情未变但这些补充输入变化时，新请求重新计算，旧run与原始证据仍保留。冷核验检查索引及嵌套CAS实际SHA，暖命中仍逐文件核对身份；不遍历历史目录、不展开年度行情树，不在写事务内首次hash正文。保存结果前再次在事务外核验，再进短事务比较，拒绝保存混合输入；新批量子项也冻结并重核此证明。合法partial覆盖可复用其中逐股unknown，缺档不填零；损坏或超过有界证明预算的输入不取得可信复用证明。旧运行缺此证明时，依赖补充池的规则需新算一次；纯技术规则保留原兼容复用，不因无关资金或板块K线文件变化而重算。
 - 新个股批次复用已完成相同配置的策略，只为待运行项创建筛选与跟踪任务；混合批次回执新增 `skipped_completed`、`skipped_completed_count`、`requested_count`，`total_count` 仅计实际排队项。全部已有结果时返回200只读回执：`receipt_only/result_reused:true`、稳定 `saved-results-*` 标识、`job_id:null/auto_add:false`、零新步骤，items引用原run/版本/业务日；不创建任何任务，不记录为新的持久化批次，前端可直接展开已保存结果。其 `total_count/completed_count` 表示可读取结果数，不表示新计算数。原批次请求重放与已冻结旧批次的继续仍保持原范围及原授权；板块策略不受此个股复用限制影响。已保存命中不会因为结果复用自动加入跟踪，需从原结果手动选择；同步后的重新筛选与自动加入跟踪继续由既有两个独立设置控制，不默认为用户开启。
 - 前端“复制策略”只深拷贝当前策略的 name（默认追加“副本”）、period、price_basis、definition、hot_universe、trade_rules 与 policy 的可编辑字段，不带 strategy_id、版本、自动运行配置、运行结果或跟踪记录。打开和取消仅改前端草稿；确认保存使用原 `POST /strategies`，创建独立标识、规则V1及政策V1，不 PATCH 原策略、不应用到原跟踪轮次、不自动运行。后续调整副本与原策略独立。
 - definition 为叶 `{field,op,value,period?}` / `{field,op,right_field,period?}`，或嵌套 `{all:[...]}` / `{any:[...]}`；兼容旧 logic/conditions 输入。
@@ -259,6 +260,10 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 修改默认政策可显式 `apply_to_active_tracking=true`，仅迁移沿用默认的活动轮次，保留自定义与结束轮次。返回影响/跳过数量；缩短已到期不静默结束，需核对。历史事件和入池日/价不可改写。
 
 普通周/月信号日期与入池日分开。入池始终用业务日 T 的真实日收盘，不能拿最近周/月价冒充。运行与核对有任务租约、真实进度和取消；同步 API 用例不支持后台任务式暂停/重试。
+
+数据中心自动计划使用`GET/PUT /settings/automatic-tasks`，与盘面观察日无关，详细窗口与调度规则见[自动计划契约](automatic-review-tasks.md)。GET在同一业务SQLite读事务返回原`timezone/revision/noon/after_close/last_checks/policy`及`auction`投影；竞价含`enabled/revision/mode/fixed_time/window_end/can_enable/reason/next_run_at/last_run/worker/legacy_configuration/legacy_instrument_count`，其中时间固定09:25:05至09:30:00，旧`once`仅作兼容只读状态。午评默认12:05、盘后默认17:00，最早盘后时间17:00；已保存的自定义时间不强制覆盖。新安装三个开关均关闭。
+
+PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；新增可选`auction={enabled}`，提供竞价开关时必须同时提供非负整数`expected_auction_revision`，不接受竞价时间、日期、模式或名单。两个版本在同一短事务内核验，冲突409时全部不写；未带auction的旧客户端不改变竞价配置，完全相同的规范配置不增加修订号。旧单次、日期或手工名单经显式保存规范为off/daily及空名单时，即使有效enabled仍为false也可能增加竞价修订号。仅启用状态实际改变时重新核验竞价可启用权限，临时来源不可用不阻断已有daily开关的noop。保存不创建任务、不启用初始化、不绕过整链运行锁；兼容`POST /market/auction/automation`也仅接受off/daily和当前修订号，拒绝once、日期、名单及时间。
 
 `GET /tasks/activity` 为全局任务提示提供轻量只读摘要：当前 running/queued（最多200项，`active_count` 为实际总数）及最近5个非活动任务；不返回完整日志或任务参数。行含 job_id/request_key、kind/title、target_type、strategy_id/strategy_name、status/stage、progress、实际批次数、日期和结束时间。刚开始且未回报测量时 progress=null，真实0%保留，完成为100%，失败不伪装完成。个股与板块选股因已有运行任务冲突返回409 `{detail:{message,active_task}}`，message包含当前任务与策略名称。
 

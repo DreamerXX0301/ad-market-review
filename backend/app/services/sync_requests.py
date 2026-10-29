@@ -32,6 +32,8 @@ def create_sync_request(payload: dict):
     from app.adapters.dragon_tiger import VERSION as dragon_tiger_version
     parameters.update(dragon_tiger_policy=dragon_tiger_version,dragon_tiger_backfill=mode=='initialise')
     if mode=='increment':
+        from app.services.sync_workspace_followup import MARKER, VERSION as workspace_followup_version
+        parameters[MARKER]=workspace_followup_version
         from app.services.sync_clock import safe_completion_date
         parameters['sync_completion_date']=safe_completion_date()
         from app.services.line_alert_retention import VERSION as line_retention_version

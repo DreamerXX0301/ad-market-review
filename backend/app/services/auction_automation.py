@@ -6,6 +6,8 @@ by manual requests; actual source access remains in auction_service.
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 
 from fastapi import HTTPException
@@ -18,6 +20,7 @@ VERSION = 'auction-automation-v1'
 START = time(9, 25, 5)
 END = time(9, 30)
 MAX_ATTEMPTS = 3
+_worker_creation = ContextVar('auction_worker_creation', default=None)
 
 
 class AuctionNotReady(ValueError):
@@ -46,8 +49,31 @@ def _config(connection):
 
 
 def _matches(config, revision, day):
-    return (config['revision'] == revision and config['mode'] != 'off'
-            and (config['mode'] != 'once' or config['trade_date'] == day))
+    return config['revision'] == revision and config['mode'] == 'daily' and not _legacy_configuration(config)
+
+
+def _legacy_configuration(config):
+    """Old once/manual-list settings remain visible, never drive a new plan."""
+    try:
+        return (config['mode'] not in ('off', 'daily') or config['trade_date'] is not None
+                or json.loads(config['instrument_ids_json']) != [])
+    except (ValueError, TypeError):
+        return True
+
+
+@contextmanager
+def worker_creation_scope(authorization):
+    """Only the idle worker tick carries this in-process creation authority."""
+    token = _worker_creation.set(authorization)
+    try:
+        yield
+    finally:
+        _worker_creation.reset(token)
+
+
+def require_worker_creation(authorization):
+    if not isinstance(authorization, dict) or _worker_creation.get() is not authorization:
+        raise HTTPException(403, '竞价仅由唯一worker按每天09:25:05自动计划创建，不支持手动采集')
 
 
 def _eligibility(connection):
@@ -103,29 +129,22 @@ def _next_day(day):
     return value
 
 
-def read_view():
-    current = now_china(); today = current.date().isoformat()
-    with connect() as connection:
-        connection.execute('BEGIN')
-        config = _config(connection)
-        can_enable, reason = _eligibility(connection)
-        worker = _worker(connection, current)
-        last = _run_view(connection, connection.execute('SELECT * FROM market_auction_automation_run ORDER BY trade_date DESC LIMIT 1').fetchone())
-        today_run = _run_view(connection, connection.execute('SELECT * FROM market_auction_automation_run WHERE trade_date=?', (today,)).fetchone())
-    enabled = config['mode'] != 'off'
-    if config['mode'] == 'once' and (config['trade_date'] < today or
-            today_run and today_run['state'] in ('available', 'purged', 'failed', 'paused', 'cancelled', 'skipped', 'expired')):
-        enabled = False
+def _view(connection, current):
+    today = current.date().isoformat()
+    config = _config(connection)
+    can_enable, reason = _eligibility(connection)
+    worker = _worker(connection, current)
+    last = _run_view(connection, connection.execute('SELECT * FROM market_auction_automation_run ORDER BY trade_date DESC LIMIT 1').fetchone())
+    today_run = _run_view(connection, connection.execute('SELECT * FROM market_auction_automation_run WHERE trade_date=?', (today,)).fetchone())
+    legacy = _legacy_configuration(config)
+    enabled = config['mode'] == 'daily' and not legacy
+    if legacy:
+        reason = '旧单次或手工名单配置仅供历史查看，不再自动执行；请在数据中心重新保存每天自动计划开关'
     next_at = None
     if enabled:
-        if config['mode'] == 'once':
-            next_day = datetime.fromisoformat(config['trade_date']).date()
-            if current.time().replace(tzinfo=None) >= END or next_day.weekday() >= 5:
-                next_day = None
-        else:
-            next_day = current.date()
-            if next_day.weekday() >= 5 or current.time().replace(tzinfo=None) >= END or today_run:
-                next_day = _next_day(next_day)
+        next_day = current.date()
+        if next_day.weekday() >= 5 or current.time().replace(tzinfo=None) >= END or today_run:
+            next_day = _next_day(next_day)
         if next_day is not None:
             next_at = datetime.combine(next_day, START, CHINA).isoformat()
         if reason is None and not worker['alive']:
@@ -135,56 +154,71 @@ def read_view():
             'today': today, 'now': current.isoformat(), 'timezone': 'Asia/Shanghai',
             'start_time': '09:25:05', 'end_time': '09:30:00', 'enabled': enabled,
             'next_run_at': next_at, 'can_enable': can_enable, 'reason': reason,
-            'last_run': last, 'worker': worker}
+            'last_run': last, 'worker': worker, 'legacy_configuration': legacy}
+
+
+def read_view():
+    with connect() as connection:
+        connection.execute('BEGIN')
+        return _view(connection, now_china())
+
+
+def settings_view(connection):
+    """Unified settings projection shares the caller's SQLite read snapshot."""
+    view = _view(connection, now_china())
+    return {key: view[key] for key in ('enabled', 'revision', 'mode', 'can_enable', 'reason',
+                                      'next_run_at', 'last_run', 'worker', 'legacy_configuration')} | {
+        'fixed_time': '09:25:05', 'window_end': '09:30:00', 'legacy_instrument_count': len(view['instrument_ids'])}
 
 
 def update_config(payload):
-    if not isinstance(payload, dict) or set(payload) - {'mode', 'date', 'instrument_ids', 'expected_revision'}:
-        raise HTTPException(422, '自动竞价仅接受模式、单次日期、观察名单与当前配置版本')
+    if not isinstance(payload, dict) or set(payload) != {'mode', 'expected_revision'}:
+        raise HTTPException(422, '自动竞价只接受off/daily模式与当前配置版本，时间固定且名单自动生成')
     mode, expected = payload.get('mode'), payload.get('expected_revision')
-    if mode not in ('off', 'once', 'daily') or not isinstance(expected, int) or isinstance(expected, bool) or expected < 0:
-        raise HTTPException(422, 'mode须为off/once/daily，expected_revision须为非负整数')
-    from app.services.auction_service import instrument_values, day_value
-    current = now_china(); today = current.date().isoformat()
-    day = day_value(payload.get('date', today)) if mode == 'once' else None
-    if mode == 'once' and day != today:
-        raise HTTPException(422, '单次自动竞价只可安排今天，不补采历史或预约其他日期')
-    if mode == 'once' and (current.weekday() >= 5 or current.time().replace(tzinfo=None) >= END):
-        raise HTTPException(409, '今天已过竞价窗口或为周末，不能安排今日一次；可开启每天计划等待下一窗口')
-    if mode != 'once' and payload.get('date') is not None:
-        raise HTTPException(422, '只有once模式接受日期')
+    if mode not in ('off', 'daily') or type(expected) is not int or expected < 0:
+        raise HTTPException(422, 'mode须为off/daily，expected_revision须为非负整数')
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
         from app.services.increment_access import require_business_unlocked
         require_business_unlocked(connection)
-        config = _config(connection)
-        if expected != config['revision']:
-            raise HTTPException(409, {'message': '自动竞价配置已变化，请重新读取后保存', 'revision': config['revision']})
-        instruments = instrument_values(payload['instrument_ids']) if 'instrument_ids' in payload else json.loads(config['instrument_ids_json'])
-        if mode != 'off':
-            allowed, reason = _eligibility(connection)
-            if not allowed:
-                raise HTTPException(409, reason)
-        connection.execute('''UPDATE market_auction_automation SET revision=revision+1,mode=?,trade_date=?,
-            instrument_ids_json=?,updated_at_ms=? WHERE singleton=1 AND revision=?''',
-            (mode, day, dumps(instruments), stamp(current), expected))
-        # Queued work has not started source access. Configuration changes
-        # stop it; an already-running original attempt retains its authority.
-        pending = connection.execute('''SELECT r.job_id FROM market_auction_automation_run r JOIN job j USING(job_id)
+        configure_in_transaction(connection, enabled=mode == 'daily', expected_revision=expected)
+    return read_view()
+
+
+def configure_in_transaction(connection, *, enabled, expected_revision):
+    """No nested connection/commit: combined settings either all save or none."""
+    if type(enabled) is not bool or type(expected_revision) is not int or expected_revision < 0:
+        raise HTTPException(422, '竞价开关和配置版本无效')
+    config = _config(connection)
+    if expected_revision != config['revision']:
+        raise HTTPException(409, {'message': '自动竞价配置已变化，请重新读取后保存', 'revision': config['revision']})
+    mode = 'daily' if enabled else 'off'
+    if config['mode'] == mode and not _legacy_configuration(config):
+        return
+    if enabled:
+        allowed, reason = _eligibility(connection)
+        if not allowed:
+            raise HTTPException(409, reason)
+    connection.execute('''UPDATE market_auction_automation SET revision=revision+1,mode=?,trade_date=NULL,
+        instrument_ids_json='[]',updated_at_ms=? WHERE singleton=1 AND revision=?''',
+        (mode, stamp(), expected_revision))
+    # Queued work has not started source access. Configuration changes stop it;
+    # neither manual continue nor enabling a later plan revives that request.
+    pending = connection.execute('''SELECT r.job_id FROM market_auction_automation_run r JOIN job j USING(job_id)
             WHERE r.automatic_control=1 AND j.status='queued' ''').fetchall()
-        for row in pending:
-            connection.execute("UPDATE job SET status='paused',phase='automation_configuration_changed',lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (row['job_id'],))
-            tasks.append_event(connection, row['job_id'], 'automation_disabled', '自动计划配置已改变，尚未执行的原竞价任务暂停；需明确手动继续')
-        connection.execute("""UPDATE market_auction_automation_run SET automatic_control=0,retry_after_at_ms=NULL,
+    for row in pending:
+        connection.execute("UPDATE job SET status='paused',phase='automation_configuration_changed',lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (row['job_id'],))
+        tasks.append_event(connection, row['job_id'], 'automation_disabled', '自动计划配置已改变，尚未执行的原竞价任务暂停；不手动或自动继续')
+    connection.execute("""UPDATE market_auction_automation_run SET automatic_control=0,retry_after_at_ms=NULL,
             state=CASE WHEN state='waiting_retry' THEN 'failed' WHEN job_id IN
               (SELECT job_id FROM job WHERE status='paused') THEN 'paused' ELSE state END,
             reason='自动计划配置已改变，后续自动创建和重试授权已停止',updated_at_ms=?
-            WHERE automatic_control=1 AND state<>'available'""", (stamp(current),))
-    return read_view()
+            WHERE automatic_control=1 AND state<>'available'""", (stamp(),))
 
 
 def creation_authorization(connection, context, day):
     """Called within capture's exact short transaction, before any job exists."""
+    require_worker_creation(context)
     current = now_china(); config = _config(connection)
     if (not isinstance(context, dict) or not _matches(config, context.get('revision'), day)
             or not in_window(day, current)):
@@ -222,7 +256,7 @@ def tick():
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
         config = _config(connection)
-        if config['mode'] == 'off':
+        if config['mode'] == 'off' or _legacy_configuration(config):
             return None
         day = config['trade_date'] if config['mode'] == 'once' else today
         if day > today:
@@ -274,12 +308,12 @@ def tick():
         if not allowed:
             _receipt(connection, day, config['revision'], 'failed', reason)
             return None
-        create = {'date': day, 'request_key': f'auction-auto:{config["revision"]}:{day}',
-                  'instrument_ids': json.loads(config['instrument_ids_json'])}
+        create = {'date': day, 'request_key': f'auction-auto:{config["revision"]}:{day}'}
         authorization = {'revision': config['revision']}
     from app.services.auction_service import create_capture
     try:
-        return create_capture(create, automation=authorization)
+        with worker_creation_scope(authorization):
+            return create_capture(create, automation=authorization)
     except HTTPException as error:
         if error.status_code != 409:
             raise

@@ -1,4 +1,4 @@
-/** Auction observations are dated, manually captured samples; missing data stays unknown. */
+/** Auction observations are dated, automatically captured samples; missing data stays unknown. */
 type AuctionRow = Record<string, any>;
 
 export const auctionNumber = (value: unknown): number | null =>
@@ -102,13 +102,13 @@ export function auctionCaptureState(
   if (pending)
     return {
       disabled: true,
-      label: "正在提交…",
-      reason: "正在确认本日任务，请稍候。",
+      label: "正在提交操作…",
+      reason: "正在确认原任务操作，请稍候。",
     };
   if (!view || view.date !== date)
     return {
       disabled: true,
-      label: "手动采集竞价",
+      label: "读取竞价状态",
       reason: "正在读取所选日期的采集状态。",
     };
   if (view.state !== "not_collected" || view.locked_for_day === true)
@@ -118,32 +118,28 @@ export function auctionCaptureState(
       reason:
         view.state === "purged"
           ? "该日竞价已到期清理，保留日台账，不重新采集历史竞价。"
-          : view.state === "failed"
-            ? "窗口内可手动重试原任务；候选名单保持原样。"
-            : view.state === "available"
-              ? "本日竞价已冻结，历史查看只读取这份留存。"
-              : "沿用本日原任务，暂停和取消不会自动继续。",
+          : view.state === "available"
+            ? "本日竞价已冻结，历史查看只读取这份留存。"
+            : "沿用本日原任务；仅来源暂未就绪时可在窗口内有限自动重试，显式暂停、取消或最终失败不自动继续。",
+    };
+  if (date !== view.today)
+    return {
+      disabled: true,
+      label: "该日未留存竞价",
+      reason: "没有留存的历史竞价保持空白，不从当前报价补造。",
     };
   if (auctionAutomaticToday(automation || null) && date === automation?.today)
     return {
       disabled: true,
       label: "等待服务自动采集",
       reason:
-        "已按服务授权安排本日竞价；无需再次手动提交，可在自动采集设置中关闭后改手动。",
+        "已开启每日自动竞价，服务在北京时间09:25:05起、09:30前采集系统名单；无需手动提交。",
     };
-  const allowed =
-    date === view.today &&
-    view.can_capture === true &&
-    view.capture_window?.allowed === true;
   return {
-    disabled: !allowed,
-    label: "手动采集竞价",
+    disabled: true,
+    label: "自动竞价未开启",
     reason:
-      view.capture_reason ||
-      view.capture_window?.reason ||
-      (allowed
-        ? "可在09:25至09:30前手动冻结一次终态竞价。"
-        : "仅在今天09:25至09:30前手动采集。"),
+      "请在数据中心开启每日自动竞价；采集时刻固定为北京时间09:25:05，不接受手动采集或手填名单。",
   };
 }
 
@@ -157,12 +153,7 @@ export function auctionCanAct(
   if (action === "cancel")
     return ["queued", "running", "paused"].includes(view.state);
   if (action === "pause") return ["queued", "running"].includes(view.state);
-  return (
-    date === view.today &&
-    view.capture_window?.allowed === true &&
-    view[action === "retry" ? "can_retry" : "can_resume"] === true &&
-    view.state === (action === "retry" ? "failed" : "paused")
-  );
+  return false;
 }
 
 export function auctionShouldPoll(
@@ -362,9 +353,6 @@ export function auctionAutomationView(value: AuctionRow | null) {
 export function auctionAutomaticToday(value: AuctionRow | null): boolean {
   const automation = auctionAutomationView(value);
   return (
-    !!automation &&
-    automation.enabled === true &&
-    (automation.mode === "daily" ||
-      (automation.mode === "once" && automation.date === automation.today))
+    !!automation && automation.enabled === true && automation.mode === "daily"
   );
 }

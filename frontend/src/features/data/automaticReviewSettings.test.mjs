@@ -134,7 +134,8 @@ function nodes(value) {
   return [value, ...nodes(value.props?.children)];
 }
 function text(value = tree) {
-  if (Array.isArray(value)) return value.map(text).join("");
+  if (Array.isArray(value))
+    return value.map((item) => text(item ?? null)).join("");
   if (value == null || typeof value === "boolean") return "";
   if (typeof value !== "object") return String(value);
   return text(value.props?.children ?? null);
@@ -165,6 +166,16 @@ const base = {
   noon: { enabled: false, time: "12:05" },
   after_close: { enabled: false, time: "18:30" },
   last_checks: { noon: null, after_close: null },
+  auction: {
+    enabled: false,
+    revision: 0,
+    mode: "off",
+    fixed_time: "09:25:05",
+    window_end: "09:30:00",
+    can_enable: true,
+    legacy_configuration: false,
+    legacy_instrument_count: 0,
+  },
 };
 
 render();
@@ -198,7 +209,7 @@ render();
 assert.equal(tree.props.actions.props.children, "自动未开启");
 assert.deepEqual(
   toggles().map((node) => node.props.checked),
-  [false, false],
+  [false, false, false],
 );
 assert.deepEqual(
   times().map((node) => node.props.value),
@@ -206,8 +217,67 @@ assert.deepEqual(
 );
 assert.equal(button("保存自动设置").props.disabled, true);
 assert.match(text(), /暂无调度检查记录，不代表当天已经执行/);
-assert.match(text(), /完成后需要你确认结果才解锁/);
-setToggle(0, true);
+assert.match(text(), /盘后完成需确认结果才解锁/);
+// New defaults are server data; already saved schedules must remain untouched.
+result.data = {
+  ...base,
+  after_close: { enabled: false, time: "17:00" },
+  auction: {
+    ...base.auction,
+    can_enable: false,
+    reason: "唯一worker未运行，请检查初始化状态",
+    worker: { alive: false },
+  },
+};
+render();
+assert.equal(times()[1].props.value, "17:00");
+assert.match(text(), /默认17:00/);
+assert.equal(
+  toggles().length,
+  2,
+  "ineligible auction has a status, not an inert checkbox",
+);
+assert.match(text(), /暂不可开启/);
+assert.match(text(), /采集服务未运行，请检查初始化状态/);
+assert.match(text(), /服务未运行/);
+assert.doesNotMatch(text(), /worker|工作进程|固定时间/);
+assert.equal(
+  (text().match(/09:25:05/g) || []).length,
+  1,
+  "auction time is shown once",
+);
+assert.equal(
+  requests.length,
+  0,
+  "unavailable auction is never enabled by default",
+);
+result.data = {
+  ...base,
+  auction: { ...base.auction, enabled: true, mode: "daily", can_enable: false },
+};
+render();
+assert.equal(
+  toggles().length,
+  3,
+  "existing enabled plan retains its off switch",
+);
+assert.equal(toggles()[0].props.checked, true);
+assert.equal(toggles()[0].props.disabled, false);
+result.data = { ...base, after_close: { enabled: true, time: "18:00" } };
+render();
+assert.equal(
+  times()[1].props.value,
+  "18:00",
+  "saved 18:00 schedule is not rewritten",
+);
+result.data = base;
+render();
+assert.equal(
+  times()[1].props.value,
+  "18:30",
+  "saved 18:30 schedule is not rewritten by the new default",
+);
+setToggle(1, true);
 assert.equal(
   requests.length,
   0,
@@ -223,8 +293,9 @@ assert.equal(button("保存自动设置").props.disabled, true);
 await button("保存自动设置").props.onClick();
 assert.equal(requests.length, 0, "invalid time is rejected by controller too");
 setTime(0, "12:10");
-setToggle(1, true);
-setTime(1, "19:20");
+setToggle(2, true);
+setTime(1, "17:00");
+setToggle(0, true);
 const save = button("保存自动设置").props.onClick;
 save();
 save();
@@ -236,14 +307,18 @@ assert.deepEqual(requests[0], {
     method: "PUT",
     body: JSON.stringify({
       expected_revision: 0,
+      expected_auction_revision: 0,
       noon: { enabled: true, time: "12:10" },
-      after_close: { enabled: true, time: "19:20" },
+      after_close: { enabled: true, time: "17:00" },
+      auction: { enabled: true },
     }),
   },
   body: {
     expected_revision: 0,
+    expected_auction_revision: 0,
     noon: { enabled: true, time: "12:10" },
-    after_close: { enabled: true, time: "19:20" },
+    after_close: { enabled: true, time: "17:00" },
+    auction: { enabled: true },
   },
 });
 assert.equal(
@@ -259,7 +334,8 @@ waiting.shift().resolve({
   ...base,
   revision: 1,
   noon: { enabled: true, time: "12:10" },
-  after_close: { enabled: true, time: "19:20" },
+  after_close: { enabled: true, time: "17:00" },
+  auction: { ...base.auction, enabled: true, revision: 1, mode: "daily" },
 });
 await flush();
 assert.equal(tree.props.actions.props.children, "自动已开启");
@@ -308,7 +384,7 @@ assert.match(text(), /同日已有午评任务/);
 button("查看已有任务").props.onClick();
 assert.deepEqual(opened, ["existing-noon"]);
 assert.equal(requests.length, 2);
-setToggle(1, true);
+setToggle(2, true);
 active = false;
 render();
 await button("保存自动设置").props.onClick();
@@ -349,6 +425,63 @@ assert.equal(
   false,
   "settings card has no scheduler, audio, browser permission or task creation endpoint",
 );
+button("放弃修改并重新读取").props.onClick();
+render();
+result.data = { ...base, auction: undefined };
+render();
+assert.equal(
+  toggles().every((n) => n.props.disabled),
+  true,
+  "missing one plan disables all edits",
+);
+assert.equal(button("保存自动设置").props.disabled, true);
+result.data = base;
+render();
+setToggle(0, true);
+result.data = { ...base, auction: { ...base.auction, revision: 1 } };
+render();
+assert.equal(
+  button("保存自动设置").props.disabled,
+  true,
+  "auction revision refresh invalidates an old draft",
+);
+const beforeStale = requests.length;
+await button("保存自动设置").props.onClick();
+assert.equal(requests.length, beforeStale);
+button("放弃修改并重新读取").props.onClick();
+render();
+result.data = base;
+render();
+setToggle(1, true);
+result.error = "settings unavailable";
+render();
+assert.equal(button("保存自动设置").props.disabled, true);
+await button("保存自动设置").props.onClick();
+assert.equal(
+  requests.length,
+  beforeStale,
+  "cached data with GET error cannot save",
+);
+result.error = "";
+render();
+button("保存自动设置").props.onClick();
+waiting.shift().resolve({ ...base, revision: 1 });
+await flush();
+assert.match(errors().at(-1).props.message, /与本次修改不一致/);
+assert.equal(
+  button("保存自动设置").props.disabled,
+  true,
+  "unconfirmed response requires reload before retry",
+);
+assert.equal(times()[1].props.min, "17:00");
+assert.equal(
+  nodes(tree).filter((n) => n.props?.type === "time").length,
+  2,
+  "auction has no editable time",
+);
+assert.match(text(), /北京时间.*09:25:05/);
+assert.doesNotMatch(text(), /固定时间|worker|工作进程/);
+assert.equal(original.includes("#data?section=automatic"), true);
 console.log(
   "Automatic settings controller: unknown/opt-in/ranges/double-save/revisions/conflict/reload/inactive/existing task/invalid response/no implicit task execution passed",
 );

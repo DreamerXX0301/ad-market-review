@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Sunrise,
 } from "lucide-react";
-import { api, post, requestKey, useApi, usePageActive } from "../../lib/api";
+import { post, useApi, usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
   Badge,
@@ -27,7 +27,6 @@ import {
   auctionBackgroundTags,
   auctionCanAct,
   auctionCaptureState,
-  auctionCodes,
   auctionNumber,
   auctionPayload,
   auctionPreviousFocus,
@@ -40,18 +39,19 @@ import AuctionTopicSummary from "./AuctionTopicSummary";
 import AuctionFeedback from "./AuctionFeedback";
 import AuctionResonance from "./AuctionResonance";
 import AuctionClassifications from "./AuctionClassifications";
+import AuctionHeightFilters from "./AuctionHeightFilters";
+import AuctionHeightBadge from "./AuctionHeightBadge";
+import AuctionStockBadges from "./AuctionStockBadges";
+import {
+  auctionHeightMatches,
+  auctionSortByHeight,
+  type AuctionHeightKey,
+} from "./auctionHeightPresentation";
 import AuctionCopyText from "./AuctionCopyText";
 import AuctionAssociationSummary from "./AuctionAssociationSummary";
 import AuctionPageNavigation from "./AuctionPageNavigation";
 import useAuctionCloseRefresh from "./useAuctionCloseRefresh";
 import AuctionCloseGroups from "./AuctionCloseGroups";
-import {
-  beginAuctionRun,
-  acceptAuctionRun,
-  adoptExistingAuctionRun,
-  auctionRequestRejected,
-  releaseAuctionRun,
-} from "../../components/auctionRunLock";
 import { refreshTaskActivity } from "../../components/taskActivity";
 import "./AuctionReview.css";
 
@@ -209,11 +209,10 @@ export default function AuctionReview({
   const hasCloseGroups =
     closeReview?.version === "auction-close-review-v1" &&
     noonRows(closeReview.groups).length > 0;
-  const [codes, setCodes] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [pendingDay, setPendingDay] = useState("");
   const [sort, setSort] = useState<{ key: string; direction: "asc" | "desc" }>({
-    key: "auction_pct",
+    key: "previous_board_count",
     direction: "desc",
   });
   const [benchmarkDirection, setBenchmarkDirection] = useState<"asc" | "desc">(
@@ -224,11 +223,13 @@ export default function AuctionReview({
     date: "",
     key: "",
   });
+  const [heightSelection, setHeightSelection] = useState<{
+    date: string;
+    key: AuctionHeightKey;
+  }>({ date: "", key: "all" });
   const submitting = useRef(false);
-  const keys = useRef<Record<string, { key: string; ids: string[] }>>({});
   const currentDay = useRef(selected);
   currentDay.current = selected;
-  const parsed = auctionCodes(codes);
   const control = auctionCaptureState(
     view,
     selected,
@@ -241,6 +242,8 @@ export default function AuctionReview({
     setSubmitError("");
     setCloseOpen(false);
     setObservationPage(0);
+    setAssociationSelection({ date: selected, key: "" });
+    setHeightSelection({ date: selected, key: "all" });
   }, [selected]);
   useEffect(() => {
     if (!active || !auctionShouldPoll(view, selected)) return;
@@ -278,92 +281,23 @@ export default function AuctionReview({
     automation?.last_run?.attempts,
     result.reload,
   ]);
-  async function rejectedRun(day: string, key: string, error: any) {
-    if (!auctionRequestRejected(error)) return;
-    try {
-      const checked = await api<Row>(
-        `/market/auction?date=${encodeURIComponent(day)}`,
-      );
-      if (
-        checked.date === day &&
-        checked.task &&
-        adoptExistingAuctionRun(key, checked.task)
-      )
-        return;
-    } catch {
-      /* A definite rejection still releases this local pending request. */
-    }
-    releaseAuctionRun(key);
-  }
-  async function capture() {
-    if (
-      submitting.current ||
-      !view ||
-      !selected ||
-      control.disabled ||
-      parsed.error
-    )
-      return;
-    submitting.current = true;
-    const day = selected;
-    setPendingDay(day);
-    setSubmitError("");
-    // An uncertain network result replays the exact request identity and candidate list.
-    const saved = (keys.current[day] ||= {
-      key: requestKey(),
-      ids: parsed.ids,
-    });
-    try {
-      beginAuctionRun(day, saved.key);
-      const task = await post("/market/auction/jobs", {
-        date: day,
-        request_key: saved.key,
-        ...(saved.ids.length ? { instrument_ids: saved.ids } : {}),
-      });
-      acceptAuctionRun(saved.key, task);
-      refreshTaskActivity();
-      onDatesChanged?.();
-    } catch (error: any) {
-      await rejectedRun(day, saved.key, error);
-      if ([400, 401, 403, 409, 422].includes(error.status))
-        delete keys.current[day];
-      if (currentDay.current === day)
-        setSubmitError(error.message || "任务提交未完成，请重新读取本地状态。");
-    } finally {
-      submitting.current = false;
-      setPendingDay("");
-      result.reload();
-    }
-  }
-  async function changeTask(action: "retry" | "resume" | "cancel" | "pause") {
+  async function changeTask(action: "cancel" | "pause") {
     if (submitting.current || !auctionCanAct(view, selected, action) || !taskId)
       return;
     const day = selected;
     submitting.current = true;
     setPendingDay(day);
     setSubmitError("");
-    const key =
-      view?.task?.request_key || keys.current[day]?.key || requestKey();
     try {
-      if (action === "retry" || action === "resume")
-        beginAuctionRun(day, key, view!.task);
-      const task = await post(`/tasks/${encodeURIComponent(taskId)}/${action}`);
-      if (action === "retry" || action === "resume")
-        acceptAuctionRun(key, task);
+      await post(`/tasks/${encodeURIComponent(taskId)}/${action}`);
       refreshTaskActivity();
       notify(
-        action === "retry"
-          ? "原竞价任务已重新排队，仍使用冻结名单。"
-          : action === "resume"
-            ? "已继续原竞价任务。"
-            : action === "pause"
-              ? "已暂停采集。"
-              : "已取消本日采集。",
+        action === "pause"
+          ? "已暂停采集，服务不会自动继续。"
+          : "已取消本日采集。",
       );
       onDatesChanged?.();
     } catch (error: any) {
-      if (action === "retry" || action === "resume")
-        await rejectedRun(day, key, error);
       if (currentDay.current === day)
         setSubmitError(error.message || "任务操作未完成，请刷新状态。");
     } finally {
@@ -377,14 +311,21 @@ export default function AuctionReview({
   const candidates = new Map(
     noonRows(universe.items).map((row) => [row.instrument_id, row]),
   );
-  const rows = auctionSortRows(
-    noonRows(payload?.quotes?.items).map((row) => ({
-      ...candidates.get(row.instrument_id),
-      ...row,
-    })),
-    sort.key,
-    sort.direction,
-  );
+  const sourceRows = noonRows(payload?.quotes?.items).map((row) => ({
+    ...candidates.get(row.instrument_id),
+    ...row,
+    ...(view?.stock_boards?.[row.instrument_id] || {}),
+  }));
+  const rows =
+    sort.key === "previous_board_count"
+      ? auctionSortByHeight(sourceRows, sort.direction)
+      : auctionSortRows(sourceRows, sort.key, sort.direction);
+  const selectedHeight =
+    heightSelection.date === selected ? heightSelection.key : "all";
+  function selectHeight(key: AuctionHeightKey) {
+    setHeightSelection({ date: selected, key });
+    setObservationPage(0);
+  }
   const selectedAssociationKey =
     associationSelection.date === selected ? associationSelection.key : "";
   const selectedAssociation = noonRows(topicView?.groups).find(
@@ -395,8 +336,21 @@ export default function AuctionReview({
     selectedAssociation && Array.isArray(selectedAssociation.instrument_ids)
       ? new Set<string>(selectedAssociation.instrument_ids)
       : null;
-  const observationRows = selectedAssociationIds
-    ? rows.filter((row) => selectedAssociationIds.has(row.instrument_id))
+  const combinedIds =
+    selectedHeight === "all"
+      ? selectedAssociationIds
+      : new Set<string>(
+          sourceRows
+            .filter(
+              (row) =>
+                auctionHeightMatches(row, selectedHeight) &&
+                (!selectedAssociationIds ||
+                  selectedAssociationIds.has(row.instrument_id)),
+            )
+            .map((row) => row.instrument_id),
+        );
+  const observationRows = combinedIds
+    ? rows.filter((row) => combinedIds.has(row.instrument_id))
     : rows;
   function selectAssociation(key: string) {
     setAssociationSelection((previous) => ({
@@ -441,9 +395,7 @@ export default function AuctionReview({
     "asc",
   ).slice(0, 6);
   const state = view?.state || "not_collected";
-  const canEdit =
-    (!view || state === "not_collected") && !keys.current[selected];
-  const identity = (row: Row) => (
+  const identity = (row: Row, showHeight = true) => (
     <div className="auction-identity">
       <button
         className="auction-stock"
@@ -458,6 +410,14 @@ export default function AuctionReview({
         {row.name || row.instrument_id}
       </button>
       <CopyStockCode instrumentId={row.instrument_id} />
+      <AuctionStockBadges
+        row={{
+          ...candidates.get(row.instrument_id),
+          ...row,
+          ...(view?.stock_boards?.[row.instrument_id] || {}),
+        }}
+        showEvent={showHeight}
+      />
     </div>
   );
   return (
@@ -493,19 +453,6 @@ export default function AuctionReview({
               <RefreshCw size={14} />
               读取状态
             </button>
-            <button
-              className="btn primary"
-              onClick={capture}
-              disabled={
-                control.disabled ||
-                !!parsed.error ||
-                result.loading ||
-                !automation
-              }
-            >
-              <Sunrise size={15} />
-              {control.label}
-            </button>
           </div>
         </div>
         <div className="auction-scope-strip">
@@ -514,7 +461,7 @@ export default function AuctionReview({
             {auctionStates[state] || state}
           </Badge>
           <span>
-            <Clock3 size={13} /> 北京时间09:25至09:30前
+            <Clock3 size={13} /> 北京时间09:25:05自动采集 · 09:30前截止
           </span>
           {payload && <span>前一交易日 {payload.previous_date || "未知"}</span>}
         </div>
@@ -537,11 +484,6 @@ export default function AuctionReview({
             loading={automaticResult.loading}
             error={automaticResult.error}
             reload={automaticResult.reload}
-            onSaved={(value) => {
-              automaticResult.setData(value);
-              refreshTaskActivity();
-              result.reload();
-            }}
           />
         </section>
         <div className="auction-method-strip">
@@ -552,14 +494,8 @@ export default function AuctionReview({
           </div>
           <div>
             <span>02</span>
-            <strong>
-              {automaticToday ? "等待服务09:25后核对" : "09:25后核对"}
-            </strong>
-            <p>
-              {automaticToday
-                ? "服务会自动留存终态，无需守着页面再点一次。"
-                : "手动留存终态，比较高低开、竞价额与来源量比。"}
-            </p>
+            <strong>09:25:05自动核对</strong>
+            <p>开启计划后由服务自动留存终态，比较高低开、竞价额与来源量比。</p>
           </div>
           <div>
             <span>03</span>
@@ -628,7 +564,7 @@ export default function AuctionReview({
                 </>
               ) : (
                 <p className="auction-muted">
-                  最近已发布日尚未留存可核验的复盘判断或逐股主线。可以先整理自选与自定义名单；本次不会替你补写昨日判断。
+                  最近已发布日尚未留存可核验的复盘判断或逐股主线。可以先整理自选；本次不会替你补写昨日判断。
                 </p>
               )}
               <p className="auction-reading-note">
@@ -637,64 +573,11 @@ export default function AuctionReview({
             </div>
           </Panel>
         )}
-        {!payload && !automaticToday && (
-          <Panel
-            title="这次看哪些股票"
-            subtitle="最多100只；只观察冻结的候选样本，不代表全市场。"
-          >
-            <div className="auction-panel-body">
-              <label htmlFor="auction-codes">
-                自定义完整代码 <span>选填 · 留空使用默认名单</span>
-              </label>
-              <textarea
-                id="auction-codes"
-                value={codes}
-                onChange={(event) => setCodes(event.target.value)}
-                disabled={!canEdit || busy}
-                placeholder="例如：600519.SH, 000001.SZ&#10;逗号、空格或换行分隔"
-                rows={3}
-                aria-describedby="auction-codes-help"
-              />
-              <div className="auction-input-foot">
-                <p id="auction-codes-help">
-                  {parsed.error ||
-                    (parsed.ids.length
-                      ? `已填写 ${parsed.ids.length} 只；仅采集这份自定义名单。`
-                      : "默认优先昨日复盘关注与原主线，再补自选及严格前一交易日已核验的涨停、炸板样本；超出100只标明未纳入数量。")}
-                </p>
-                {parsed.error && <Badge tone="danger">请检查代码</Badge>}
-              </div>
-              {!canEdit && (
-                <p className="auction-muted">
-                  本日任务已提交，重试沿用首次冻结名单。
-                </p>
-              )}
-            </div>
-          </Panel>
-        )}
         {view?.task && !payload && state !== "purged" && (
           <Panel
             title="本日采集任务"
             actions={
               <div className="button-group">
-                {auctionCanAct(view, selected, "retry") && (
-                  <button
-                    className="btn primary"
-                    disabled={busy}
-                    onClick={() => changeTask("retry")}
-                  >
-                    重试原任务
-                  </button>
-                )}
-                {auctionCanAct(view, selected, "resume") && (
-                  <button
-                    className="btn primary"
-                    disabled={busy}
-                    onClick={() => changeTask("resume")}
-                  >
-                    继续原任务
-                  </button>
-                )}
                 {auctionCanAct(view, selected, "pause") && (
                   <button
                     className="btn"
@@ -738,7 +621,7 @@ export default function AuctionReview({
                   : state === "not_collected"
                     ? automaticToday
                       ? "已安排今天的自动竞价"
-                      : "先留下一份真实的竞价观察"
+                      : "自动竞价尚未开启"
                     : auctionStates[state]
               }
               description={
@@ -747,8 +630,8 @@ export default function AuctionReview({
                   : state === "not_collected"
                     ? automaticToday
                       ? "服务运行时，约09:25:05起在09:30前自动采集。浏览器可以关闭，结果就绪后回来查看；错过窗口不补造。"
-                      : "在交易日09:25后手动采集。没有留存的历史竞价保持空白，当前报价不会补成历史结果。"
-                    : "当前没有可用的竞价正文。窗口内可按任务状态继续或重试原任务；窗口结束后保留缺口。"
+                      : "在数据中心开启自动竞价后，服务仅在交易日09:25:05起采集系统名单。没有留存的历史竞价保持空白。"
+                    : "当前没有可用的竞价正文。仅来源暂未就绪时允许窗口内有限自动重试；显式暂停、取消或最终失败不自动继续。"
               }
             />
           </Panel>
@@ -806,8 +689,11 @@ export default function AuctionReview({
                 date={selected}
                 topicView={topicView}
                 selectedKey={selectedAssociationKey}
-                selectedIds={selectedAssociationIds}
+                selectedIds={combinedIds}
                 onAssociationSelect={selectAssociation}
+                heightRows={sourceRows}
+                selectedHeight={selectedHeight}
+                onHeightSelect={selectHeight}
                 onStock={onStock}
                 chartDate={chartDate}
               />
@@ -1041,7 +927,7 @@ export default function AuctionReview({
             <section id="auction-resonance" tabIndex={-1}>
               <AuctionResonance
                 date={selected}
-                quotes={noonRows(payload.quotes?.items)}
+                quotes={sourceRows}
                 onStock={onStock}
                 chartDate={chartDate}
               />
@@ -1050,7 +936,7 @@ export default function AuctionReview({
               <AuctionTopicSummary
                 result={{ ...topicResult, data: topicView }}
                 date={selected}
-                quotes={noonRows(payload.quotes?.items)}
+                quotes={sourceRows}
                 onStock={onStock}
                 chartDate={chartDate}
               />
@@ -1070,6 +956,11 @@ export default function AuctionReview({
                   </Badge>
                 }
               >
+                <AuctionHeightFilters
+                  rows={sourceRows}
+                  value={selectedHeight}
+                  onChange={selectHeight}
+                />
                 <AuctionAssociationSummary
                   view={topicView}
                   date={selected}
@@ -1078,8 +969,12 @@ export default function AuctionReview({
                 />
                 <div className="auction-observation-controls">
                   <span>
-                    {selectedAssociation?.name || "全部"}{" "}
-                    {integer(observationRows.length)}只 · 每页20只
+                    当前 {integer(observationRows.length)} /{" "}
+                    {integer(rows.length)}只 · 每页20只
+                    {selectedAssociation
+                      ? ` · ${selectedAssociation.name}`
+                      : ""}
+                    {selectedHeight !== "all" ? " · 已按昨日板高筛选" : ""}
                   </span>
                   {selectedAssociation && (
                     <button
@@ -1096,12 +991,46 @@ export default function AuctionReview({
                     label="复制当前股票列表代码"
                   />
                 </div>
+                <p className="auction-height-sort-note">
+                  默认按昨日板高降序、同高度按竞价涨幅降序。可点表头切换；未知值排在末尾。
+                </p>
                 <div className="auction-table-wrap">
                   <table className="auction-table">
                     <thead>
                       <tr>
                         <th>股票</th>
-                        <th>入选背景</th>
+                        <th
+                          aria-sort={
+                            sort.key === "previous_board_count"
+                              ? sort.direction === "desc"
+                                ? "descending"
+                                : "ascending"
+                              : "none"
+                          }
+                        >
+                          <button
+                            type="button"
+                            className="auction-sort"
+                            onClick={() =>
+                              setSort({
+                                key: "previous_board_count",
+                                direction:
+                                  sort.key === "previous_board_count" &&
+                                  sort.direction === "desc"
+                                    ? "asc"
+                                    : "desc",
+                              })
+                            }
+                          >
+                            昨日板高 / 入选背景{" "}
+                            {sort.key === "previous_board_count" &&
+                              (sort.direction === "desc" ? (
+                                <ArrowDown size={12} />
+                              ) : (
+                                <ArrowUp size={12} />
+                              ))}
+                          </button>
+                        </th>
                         <th className="auction-affiliations-column">
                           行业 / 概念 · 样本均幅
                         </th>
@@ -1146,15 +1075,10 @@ export default function AuctionReview({
                     <tbody>
                       {visibleObservationRows.map((row) => (
                         <tr key={row.instrument_id}>
-                          <td>{identity(row)}</td>
+                          <td>{identity(row, false)}</td>
                           <td className="auction-background">
                             <BackgroundTags reasons={row.reasons} />
-                            {auctionNumber(row.previous_board_count) !=
-                              null && (
-                              <small className="auction-board-count">
-                                昨日{integer(row.previous_board_count)}板
-                              </small>
-                            )}
+                            <AuctionHeightBadge row={row} />
                           </td>
                           <td className="auction-affiliations-column">
                             <AuctionClassifications

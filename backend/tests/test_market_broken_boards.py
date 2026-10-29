@@ -631,7 +631,8 @@ def test_single_day_detail_http_route_uses_real_event_coverage_and_one_history_b
     assert result['data_coverage']['selected_date_available'] is True
     assert DAY in result['data_coverage']['available_dates']
     assert member_reads == [('sectors', DAY)]
-    assert market.calls == [(sorted([A, B, C, X]), DAY, DAY)]
+    assert market.calls == [(sorted([A, B, C, X]), PREVIOUS, DAY)]
+    assert report['current']['previous_event_date'] == PREVIOUS
 
 
 @pytest.mark.parametrize('value,code', [(None, 'unknown'), (-5, 'large_drop'), (-4.999, 'negative'), (0, 'flat'), (.001, 'positive'), (-13.29, 'large_drop')])
@@ -806,3 +807,77 @@ def test_historical_single_day_sample_date_is_selected_day_not_latest_day(monkey
     group = result['current']['concept_distribution'][0]
     assert group['topics_date'] == group['sample_date'] == PREVIOUS
     assert group['sample_avg_change_pct'] == 0. and group['sample_valid_count'] == 2
+
+
+def test_prior_event_badges_use_strict_previous_price_verified_pool_and_one_batch(monkeypatch):
+    market = Market()
+    prior = market.container(PREVIOUS, up=[A, B], broken=[C])
+    prior['limitup'][0]['continue_day_cnt'] = 1
+    prior['limitup'][1]['continue_day_cnt'] = 8
+    market.ref['pool_history'][PREVIOUS] = prior
+    market.ref['pool_history'][DAY] = market.container(DAY, broken=[A, B, C, X])
+    monkeypatch.setattr('app.services.market_broken_boards.resolve_reference', lambda *_: ({}, {}))
+    before = deepcopy(market.ref)
+    result = build(market, with_memberships=True)
+    by_id = {row['instrument_id']: row for row in result['current']['items']}
+    assert [(by_id[symbol]['previous_state'], by_id[symbol]['previous_board_count']) for symbol in (A, B, C, X)] == [
+        ('limit_up', 1), ('limit_up', 8), ('limit_break', None), ('none', None)]
+    assert all(row['previous_event_date'] == PREVIOUS for row in by_id.values())
+    feedback = result['previous_feedback']['items']
+    assert [row['instrument_id'] for row in feedback] == [C]
+    assert feedback[0]['previous_state'] == 'limit_break'
+    assert feedback[0]['previous_board_count'] is None
+    assert len(market.calls) == 1
+    assert market.calls[0][1:] == (DAYS[-7], DAY)
+    assert market.ref == before
+
+
+@pytest.mark.parametrize('mode', ['no_height', 'invalid_height', 'duplicate_height', 'field_conflict', 'pool_conflict', 'bad_price', 'bad_date', 'missing_prior_pool'])
+def test_prior_missing_conflicting_or_unpriced_evidence_never_fabricates_height(mode, monkeypatch):
+    market = Market()
+    prior = market.container(PREVIOUS, up=[X])
+    prior['limitup'][0]['continue_day_cnt'] = 3
+    if mode == 'no_height': prior['limitup'][0].pop('continue_day_cnt')
+    elif mode == 'invalid_height': prior['limitup'][0]['continue_day_cnt'] = True
+    elif mode == 'duplicate_height':
+        duplicate = {**prior['limitup'][0], 'continue_day_cnt': 5}
+        prior['limitup'].append(duplicate); prior['coverage']['limitup']['declared_total'] = 2
+    elif mode == 'field_conflict': prior['limitup'][0]['board_count'] = 1
+    elif mode == 'pool_conflict':
+        prior['breakpool'] = deepcopy(prior['limitup']); prior['coverage']['breakpool']['declared_total'] = 1
+    elif mode == 'bad_price': prior['limitup'][0]['last_price'] = 99
+    elif mode == 'bad_date': prior['limitup'][0]['date'] = DAY
+    elif mode == 'missing_prior_pool': prior.pop('limitup')
+    market.ref['pool_history'][PREVIOUS] = prior
+    monkeypatch.setattr('app.services.market_broken_boards.resolve_reference', lambda *_: ({}, {}))
+    row = next(row for row in build(market, with_memberships=True)['current']['items'] if row['instrument_id'] == X)
+    assert row['previous_board_count'] is None
+    assert row['previous_state'] == ('conflict' if mode == 'pool_conflict' else 'limit_up' if mode in ('no_height', 'invalid_height', 'duplicate_height', 'field_conflict') else 'unknown')
+    assert row['previous_event_reason']
+
+
+def test_single_day_broken_detail_adds_only_strict_previous_day_to_same_batch(monkeypatch):
+    market = Market()
+    monkeypatch.setattr('app.services.market_broken_boards.resolve_reference', lambda *_: ({}, {}))
+    result = build(market, history_days=1, include_feedback=False, with_memberships=True)
+    assert result['previous_feedback'] == {}
+    assert [row['date'] for row in result['history']] == [DAY]
+    assert result['comparison']['previous_date'] is None
+    assert len(market.calls) == 1
+    assert market.calls[0][1:] == (PREVIOUS, DAY)
+    assert all(row['previous_event_date'] == PREVIOUS for row in result['current']['items'])
+
+
+def test_prior_event_is_not_borrowed_from_older_day_or_without_prior_quote(monkeypatch):
+    market = Market()
+    market.ref['pool_history'][DAYS[-3]] = market.container(DAYS[-3], up=[X])
+    market.ref['pool_history'][DAYS[-3]]['limitup'][0]['continue_day_cnt'] = 5
+    market.ref['pool_history'].pop(PREVIOUS)
+    monkeypatch.setattr('app.services.market_broken_boards.resolve_reference', lambda *_: ({}, {}))
+    row = next(row for row in build(market, with_memberships=True)['current']['items'] if row['instrument_id'] == X)
+    assert (row['previous_state'], row['previous_board_count']) == ('unknown', None)
+    market.ref['pool_history'][PREVIOUS] = market.container(PREVIOUS, up=[X])
+    market.ref['pool_history'][PREVIOUS]['limitup'][0]['continue_day_cnt'] = 2
+    market.history[X] = [row for row in market.history[X] if row['date'] != PREVIOUS]
+    row = next(row for row in build(market, with_memberships=True)['current']['items'] if row['instrument_id'] == X)
+    assert (row['previous_state'], row['previous_board_count']) == ('unknown', None)

@@ -7,7 +7,11 @@ import { Badge, ErrorBox, Panel, Spinner, Status } from "../../components/UI";
 import {
   automaticReviewSettings,
   automaticSettingsChanged,
+  automaticSettingsRequest,
+  automaticSettingsStale,
+  automaticSavedResponse,
   automaticTimeError,
+  automaticStatusText,
 } from "./automaticReviewPresentation";
 import type { AutomaticReviewSettingsValue } from "./automaticReviewPresentation";
 import "./AutomaticReviewSettings.css";
@@ -24,8 +28,8 @@ const PLANS = [
   {
     kind: "after_close",
     title: "自动盘后复盘",
-    subtitle: "默认18:30 · 当天18:00后有效",
-    min: "18:00",
+    subtitle: "默认17:00 · 当天有效",
+    min: "17:00",
     max: "23:59",
   },
 ] as const;
@@ -42,6 +46,7 @@ export default function AutomaticReviewSettings({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [needsReload, setNeedsReload] = useState(false);
   const inFlight = useRef(false),
     mounted = useRef(true);
   useEffect(() => {
@@ -50,17 +55,33 @@ export default function AutomaticReviewSettings({
       mounted.current = false;
     };
   }, []);
+  useEffect(() => {
+    if (
+      active &&
+      typeof window !== "undefined" &&
+      window.location.hash === "#data?section=automatic"
+    )
+      document
+        .getElementById("automatic-review-settings")
+        ?.scrollIntoView({ block: "start" });
+  }, [active]);
   const value = draft || saved;
+  const stale = !!draft && !!saved && automaticSettingsStale(draft, saved);
+  const unavailable = !saved || !!result.error || result.loading;
   const dirty = !!draft && !!saved && automaticSettingsChanged(draft, saved);
+  const auctionToggleAvailable =
+    !!value &&
+    !unavailable &&
+    (value.auction.enabled || saved?.auction.can_enable === true);
   const validation = value
     ? automaticTimeError("noon", value.noon.time) ||
       automaticTimeError("after_close", value.after_close.time)
     : "";
   const change = (
-    kind: "noon" | "after_close",
+    kind: "noon" | "after_close" | "auction",
     patch: { enabled?: boolean; time?: string },
   ) => {
-    if (!value || pending) return;
+    if (!value || unavailable || pending || !active) return;
     setDraft({ ...value, [kind]: { ...value[kind], ...patch } });
     setError("");
     setNotice("");
@@ -70,11 +91,26 @@ export default function AutomaticReviewSettings({
     setDraft(null);
     setError("");
     setNotice("");
+    setNeedsReload(false);
     result.setData(null);
     result.reload();
   };
   const save = async () => {
-    if (!active || inFlight.current || !value || !dirty || validation) return;
+    if (
+      !active ||
+      inFlight.current ||
+      !value ||
+      !saved ||
+      unavailable ||
+      !dirty ||
+      validation ||
+      stale ||
+      needsReload ||
+      (value.auction.enabled &&
+        !saved.auction.enabled &&
+        !saved.auction.can_enable)
+    )
+      return;
     inFlight.current = true;
     setPending(true);
     setError("");
@@ -82,30 +118,29 @@ export default function AutomaticReviewSettings({
     try {
       const response = await api<Row>(PATH, {
         method: "PUT",
-        body: JSON.stringify({
-          expected_revision: value.revision,
-          noon: value.noon,
-          after_close: value.after_close,
-        }),
+        body: JSON.stringify(automaticSettingsRequest(value)),
       });
       if (!mounted.current) return;
-      if (!automaticReviewSettings(response))
+      const confirmed = automaticSavedResponse(saved, value, response);
+      if (!confirmed)
         throw new Error(
-          "保存响应不完整，请重新读取确认设置，暂不声称保存成功。",
+          "保存响应不完整或与本次修改不一致，请重新读取确认设置，暂不声称保存成功。",
         );
-      result.setData(response);
+      result.setData(confirmed);
       setDraft(null);
       setNotice(
-        "设置已保存。服务端worker按北京时间检查；保存计划不代表任务已经创建或执行。",
+        "设置已保存，生效后按北京时间执行；保存计划不代表任务已经创建或执行。",
       );
     } catch (problem: any) {
-      if (mounted.current)
+      if (mounted.current) {
+        setNeedsReload(true);
         setError(
           (problem?.message || "自动复盘设置保存失败。") +
             (problem?.status === 409 && !problem?.incrementLocked
               ? " 请重新读取最新设置后再保存。"
               : ""),
         );
+      }
     } finally {
       inFlight.current = false;
       if (mounted.current) setPending(false);
@@ -121,11 +156,7 @@ export default function AutomaticReviewSettings({
       );
     return (
       <div className="automatic-review-check">
-        <p>
-          {typeof item.reason === "string"
-            ? item.reason
-            : "最近检查未提供说明。"}
-        </p>
+        <p>{automaticStatusText(item.reason, "最近检查未提供说明。")}</p>
         <p className="muted">
           {item.date ? <span>任务日 {item.date} · </span> : null}
           检查于 {item.checked_at ? dateTime(item.checked_at) : "—"}{" "}
@@ -145,27 +176,31 @@ export default function AutomaticReviewSettings({
   };
   return (
     <Panel
-      title="自动午评与盘后复盘"
-      subtitle="新安装默认关闭；保存开启后，由本实例唯一worker按北京时间检查。"
+      title="自动采集计划"
+      subtitle="新安装默认关闭，开启后按北京时间自动采集。"
       actions={
         <Badge
           tone={
             saved
-              ? saved.noon.enabled || saved.after_close.enabled
+              ? saved.auction.enabled ||
+                saved.noon.enabled ||
+                saved.after_close.enabled
                 ? "good"
                 : "neutral"
               : "warn"
           }
         >
           {saved
-            ? saved.noon.enabled || saved.after_close.enabled
+            ? saved.auction.enabled ||
+              saved.noon.enabled ||
+              saved.after_close.enabled
               ? "自动已开启"
               : "自动未开启"
             : "设置待读取"}
         </Badge>
       }
     >
-      <div className="automatic-review-settings">
+      <div className="automatic-review-settings" id="automatic-review-settings">
         {!saved &&
           (result.loading ? (
             <p className="automatic-review-loading">
@@ -182,13 +217,77 @@ export default function AutomaticReviewSettings({
           <ErrorBox message={result.error} retry={reload} />
         )}
         <div className="automatic-review-plans">
+          <section>
+            <label
+              className={`automatic-review-toggle${auctionToggleAvailable ? "" : " is-unavailable"}`}
+            >
+              {auctionToggleAvailable && (
+                <input
+                  type="checkbox"
+                  checked={value?.auction.enabled ?? false}
+                  disabled={pending || !active}
+                  onChange={(event) =>
+                    change("auction", { enabled: event.target.checked })
+                  }
+                />
+              )}
+              <span>
+                <strong>自动盘前竞价</strong>
+                <small>自动生成关注名单 · 当天09:30前有效</small>
+              </span>
+              {!auctionToggleAvailable && (
+                <Badge tone="warn">
+                  {saved && !unavailable ? "暂不可开启" : "状态待读取"}
+                </Badge>
+              )}
+            </label>
+            <div className="automatic-review-time">
+              北京时间{" "}
+              <strong className="automatic-review-fixed-time">09:25:05</strong>
+            </div>
+            <div className="automatic-review-check">
+              {saved?.auction.reason ? (
+                <p>{automaticStatusText(saved.auction.reason)}</p>
+              ) : saved && !unavailable && !auctionToggleAvailable ? (
+                <p>开启条件尚未满足，请检查初始化和数据源状态。</p>
+              ) : null}
+              {saved?.auction.legacy_configuration && (
+                <p className="automatic-review-error">
+                  旧设置已停用，重新保存开关后使用每日计划。
+                </p>
+              )}
+              <p className="muted">
+                下一次{" "}
+                {saved?.auction.next_run_at
+                  ? dateTime(saved.auction.next_run_at)
+                  : "暂无已核验时间"}
+              </p>
+              {saved?.auction.last_run && (
+                <p>
+                  最近执行：
+                  {automaticStatusText(
+                    saved.auction.last_run.reason,
+                    "尚无执行说明",
+                  )}{" "}
+                  {saved.auction.last_run.state && (
+                    <Status value={saved.auction.last_run.state} />
+                  )}
+                </p>
+              )}
+              {typeof saved?.auction.worker?.alive === "boolean" && (
+                <p className="muted">
+                  {saved.auction.worker.alive ? "服务运行中" : "服务未运行"}
+                </p>
+              )}
+            </div>
+          </section>
           {PLANS.map((plan) => (
             <section key={plan.kind}>
               <label className="automatic-review-toggle">
                 <input
                   type="checkbox"
                   checked={value?.[plan.kind].enabled ?? false}
-                  disabled={!value || pending || !active}
+                  disabled={!value || unavailable || pending || !active}
                   onChange={(event) =>
                     change(plan.kind, { enabled: event.target.checked })
                   }
@@ -206,7 +305,7 @@ export default function AutomaticReviewSettings({
                   min={plan.min}
                   max={plan.max}
                   value={value?.[plan.kind].time || ""}
-                  disabled={!value || pending || !active}
+                  disabled={!value || unavailable || pending || !active}
                   onChange={(event) =>
                     change(plan.kind, { time: event.target.value })
                   }
@@ -219,14 +318,16 @@ export default function AutomaticReviewSettings({
         </div>
         <p className="automatic-review-policy">
           <Clock3 size={14} aria-hidden="true" />
-          仅当天有效窗口补跑；午评13:00后不补，盘后跨零点不追历史。电脑和API/worker需保持运行，页面打开不负责计时。
+          仅交易日且服务运行时执行，浏览器可关闭。错过竞价、午评窗口或盘后跨零点不补跑。
         </p>
         <p className="automatic-review-policy">
-          仅市场交易日执行；日历未核验、未初始化或来源未就绪时保留原因。同日已有运行、已完成、失败、暂停或取消任务不会重复创建；失败或显式暂停/取消请到原任务手动处理。首次初始化仍由你手动发起。
+          同日已有任务不重复创建，暂停或取消不自动继续；盘后完成需确认结果才解锁。首次初始化仍需手动操作。
         </p>
-        <p className="automatic-review-policy">
-          自动盘后复盘也会显示全局进度并锁定业务操作；完成后需要你确认结果才解锁。上次结果尚未确认时，后续自动盘后复盘等待确认，不会绕过或自动关闭进度框。
-        </p>
+        {(stale || needsReload) && (
+          <p className="automatic-review-error" role="alert">
+            设置版本已变化或保存结果需要确认，请放弃修改并重新读取后再保存。
+          </p>
+        )}
         {validation && (
           <p className="automatic-review-error" role="alert">
             {validation}
@@ -261,8 +362,14 @@ export default function AutomaticReviewSettings({
               type="button"
               className="btn primary small"
               disabled={
+                unavailable ||
                 !saved ||
                 !dirty ||
+                stale ||
+                needsReload ||
+                (!!value?.auction.enabled &&
+                  !saved?.auction.enabled &&
+                  !saved?.auction.can_enable) ||
                 pending ||
                 !!validation ||
                 result.loading ||

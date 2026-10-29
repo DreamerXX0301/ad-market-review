@@ -3,50 +3,164 @@ import fs from "node:fs/promises";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
-const encode = source => "data:text/javascript;base64," + Buffer.from(source).toString("base64");
-const runtime = import.meta.resolve("react/jsx-runtime"), react=import.meta.resolve("react");
-const reactProbe=encode(`import * as React from ${JSON.stringify(react)};export * from ${JSON.stringify(react)};
-let cursor=0,states={};export function configure(value){cursor=0;states=value;}export function useState(initial){const index=cursor++;return React.useState(Object.hasOwn(states,index)?states[index]:initial);}`);
-const jsxProbe=encode(`import{jsx as a,jsxs as b}from ${JSON.stringify(runtime)};export{Fragment}from ${JSON.stringify(runtime)};export const buttons=[];function see(t,p){if(t==='button')buttons.push(p);}export function jsx(t,p,k){see(t,p);return a(t,p,k);}export function jsxs(t,p,k){see(t,p);return b(t,p,k);}`);
-const apiProbe=encode(`export const calls=[];let answer=async()=>({});export function setAnswer(value){answer=value;calls.length=0;}export async function post(path,payload){calls.push([path,payload]);return answer(path,payload);}`);
-const uiProbe=encode(`import{jsx}from ${JSON.stringify(runtime)};export const useToast=()=>()=>{};export const Badge=({children})=>jsx('span',{children});export const ErrorBox=({message})=>jsx('p',{children:message});`);
-async function compile(file){return ts.transpileModule(await fs.readFile(new URL(file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;}
-const helpers=encode(await compile('./auctionPresentation.ts'));
-const imports={react:reactProbe,'react/jsx-runtime':jsxProbe,'../../lib/api':apiProbe,'../../components/UI':uiProbe,'./noonPresentation':encode('export const noonClock=String;'),'./auctionPresentation':helpers};
-let source=await compile('./AuctionAutomation.tsx');
-for(const m of [...source.matchAll(/from (["'])([^"']+)\1/g)])source=source.replace(m[0],'from '+JSON.stringify(imports[m[2]]||import.meta.resolve(m[2])));
-const {default:Component}=await import(encode(source));
-const {configure}=await import(reactProbe),{buttons}=await import(jsxProbe),{calls,setAnswer}=await import(apiProbe);
-const saved=[],refresh=[];
-const day='2026-10-29';
-const initial={version:'auction-automation-v1',revision:0,mode:'off',date:null,instrument_ids:[],today:day,now:day+'T03:00:00+08:00',timezone:'Asia/Shanghai',start_time:'09:25:05',end_time:'09:30:00',enabled:false,next_run_at:null,can_enable:true,reason:null,last_run:null,worker:{alive:false,last_heartbeat_at_ms:null}};
-function render(settings,states={}){configure(states);buttons.length=0;return renderToStaticMarkup(createElement(Component,{value:settings,loading:false,error:'',reload(){refresh.push(1);},onSaved(value){saved.push(value);}}));}
-function button(label){const result=buttons.find(row=>String(row.children).includes(label));assert.ok(result,label);return result;}
-setAnswer(async()=>initial);
-let html=render(initial);
-assert.match(html,/服务自动采集：已关闭/);assert.match(html,/工作进程未确认在线/);assert.equal(calls.length,0,'opening the settings must never enable automation');
-let finish;
-setAnswer(()=>new Promise(resolve=>finish=resolve));
-render(initial,{0:true,1:initial,2:'daily',3:'600519.SH,000001.SZ'});
-const save=button('保存并开启');const pending=save.onClick();save.onClick();
-assert.deepEqual(calls,[['/market/auction/automation',{mode:'daily',expected_revision:0,instrument_ids:['600519.SH','000001.SZ'] }]],'double click produces only one CAS mutation');
-const enabled={...initial,revision:1,mode:'daily',enabled:true};finish(enabled);await pending;
-assert.equal(saved.at(-1),enabled,'only server-confirmed settings become visible');
-setAnswer(async()=>({...initial,revision:2,mode:'once',date:day,enabled:true}));
-render(initial,{0:true,1:initial,2:'once',3:''});await button('保存并开启').onClick();
-assert.equal(calls[0][1].date,day,'once uses the service today, independent of historical view');
-assert.deepEqual(calls[0][1].instrument_ids,[],'empty list preserves the declared default candidate policy');
-setAnswer(async()=>initial);
-render({...enabled,revision:2},{0:true,1:enabled,2:'daily',3:''});
-assert.equal(button('保存并开启').disabled,true,'a stale settings draft cannot overwrite a newer revision');
-await button('保存并开启').onClick();assert.equal(calls.length,0);
-setAnswer(async()=>({...initial,revision:2}));
-render({...enabled,can_enable:false});await button('关闭，改为手动').onClick();
-assert.deepEqual(calls,[['/market/auction/automation',{mode:'off',expected_revision:1}]],'disabling is allowed even when prerequisites became unavailable');
-const savedBefore=saved.length,refreshBefore=refresh.length;
-setAnswer(async()=>{throw Object.assign(Error('配置版本已变化'),{status:409});});
-render(enabled);await button('关闭，改为手动').onClick();
-assert.equal(saved.length,savedBefore,'a rejected mutation never invents a new setting');assert.equal(refresh.length,refreshBefore+1,'conflicts re-read authoritative settings');
-setAnswer(async()=>initial);render(initial,{0:true,1:initial,2:'daily',3:'600519'});
-assert.equal(button('保存并开启').disabled,true);await button('保存并开启').onClick();assert.equal(calls.length,0,'invalid codes do not save an authorization');
-console.log('Auction automation: GET-only opening, explicit daily/once/off CAS, original default scope, duplicate guard, stale revision and authoritative error recovery passed');
+const encode = (source) =>
+  "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+const runtime = import.meta.resolve("react/jsx-runtime");
+const jsxProbe = encode(
+  `import{jsx as a,jsxs as b}from ${JSON.stringify(runtime)};export{Fragment}from ${JSON.stringify(runtime)};export const buttons=[];function see(t,p){if(t==='button'||t==='a')buttons.push({type:t,...p});}export function jsx(t,p,k){see(t,p);return a(t,p,k);}export function jsxs(t,p,k){see(t,p);return b(t,p,k);}`,
+);
+const ui = encode(
+  `import{jsx}from ${JSON.stringify(runtime)};export const Badge=({children})=>jsx('span',{children});export const ErrorBox=({message})=>jsx('p',{children:message});`,
+);
+async function compile(file) {
+  return ts.transpileModule(
+    await fs.readFile(new URL(file, import.meta.url), "utf8"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022,
+        jsx: ts.JsxEmit.ReactJSX,
+      },
+    },
+  ).outputText;
+}
+const original = await fs.readFile(
+  new URL("./AuctionAutomation.tsx", import.meta.url),
+  "utf8",
+);
+let source = await compile("./AuctionAutomation.tsx");
+const imports = {
+  "react/jsx-runtime": jsxProbe,
+  "../../components/UI": ui,
+  "./noonPresentation": encode("export const noonClock=String;"),
+  "./auctionPresentation": encode(await compile("./auctionPresentation.ts")),
+  "../data/automaticReviewPresentation": encode(
+    await compile("../data/automaticReviewPresentation.ts"),
+  ),
+};
+for (const m of [...source.matchAll(/from (["'])([^"']+)\1/g)])
+  source = source.replace(
+    m[0],
+    "from " + JSON.stringify(imports[m[2]] || import.meta.resolve(m[2])),
+  );
+const { default: Component } = await import(encode(source));
+const { buttons } = await import(jsxProbe);
+const initial = {
+  version: "auction-automation-v1",
+  revision: 0,
+  mode: "off",
+  date: null,
+  instrument_ids: [],
+  today: "2026-10-29",
+  start_time: "09:25:05",
+  enabled: false,
+  next_run_at: null,
+  worker: { alive: false },
+  last_run: null,
+};
+let refreshed = 0,
+  saved = 0;
+function render(value, props = {}) {
+  buttons.length = 0;
+  return renderToStaticMarkup(
+    createElement(Component, {
+      value,
+      loading: false,
+      error: "",
+      reload() {
+        refreshed++;
+      },
+      onSaved() {
+        saved++;
+      },
+      ...props,
+    }),
+  );
+}
+let html = render(initial);
+assert.match(html, /未开启每日采集/);
+assert.match(html, /去数据中心设置/);
+assert.doesNotMatch(html, /手动采集|单次|填写名单|保存并开启/);
+const link = buttons.find((x) => x.type === "a");
+assert.equal(link.href, "#data?section=automatic");
+const refresh = buttons.find((x) => x.type === "button");
+refresh.onClick();
+assert.equal(refreshed, 1);
+assert.equal(saved, 0);
+assert.equal(
+  buttons.length,
+  2,
+  "only status refresh and settings navigation remain",
+);
+html = render({
+  ...initial,
+  revision: 1,
+  mode: "daily",
+  enabled: true,
+  worker: { alive: true },
+});
+assert.match(html, /服务自动竞价：已开启/);
+assert.match(html, /北京时间09:25:05/);
+assert.equal((html.match(/09:25:05/g) || []).length, 1);
+assert.doesNotMatch(html, /固定时间|worker|工作进程/);
+html = render({
+  ...initial,
+  reason: "唯一worker未运行",
+  last_run: { reason: "工作进程已停止" },
+});
+assert.match(html, /采集服务未运行/);
+assert.match(html, /采集服务已停止/);
+assert.match(html, /服务未运行/);
+assert.doesNotMatch(html, /worker|工作进程/);
+html = render({ ...initial, mode: "once", enabled: true });
+assert.match(
+  html,
+  /未开启每日采集/,
+  "old once is not presented as daily authorization",
+);
+html = render({
+  ...initial,
+  mode: "daily",
+  enabled: true,
+  instrument_ids: ["600001.SH"],
+});
+assert.match(
+  html,
+  /未开启每日采集/,
+  "old custom scope is not a current daily setting",
+);
+html = render({ ...initial, worker: undefined });
+assert.match(html, /服务状态待确认/);
+assert.doesNotMatch(html, /服务未运行/);
+html = render({ ...initial, enabled: undefined });
+assert.match(
+  html,
+  /状态待确认/,
+  "incomplete enabled state is not shown as disabled",
+);
+html = render(null);
+assert.match(html, /状态待确认/);
+render(initial, { loading: true });
+assert.equal(buttons.find((x) => x.type === "button").disabled, true);
+html = render({
+  ...initial,
+  last_run: {
+    date: "2026-10-29",
+    state: "paused",
+    reason: "原任务已暂停",
+    attempts: 1,
+  },
+});
+assert.match(html, /已暂停/);
+assert.match(html, /原任务已暂停/);
+assert.doesNotMatch(html, /继续采集|恢复任务/);
+assert.equal(
+  /\bpost\b|\bapi\s*\(|textarea|type="radio"|type="date"|type="time"|onSaved\(/.test(
+    original,
+  ),
+  false,
+  "read-only component has no mutation endpoint/editor",
+);
+console.log(
+  "Auction automation read-only: status/unknown/legacy distinction, fixed time, settings link, GET refresh only and no editor/mutation passed",
+);

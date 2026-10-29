@@ -8,7 +8,7 @@ import pytest
 from app import core, worker
 from app.services import auction_automation as automation
 from app.services import auction_service as service, sync_progress, task_service as tasks
-from test_auction_snapshots import DAY, NOW, PREVIOUS, isolated as auction_environment
+from test_auction_snapshots import DAY, NOW, PREVIOUS, isolated as auction_environment, seed_legacy_job
 
 
 @pytest.fixture
@@ -24,8 +24,7 @@ def configuration():
 
 
 def configure(mode='daily'):
-    automation.update_config({'mode': mode, 'expected_revision': configuration()['revision'],
-                              'instrument_ids': ['600001.SH']})
+    automation.update_config({'mode': mode, 'expected_revision': configuration()['revision']})
 
 
 def current_job():
@@ -74,8 +73,7 @@ def test_configuration_cas_rejects_stale_writes_without_scheduling(safety):
 
 
 def test_tick_binds_existing_manual_job_without_taking_retry_control(safety):
-    manual = service.create_capture({'date': DAY, 'request_key': 'manual-before-auto',
-                                     'instrument_ids': ['600001.SH']})
+    manual = {'task_id': seed_legacy_job()}
     configure()
     automation.tick()
     assert current_job()['job_id'] == manual['task_id']
@@ -145,21 +143,20 @@ def test_disabling_during_running_attempt_prevents_later_automatic_retry(safety)
         assert connection.execute('SELECT count(*) FROM market_auction_snapshot').fetchone()[0] == 0
 
 
-def test_manual_resume_after_pause_is_detached_from_disabled_automation(safety):
-    configure()
-    automation.tick()
+def test_manual_resume_after_pause_is_rejected_and_disabled_automation_stays_stopped(safety):
+    configure(); automation.tick()
     original = current_job()['job_id']
-    tasks.change_task(original, 'pause')
-    configure('off')
-    tasks.change_task(original, 'resume')
-    assert not run_record()['automatic_control']
-    job = tasks.claim_next('explicit-manual-resume-worker')
-    assert job['job_id'] == original
-    worker.dispatch(job)
-    assert current_job()['status'] == 'succeeded'
-    with core.connect() as connection:
-        assert connection.execute('SELECT count(*) FROM market_auction_snapshot').fetchone()[0] == 1
-
+    tasks.change_task(original, 'pause'); configure('off')
+    before = run_record()
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as caught:
+        tasks.change_task(original, 'resume')
+    assert caught.value.status_code == 403
+    assert run_record() == before and not run_record()['automatic_control']
+    configure('daily'); automation.tick()
+    assert tasks.claim_next('explicit-manual-resume-rejected') is None
+    assert current_job()['status'] == 'paused'
+    assert_no_collection(safety)
 
 @pytest.mark.parametrize('action,expected', [('pause', 'paused'), ('cancel', 'cancelled')])
 def test_manual_stop_while_waiting_for_not_ready_retry_remains_terminal_for_scheduler(safety, action, expected):
@@ -185,22 +182,18 @@ def test_manual_stop_while_waiting_for_not_ready_retry_remains_terminal_for_sche
     assert safety.source.calls == calls
 
 
-def test_once_authorization_cannot_run_again_after_restart_or_on_next_day(safety):
-    configure('once')
-    automation.tick()
-    job = tasks.claim_next('once-safety-worker')
-    worker.dispatch(job)
-    calls = list(safety.source.calls)
+def test_legacy_once_authorization_cannot_run_after_restart_or_on_next_day(safety):
+    with core.connect() as connection:
+        connection.execute("UPDATE market_auction_automation SET mode='once',trade_date=?,revision=1 WHERE singleton=1", (DAY,))
     for _ in range(3):
         automation.tick()
-    safety.clock[0] += timedelta(days=1)
-    automation.tick()
+    safety.clock[0] += timedelta(days=1); automation.tick()
     assert automation.read_view()['enabled'] is False
-    assert safety.source.calls == calls
+    assert automation.read_view()['legacy_configuration']
+    assert_no_collection(safety)
     with core.connect() as connection:
-        assert connection.execute('SELECT count(*) FROM job').fetchone()[0] == 1
-        assert connection.execute('SELECT count(*) FROM market_auction_capture').fetchone()[0] == 1
-
+        assert connection.execute('SELECT count(*) FROM job').fetchone()[0] == 0
+        assert connection.execute('SELECT count(*) FROM market_auction_capture').fetchone()[0] == 0
 
 def test_increment_awaiting_confirmation_blocks_worker_side_schedule(safety):
     configure()

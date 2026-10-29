@@ -33,27 +33,37 @@ def run_after_sync(parent_job_id):
     """Defaults do nothing. User configured flags are the authority for auto-joins."""
     results=[]
     with connect() as c:
-        state=c.execute('SELECT status FROM job WHERE job_id=?',(parent_job_id,)).fetchone()
+        state=c.execute('SELECT * FROM job WHERE job_id=?',(parent_job_id,)).fetchone()
         count=c.execute("SELECT count(*) FROM tracking_round WHERE status='tracking'").fetchone()[0]
-    if not state or state[0] not in ('succeeded','no_change','partial'):return []
+    if not state or state['status'] not in ('succeeded','no_change','partial'):return []
+    from .sync_workspace_followup import enabled, guard
+    deferred=enabled(json.loads(state['parameters_json']))
+    def check():
+        if deferred:guard(parent_job_id)
+    check()
     for strategy in strategies.list_strategies()['items']:
+        check()
         if strategy['archived']:continue
         result={'strategy_id':strategy['strategy_id'],'name':strategy['name']}
         try:
             config=get_settings(strategy['strategy_id'])
             if not config['refresh_after_sync']:continue
             run=strategies.run_strategy(strategy['strategy_id'],{'request_key':parent_job_id+':selection:'+strategy['strategy_id']})
+            check()
             result.update(run_id=run['run_id'],matched=run['matched_count'],unknown=run['unknown_count'],added_count=0)
             if config['auto_track']:
                 ids=[r['instrument_id'] for r in run['items'] if r['decision']=='matched']
                 for offset in range(0,len(ids),500):
+                    check()
                     joined=tracking.add_tracking({'run_id':run['run_id'],'instrument_ids':ids[offset:offset+500]})
                     result['added_count']+=joined['added_count']
                 count+=result['added_count']
+        except (tasks.TaskPaused,tasks.TaskCancelled):raise
         except Exception as error:
             result['error']=str(getattr(error,'detail','本地策略计算未完成，请手动重试'))
         results.append(result)
     if count:
+        check()
         try:results.append({'tracking_review':tracking.review_tracking({'request_key':parent_job_id+':tracking-review'})})
         except Exception as error:results.append({'tracking_review_error':str(getattr(error,'detail','跟踪核对未完成，请手动重试'))})
     if results:

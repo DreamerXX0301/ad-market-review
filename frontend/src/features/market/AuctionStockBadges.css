@@ -1,0 +1,31 @@
+.auction-stock-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.auction-stock-event,
+.auction-stock-board {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  background: var(--surface2);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.auction-stock-event.limit_up {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+}
+.auction-stock-event.limit_break,
+.auction-stock-board.is-unknown {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 40%, var(--border));
+}

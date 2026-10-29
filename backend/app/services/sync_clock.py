@@ -3,7 +3,7 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 CHINA = ZoneInfo('Asia/Shanghai')
-CUTOFF_HOUR = 18
+CUTOFF_HOUR = 17
 
 
 def now_china():
@@ -27,8 +27,8 @@ def sync_window(at=None):
     allowed = value.hour >= CUTOFF_HOUR
     next_at = None if allowed else datetime.combine(value.date(), time(CUTOFF_HOUR), CHINA).isoformat()
     return {'increment_allowed': allowed,
-            'reason': None if allowed else '盘后增量需在北京时间18:00后手动运行；18:00前不抓取未完成的当日行情',
-            'timezone': 'Asia/Shanghai', 'cutoff': '18:00', 'now': value.isoformat(),
+            'reason': None if allowed else '盘后增量需在北京时间17:00后运行；17:00前不抓取未完成的当日行情',
+            'timezone': 'Asia/Shanghai', 'cutoff': '17:00', 'now': value.isoformat(),
             'next_available_at': next_at, 'completion_safe_date': safe_completion_date(value)}
 
 
@@ -46,7 +46,7 @@ def validate_frozen_target(target, at=None):
     if not valid:
         raise ValueError('恢复任务缺少有效冻结交易日期，不猜测新的目标日')
     if target > safe_completion_date(at):
-        raise ValueError('冻结目标日尚未到北京时间18:00安全时点，不发布当日未完成行情；稍后继续原任务')
+        raise ValueError('冻结目标日尚未到北京时间17:00安全时点，不发布当日未完成行情；稍后继续原任务')
 
 
 def require_resume(frozen_target=None, at=None):

@@ -26,7 +26,7 @@ def disable_automatic_review(connection, now):
             raise ValueError('Invalid automatic review switches in backup')
         clock=value['time']
         if (not isinstance(clock,str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',clock)
-                or kind=='noon' and not '11:31'<=clock<'13:00' or kind=='after_close' and clock<'18:00'):
+                or kind=='noon' and not '11:31'<=clock<'13:00' or kind=='after_close' and clock<'17:00'):
             raise ValueError('Invalid automatic review time in backup')
         value['enabled']=False
     config['revision']+=1

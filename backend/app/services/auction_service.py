@@ -1,4 +1,4 @@
-"""手动竞价终态快照；API只读SQLite，唯一worker负责时点采集。"""
+"""自动竞价终态快照；API只读SQLite，唯一worker负责固定时点采集。"""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -51,9 +51,13 @@ def capture_window(day, at=None):
     elif target.weekday() >= 5:
         reason = '周末不创建竞价；节假日由工作进程核验来源交易日历'
     elif not allowed:
-        reason = '请在本交易日北京时间09:25至09:30前手动采集竞价终态'
+        reason = '自动竞价仅在本交易日北京时间09:25:05至09:30前执行，错过不补采'
+    from .auction_automation import START
+    allowed = allowed and now.time().replace(tzinfo=None) >= START
+    if not allowed and reason is None:
+        reason = '自动竞价固定从北京时间09:25:05开始执行'
     return {'allowed': allowed, 'reason': reason,
-            'start_at': datetime.combine(target, CAPTURE_START, CHINA).isoformat(),
+            'start_at': datetime.combine(target, START, CHINA).isoformat(),
             'end_at': datetime.combine(target, CAPTURE_END, CHINA).isoformat(),
             'timezone': 'Asia/Shanghai', 'calendar_verified': False}
 
@@ -147,11 +151,7 @@ def read_view(day=None):
         from app.services.auction_retention import retention_status
         retention = retention_status(connection, day)
     state = 'available' if retained else 'purged' if retention['purged'] else job['status'] if job else 'not_collected'
-    can_retry = bool(window['allowed'] and configured and initialized and state == 'failed')
     waiting_retry = automatic.get('automation_state') == 'waiting_retry' and automatic.get('automatic_control') is True
-    if waiting_retry:
-        can_retry = False
-    can_resume = bool(window['allowed'] and configured and initialized and state == 'paused')
     reason = window['reason']
     if ledger and retained:
         reason = '当天竞价终态已留存，不再次采集'
@@ -160,31 +160,41 @@ def read_view(day=None):
     elif state == 'cancelled':
         reason = '当天竞价任务已显式取消，不自动继续或创建第二个任务'
     elif ledger:
-        reason = '当天已有原任务；失败可在原09:25至09:30窗口手动重试，暂停仅手动继续'
+        reason = '当天已有原任务；不支持手动重试或继续，显式暂停和取消不会自动恢复'
         if waiting_retry:
             reason = '自动计划正在等待来源终态后有界重试原任务；可显式暂停或取消，不重复创建'
     elif not initialized:
         reason = '请先完成行情初始化，以便冻结严格前日背景'
     elif not configured:
         reason = '请先配置并启用扶摇数据源'
+    elif window['allowed']:
+        reason = '新竞价仅由已开启的每天自动计划在09:25:05至09:30前登记，不提供手动采集'
     window['calendar_verified'] = retained is not None
+    snapshot = _snapshot_view(retained)
+    # Classification is a read projection, never part of the immutable quote body.
+    # validate_snapshot has already checked both the identities and the 100-row bound.
+    from app.services.market_broken_boards import _board_fields
+    stock_boards = {item['instrument_id']: _board_fields(item['instrument_id'])
+                    for item in snapshot['payload']['quotes']['items']} if snapshot else {}
     return {'date': day, 'today': now.date().isoformat(), 'now': now.isoformat(),
             'capture_window': window, 'capture_reason': reason,
-            'can_capture': bool(window['allowed'] and not ledger and configured and initialized),
-            'can_retry': can_retry, 'can_resume': can_resume, 'locked_for_day': ledger is not None, 'state': state,
+            'can_capture': False, 'can_retry': False, 'can_resume': False,
+            'locked_for_day': ledger is not None, 'state': state,
             **automatic,
             'task': tasks.task_view(ledger['job_id']) if ledger else None,
-            'snapshot': _snapshot_view(retained), 'available_dates': dates,
+            'snapshot': snapshot, 'stock_boards': stock_boards, 'available_dates': dates,
             'preparation': preparation_view(day, now) if retained is None and state != 'purged' else None,
             'retention': retention,
-            'scope': '手动冻结的最多100只观察股票竞价样本；不代表全市场，不产生策略或跟踪信号。'}
+            'scope': '已留存的最多100只观察股票竞价样本；新采集仅来自每天自动计划，不代表全市场或策略跟踪信号。'}
 
 
 def create_capture(payload, *, automation=None):
-    if not isinstance(payload, dict) or set(payload) - {'date', 'request_key', 'instrument_ids'}:
-        raise HTTPException(422, '竞价采集只接受日期、请求标识与可选完整股票代码数组')
+    from .auction_automation import require_worker_creation
+    require_worker_creation(automation)
+    if not isinstance(payload, dict) or set(payload) - {'date', 'request_key'}:
+        raise HTTPException(422, '自动竞价只接受日期与请求标识，观察名单由worker自动冻结')
     day = day_value(payload.get('date', now_china().date().isoformat()))
-    instruments = instrument_values(payload.get('instrument_ids'))
+    instruments = []
     request_key = payload.get('request_key', new_id('auction-request'))
     if not isinstance(request_key, str) or not 1 <= len(request_key) <= 200:
         raise HTTPException(422, '请求标识须为1至200字符')
@@ -243,41 +253,11 @@ def create_capture(payload, *, automation=None):
 
 
 def requeue_capture(identifier, action):
-    """失败只重排原job；取消、已成功或过窗均不能复制取数授权。"""
-    with connect() as connection:
-        connection.execute('BEGIN IMMEDIATE')
-        from app.services.increment_access import require_business_unlocked
-        require_business_unlocked(connection)
-        row = connection.execute('SELECT * FROM job WHERE job_id=?', (identifier,)).fetchone()
-        if not row:
-            raise HTTPException(404, '竞价任务不存在')
-        ledger = connection.execute('SELECT trade_date FROM market_auction_capture WHERE job_id=?', (identifier,)).fetchone()
-        params = json.loads(row['parameters_json'])
-        if not ledger or params.get('operation') != 'auction_snapshot' or ledger['trade_date'] != row['target_date']:
-            raise HTTPException(409, '竞价任务与原始日台账不一致')
-        if connection.execute('SELECT 1 FROM market_auction_snapshot WHERE job_id=?', (identifier,)).fetchone():
-            raise HTTPException(409, '当天竞价终态已留存，不再次采集')
-        if connection.execute("SELECT 1 FROM market_auction_purge WHERE source_job_id=? AND status='purged'", (identifier,)).fetchone():
-            raise HTTPException(409, '该日竞价正文已到期清理，永久日账保留，不补采历史竞价')
-        if row['status'] == 'cancelled':
-            raise HTTPException(409, '竞价任务已显式取消，当天不再创建或继续采集')
-        if not capture_window(row['target_date'])['allowed']:
-            raise HTTPException(409, '原竞价任务已超出当天09:25至09:30前的窗口，不能补造历史竞价')
-        if not _configured(connection):
-            raise HTTPException(409, '请先配置并启用扶摇数据源')
-        expected = 'failed' if action == 'retry' else 'paused'
-        if row['status'] != expected:
-            raise HTTPException(409, '失败任务请手动重试，暂停任务请手动继续；活动任务不重复提交')
-        from app.services.auction_automation import manual_takeover
-        manual_takeover(connection, identifier)
-        connection.execute("""UPDATE job SET status='queued',phase='queued',accepted_batches=0,
-            error_summary=NULL,finished_at_ms=NULL,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?""", (identifier,))
-        tasks.append_event(connection, identifier, 'queued', '用户手动重试原竞价任务，保留首次冻结名单与前日材料'
-                           if action == 'retry' else '用户手动继续原竞价任务，保留首次冻结名单与前日材料')
-    return tasks.task_view(identifier)
+    """A user cannot restart an old request; only bounded worker retries remain."""
+    raise HTTPException(403, '竞价不支持手动重试或继续；仅自动计划可在固定窗口内有界重试原任务')
 
 
-def _guard_job(job):
+def _guard_job(job, *, require_window=False):
     with connect() as connection:
         row = connection.execute('SELECT status,lease_owner FROM job WHERE job_id=?', (job['job_id'],)).fetchone()
     if row is None or row['status'] == 'cancelled':
@@ -286,6 +266,8 @@ def _guard_job(job):
         raise tasks.TaskPaused()
     if row['status'] != 'running' or row['lease_owner'] != job.get('lease_owner'):
         raise tasks.TaskCancelled()
+    if require_window and not capture_window(job['target_date'])['allowed']:
+        raise WindowExpired('竞价来源请求仅可在当天北京时间09:25:05至09:30前执行')
 
 
 def _previous_context(market, day, previous, known_at):
@@ -497,7 +479,7 @@ def _execute_capture(job, callback=None):
         raise ValueError('原竞价采集窗口已结束，不使用当前行情补造盘前终态')
     from app.services.source_service import client
     adapter = client('fuyao')
-    collector = Collector(day, adapter, lambda: _guard_job(job), now_china, callback)
+    collector = Collector(day, adapter, lambda: _guard_job(job, require_window=True), now_china, callback)
     calendar_body = collector.request('calendar', '/api/a-share/calendar/trading-days')
     if not isinstance(calendar_body, dict) or calendar_body.get('code') != 0:
         raise ValueError('竞价来源交易日历请求失败或不可核验，未请求竞价报价')

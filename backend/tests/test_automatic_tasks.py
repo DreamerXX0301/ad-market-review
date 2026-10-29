@@ -1,6 +1,7 @@
 """Daily automatic plans: isolated SQLite, fixed clocks and synthetic calendar only."""
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Event
 import json
 from time import perf_counter, process_time
 import tracemalloc
@@ -85,7 +86,7 @@ def test_default_get_and_put_are_local_read_config_only(scheduled):
     assert first.status_code == 200
     state = first.json()
     assert state['noon'] == {'enabled': False, 'time': '12:05'}
-    assert state['after_close'] == {'enabled': False, 'time': '18:30'}
+    assert state['after_close'] == {'enabled': False, 'time': '17:00'}
     assert state['revision'] == 0 and state['timezone'] == 'Asia/Shanghai'
     assert state['last_checks'] == {'noon': None, 'after_close': None}
     saved = client.put('/api/v1/settings/automatic-tasks', json={**{key: state[key] for key in service.KINDS}, 'expected_revision': 0})
@@ -98,7 +99,7 @@ def test_default_get_and_put_are_local_read_config_only(scheduled):
     {'noon': {'enabled': 'true', 'time': '12:05'}},
     {'noon': {'enabled': True, 'time': '11:30'}}, {'noon': {'enabled': True, 'time': '13:00'}},
     {'noon': {'enabled': True, 'time': '12:5'}}, {'noon': {'enabled': True, 'time': '24:00'}},
-    {'after_close': {'enabled': True, 'time': '17:59'}},
+    {'after_close': {'enabled': True, 'time': '16:59'}},
     {'expected_revision': True}, {'expected_revision': -1}, {'expected_revision': None},
 ])
 def test_config_validation_and_unknown_fields(scheduled, change):
@@ -165,6 +166,37 @@ def test_concurrent_schedulers_create_only_one_task_and_calendar_request(schedul
     assert sum(len(value['created']) for value in result) == 1
 
 
+def test_competing_calendar_status_cannot_erase_a_live_submit_claim(scheduled, monkeypatch):
+    source, clock = scheduled; enable()
+    original = service._create
+    claimed, release = Event(), Event()
+    calls=[]
+    def create(kind, day, revision):
+        calls.append(kind)
+        if len(calls)==1:
+            claimed.set()
+            assert release.wait(5)
+        return original(kind, day, revision)
+    monkeypatch.setattr(service, '_create', create)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(service.AutomaticReviewScheduler().tick)
+        assert claimed.wait(5)
+        try:
+            # Another scheduler may have observed the calendar request while it
+            # was still 'checking', then report that stale state after claim.
+            with core.connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                service._state(connection, 'noon', DAY, 'calendar_unknown', 'synthetic competing observation', clock[0])
+            second = pool.submit(service.AutomaticReviewScheduler().tick).result(timeout=5)
+        finally:
+            release.set()
+        first = first.result(timeout=5)
+    assert len(actual_jobs()) == 1 and len(source.calls) == 1
+    assert len(first['created']) == 1 and second['created'] == [] and len(calls) == 1
+    with core.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM job_event WHERE stage='automatic_schedule'").fetchone()[0] == 1
+
+
 @pytest.mark.parametrize('status', ['succeeded', 'partial', 'no_change', 'paused', 'cancelled', 'failed'])
 @pytest.mark.parametrize('kind', ['noon', 'after_close'])
 def test_existing_manual_or_auto_task_is_never_retried_or_resumed(scheduled, kind, status):
@@ -180,10 +212,12 @@ def test_existing_manual_or_auto_task_is_never_retried_or_resumed(scheduled, kin
     assert len(actual_jobs()) == 1 and len(source.calls) == 1
 
 
-def test_after_close_reuses_complete_chain_and_transactional_workbench_lock(scheduled):
+@pytest.mark.parametrize('close_time', ['17:00', '18:30'])
+def test_after_close_reuses_complete_chain_and_transactional_workbench_lock(scheduled, close_time):
     from app.services import sync_progress
-    source, clock = scheduled; enable(noon=False, after_close=True)
-    clock[0] = clock[0].replace(hour=18, minute=30)
+    source, clock = scheduled; enable(noon=False, after_close=True, close_time=close_time)
+    hour, minute = map(int, close_time.split(':'))
+    clock[0] = clock[0].replace(hour=hour, minute=minute)
     created = service.AutomaticReviewScheduler().tick()['created'][0]
     job = tasks.task_view(created); params = job['parameters']
     assert job['kind'] == 'increment' and params['sync_completion_date'] == DAY

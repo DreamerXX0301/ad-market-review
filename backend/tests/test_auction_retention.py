@@ -368,8 +368,11 @@ def test_automatic_projection_keeps_purged_slot_terminal_and_once_disabled(local
     assert retention.after_increment(increment)['purged_snapshots'] == 1
     monkeypatch.setattr(automation, 'now_china', lambda: datetime.fromisoformat(EXPIRED + 'T09:26:00').replace(tzinfo=CHINA))
     monkeypatch.setattr(automation, '_eligibility', lambda _connection: (True, None))
-    result = automation.update_config({'mode': 'once', 'date': EXPIRED,
-        'instrument_ids': [CODE], 'expected_revision': 0})
+    # Preserve an old immutable slot/config without using a now-rejected writer.
+    with core.connect() as connection:
+        connection.execute("UPDATE market_auction_automation SET mode='once',trade_date=?,instrument_ids_json=?,revision=1 WHERE singleton=1",
+                           (EXPIRED, json.dumps([CODE])))
+    result = automation.read_view()
     assert result['last_run']['state'] == 'purged' and result['last_run']['retry_after_at_ms'] is None
     assert result['enabled'] is False and result['next_run_at'] is None
     automation.tick()

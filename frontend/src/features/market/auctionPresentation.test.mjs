@@ -17,20 +17,20 @@ assert.equal(auctionCodes(Array(100).fill("000001.SZ").join(",")).ids.length, 1)
 assert.equal(auctionNumber(0), 0);
 for (const value of [null, "0", NaN, Infinity, true]) assert.equal(auctionNumber(value), null);
 const fresh = { date: day, today: day, state: "not_collected", can_capture: true, capture_window: { allowed: true } };
-assert.equal(auctionCaptureState(fresh, day).disabled, false);
+assert.equal(auctionCaptureState(fresh, day).disabled, true, "the former manual permission cannot enable a new capture");
 assert.equal(auctionCaptureState(fresh, "2026-10-28").disabled, true);
 assert.equal(auctionCaptureState({ ...fresh, today: "2026-10-30" }, day).disabled, true);
-assert.equal(auctionCaptureState({ ...fresh, capture_window: { allowed: false, reason: "窗口已结束" } }, day).reason, "窗口已结束");
+assert.match(auctionCaptureState({ ...fresh, capture_window: { allowed: false, reason: "窗口已结束" } }, day).reason, /数据中心|固定/);
 assert.equal(auctionCaptureState(fresh, day, true).disabled, true);
 for (const state of ["queued", "running", "paused", "failed", "cancelled", "available"]) assert.equal(auctionCaptureState({ ...fresh, state }, day).disabled, true, `${state} cannot create a second task`);
 const task = { task_id: "fixture-original-task" };
 const failed = { ...fresh, state: "failed", task, can_retry: true };
-assert.equal(auctionCanAct(failed, day, "retry"), true);
+assert.equal(auctionCanAct(failed, day, "retry"), false, "manual retries are no longer a product action");
 assert.equal(auctionCanAct({ ...failed, can_retry: false }, day, "retry"), false);
 assert.equal(auctionCanAct({ ...failed, capture_window: { allowed: false } }, day, "retry"), false);
 assert.equal(auctionCanAct({ ...failed, today: "2026-10-30" }, day, "retry"), false);
 const paused = { ...fresh, state: "paused", task, can_resume: true };
-assert.equal(auctionCanAct(paused, day, "resume"), true);
+assert.equal(auctionCanAct(paused, day, "resume"), false, "explicit pauses are never resumed by the UI");
 assert.equal(auctionCanAct({ ...paused, today: "2026-10-30" }, day, "resume"), false);
 assert.equal(auctionCanAct(paused, day, "cancel"), true);
 assert.equal(auctionCanAct(paused, day, "pause"), false);
@@ -50,7 +50,7 @@ const samples = [{ auction_pct: null }, { auction_pct: 0 }, { auction_pct: -2 },
 assert.deepEqual(auctionSortRows(samples, "auction_pct", "desc").map(row => row.auction_pct), [4, 0, -2, null, "99"]);
 assert.deepEqual(auctionSortRows(samples, "auction_pct", "asc").map(row => row.auction_pct), [-2, 0, 4, null, "99"]);
 assert.deepEqual(samples.map(row => row.auction_pct), [null, 0, -2, 4, "99"]);
-console.log("auction presentation: manual capture, original-task controls, date isolation, explicit sample parsing and unknown-last sorting passed");
+console.log("auction presentation: automatic-only controls, pause/cancel, date isolation, legacy parsing and unknown-last sorting passed");
 const { auctionPreviousFocus } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
 const original = {
   date: "2026-10-28", state: "retained", recorded_at_ms: Date.parse("2026-10-28T18:00:00+08:00"),
@@ -83,7 +83,7 @@ assert.equal(auctionAutomationView({...automation,revision:-1}),null);
 assert.equal(auctionAutomaticToday(automation),true);
 assert.equal(auctionAutomaticToday({...automation,enabled:false}),false);
 assert.equal(auctionAutomaticToday({...automation,mode:'once',date:'2026-10-28'}),false);
-assert.equal(auctionAutomaticToday({...automation,mode:'once',date:day}),true);
+assert.equal(auctionAutomaticToday({...automation,mode:'once',date:day}),false);
 assert.equal(auctionCaptureState(fresh,day,false,automation).disabled,true,'automatic schedule suppresses redundant manual start');
 assert.equal(auctionCaptureState({...fresh,date:'2026-10-28'},'2026-10-28',false,automation).disabled,true,'history never becomes an automatic current-day run');
 console.log('Auction automatic display: global authorization is independent of shared historical date and cannot double-start today passed');

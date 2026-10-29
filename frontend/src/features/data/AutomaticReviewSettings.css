@@ -6,7 +6,7 @@
 }
 .automatic-review-plans {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
 .automatic-review-plans > section {
@@ -21,6 +21,9 @@
   align-items: center;
   gap: 9px;
   cursor: pointer;
+}
+.automatic-review-toggle.is-unavailable {
+  cursor: default;
 }
 .automatic-review-toggle strong,
 .automatic-review-toggle small {
@@ -51,6 +54,12 @@
   background: var(--surface-2, var(--surface));
   color: var(--text);
   font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.automatic-review-fixed-time {
+  min-width: 92px;
+  color: var(--text);
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 .automatic-review-time input:focus-visible {
@@ -102,7 +111,7 @@
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
-@media (max-width: 760px) {
+@media (max-width: 1000px) {
   .automatic-review-plans {
     grid-template-columns: 1fr;
   }

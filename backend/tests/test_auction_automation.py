@@ -59,9 +59,9 @@ def test_get_configuration_and_post_are_local_only_default_off(auto, monkeypatch
     assert value['version'] == 'auction-automation-v1' and value['revision'] == 0
     assert value['mode'] == 'off' and not value['enabled']
     assert value['worker'] == {'alive': False, 'last_heartbeat_at_ms': None}
-    enabled = enable(auto, instrument_ids=['600001.SH', '600001.SH'])
+    enabled = enable(auto)
     assert enabled['revision'] == 1 and enabled['mode'] == 'daily'
-    assert enabled['instrument_ids'] == ['600001.SH'] and enabled['last_run'] is None
+    assert enabled['instrument_ids'] == [] and enabled['last_run'] is None
     assert enabled['start_time'] == '09:25:05' and enabled['end_time'] == '09:30:00'
 
 
@@ -81,12 +81,17 @@ def test_eligibility_blocks_enable_but_disabling_is_always_available(auto, monke
     enable(auto)
     monkeypatch.setattr(service, '_configured', lambda _connection: False)
     assert not automation.read_view()['can_enable']
-    assert auto.client.post('/api/v1/market/auction/automation', json={'mode':'daily','expected_revision':1}).status_code == 409
-    assert enable(auto, 'off')['mode'] == 'off'
+    # Saving the same enabled value is a no-op; source eligibility is checked on a real transition.
+    assert enable(auto)['revision'] == 1
+    disabled = enable(auto, 'off')
+    assert disabled['mode'] == 'off'
+    assert auto.client.post('/api/v1/market/auction/automation',
+        json={'mode':'daily','expected_revision':disabled['revision']}).status_code == 409
+    assert automation.read_view()['mode'] == 'off'
 
 
 def test_idle_tick_registers_one_frozen_automatic_job_and_worker_collects_exact_explicit_cohort(auto):
-    enable(auto, instrument_ids=['000001.SZ'])
+    enable(auto)
     job = claimed(auto)
     assert auto.source.calls == []
     params = json.loads(job['parameters_json'])
@@ -95,8 +100,8 @@ def test_idle_tick_registers_one_frozen_automatic_job_and_worker_collects_exact_
     worker.dispatch(job)
     value = automation.read_view()['last_run']
     assert value['state'] == 'available' and value['attempts'] == 1
-    assert auto.source.calls[1][1]['thscodes'] == '000001.SZ'
-    assert service.read_view(DAY)['snapshot']['payload']['universe']['mode'] == 'explicit'
+    assert auto.source.calls[1][1]['thscodes'] == '600001.SH,000001.SZ'
+    assert service.read_view(DAY)['snapshot']['payload']['universe']['mode'] == 'watchlist_previous_events'
     for _ in range(3):
         automation.tick()
     assert tasks.claim_next('must-stay-idle') is None
@@ -189,17 +194,21 @@ def test_explicit_stop_during_failed_waiting_interval_prevents_auto_requeue(auto
     assert not row()['automatic_control']
 
 
-def test_manual_retry_takes_over_once_without_further_auto_retry(auto):
+def test_manual_retry_cannot_take_over_or_change_automatic_retry_authority(auto):
     enable(auto); auto.source.hook = not_ready(auto)
     job = claimed(auto); fail_attempt(job)
-    retried = tasks.change_task(job['job_id'], 'retry')
-    assert retried['task_id'] == job['job_id'] and retried['parameters']['automation']['manual_takeover']
-    manual = tasks.claim_next('manual-takeover')
-    fail_attempt(manual)
-    auto.clock[0] += timedelta(seconds=30)
-    automation.tick(); assert tasks.claim_next('no-automatic-retry-of-manual-attempt') is None
-    assert row()['attempts'] == 1 and not row()['automatic_control']
-
+    before = row()
+    with pytest.raises(HTTPException) as caught:
+        tasks.change_task(job['job_id'], 'retry')
+    assert caught.value.status_code == 403
+    assert row() == before and row()['automatic_control']
+    auto.clock[0] += timedelta(seconds=10)
+    auto.source.hook = None
+    retried = claimed(auto)
+    assert retried['job_id'] == job['job_id']
+    worker.dispatch(retried)
+    assert row()['attempts'] == 2 and row()['state'] == 'available'
+    assert not json.loads(retried['parameters_json'])['automation']['manual_takeover']
 
 def test_off_pauses_unstarted_queued_capture_and_revision_change_blocks_lease_recovery(auto):
     enable(auto); automation.tick()
@@ -230,8 +239,8 @@ def test_source_revision_change_before_execution_is_not_implicitly_authorized(au
     assert auto.source.calls == [] and row()['state'] == 'paused'
 
 
-def test_start92505_weekend_once_and_expired_receipts(auto):
-    enable(auto, 'once')
+def test_daily_start92505_boundary_does_not_register_before_window(auto):
+    enable(auto)
     auto.clock[0] = NOW.replace(minute=25, second=4)
     automation.tick(); assert row() is None
     auto.clock[0] = NOW.replace(minute=25, second=5)
@@ -239,14 +248,15 @@ def test_start92505_weekend_once_and_expired_receipts(auto):
     assert row()['attempts'] == 0
 
 
-def test_expired_once_is_not_run_the_following_day(auto):
-    enable(auto, 'once')
+def test_legacy_once_configuration_is_readable_but_not_run_the_following_day(auto):
+    with core.connect() as connection:
+        connection.execute("UPDATE market_auction_automation SET mode='once',trade_date=?,revision=1 WHERE singleton=1", (DAY,))
     auto.clock[0] += timedelta(days=1)
     automation.tick()
-    assert row()['state'] == 'expired' and row()['job_id'] is None
-    assert tasks.claim_next('no-old-day') is None
-    assert not automation.read_view()['enabled']
-
+    assert row() is None and tasks.claim_next('no-old-day') is None
+    view = automation.read_view()
+    assert view['mode'] == 'once' and view['legacy_configuration'] and not view['enabled']
+    assert auto.source.calls == []
 
 def test_worker_heartbeat_is_local_and_ages_out(auto):
     core.set_setting('worker_heartbeat', {'at_ms': int(auto.clock[0].timestamp() * 1000), 'owner': 'fixture-worker'})
@@ -292,7 +302,7 @@ def test_stale_execution_outcome_cannot_stop_recovered_attempt_before_its_begin(
 def test_once_cannot_authorize_an_expired_or_weekend_window(auto, at):
     auto.clock[0] = at
     response = auto.client.post('/api/v1/market/auction/automation', json={'mode':'once','expected_revision':0})
-    assert response.status_code == 409
+    assert response.status_code == 422
     assert automation.read_view()['mode'] == 'off' and row() is None
 
 

@@ -166,10 +166,12 @@ def update_strategy(sid,payload):
     apply_active=payload.get('apply_to_active_tracking',False)
     if not isinstance(apply_active,bool):fail('apply_to_active_tracking必须为true/false')
     if apply_active and 'policy' not in payload:fail('同步当前轮次时需要提供policy')
+    prepared_inputs=stock_daily_once.prepare_inputs([sid])
     with connect() as c:
         c.execute("BEGIN IMMEDIATE")
         require_strategy_present(c,sid)
-        old=strategy_view(c,sid);name=str(payload.get('name',old['name'])).strip()
+        run_context=stock_daily_once.read_context(c,strategy_ids=[sid],prepared_inputs=prepared_inputs)
+        old=strategy_view(c,sid,run_context=run_context);name=str(payload.get('name',old['name'])).strip()
         if not name or len(name)>100:fail('策略名称需要1至100字')
         period=payload.get('period',old['period'])
         price_basis=normalized_price_basis(payload.get('price_basis',old.get('price_basis','none')))
@@ -194,7 +196,7 @@ def update_strategy(sid,payload):
                 for round_ in following:
                     if apply_tracking_policy(c,round_,pv,day,calendar,reason='用户保存默认政策并同步沿用默认政策的当前轮次',scope='strategy_default'):applied.append(round_['round_id'])
         c.execute('UPDATE strategy SET name=?,archived=? WHERE strategy_id=?',(name,int(bool(payload.get('archived',old['archived']))),sid))
-        result=strategy_view(c,sid)
+        result=strategy_view(c,sid,run_context=run_context)
         if 'policy' in payload:result['policy_application']={'scope':'active_default' if apply_active else 'future_only','effective_business_date':day,'applied_count':len(applied),'skipped_custom_count':len(custom) if apply_active else 0,'eligible_count':len(following),'applied_round_ids':applied,'requires_manual_review':bool(applied)}
         return result
 
@@ -375,6 +377,7 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
     if response_decision not in (None,'matched','unmatched','unknown'):fail('结果筛选无效')
     payload=payload or {};key=str(payload.get('request_key') or new_id('selection-request'))
     if len(key)>200:fail('request_key过长')
+    prepared_inputs=stock_daily_once.prepare_inputs([sid])
     job_id=queued_job['job_id'] if queued_job else new_id('job');rid=new_id('run');owner=queued_job['lease_owner'] if queued_job else api_lease_owner()
     reused_run_id=None;reuse_reason=None
     with connect() as c:
@@ -389,13 +392,14 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
         else:
             day=current(c)
             deps,primary=freeze_inputs(c)
-            run_context=stock_daily_once.read_context(c,day=day,dependencies=deps,primary_snapshot_id=primary,strategy_ids=[sid])
+            run_context=stock_daily_once.read_context(c,day=day,dependencies=deps,primary_snapshot_id=primary,strategy_ids=[sid],prepared_inputs=prepared_inputs)
             st=ensure_evaluator_version(c,sid,run_context=run_context)
             if st['archived']:fail('策略已归档，不能运行')
             admission=stock_daily_once.availability(c,st,context=run_context)
             if admission['state']=='completed' and not queued_job:
                 reused_run_id=admission['completed_run_id'];reuse_reason=admission['reason']
             else:
+                if admission['state']=='unavailable':fail(admission['reason'] or '策略输入已变化，请重新运行。',409)
                 # Persisted batch items retain their explicitly frozen scope;
                 # admission filtering applies when a new batch is created.
                 if not queued_job:stock_daily_once.require_available(c,st,context=run_context)
@@ -404,7 +408,7 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
                 membership_signature=_topic_revision_signature(c) if st.get('hot_universe') else None
                 if queued_job:
                     from .strategy_batches import validate_item
-                    validate_item(c,queued_job,st,day,deps,primary)
+                    validate_item(c,queued_job,st,day,deps,primary,run_context=run_context)
                 else:
                     try:insert(c,'job',dict(job_id=job_id,request_key=key,logical_key=new_id('selection'),kind='selection',target_date=day,parameters_json=js({'strategy_id':sid,'version':st['version']}),parameters_hash=digest([sid,st['version'],day,deps]),status='running',phase='evaluating',lease_owner=owner,lease_expires_at_ms=now_ms()+120000,created_at_ms=now_ms()))
                     except sqlite3.IntegrityError:tasks.active_task_conflict(c)
@@ -537,12 +541,14 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
                     f'已核验 {sequence+1}/{len(ordered)} 只证券',
                     {'actual_completed_batches':sequence+1,'actual_total_batches':len(ordered)})
         report('保存策略结果',97,'条件已核验，正在保存本次运行与候选依据')
+        final_inputs=stock_daily_once.prepare_inputs([sid])
         with connect() as c:
             c.execute('BEGIN IMMEDIATE')
             check_task(c)
             if current(c)!=day:fail('业务日已更新，请重新运行策略。',409)
             if freeze_inputs(c)!=(deps,primary):fail('行情或补充数据代际已更新，本次未保存混合来源结果，请重新运行策略。',409)
             if stock_daily_once.revision_signature(c)!=run_context['topic_revision_signature']:fail('本地题材或成员已变化，本次未保存混合来源结果，请重新运行策略。',409)
+            stock_daily_once.require_unchanged_inputs(c,st,run_context,final_inputs)
             if membership_signature is not None and _topic_revision_signature(c)!=membership_signature:fail('本地题材或成员已变化，本次未保存混合热点范围；请重新运行策略。',409)
             universe_definition={'scope':'currently_imported_stock_master','count':len(result),'survivorship_warning':True,'candidate_storage_contract':'sparse-nonmatches-v1'}
             from app.domain.strategy_prices import VERSION as PRICE_CONTRACT
@@ -551,6 +557,7 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
             if hot_evidence is not None:universe_definition['hot_universe']=hot_evidence
             signature=[deps,st['definition'],day]+([hot_evidence] if hot_evidence is not None else [])
             signature+=[{'price_basis':price_basis,'price_contract':PRICE_CONTRACT}]
+            if 'supplement_input' in run_context:signature+=[{'supplement_input':run_context['supplement_input']}]
             insert(c,'selection_run',dict(run_id=rid,job_id=job_id,strategy_id=sid,strategy_version=st['version'],business_date=day,primary_snapshot_id=primary,input_snapshots_json=js(deps),input_sha256=digest(signature),status='running',universe_definition_json=js(universe_definition),created_at_ms=now_ms()))
             for row in result:insert(c,'selection_candidate',row)
             c.execute("UPDATE selection_run SET status='completed',completed_at_ms=? WHERE run_id=?",(now_ms(),rid))

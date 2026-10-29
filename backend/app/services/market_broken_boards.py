@@ -19,6 +19,7 @@ from app.domain.universe import BOARDS, identity_flags
 from app.services.market_history import resolve_reference
 
 VERSION = 'broken-board-analysis-v1'
+PRIOR_EVENT_VERSION = 'broken-board-prior-events-v1'
 SYMBOL = re.compile(r'\d{6}\.(?:SH|SZ|BJ)\Z')
 SOURCE_SCOPE = 'fuyao-a-share-source-pools'
 SCOPE = '扶摇同日涨停与炸板来源池，按证券去重及原始收盘核验；不是交易所全市场事件全集'
@@ -390,6 +391,43 @@ def _summary(day, records, quotes, snapshot_id):
     return result, internal
 
 
+def _previous_height(events):
+    """All retained declarations must agree; missing height is never first board."""
+    values = set()
+    for event in events:
+        own = [event[key] for key in ('continue_day_cnt', 'board_count', 'board_num') if event.get(key) is not None]
+        if not own or any(_number(value) is None or value < 1 or int(value) != value for value in own):
+            return None
+        values.update(int(value) for value in own)
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _previous_fact(symbol, previous, prior, quotes):
+    """Strict P close-verified facts for observation D, without inferring an attempt."""
+    result = {'previous_event_version': PRIOR_EVENT_VERSION, 'previous_event_date': previous,
+              'previous_state': 'unknown', 'previous_board_count': None, 'previous_event_source': None,
+              'previous_event_reason': '严格前一交易日来源事件或原始收盘证据未齐'}
+    if not previous or not prior:
+        return result
+    if symbol in prior['overlap']:
+        return {**result, 'previous_state': 'conflict', 'previous_event_reason': '前一交易日涨跌停或炸板来源冲突，不标记板型'}
+    if symbol in prior['up']:
+        record = prior['records']['limitup']
+        height = _previous_height(record['groups'].get(symbol, []))
+        return {**result, 'previous_state': 'limit_up', 'previous_board_count': height,
+                'previous_event_source': record['source'],
+                'previous_event_reason': None if height is not None else '前一交易日收盘涨停已核验，但具体高度缺失或冲突'}
+    if symbol in prior['broken']:
+        return {**result, 'previous_state': 'limit_break', 'previous_event_source': prior['records']['breakpool']['source'],
+                'previous_event_reason': None}
+    up, broken = prior['records']['limitup'], prior['records']['breakpool']
+    if (prior['up_complete'] and prior['broken_complete'] and up['source'] == broken['source']
+            and up['scope'] == broken['scope'] and _raw_quote(quotes.get(symbol, {}).get(previous), symbol, previous)):
+        return {**result, 'previous_state': 'none', 'previous_event_source': up['source'],
+                'previous_event_reason': '前一交易日完整同源池未列为收盘涨停或炸板，不添加板型标记'}
+    return result
+
+
 def _feedback(day, previous, current, prior, quotes, current_rows, snapshot_id):
     previous = previous or None
     known = prior['broken'] if prior else {}
@@ -472,9 +510,12 @@ def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAY
     calendar = sorted({_day(value) for value in calendar_values if _day(value) and value <= day})
     calendar_reason = None if day in calendar else '未提供可核验的观察日市场交易日历，无法确认当日及前一交易日的炸板统计'
     days = calendar[-max(1, min(history_days, MAX_DAYS)):] if day in calendar else []
-    previous = calendar[-2] if include_feedback and len(calendar) > 1 and calendar[-1] == day else None
-    if previous and previous not in days:
-        read_days = [previous, *days]
+    calendar_previous = calendar[-2] if len(calendar) > 1 and calendar[-1] == day else None
+    previous = calendar_previous if include_feedback else None
+    event_previous = calendar_previous if with_memberships else None
+    required_previous = previous or event_previous
+    if required_previous and required_previous not in days:
+        read_days = [required_previous, *days]
     else:
         read_days = days
     records = {}
@@ -522,7 +563,11 @@ def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAY
                 if include_feedback else {})
     if calendar_reason and include_feedback:
         feedback['reason'] = calendar_reason
+    current.update(previous_event_version=PRIOR_EVENT_VERSION, previous_event_date=calendar_previous)
     if with_memberships:
+        prior = internal.get(event_previous)
+        for row in [*current['items'], *feedback.get('items', [])]:
+            row.update(_previous_fact(row['instrument_id'], event_previous, prior, quotes))
         current.update(_cohort_memberships(current['items'], membership_day=day, sample_day=day, status=status,
                                           reference=reference, broken_only=True))
         if include_feedback:

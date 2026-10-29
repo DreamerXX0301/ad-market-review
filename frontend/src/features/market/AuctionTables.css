@@ -128,6 +128,68 @@
   color: var(--muted);
   font-size: 11px;
 }
+.auction-stock-list-toolbar,
+.auction-stock-list-sort,
+.auction-stock-list-boards {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.auction-stock-list-toolbar {
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+.auction-stock-list-sort > span,
+.auction-stock-list-boards > span,
+.auction-stock-list-count {
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-stock-list-sort button,
+.auction-stock-list-boards button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--surface);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.auction-stock-list-boards b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.auction-stock-list-sort button:hover,
+.auction-stock-list-boards button:hover,
+.auction-stock-list-sort button.is-selected,
+.auction-stock-list-boards button.is-selected {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+.auction-stock-list-sort button:focus-visible,
+.auction-stock-list-boards button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.auction-stock-list-note,
+.auction-stock-list-empty {
+  margin: 9px 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-stock-list-empty {
+  padding: 18px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+}
 .auction-table-stock-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

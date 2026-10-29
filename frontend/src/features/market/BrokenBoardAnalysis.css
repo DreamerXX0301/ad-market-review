@@ -394,3 +394,12 @@
     padding: 7px;
   }
 }
+
+.broken-board-height-filter {
+  flex-wrap: wrap;
+}
+.broken-board-height-filter button b {
+  margin-left: 3px;
+  color: var(--blue);
+  font-variant-numeric: tabular-nums;
+}

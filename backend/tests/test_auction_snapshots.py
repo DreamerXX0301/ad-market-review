@@ -14,7 +14,7 @@ import pytest
 from app import core, worker
 from app.adapters.providers import ProviderError
 from app.routers import auction, platform
-from app.services import auction_service as service, source_service, task_service as tasks
+from app.services import auction_service as service, auction_automation as automation, source_service, task_service as tasks
 from app.services.auction_collection import CHINA, Collector, WindowExpired, canonical, in_window
 from test_workspace import ws
 
@@ -81,6 +81,7 @@ def isolated(tmp_path, monkeypatch):
                     'limit_break': {'date': PREVIOUS, 'state': 'observed_sample', 'verified_count': 1,
                                     'items': [{'instrument_id': '000001.SZ', 'name': '合成炸板样本'}]}}}
     monkeypatch.setattr(service, 'now_china', lambda: clock[0])
+    monkeypatch.setattr(automation, 'now_china', lambda: clock[0])
     monkeypatch.setattr(tasks, 'now_ms', lambda: int(clock[0].timestamp() * 1000))
     monkeypatch.setattr(service, 'get_market', lambda: market)
     monkeypatch.setattr(service, '_configured', lambda _connection: True)
@@ -95,12 +96,38 @@ def create(isolated, key='fixture-auction', **changes):
     return isolated.client.post('/api/v1/market/auction/jobs', json={'date': DAY, 'request_key': key, **changes})
 
 
-def claim(isolated, **changes):
-    response = create(isolated, **changes)
-    assert response.status_code == 200, response.text
+def schedule(isolated):
+    """Exercise the actual idle-worker path; never forge its private authority."""
+    config = automation.read_view()
+    if not config['enabled']:
+        automation.update_config({'mode': 'daily', 'expected_revision': config['revision']})
+    automation.tick()
+    with core.connect() as connection:
+        row = connection.execute('SELECT job_id FROM market_auction_capture WHERE trade_date=?', (DAY,)).fetchone()
+    return row['job_id'] if row else None
+
+
+def claim(isolated):
+    identifier = schedule(isolated)
     claimed = tasks.claim_next('fixture-auction-worker')
-    assert claimed['job_id'] == response.json()['task_id']
+    assert claimed and claimed['job_id'] == identifier
     return claimed
+
+
+def seed_legacy_job(*, code='600001.SH'):
+    """Seed a pre-upgrade original ledger, not a supported creation interface."""
+    parameters = {'operation': 'auction_snapshot', 'version': service.VERSION, 'source_id': 'fuyao',
+                  'date': DAY, 'stage': 'final', 'instrument_ids': [code], 'max_symbols': 100,
+                  'window_end_at': NOW.replace(minute=30).isoformat()}
+    identifier = 'job_legacy_fixture'
+    stamp = int(NOW.timestamp() * 1000)
+    with core.connect() as connection:
+        connection.execute('''INSERT INTO job(job_id,request_key,logical_key,kind,target_date,parameters_json,
+            parameters_hash,status,planned_batches,created_at_ms) VALUES(?,?,?,'source_check',?,?,?,'queued',100,?)''',
+            (identifier, 'legacy-fixture', core.digest({'kind':'source_check','target_date':DAY,'parameters':parameters}),
+             DAY, core.dumps(parameters), core.digest(parameters), stamp))
+        connection.execute('INSERT INTO market_auction_capture VALUES(?,?,?,?)', (DAY,identifier,'legacy-fixture',stamp))
+    return identifier
 
 
 def test_roundtrip_preserves_sha_and_sqlite_originals_but_get_only_returns_metadata(isolated):
@@ -140,34 +167,36 @@ def test_roundtrip_preserves_sha_and_sqlite_originals_but_get_only_returns_metad
 
 
 def test_same_key_replay_and_concurrent_new_keys_never_create_second_job(isolated):
-    first = create(isolated)
-    assert create(isolated).json()['task_id'] == first.json()['task_id']
-    assert create(isolated, instrument_ids=['600001.SH']).status_code == 409
-    assert create(isolated, key='different-key').status_code == 409
+    first = schedule(isolated)
+    assert schedule(isolated) == first
+    for changes in ({}, {'instrument_ids':['600001.SH']}, {'key':'different-key'}):
+        assert create(isolated, **changes).status_code == 403
     with core.connect() as connection:
         assert connection.execute('SELECT count(*) FROM market_auction_capture').fetchone()[0] == 1
-    # 新的空库下两个并发键也由独立日台账唯一约束守住。
-
+        assert connection.execute('SELECT count(*) FROM job').fetchone()[0] == 1
 
 def test_parallel_daily_submission_only_accepts_one(isolated):
+    automation.update_config({'mode':'daily','expected_revision':0})
     with ThreadPoolExecutor(max_workers=2) as pool:
-        responses = list(pool.map(lambda key: create(isolated, key=key), ['a', 'b']))
-    assert sorted(response.status_code for response in responses) == [200, 409]
-
+        list(pool.map(lambda _: automation.tick(), range(2)))
+    with core.connect() as connection:
+        assert connection.execute('SELECT count(*) FROM market_auction_capture').fetchone()[0] == 1
+        assert connection.execute('SELECT count(*) FROM job').fetchone()[0] == 1
+    assert isolated.source.calls == []
 
 @pytest.mark.parametrize('instruments', ['600001.SH', ['600001'], ['600001.HK'], ['６００００１.SH'], [True], ['600001.SH'] * 101])
 def test_explicit_input_rejects_invalid_type_market_or_raw_token_count(isolated, instruments):
-    assert create(isolated, instrument_ids=instruments).status_code == 422
+    assert create(isolated, instrument_ids=instruments).status_code == 403
+    with core.connect() as connection:
+        assert connection.execute('SELECT count(*) FROM job').fetchone()[0] == 0
 
 
 def test_explicit_list_never_expands_to_previous_events(isolated):
-    job = claim(isolated, instrument_ids=['000001.SZ', '000001.SZ'])
-    service.execute_capture(job)
-    payload = service.read_view(DAY)['snapshot']['payload']
-    assert payload['universe']['mode'] == 'explicit'
-    assert payload['universe']['requested'] == 1
-    assert isolated.source.calls[1][1]['thscodes'] == '000001.SZ'
-
+    # Pure compatibility for an already frozen pre-upgrade explicit list.
+    universe = service._universe(isolated.market, ['000001.SZ','000001.SZ'], isolated.previous, int(NOW.timestamp()*1000))
+    assert universe['mode'] == 'explicit' and universe['requested'] == 1
+    assert universe['items'][0]['instrument_id'] == '000001.SZ'
+    assert isolated.source.calls == []
 
 def test_saved_yesterday_watchlist_observations_and_mainlines_precede_current_watchlist(isolated):
     isolated.previous['payload']['watchlist'] = {'stocks': [{'instrument_id': '000008.SZ', 'trigger': '原计划触发条件',
@@ -189,13 +218,12 @@ def test_saved_yesterday_watchlist_observations_and_mainlines_precede_current_wa
 
 
 def test_explicit_candidate_links_yesterday_height_and_reasons_without_adding_names(isolated):
-    isolated.previous['payload']['watchlist'] = {'stocks': [{'instrument_id': '600001.SH'}, {'instrument_id': '000008.SZ'}]}
-    job = claim(isolated, instrument_ids=['600001.SH']); service.execute_capture(job)
-    universe = service.read_view(DAY)['snapshot']['payload']['universe']
+    isolated.previous['payload']['watchlist'] = {'stocks': [{'instrument_id':'600001.SH'},{'instrument_id':'000008.SZ'}]}
+    universe = service._universe(isolated.market, ['600001.SH'], isolated.previous, int(NOW.timestamp()*1000))
     assert universe['requested'] == 1 and universe['total_candidates'] == 1
     assert universe['items'][0]['previous_board_count'] == 3
-    assert universe['items'][0]['reasons'] == ['用户明确指定', '严格前日已留存复盘关注股', '严格前日已核验涨停']
-
+    assert universe['items'][0]['reasons'] == ['用户明确指定','严格前日已留存复盘关注股','严格前日已核验涨停']
+    assert isolated.source.calls == []
 
 def test_watchlist_precedes_events_and_late_watchlist_is_excluded(isolated):
     with core.connect() as connection:
@@ -234,15 +262,15 @@ def test_not_ready_numeric_fields_fail_without_success_then_retry_same_job_keeps
         service.execute_capture(job)
     tasks.finish(job['job_id'], 'failed', error='来源尚未就绪', lease_owner=job['lease_owner'])
     frozen = tasks.task_view(job['job_id'])['parameters']['frozen_inputs']
-    assert service.read_view(DAY)['can_retry'] and service.read_view(DAY)['snapshot'] is None
+    assert not service.read_view(DAY)['can_retry'] and service.read_view(DAY)['snapshot'] is None
     isolated.previous['event_cohorts']['limit_up']['items'] = []
     isolated.previous['payload'] = {'original': '今天后来改写，不能进入旧任务'}
     isolated.source.hook = None
     retried = isolated.client.post('/api/v1/tasks/' + job['job_id'] + '/retry')
-    assert retried.status_code == 200, retried.text
-    assert retried.json()['task_id'] == job['job_id']
-    assert create(isolated, key='new-key-after-failure').status_code == 409
-    assert create(isolated).json()['task_id'] == job['job_id']
+    assert retried.status_code == 403, retried.text
+    assert create(isolated, key='new-key-after-failure').status_code == 403
+    isolated.clock[0] += timedelta(seconds=10)
+    automation.tick()
     isolated.monkeypatch.setattr(service, 'get_market', lambda: pytest.fail('retry cannot rebuild frozen market inputs'))
     resumed = tasks.claim_next('fixture-retry-worker')
     worker.dispatch(resumed)
@@ -261,13 +289,16 @@ def test_not_ready_numeric_fields_fail_without_success_then_retry_same_job_keeps
 def test_window_only_accepts_today_after925_before930(isolated, hour, minute, day):
     isolated.clock[0] = NOW.replace(hour=hour, minute=minute)
     response = isolated.client.post('/api/v1/market/auction/jobs', json={'date': day})
-    assert response.status_code == 409
+    assert response.status_code == 403
+    assert not service.capture_window(day)['allowed']
+    schedule(isolated)
+    assert isolated.source.calls == []
 
 
 def test_source_holiday_does_not_request_auction(isolated):
     isolated.source.hook = lambda path, params: {'code': 0, 'data': {'item': [{'date': PREVIOUS.replace('-', '')}]}} if path.endswith('/calendar/trading-days') else None
     job = claim(isolated)
-    with pytest.raises(ValueError, match='交易日历不含今天'):
+    with pytest.raises(ValueError, match='日历'):
         service.execute_capture(job)
     assert len(isolated.source.calls) == 1 and service.read_view(DAY)['snapshot'] is None
 
@@ -276,23 +307,24 @@ def test_cancel_is_terminal_pause_needs_manual_resume_and_expired_resume_or_retr
     job = claim(isolated)
     tasks.change_task(job['job_id'], 'pause')
     assert tasks.claim_next('not-auto-resumed') is None
-    isolated.clock[0] = NOW.replace(minute=30)
-    assert isolated.client.post('/api/v1/tasks/' + job['job_id'] + '/resume').status_code == 409
-    isolated.clock[0] = NOW
-    assert tasks.change_task(job['job_id'], 'resume')['task_id'] == job['job_id']
+    for at in (NOW.replace(minute=30), NOW):
+        isolated.clock[0] = at
+        assert isolated.client.post('/api/v1/tasks/'+job['job_id']+'/resume').status_code == 403
+        automation.tick()
+        assert tasks.task_view(job['job_id'])['status'] == 'paused'
     tasks.change_task(job['job_id'], 'cancel')
-    assert isolated.client.post('/api/v1/tasks/' + job['job_id'] + '/retry').status_code == 409
-    assert create(isolated, key='after-cancel').status_code == 409
+    assert isolated.client.post('/api/v1/tasks/'+job['job_id']+'/retry').status_code == 403
+    assert create(isolated,key='after-cancel').status_code == 403
     assert service.read_view(DAY)['state'] == 'cancelled'
-
+    assert tasks.claim_next('cancelled-stays-terminal') is None
 
 def test_failed_task_cannot_retry_after_window_or_next_day(isolated):
     job = claim(isolated)
     tasks.finish(job['job_id'], 'failed', error='fixture', lease_owner=job['lease_owner'])
     isolated.clock[0] = NOW.replace(minute=30)
-    assert isolated.client.post('/api/v1/tasks/' + job['job_id'] + '/retry').status_code == 409
+    assert isolated.client.post('/api/v1/tasks/' + job['job_id'] + '/retry').status_code == 403
     isolated.clock[0] = NOW + timedelta(days=1)
-    assert isolated.client.post('/api/v1/tasks/' + job['job_id'] + '/retry').status_code == 409
+    assert isolated.client.post('/api/v1/tasks/' + job['job_id'] + '/retry').status_code == 403
     assert not service.read_view(DAY)['can_retry']
 
 
@@ -318,6 +350,20 @@ def test_valid_auction_can_be_saved_with_unknown_benchmark_at_window_end(isolate
     payload = service.read_view(DAY)['snapshot']['payload']
     assert payload['quotes']['summary']['valid'] == 2 and payload['benchmark']['state'] == 'unknown'
     assert service.read_view(DAY)['snapshot']['evidence_count'] == 2
+
+
+
+def test_unknown_benchmark_inside_window_keeps_valid_quotes_and_only_verified_originals(isolated):
+    isolated.source.hook = lambda path, _params: {'code':0,'data':{}} if path.endswith('/short-term-benchmark') else None
+    job = claim(isolated)
+    result = service.execute_capture(job)
+    assert result['quality'] == 'partial'
+    payload = service.read_view(DAY)['snapshot']['payload']
+    assert payload['quotes']['summary']['valid'] == 2 and payload['benchmark']['state'] == 'unknown'
+    assert len(payload['sources']) == 3
+    with core.connect() as connection:
+        stored = json.loads(connection.execute('SELECT payload_json FROM market_auction_snapshot').fetchone()[0])
+        assert all(sha256(canonical(item['body'])).hexdigest() == item['sha256'] for item in stored['evidence'])
 
 
 def test_get_checks_stored_content_sha(isolated):

@@ -282,6 +282,7 @@ export default function AuctionResonance({
                                   </span>
                                 </div>
                                 <AuctionStockTiles
+                                  key={`${date}:${row.source}:${row.kind}:${row.topic_code}`}
                                   ids={ids}
                                   quotes={quotes}
                                   onStock={onStock}

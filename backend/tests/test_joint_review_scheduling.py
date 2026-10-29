@@ -45,6 +45,7 @@ def test_new_increment_freezes_both_cleanup_policies_and_keeps_old_job(scheduled
     assert parameters['auction_retention_policy'] == 'auction-retention-28d-v1'
     assert parameters['noon_close_policy'] == 'noon-close-v1'
     assert parameters['increment_session_version'] == 'increment-workbench-lock-v1'
+    assert parameters['workspace_followup_version'] == 'after-data-chain-v1'
     with core.connect() as connection:
         saved = connection.execute('SELECT parameters_json FROM job WHERE job_id=?',
                                    (created['job_id'],)).fetchone()
@@ -53,6 +54,7 @@ def test_new_increment_freezes_both_cleanup_policies_and_keeps_old_job(scheduled
                                         (old['job_id'],)).fetchone()) == before
         assert connection.execute("SELECT count(*) FROM job WHERE kind='increment'").fetchone()[0] == 2
     assert not any(key in old_parameters for key in ('noon_retention_policy', 'auction_retention_policy'))
+    assert 'workspace_followup_version' not in old_parameters
     assert len(source.calls) == (1 if submission == 'automatic' else 0)
 
 
