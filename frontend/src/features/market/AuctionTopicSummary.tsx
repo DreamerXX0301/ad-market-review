@@ -159,7 +159,26 @@ export default function AuctionTopicSummary({
                   const text = `${row.name}\n${ids.map((id) => `${id}\t${names.get(id) || id}`).join("\n")}`;
                   return (
                     <Fragment key={key}>
-                      <tr>
+                      <tr
+                        className={`auction-table-group-row${open ? " is-expanded" : ""}`}
+                        tabIndex={0}
+                        aria-expanded={open}
+                        onClick={(event) => {
+                          if (
+                            !(event.target as Element).closest("button,a,input")
+                          )
+                            setExpanded(open ? "" : key);
+                        }}
+                        onKeyDown={(event) => {
+                          if (
+                            event.target === event.currentTarget &&
+                            (event.key === "Enter" || event.key === " ")
+                          ) {
+                            event.preventDefault();
+                            setExpanded(open ? "" : key);
+                          }
+                        }}
+                      >
                         <td
                           title={`${row.source} · ${row.topic_code} · 成员 ${row.members_observed_date}`}
                         >

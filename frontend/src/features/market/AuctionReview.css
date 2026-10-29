@@ -1059,3 +1059,83 @@
   font-size: 10px;
   margin-top: 5px;
 }
+.auction-affiliation-chip b {
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  margin-left: 3px;
+}
+.auction-affiliations-preview {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 7px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 10px;
+  cursor: pointer;
+  min-width: 0;
+}
+.auction-affiliations-preview > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 0;
+  color: var(--muted);
+}
+.auction-affiliations-preview .industry {
+  color: var(--blue);
+}
+.auction-affiliations-preview .concept {
+  color: var(--accent-secondary);
+}
+.auction-affiliations-preview small {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.auction-feedback-stock-head {
+  align-items: center;
+  gap: 5px;
+}
+.auction-feedback-stock-head > .auction-stock {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auction-feedback-stock-head > .copy-stock-code {
+  font-size: 9px;
+  flex: 0 0 auto;
+}
+.auction-feedback-stock-head > span:last-child {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.auction-observation-controls,
+.auction-observation-pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-observation-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.auction-observation-controls select {
+  width: auto;
+  max-width: 330px;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+.auction-observation-pagination {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border-soft);
+}

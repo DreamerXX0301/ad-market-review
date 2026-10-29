@@ -96,15 +96,16 @@ export default function AuctionFeedback({
                         >
                           {row.name || row.instrument_id}
                         </button>
+                        <CopyStockCode instrumentId={row.instrument_id} />
                         <span className={tone(auctionNumber(row.auction_pct))}>
                           {percent(auctionNumber(row.auction_pct))}
                         </span>
                       </div>
-                      <CopyStockCode instrumentId={row.instrument_id} />
                       <AuctionClassifications
                         view={topicView}
                         date={date}
                         instrumentId={row.instrument_id}
+                        compact
                       />
                     </div>
                   ))}

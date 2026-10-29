@@ -171,3 +171,14 @@
     padding: 12px;
   }
 }
+.auction-table-group-row {
+  cursor: pointer;
+}
+.auction-table-group-row:hover > td,
+.auction-table-group-row.is-expanded > td {
+  background: color-mix(in srgb, var(--blue) 5%, var(--surface));
+}
+.auction-table-group-row:focus-visible {
+  outline: 1px solid var(--blue);
+  outline-offset: -2px;
+}

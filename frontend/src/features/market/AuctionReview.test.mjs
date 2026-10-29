@@ -13,7 +13,7 @@ const apiProbe = encode(`let packet=null,close=null,automatic=null,topics=null,f
 export const usePageActive=()=>true;export function useApi(path){requests.push(path);return{data:path?.startsWith('/market/auction?')?packet:path?.startsWith('/market/auction/close-review?')?close:path==='/market/auction/automation'?automatic:path?.startsWith('/market/auction/topic-summary?')?topics:path?.startsWith('/market/auction/feedback?')?feedback:path?.startsWith('/market/auction/resonance?')?resonance:null,loading:false,error:'',reload(){}};}
 export function api(){throw Error('Rendering never reads outside useApi');}export function post(){throw Error('Page rendering must not submit a source task');}export const requestKey=()=> 'fixture-request';`);
 const uiProbe = encode(`import{jsx,jsxs}from ${JSON.stringify(runtime)};export const useToast=()=>()=>{};
-export const Badge=({children})=>jsx('span',{children});export const Panel=({title,subtitle,children,actions})=>jsxs('section',{children:[jsx('h2',{children:title}),jsx('p',{children:subtitle}),children,actions]});
+export const Modal=({children})=>jsx('div',{children});export const Badge=({children})=>jsx('span',{children});export const Panel=({title,subtitle,children,actions})=>jsxs('section',{children:[jsx('h2',{children:title}),jsx('p',{children:subtitle}),children,actions]});
 export const Empty=({title,description})=>jsxs('div',{className:'empty-state',children:[jsx('h3',{children:title}),jsx('p',{children:description})]});export const ErrorBox=({message})=>jsx('p',{role:'alert',children:message});export const Loading=()=>jsx('p',{children:'读取中'});`);
 const replacements = { react: reactProbe, "../../lib/api": apiProbe, "../../components/UI": uiProbe };
 const cache = new Map();
@@ -155,3 +155,8 @@ html=renderToStaticMarkup(createElement(AuctionStockTiles,{ids:['600003.SH','600
 assert.ok(html.indexOf('高开卡片')<html.indexOf('低开卡片'));
 assert.ok(html.indexOf('低开卡片')<html.indexOf('未知卡片'));
 assert.match(html,/\+5\.00%/);assert.match(html,/-2\.00%/);assert.doesNotMatch(html,/99\.00%/);
+const oneGroupTopics={...classifiedTopics,groups:[{...topics.groups[0],sample_count:1,valid_count:1,average_auction_pct:-2,instrument_ids:['600001.SH']}]};
+html=render(retained,{6:'concept',7:'fuyao:concept:886001.TI'},null,null,day,oneGroupTopics,feedback);
+const observationTable=html.slice(html.indexOf('<table class="auction-table"'),html.indexOf('</table>',html.indexOf('<table class="auction-table"')));
+assert.match(observationTable,/600001/);assert.doesNotMatch(observationTable,/000001/);
+assert.match(html,/每页20只/);assert.match(html,/样本均幅/);assert.match(html,/查看完整行业概念、样本均幅与代码/);
