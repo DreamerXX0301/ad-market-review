@@ -17,6 +17,8 @@ business_http_request = ContextVar('increment_business_http_request', default=Fa
 
 def require_business_unlocked(connection):
     """Use immediately after BEGIN IMMEDIATE at direct SQL job creators."""
+    from .automatic_tasks import guard_creation
+    guard_creation(connection)
     if business_http_request.get():
         from .sync_progress import require_unlocked
         require_unlocked(connection)

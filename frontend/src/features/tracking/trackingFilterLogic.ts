@@ -28,6 +28,12 @@ export function trackingProgress(row: Row): {
   };
 }
 
+/** Progress means elapsed market sessions, not rounded bar width or duration %. */
+export function trackingProgressSortValue(row: Row): number | null {
+  const progress = trackingProgress(row);
+  return progress.percentage === null ? null : progress.age;
+}
+
 export function trackingTopicMatch(
   row: Row | undefined,
   selected: string[],

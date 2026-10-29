@@ -355,7 +355,9 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 固定前复权锚水平线使用同一event_affine算法，按已核验公司行动将原锚线价与前收映射到事件日raw价基准；事件同时保存 `line_price` 原锚价和实际判定 `comparison_line_price`，两者不能混称。缺少行动证据、无效/重复行动或锚后转换失败保持unknown。none原始线在除权日不直接混比前收，touch可单独使用当日raw范围。
 
-`GET /watchlist/line-alerts?as_of=&limit=100` 返回所有股票（包括尚未自选）的已存事件、total、business_date、当前rules_total、latest_check和unknowns；历史只含trade_date<=as_of，不从当前行情反推旧事件。latest_check含job_id、checked_at_ms、market_snapshot_id、checked_rules（本次rule/day结果数）、trigger_count、unknown_count，以及 `is_current/stale/stale_reason`，行情日、head或规则改变后不能将旧完成回执冒充当前完成。
+`GET /watchlist/line-alerts?as_of=&limit=100&scope=all` 返回所有股票（包括尚未自选）的已存事件、total、business_date、as_of、scope、today_total、history_total、当前rules_total、latest_check和unknowns。`scope` 为 `all`（兼容默认）、`today`（trade_date等于最新已发布business_date）、`history`（早于business_date且不晚于as_of）；今日不接受更早as_of，历史补跑按事件trade_date归档，不按created_at误归今日。total按当前scope完整计数，不受limit影响（1至1000）；today_total按业务日，history_total按截至日期统计更早事件。不从当前行情反推旧事件。latest_check含job_id、checked_at_ms、market_snapshot_id、checked_rules（本次rule/day结果数）、trigger_count、unknown_count，以及 `is_current/stale/stale_reason`，行情日、head或规则改变后不能将旧完成回执冒充当前完成。
+
+`GET /watchlist/line-alerts/summary` 是全局小提醒入口的有界只读摘要：business_date、当日total、limit=5与items，只含event_id、证券名称代码、rule/state/title、trade_date、created_at_ms。按line_alert_by_day索引读取，不取行情、解密凭据、创建任务或更新提醒；缺业务日返回null/0/空数组。读取、静音或浏览器内去重不修改服务端历史记录，也不改变首次提醒后60交易日的清理规则。
 
 事件保存event_id、instrument_id/name/code、annotation_id/revision、line_type/rule、trade_date、原价与判定价、price_basis/anchor_date、raw OHLC、严格前收/转换前收、转换依据、state/title/reason、创建时间和冻结market_snapshot_id/input_snapshots；引用快照以manual retention pin保存，手动删除水平线不即时删除历史证据；首次实际提醒后的到期清理规则见下。`/watchlist`每行latest_line_alert通过按股票分组的批量SQLite摘要返回，不依赖提醒列表limit或逐股GET。
 

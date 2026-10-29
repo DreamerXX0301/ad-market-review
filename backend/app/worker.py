@@ -46,7 +46,7 @@ def _authorize_chain(job):
         state=connection.execute('SELECT status FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
         if not state or state[0] in tasks.TERMINAL or state[0]=='paused':return
         if not connection.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='chain_authorized'",(job['job_id'],)).fetchone():
-            tasks.append_event(connection,job['job_id'],'chain_authorized','记录本次手动任务的后续数据链授权；中断后只补漏，不创建每日调度')
+            tasks.append_event(connection,job['job_id'],'chain_authorized','记录本次显式授权任务的后续数据链；中断后只补漏，不扩大原冻结范围')
 
 
 def _chain_target(job,completed_result=None):
@@ -431,6 +431,8 @@ def run(once=False):
         for signum in (signal.SIGTERM,signal.SIGINT):
             signal.signal(signum,lambda *_:stop.set())
         next_research_cleanup=0
+        from app.services.automatic_tasks import AutomaticReviewScheduler
+        automatic_scheduler=AutomaticReviewScheduler()
         while not stop.is_set():
             if time.monotonic()>=next_research_cleanup:
                 try:
@@ -447,6 +449,9 @@ def run(once=False):
                 except Exception as error:
                     logger.warning('本地核验补漏稍后重试 %s %s',name,type(error).__name__)
             recover_followups()
+            try:automatic_scheduler.tick()
+            except Exception as error:
+                logger.warning('自动复盘检查暂未完成 %s',type(error).__name__)
             job=tasks.claim_next(owner)
             if not job:
                 try:

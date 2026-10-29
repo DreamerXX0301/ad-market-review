@@ -1,0 +1,71 @@
+.table-multi-sort {
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--accent) 3%, var(--surface));
+  display: grid;
+  gap: 10px;
+}
+.table-multi-sort-heading,
+.table-multi-sort-heading strong,
+.table-multi-sort-levels,
+.table-multi-sort-levels > li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.table-multi-sort-heading {
+  flex-wrap: wrap;
+}
+.table-multi-sort-heading > span,
+.table-multi-sort p {
+  color: var(--muted);
+  font-size: 11px;
+}
+.table-multi-sort-heading > button {
+  margin-left: auto;
+}
+.table-multi-sort-levels {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex-wrap: wrap;
+}
+.table-multi-sort-levels > li:not(.table-multi-sort-add) {
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.table-multi-sort-levels select {
+  width: 145px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.table-sort-priority {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  border-radius: 5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-size: 11px;
+}
+.table-multi-sort p {
+  margin: 0;
+}
+@media (max-width: 700px) {
+  .table-multi-sort {
+    padding: 14px;
+  }
+  .table-multi-sort-levels > li:not(.table-multi-sort-add) {
+    width: 100%;
+    gap: 5px;
+  }
+  .table-multi-sort-levels select {
+    flex: 1;
+    min-width: 70px;
+    width: auto;
+  }
+}

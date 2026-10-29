@@ -1,0 +1,100 @@
+.line-alert-notice {
+  position: relative;
+}
+.line-alert-notice-trigger {
+  position: relative;
+  width: 36px;
+  height: 36px;
+}
+.line-alert-notice-trigger.has-alerts {
+  color: var(--blue);
+}
+.line-alert-notice-trigger > b {
+  position: absolute;
+  right: -5px;
+  top: -4px;
+  padding: 2px 4px;
+  min-width: 17px;
+  border-radius: 9px;
+  background: var(--up);
+  color: var(--surface);
+  font-size: 9px;
+  font-weight: 600;
+}
+.line-alert-notice-popover {
+  position: absolute;
+  top: 45px;
+  right: 0;
+  width: min(370px, calc(100vw - 32px));
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 12px 40px #0004;
+  z-index: 40;
+}
+.line-alert-notice-popover > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.line-alert-notice-popover strong {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+}
+.line-alert-notice-popover small,
+.line-alert-notice-popover p {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.7;
+}
+.line-alert-notice-popover ul {
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+.line-alert-notice-popover li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+.line-alert-notice-popover li > span {
+  display: grid;
+  gap: 3px;
+}
+.line-alert-notice-popover li > b {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 500;
+}
+.line-alert-notice-popover li > b.invalidated {
+  color: var(--up);
+}
+.line-alert-notice-popover li > b.touch {
+  color: #c9a052;
+}
+.line-alert-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+  justify-content: space-between;
+}
+.line-alert-notice-error {
+  color: var(--up) !important;
+}
+@media (max-width: 640px) {
+  .line-alert-notice-popover {
+    position: fixed;
+    top: 76px;
+    right: 16px;
+  }
+}

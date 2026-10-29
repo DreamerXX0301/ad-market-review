@@ -39,6 +39,7 @@ import Research from "./features/research/Research";
 import ReadonlyPreviewBanner from "./components/ReadonlyPreviewBanner";
 import SectorChartDialog from "./features/market/SectorChartDialog";
 import SectorMembersDialog from "./features/sector/SectorMembersDialog";
+import NoonSectorDialog from "./features/market/NoonSectorDialog";
 import { globalSectorSelection } from "./components/searchPresentation";
 import { marketInstallationState } from "./components/marketInstallation";
 import IncrementProgressDialog from "./components/IncrementProgressDialog";
@@ -47,6 +48,7 @@ type SectorSelection = NonNullable<ReturnType<typeof globalSectorSelection>> & {
     noon_scope_notice?: string;
     noon_snapshot_date?: string;
     noon_chart_as_of?: string;
+    noon_members_snapshot_id?: string;
   };
 };
 // Opening a stock drawer keeps the active market list's inputs unchanged.
@@ -474,7 +476,16 @@ export default function App() {
           ))}
         </AppShell>
         {sector &&
-          (sector.view === "chart" ? (
+          (sector.topic.noon_members_snapshot_id ? (
+            <NoonSectorDialog
+              key={`${sector.topic.noon_members_snapshot_id}:${sector.topic.topic_code}`}
+              topic={sector.topic}
+              snapshotId={sector.topic.noon_members_snapshot_id}
+              initialView={sector.view}
+              onClose={() => setSector(null)}
+              onStock={(id, asOf) => setStock({ id, asOf })}
+            />
+          ) : sector.view === "chart" ? (
             <SectorChartDialog
               topic={{
                 topicCode: sector.topic.topic_code,

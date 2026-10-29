@@ -381,6 +381,9 @@ def execute_capture(job, callback=None):
             continue
         payload['stock_classifications'][symbol] = classification
         budget -= size
+    from app.services.noon_sector_views import freeze_memberships
+    payload['sector_memberships'] = freeze_memberships(payload, topics,
+        budget=max(0, 8 * 1024 * 1024 - len(canonical(payload)) - 4096))
     encoded = canonical(payload).decode()
     if len(encoded.encode()) > 8 * 1024 * 1024:
         raise ValueError('午评正文超过8MiB预算，未保存不完整正文')

@@ -60,6 +60,7 @@ import {
   visibleWarnings,
 } from "./dataPresentation";
 import "./DataCenter.css";
+import AutomaticReviewSettings from "./AutomaticReviewSettings";
 import CoveragePanel from "./CoveragePanel";
 import PublishedStorageDetails from "./PublishedStorageDetails";
 import { publishedStorageView } from "./storagePresentation";
@@ -644,12 +645,8 @@ export default function DataCenter({
       <div className="data-center-heading">
         <div>
           <span>数据工作区</span>
-          <p>手动同步，按阶段核验，保留每次运行记录。</p>
+          <p>同步与任务设置，按阶段核验，保留每次运行记录。</p>
         </div>
-        <Badge>
-          <Pause size={11} />
-          自动调度已关闭
-        </Badge>
       </div>
       <div className="stats-grid">
         <Stat
@@ -674,6 +671,12 @@ export default function DataCenter({
         />
       </div>
       <PublishedStorageDetails view={storage} />
+      <AutomaticReviewSettings
+        onSelectTask={(id) => {
+          setSelectedId(id);
+          setFollowChain(false);
+        }}
+      />
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}

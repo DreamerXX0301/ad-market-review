@@ -31,5 +31,16 @@ assert.equal(copied.searchParams.get("sort"), parsed.searchParams.get("sort"));
 assert.deepEqual(p.closeMetric({ count: 0, source_count: 3, denominator: 2, unknown_count: 1, rate_pct: 0 }), { count: 0, source: 3, denominator: 2, unknown: 1, rate: 0 });
 assert.deepEqual(p.closeMetric({}), { count: null, source: null, denominator: null, unknown: null, rate: null });
 for (const state of ["waiting_close", "not_collected", "no_snapshot", "purged"]) assert.ok(p.closeStateMessages[state]);
+for (const direction of ["asc","desc"]) {
+  const final = new URL("https://fixture.invalid/api/v1" + p.closeItemsPath({...options,sort:"close_change_pct",direction}));
+  assert.equal(final.searchParams.get("date"),options.date);
+  assert.equal(final.searchParams.get("review_id"),options.reviewId);
+  assert.equal(final.searchParams.get("sort"),"close_change_pct");
+  assert.equal(final.searchParams.get("direction"),direction);
+  assert.equal(final.searchParams.get("board"),options.board);
+  const copyFinal = new URL("https://fixture.invalid/api/v1" + p.closeItemsPath({...options,sort:"close_change_pct",direction,codesOnly:true}));
+  assert.equal(copyFinal.searchParams.get("sort"),"close_change_pct");
+  assert.equal(copyFinal.searchParams.get("cursor"),null);
+}
 assert.equal(p.CLOSE_SECTIONS.length, 6);
 console.log("Close review presentation: event/price color separation, missing vs zero, exact revision filters, whole-range six-digit copying and six-section route passed");

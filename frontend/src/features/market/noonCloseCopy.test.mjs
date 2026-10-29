@@ -31,7 +31,7 @@ async function compile(path,jsx=false){return ts.transpileModule(await fs.readFi
 const visibility=encoded(await compile("../../lib/indicatorVisibility.ts"));
 const format=encoded((await compile("../../lib/format.ts")).replaceAll(JSON.stringify("./indicatorVisibility"),JSON.stringify(visibility))), helper=encoded(await compile("./noonClosePresentation.ts"));
 let source=await compile("./NoonCloseReview.tsx",true);
-for(const [from,to] of Object.entries({"react/jsx-runtime":jsx,react,"lucide-react":icons,"../../lib/api":api,"../../components/UI":ui,"../../components/CopyStockCode":encoded("export default 'stock-code';"),"../../lib/format":format,"./NoonBoardFilter":board,"./noonClosePresentation":helper}))source=source.replaceAll(JSON.stringify(from),JSON.stringify(to));
+for(const [from,to] of Object.entries({"react/jsx-runtime":jsx,react,"lucide-react":icons,"../../lib/api":api,"../../components/UI":ui,"../../components/CopyStockCode":encoded("export default 'stock-code';"),"../../lib/format":format,"./NoonBoardFilter":board,"./noonClosePresentation":helper,"./NoonCloseFocusTable":encoded("export default 'focus-table';")}))source=source.replaceAll(JSON.stringify(from),JSON.stringify(to));
 source=source.replace('import "./NoonCloseReview.css";',"");
 const {default:CloseReview}=await import(encoded(source));
 const render=(date=day)=>{cursor=0;const result=CloseReview({date});scheduled.splice(0).forEach(fn=>fn());return result;};
@@ -43,7 +43,7 @@ try{
  let tree=render();
  button(tree,"炸板回封").props.onClick();tree=render();
  allNodes(tree).find(n=>n.type==="board-filter").props.onChange("star");tree=render();
- allNodes(tree).find(n=>n.props?.onSort).props.onSort("afternoon_change_pct");tree=render();
+ allNodes(tree).find(n=>n.props?.onSort).props.onSort("close_change_pct");tree=render();
  button(tree,"下一页").props.onClick();tree=render();
  const task=copy(tree), url=new URL(paths.at(-1),"http://fixture.invalid");
  assert.equal(url.searchParams.get("codes_only"),"true");
@@ -51,7 +51,7 @@ try{
  assert.equal(url.searchParams.get("date"),day);
  assert.equal(url.searchParams.get("transition"),"resealed");
  assert.equal(url.searchParams.get("board"),"star");
- assert.equal(url.searchParams.get("sort"),"afternoon_change_pct");
+ assert.equal(url.searchParams.get("sort"),"close_change_pct");
  assert.equal(url.searchParams.get("direction"),"desc");
  assert.equal(url.searchParams.has("cursor"),false,"copy must read complete filter, never the displayed page cursor");
  const codes=Array.from({length:60},(_,i)=>String(i+1).padStart(6,"0"));

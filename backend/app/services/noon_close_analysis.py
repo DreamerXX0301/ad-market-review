@@ -691,15 +691,16 @@ def build_close_review(noon_payload, close_inputs):
             if not isinstance(source_rank, int) or isinstance(source_rank, bool) or source_rank <= 0:
                 source_rank = None
             leader_rows[key].append({**{field: item.get(field) for field in (
-                'instrument_id', 'name', 'noon_price', 'close_price', 'afternoon_change_pct', 'close_state', 'transition')},
+                'instrument_id', 'name', 'noon_price', 'close_price', 'noon_change_pct', 'close_change_pct',
+                'afternoon_change_pct', 'close_state', 'transition')},
                 'relay_state': item['relay_state'], 'final_board_count': item['final_board_count'],
                 'previous_board_count': item['previous_board_count'],
                 'rank': source_rank if key == 'hot' else position, 'source_rank': source_rank,
                 'rank_scope': '原午间供应商排名；缺失不补序号' if key == 'hot' else '原午间已保存列表的派生排序',
                 'sections': item['sections']})
     for group in observations:
-        group['objective'] = [{key: by_symbol[symbol].get(key) for key in ('instrument_id', 'noon_price', 'close_price',
-            'afternoon_change_pct', 'close_state', 'transition', 'final_board_count', 'previous_board_count', 'relay_state')}
+        group['objective'] = [{key: by_symbol[symbol].get(key) for key in ('instrument_id', 'name', 'noon_price', 'close_price',
+            'noon_change_pct', 'close_change_pct', 'afternoon_change_pct', 'close_state', 'transition', 'final_board_count', 'previous_board_count', 'relay_state')}
             for symbol in group['instrument_ids'] if symbol in by_symbol]
         group['scope'] = '原关注及自由文字保持原样，仅并列客观结果，不自动判定兑现或证伪'
     next_groups = []

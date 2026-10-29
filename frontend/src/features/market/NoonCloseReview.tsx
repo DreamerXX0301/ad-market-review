@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
-import {
-  ArrowRight,
-  ChevronDown,
-  ChevronUp,
-  Copy,
-  RefreshCw,
-} from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, RefreshCw } from "lucide-react";
 import { api, useApi, usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
@@ -37,12 +31,12 @@ import {
   closeMetric,
   closeNumber,
   closeRows,
-  closeStateLabel,
   closeStateMessages,
   closeTransitionLabel,
   closeTransitionTone,
 } from "./noonClosePresentation";
 import type { CloseSection, CloseSort } from "./noonClosePresentation";
+import NoonCloseFocusTable from "./NoonCloseFocusTable";
 import "./NoonCloseReview.css";
 
 type StockAction = (id: string, date: string) => void;
@@ -129,6 +123,8 @@ const tableColumns: { key: CloseSort | null; label: string; text?: boolean }[] =
     { key: null, label: "行业 / 概念", text: true },
     { key: "final_board_count", label: "昨日 / 收盘高度" },
     { key: null, label: "午间 → 收盘", text: true },
+    { key: "noon_change_pct", label: "午间涨幅" },
+    { key: "close_change_pct", label: "今日收盘涨幅" },
     { key: "afternoon_change_pct", label: "午后涨跌幅" },
     { key: "amount", label: "收盘成交额" },
   ];
@@ -163,10 +159,12 @@ export function CloseRowsTable({
     !showClasses,
     !(available("previous_board_count") || available("final_board_count")),
     false,
+    false,
+    false,
     !available("afternoon_change_pct"),
     !available("close_amount"),
   ];
-  const widths = [132, 155, 105, 210, 95, 110];
+  const widths = [132, 155, 105, 180, 100, 115, 100, 110];
   const sortButton = (key: CloseSort, label: string) => (
     <button
       type="button"
@@ -203,10 +201,9 @@ export function CloseRowsTable({
                 key={i}
                 hidden={hiddenColumns[i]}
                 className={col.text ? "noon-close-text" : ""}
+                style={{ width: widths[i] }}
                 aria-sort={
-                  col.key === sort ||
-                  (i === 3 &&
-                    ["noon_change_pct", "close_change_pct"].includes(sort))
+                  col.key === sort
                     ? direction === "desc"
                       ? "descending"
                       : "ascending"
@@ -214,14 +211,6 @@ export function CloseRowsTable({
                 }
               >
                 {col.key ? sortButton(col.key, col.label) : col.label}
-                {i === 3 && (
-                  <small>
-                    {available("noon_change_pct") &&
-                      sortButton("noon_change_pct", "午间涨幅")}{" "}
-                    {available("close_change_pct") &&
-                      sortButton("close_change_pct", "收盘涨幅")}
-                  </small>
-                )}
               </th>
             ))}
           </tr>
@@ -293,15 +282,6 @@ export function CloseRowsTable({
                   <div className={closeTransitionTone(row)}>
                     {closeTransitionLabel(row)}
                   </div>
-                  <small>
-                    <span className={tone(closeNumber(row.noon_change_pct))}>
-                      {percent(closeNumber(row.noon_change_pct))}
-                    </span>
-                    <ArrowRight size={10} aria-hidden="true" />
-                    <span className={tone(closeNumber(row.close_change_pct))}>
-                      {percent(closeNumber(row.close_change_pct))}
-                    </span>
-                  </small>
                   {Array.isArray(row.day_events) &&
                     row.day_events.length > 0 && (
                       <small>
@@ -342,13 +322,24 @@ export function CloseRowsTable({
                     </details>
                   )}
                 </td>
+                <td className={tone(closeNumber(row.noon_change_pct))}>
+                  {percent(closeNumber(row.noon_change_pct))}
+                </td>
                 <td
-                  hidden={hiddenColumns[4]}
+                  className={
+                    "noon-close-day-change " +
+                    tone(closeNumber(row.close_change_pct))
+                  }
+                >
+                  {percent(closeNumber(row.close_change_pct))}
+                </td>
+                <td
+                  hidden={hiddenColumns[6]}
                   className={tone(closeNumber(row.afternoon_change_pct))}
                 >
                   {percent(closeNumber(row.afternoon_change_pct))}
                 </td>
-                <td hidden={hiddenColumns[5]}>
+                <td hidden={hiddenColumns[7]}>
                   {amount(closeNumber(row.close_amount))}
                 </td>
               </tr>
@@ -692,34 +683,14 @@ export function CloseObservation({
           {typeof row.text === "string" ? row.text : "原文未留存"}
         </blockquote>
       )}
-      <div className="noon-close-objectives">
-        {closeRows(row.objective).map((item) => (
-          <div key={item.instrument_id}>
-            <button
-              type="button"
-              className="noon-stock-link"
-              disabled={
-                !onStock ||
-                !/^\d{6}\.(SH|SZ|BJ)$/.test(item.instrument_id || "") ||
-                (closeNumber(item.close_price) || 0) <= 0
-              }
-              onClick={() => onStock?.(item.instrument_id, date)}
-            >
-              {item.name || item.instrument_id}
-            </button>
-            <span>
-              午间 {num(closeNumber(item.noon_price))} → 收盘{" "}
-              {num(closeNumber(item.close_price))}
-            </span>
-            <span className={tone(closeNumber(item.afternoon_change_pct))}>
-              午后 {percent(closeNumber(item.afternoon_change_pct))}
-            </span>
-            <span className={closeTransitionTone(item)}>
-              {closeStateLabel(item)}
-            </span>
-          </div>
-        ))}
-      </div>
+      {closeRows(row.objective).length > 0 && (
+        <NoonCloseFocusTable
+          rows={closeRows(row.objective)}
+          date={date}
+          label="原关注客观收盘结果"
+          onStock={onStock}
+        />
+      )}
       {sector && (
         <div className="noon-close-objectives">
           <div>
@@ -1137,41 +1108,19 @@ export default function NoonCloseReview({
                           ? "午间成交额前列回看"
                           : "午间热榜回看"
                       }
-                      subtitle="固定午间名单和原排名，不以收盘榜替换"
+                      subtitle="固定午间名单和原排名，不以收盘榜替换；可按今日收盘涨幅排序，原排名不变"
                     >
-                      <div className="noon-close-leaders">
-                        {closeRows(summary.leaders?.[kind]).map(
-                          (row, index) => (
-                            <div key={row.instrument_id || index}>
-                              <span className="muted">
-                                {row.rank != null
-                                  ? "原排名" + row.rank
-                                  : "原名单"}
-                              </span>
-                              <button
-                                className="noon-stock-link"
-                                type="button"
-                                disabled={
-                                  !onStock ||
-                                  (closeNumber(row.close_price) || 0) <= 0
-                                }
-                                onClick={() =>
-                                  onStock?.(row.instrument_id, date)
-                                }
-                              >
-                                {row.name || row.instrument_id}
-                              </button>
-                              <span
-                                className={tone(
-                                  closeNumber(row.afternoon_change_pct),
-                                )}
-                              >
-                                {percent(closeNumber(row.afternoon_change_pct))}
-                              </span>
-                            </div>
-                          ),
-                        )}
-                      </div>
+                      <NoonCloseFocusTable
+                        rows={closeRows(summary.leaders?.[kind])}
+                        date={date}
+                        label={
+                          kind === "amount"
+                            ? "午间成交额前列收盘结果"
+                            : "午间热榜收盘结果"
+                        }
+                        ranked
+                        onStock={onStock}
+                      />
                     </Panel>
                   ))}
                 </>
@@ -1235,6 +1184,10 @@ export default function NoonCloseReview({
                     </button>
                   }
                 >
+                  <p className="noon-footnote">
+                    今日收盘涨幅为 {date}{" "}
+                    收盘相对该日前收的涨跌幅；午间涨幅与午后涨跌幅独立列示。缺失显示—，不使用后续日期补填。
+                  </p>
                   <NoonBoardFilter
                     value={board}
                     onChange={setBoard}

@@ -24,6 +24,7 @@ import WatchlistLineAlerts, {
   LineAlertDialog,
 } from "./WatchlistLineAlerts";
 import { useLineAlerts } from "./useLineAlerts";
+import { LINE_ALERTS_OPEN } from "./lineAlertNotification";
 import {
   watchlistEventBaseline,
   watchlistSourceLabel,
@@ -91,6 +92,8 @@ export default function Watchlist({
   const [source, setSource] = useState("all");
   const [view, setView] = useState("stocks");
   const [alertDate, setAlertDate] = useState("");
+  const [alertScope, setAlertScope] = useState("today");
+  const [alertLimit, setAlertLimit] = useState(100);
   const [selectedAlert, setSelectedAlert] = useState<Row | null>(null);
   const result = useApi<Row>("/watchlist");
   const day = result.data?.business_date;
@@ -98,7 +101,11 @@ export default function Watchlist({
     day ||
     (result.loading ? "读取中…" : result.error ? "暂未读取" : "待初始化");
   const alertAsOf = alertDate && (!day || alertDate <= day) ? alertDate : day;
-  const alerts = useLineAlerts(alertAsOf);
+  const alerts = useLineAlerts(
+    alertScope === "history" ? alertAsOf : day,
+    alertScope,
+    alertLimit,
+  );
   const checking = alerts.task ? activityPresentation(alerts.task) : null;
   const lastCheck = alerts.result.data?.latest_check;
   const staleCheck =
@@ -113,6 +120,30 @@ export default function Watchlist({
         asOf: event.trade_date,
       }),
     );
+  useEffect(() => {
+    const showToday = () => {
+      if (
+        new URLSearchParams(location.hash.split("?")[1]).get("alerts") ===
+        "today"
+      ) {
+        setView("alerts");
+        setAlertScope("today");
+        // Consume the deep link so returning to the page preserves manual choices.
+        history.replaceState(
+          null,
+          "",
+          `${location.pathname}${location.search}#watchlist`,
+        );
+      }
+    };
+    showToday();
+    window.addEventListener(LINE_ALERTS_OPEN, showToday);
+    window.addEventListener("hashchange", showToday);
+    return () => {
+      window.removeEventListener(LINE_ALERTS_OPEN, showToday);
+      window.removeEventListener("hashchange", showToday);
+    };
+  }, []);
   useEffect(() => {
     const refresh = () => result.reload();
     window.addEventListener(WATCHLIST_CHANGED, refresh);
@@ -205,7 +236,7 @@ export default function Watchlist({
               划线提醒<b>{alerts.result.data?.total ?? "—"}</b>
             </button>
           </div>
-          {view === "alerts" && (
+          {view === "alerts" && alertScope === "history" && (
             <label className="watchlist-alert-date">
               截至日期
               <DatePicker
@@ -520,7 +551,17 @@ export default function Watchlist({
             data={alerts.result.data}
             loading={alerts.result.loading}
             error={alerts.result.error}
-            asOf={alertAsOf}
+            asOf={alertScope === "history" ? alertAsOf : day}
+            scope={alertScope}
+            onScopeChange={(value) => {
+              setAlertScope(value);
+              setAlertLimit(100);
+            }}
+            onLoadMore={
+              alertLimit < 1000
+                ? () => setAlertLimit((value) => Math.min(value + 100, 1000))
+                : undefined
+            }
             onReload={alerts.result.reload}
             onOpen={setSelectedAlert}
             onStock={openAlertStock}

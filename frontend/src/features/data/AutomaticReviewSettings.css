@@ -1,0 +1,112 @@
+.automatic-review-settings {
+  display: grid;
+  gap: 12px;
+  padding: 16px 20px;
+  font-size: 12px;
+}
+.automatic-review-plans {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.automatic-review-plans > section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.automatic-review-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+.automatic-review-toggle strong,
+.automatic-review-toggle small {
+  display: block;
+}
+.automatic-review-toggle strong {
+  font-size: 13px;
+  color: var(--text);
+}
+.automatic-review-toggle small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.automatic-review-time {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--muted);
+}
+.automatic-review-time input {
+  width: 135px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  background: var(--surface-2, var(--surface));
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.automatic-review-time input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.automatic-review-check {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  line-height: 1.7;
+}
+.automatic-review-check p {
+  margin: 3px 0;
+}
+.automatic-review-check .btn {
+  margin-top: 5px;
+}
+.automatic-review-policy,
+.automatic-review-loading {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  line-height: 1.8;
+  color: var(--muted);
+}
+.automatic-review-policy svg {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.automatic-review-error {
+  color: var(--amber);
+  margin: 0;
+}
+.automatic-review-success {
+  color: var(--blue);
+  margin: 0;
+}
+.automatic-review-actions,
+.automatic-review-actions > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 9px;
+}
+.automatic-review-actions {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 760px) {
+  .automatic-review-plans {
+    grid-template-columns: 1fr;
+  }
+  .automatic-review-settings {
+    padding: 14px;
+  }
+}

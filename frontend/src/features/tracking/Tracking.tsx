@@ -111,6 +111,7 @@ import {
   matchesTrackingText,
   topicSortValue,
   trackingProgress,
+  trackingProgressSortValue,
   trackingTopicMatch,
 } from "./trackingFilterLogic";
 const policyFields = [
@@ -753,14 +754,25 @@ function StockTracking({
           <ErrorBox message={eventsResult.error} retry={eventsResult.reload} />
         ) : tab === "alerts" ? (
           <Table
+            key={tab}
             rows={rows}
             rowKey="event_id"
+            multiSort
+            multiDefaultSort={[
+              { key: "business_date", order: "desc" },
+              { key: "today_change_pct", order: "desc" },
+            ]}
             columns={[
-              { key: "business_date", title: "触发日" },
+              {
+                key: "business_date",
+                title: "触发日",
+                sortValue: (row) => row.business_date,
+              },
               { key: "name" },
               {
                 key: "today_change_pct",
                 title: "今日涨幅",
+                sortValue: (row) => row.today_change_pct,
                 render: (value, row) => (
                   <span
                     className={tone(value)}
@@ -828,8 +840,14 @@ function StockTracking({
           />
         ) : (
           <Table
+            key={tab}
             rows={rows}
             rowKey="round_id"
+            multiSort
+            multiDefaultSort={[
+              { key: "trading_age", order: "desc" },
+              { key: "today_change_pct", order: "desc" },
+            ]}
             columns={[
               { key: "name" },
               { key: "strategy_name", title: "所属策略" },
@@ -842,6 +860,7 @@ function StockTracking({
               {
                 key: "today_change_pct",
                 title: tab === "history" ? "结束日涨幅" : "今日涨幅",
+                sortValue: (row) => row.today_change_pct,
                 render: (value, row) => (
                   <span
                     className={tone(value)}
@@ -854,6 +873,7 @@ function StockTracking({
               {
                 key: "tracking_change_pct",
                 title: "跟踪涨幅",
+                sortValue: (row) => trackingPriceContext(row).change,
                 render: (v, r) => {
                   const price = trackingPriceContext(r);
                   return (
@@ -881,6 +901,9 @@ function StockTracking({
               {
                 key: "trading_age",
                 title: "进度",
+                description:
+                  "按已核验的跟踪市场交易日数排序，不按进度条百分比；进度待核验时排末。",
+                sortValue: trackingProgressSortValue,
                 render: (_, r) => {
                   const progress = trackingProgress(r);
                   return (

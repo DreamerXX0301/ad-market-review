@@ -23,6 +23,7 @@ import type { SectorMemberStockCallback } from "./SectorMembersDialog";
 import SectorPolicyEditor from "./SectorPolicyEditor";
 import { sectorKindLabel } from "./sectorPresentation";
 import TrackingTabs from "../tracking/TrackingTabs";
+import { trackingProgressSortValue } from "../tracking/trackingFilterLogic";
 import "./SectorWorkspace.css";
 
 export default function SectorTracking({
@@ -208,9 +209,18 @@ export default function SectorTracking({
           <Loading />
         ) : rows.length ? (
           <Table
-            key={`${tab}-${strategyId}-${kind}-${query}-${triggered}`}
+            key={tab}
             rows={rows}
             rowKey={tab === "alerts" ? "event_id" : "round_id"}
+            multiSort
+            multiDefaultSort={
+              tab === "alerts"
+                ? [{ key: "today_change_pct", order: "desc" }]
+                : [
+                    { key: "trading_age", order: "desc" },
+                    { key: "today_change_pct", order: "desc" },
+                  ]
+            }
             columns={[
               {
                 key: "name",
@@ -244,6 +254,7 @@ export default function SectorTracking({
               {
                 key: "today_change_pct",
                 title: "观察日涨幅",
+                sortValue: (row) => row.today_change_pct,
                 render: (value) => (
                   <span className={tone(value)}>{percent(value)}</span>
                 ),
@@ -258,6 +269,9 @@ export default function SectorTracking({
               {
                 key: "trading_age",
                 title: "跟踪进度",
+                description:
+                  "按已核验的跟踪市场交易日数排序，不按期限比例；进度待核验时排末。",
+                sortValue: trackingProgressSortValue,
                 render: (value, row) => (
                   <span>
                     {value == null ? "待核验" : `第${value}日`} /{" "}

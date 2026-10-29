@@ -147,6 +147,35 @@
   gap: 12px;
   padding: 0 24px 18px;
 }
+.line-alert-period-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px 18px;
+}
+.line-alert-period-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--surface2);
+  cursor: pointer;
+}
+.line-alert-period-tabs > button.selected {
+  color: var(--blue);
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+.line-alert-period-tabs small,
+.line-alert-period-tabs > span {
+  color: var(--muted);
+  font-size: 11px;
+}
 .line-alert-state-filter > button {
   min-height: 30px;
   padding: 5px 10px;

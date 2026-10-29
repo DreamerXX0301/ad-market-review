@@ -163,6 +163,9 @@ export default function WatchlistLineAlerts({
   onReload,
   onOpen,
   onStock,
+  scope = "all",
+  onScopeChange,
+  onLoadMore,
 }: {
   data: Row | null;
   loading: boolean;
@@ -171,6 +174,9 @@ export default function WatchlistLineAlerts({
   onReload: () => void;
   onOpen: (event: Row) => void;
   onStock: (event: Row) => void;
+  scope?: string;
+  onScopeChange?: (scope: string) => void;
+  onLoadMore?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [state, setState] = useState("all");
@@ -182,13 +188,45 @@ export default function WatchlistLineAlerts({
       <div className="line-alert-view-intro">
         <BellRing size={19} />
         <div>
-          <strong>划线触发记录</strong>
+          <strong>
+            {scope === "today"
+              ? "今日划线提醒"
+              : scope === "history"
+                ? "历史划线提醒"
+                : "划线触发记录"}
+          </strong>
           <p>
             未提醒的线持续监控；首次提醒后继续60个交易日，到期随盘后增量删除线和关联提醒。移出自选不会提前停用划线。
           </p>
         </div>
         <span>{data?.total ?? "—"} 条已保存</span>
       </div>
+      {onScopeChange && (
+        <div
+          className="line-alert-period-tabs"
+          role="group"
+          aria-label="提醒日期范围"
+        >
+          <button
+            className={scope === "today" ? "selected" : ""}
+            aria-pressed={scope === "today"}
+            onClick={() => onScopeChange("today")}
+          >
+            今日 <b>{data?.today_total ?? "—"}</b>
+            <small>{data?.business_date || ""}</small>
+          </button>
+          <button
+            className={scope === "history" ? "selected" : ""}
+            aria-pressed={scope === "history"}
+            onClick={() => onScopeChange("history")}
+          >
+            历史 <b>{data?.history_total ?? "—"}</b>
+          </button>
+          <span>
+            今日按最新已发布业务日；历史不含今日，回看只读已保存记录。
+          </span>
+        </div>
+      )}
       <div className="line-alert-filter-bar">
         <div
           className="line-alert-state-filter"
@@ -222,13 +260,22 @@ export default function WatchlistLineAlerts({
         <small>
           已加载最近 {loaded.length} / {data?.total ?? "—"} 条
         </small>
+        {onLoadMore && data?.total > loaded.length && (
+          <button className="btn small" disabled={loading} onClick={onLoadMore}>
+            再加载100条
+          </button>
+        )}
       </div>
       {error && <ErrorBox message={error} retry={onReload} />}
       {loading && !data ? (
         <Loading />
       ) : data && !loaded.length ? (
         <Empty
-          title="尚无已确认的划线触发"
+          title={
+            scope === "today"
+              ? "今日暂无已确认的划线触发"
+              : "尚无已确认的划线触发"
+          }
           description="在个股 K 线上设置支撑或压力线并勾选提醒条件；盘后核验后在此保留触发与失守记录。"
         />
       ) : data ? (

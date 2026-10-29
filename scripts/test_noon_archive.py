@@ -36,7 +36,9 @@ def noon_source(source, monkeypatch):
     content = encode(manifest); manifest_file = path.parent / 'manifest.json'; manifest_file.write_bytes(content)
     manifest_record = {'path': manifest_file.relative_to(raw).as_posix(), 'sha256': sha256(content).hexdigest(),
                        'stored_sha256': sha256(content).hexdigest(), 'bytes': len(content), 'kind': 'manifest'}
-    body = encode({'version': 'noon-snapshot-v1', 'date': DAY, 'sources': manifest['sources'] + [manifest_record]})
+    body = encode({'version': 'noon-snapshot-v1', 'date': DAY, 'sources': manifest['sources'] + [manifest_record],
+        'sector_memberships': {'version': 'noon-sector-memberships-v1', 'items': {}, 'omitted_count': 1,
+                               'reason': '合成未知名单，用于验证新增正文随原午评备份'}})
     db = sqlite3.connect(source / 'business/app.sqlite3')
     db.execute('PRAGMA foreign_keys=ON'); db.execute('PRAGMA recursive_triggers=ON'); db.execute('PRAGMA busy_timeout=10000')
     db.executescript((ROOT / 'backend/app/migrations/027_noon_snapshots.sql').read_text())
@@ -63,6 +65,9 @@ def test_standard_backup_restore_retains_noon_sql_and_exact_sources(noon_source,
     connection = sqlite3.connect(target / 'business/app.sqlite3'); connection.row_factory = sqlite3.Row
     assert inventory(connection, target / 'raw')[record['path']]['stored_sha256'] == record['stored_sha256']
     assert connection.execute('SELECT count(*) FROM market_noon_capture').fetchone()[0] == 1
+    frozen = connection.execute('SELECT payload_json,content_sha256 FROM market_noon_snapshot').fetchone()
+    assert json.loads(frozen['payload_json'])['sector_memberships']['omitted_count'] == 1
+    assert sha256(frozen['payload_json'].encode()).hexdigest() == frozen['content_sha256']
     connection.close()
 
 

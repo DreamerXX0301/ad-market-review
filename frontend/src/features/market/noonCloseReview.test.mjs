@@ -31,11 +31,24 @@ const row = { instrument_id: "000001.SZ", name: "合成核验股", board: "main"
 const table = (rows, availableFields) => renderToStaticMarkup(createElement(CloseRowsTable, { rows, availableFields, date: day, onStock(){}, sort: "afternoon_change_pct", direction: "desc", onSort(){} }));
 const opening = table([row]);
 assert.match(opening, /class="down">午间封板 → 收盘未封/);
-assert.match(opening, /class="up">\+4\.20%/);
+assert.match(opening, /class="noon-close-day-change up">\+4\.20%/);
 assert.match(opening, /class="down">-5\.27%/);
 assert.ok(opening.includes("查看截至2026-10-28的已发布收盘K线"));
 assert.ok(opening.includes("000001") && opening.includes("主板") && opening.includes("合成行业"));
 assert.ok(opening.includes('aria-sort="descending"'));
+const bodyCells=[...opening.matchAll(/<td([^>]*)>([\s\S]*?)<\/td>/g)];
+assert.equal(bodyCells.length,8,"all eight columns stay aligned");
+assert.ok(bodyCells[4][2].includes("+10.00%") && bodyCells[5][2].includes("+4.20%") && bodyCells[6][2].includes("-5.27%"),"noon, final daily and afternoon values are not swapped");
+
+const headers = [...opening.matchAll(/<th([^>]*)>([\s\S]*?)<\/th>/g)];
+for (const title of ["午间涨幅", "今日收盘涨幅", "午后涨跌幅"]) assert.equal(headers.filter(match => match[2].includes(title)).length, 1, title + " has its own header");
+assert.ok(headers.find(match => match[2].includes("今日收盘涨幅"))[2].includes("收盘回看按今日收盘涨幅降序"));
+const finalSorted = renderToStaticMarkup(createElement(CloseRowsTable, { rows:[row], date:day, sort:"close_change_pct", direction:"asc", onSort(){} }));
+const finalHeaders = [...finalSorted.matchAll(/<th([^>]*)>([\s\S]*?)<\/th>/g)];
+assert.equal(finalHeaders.filter(match => match[1].includes("aria-sort")).length,1,"only the actual final-return column owns the sort indicator");
+assert.ok(finalHeaders.find(match=>match[2].includes("今日收盘涨幅"))[1].includes('aria-sort="ascending"'));
+assert.ok(!finalHeaders.find(match=>match[2].includes("午间 → 收盘"))[1].includes("aria-sort"),"event status is not a numeric return sort header");
+
 const flat = table([{ ...row, close_state: "limit_up", transition: "kept", final_board_count: 5, close_price: 11, close_change_pct: 10, afternoon_change_pct: 0 }]);
 assert.match(flat, /class="muted">0\.00%/);
 assert.ok(flat.includes("收盘5板") && !flat.includes("确认断板"));
@@ -44,6 +57,12 @@ assert.ok(heightConflict.includes("来源7板 · 关系待核验") && heightConf
 const missing = table([{ ...row, close_state: "unknown", transition: "unknown", close_price: null, close_change_pct: null, afternoon_change_pct: null }]);
 assert.match(missing, /class="close-warn">结果待核验/);
 assert.ok(!missing.includes(">0.00%</"), "missing closing prices never become zero return");
+assert.ok(missing.includes('class="noon-close-day-change muted">—</td>'), "missing final daily return stays explicitly visible as unknown");
+const unavailableHeaders=[...table([{...row,noon_change_pct:null,close_change_pct:null}],[]).matchAll(/<th([^>]*)>([\s\S]*?)<\/th>/g)];
+assert.ok(!unavailableHeaders.find(match=>match[2].includes("今日收盘涨幅"))[1].includes("hidden"),"a wholly unknown final return still has a clear place, not silently omitted");
+const stockObservation=renderToStaticMarkup(createElement(CloseObservation,{date:day,onStock(){},row:{label:"合成股票观察",text:"原文不自动判定",objective:[row]}}));
+assert.ok(stockObservation.includes('aria-label="原关注客观收盘结果"') && stockObservation.includes("今日收盘涨幅") && stockObservation.includes('class="noon-close-day-change up">+4.20%</td>'));
+
 const missingPage = [{ ...row, close_state:"unknown", transition:"unknown", afternoon_change_pct:null, close_amount:null }];
 const fullScopeField = table(missingPage,["afternoon_change_pct"]);
 const column = [...fullScopeField.matchAll(/<th([^>]*)>([\s\S]*?)<\/th>/g)].find(match=>match[2].includes("午后涨跌幅"));

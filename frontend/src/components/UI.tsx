@@ -32,6 +32,8 @@ import type { Row } from "../lib/api";
 import { isHiddenIndicatorField } from "../lib/indicatorVisibility";
 import { isSortValue, sortTableRows } from "./tableSort";
 import type { SortValue, TableSort } from "./tableSort";
+import { availableSortLevels, sortTableRowsByLevels } from "./multiTableSort";
+import MultiSortControls from "./MultiSortControls";
 import { canRestoreModalFocus, createModalLayers } from "./modalLayers";
 import CopyStockCode from "./CopyStockCode";
 const modalLayers = createModalLayers();
@@ -440,6 +442,8 @@ export function Table({
   onSelect,
   rowKey,
   sorting = "auto",
+  multiSort = false,
+  multiDefaultSort = [],
 }: {
   rows: Row[];
   columns: Column[];
@@ -454,11 +458,17 @@ export function Table({
   rowKey?: string;
   /** external: the caller already sorts the full server-side result. */
   sorting?: "auto" | "local" | "external" | "none";
+  /** Opt-in client sorting across all loaded rows, before pagination. */
+  multiSort?: boolean;
+  multiDefaultSort?: TableSort[];
 }) {
   rows = rows.filter((row) => !isHiddenIndicatorField(row.field));
   columns = columns.filter((column) => !isHiddenIndicatorField(column.key));
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<TableSort | null>(null);
+  const [sortLevels, setSortLevels] = useState<TableSort[]>(() => [
+    ...multiDefaultSort,
+  ]);
   const customHeadings = columns.some(
     (column) =>
       column.title != null &&
@@ -477,14 +487,40 @@ export function Table({
       (rows.some((row) => row[column.key] != null) &&
         rows.every((row) => isSortValue(row[column.key]))));
   const sortColumn = columns.find((column) => column.key === sort?.key);
+  const sortChoices = multiSort && localSorting ? columns.filter(sortable) : [];
+  const activeLevels = availableSortLevels(
+    sortLevels,
+    sortChoices.map((column) => column.key),
+  );
+  const activeSorts = multiSort ? activeLevels : sort ? [sort] : [];
+  const sortSignature = activeSorts
+    .map((level) => `${level.key}:${level.order}`)
+    .join("|");
+  const sortColumns = new Map(
+    sortChoices.map((column) => [column.key, column]),
+  );
   const sorted =
-    sort && sortColumn && sortable(sortColumn)
-      ? sortTableRows(rows, sort, (row) =>
-          sortColumn.sortValue
-            ? sortColumn.sortValue(row)
-            : row[sortColumn.key],
+    multiSort && localSorting
+      ? sortTableRowsByLevels(
+          rows,
+          activeLevels,
+          (row, key) => {
+            const column = sortColumns.get(key)!;
+            return column.sortValue ? column.sortValue(row) : row[key];
+          },
+          (row) =>
+            [
+              row.instrument_id || row.topic_code || row.name || "",
+              row[rowKey || "round_id"] || row.event_id || "",
+            ].join("\u0000"),
         )
-      : rows;
+      : sort && sortColumn && sortable(sortColumn)
+        ? sortTableRows(rows, sort, (row) =>
+            sortColumn.sortValue
+              ? sortColumn.sortValue(row)
+              : row[sortColumn.key],
+          )
+        : rows;
   const rowSignature = rows
     .map(
       (r, i) =>
@@ -502,7 +538,7 @@ export function Table({
         String(r.business_date || r.date || r.entry_date || ""),
     )
     .join("|");
-  useEffect(() => setPage(0), [rowSignature, sort?.key, sort?.order]);
+  useEffect(() => setPage(0), [rowSignature, sortSignature]);
   const safePage = Math.min(
     page,
     Math.max(0, Math.ceil(rows.length / pageSize) - 1),
@@ -513,6 +549,23 @@ export function Table({
     return <Empty title={emptyTitle} description={emptyDescription} />;
   return (
     <>
+      {multiSort && localSorting && (
+        <MultiSortControls
+          levels={activeLevels}
+          choices={sortChoices.map((column) => ({
+            key: column.key,
+            label: String(column.title || label[column.key] || column.key),
+          }))}
+          onChange={(levels) => {
+            setSortLevels(levels);
+            setPage(0);
+          }}
+          onReset={() => {
+            setSortLevels([...multiDefaultSort]);
+            setPage(0);
+          }}
+        />
+      )}
       <div className="table-wrap">
         <table>
           <thead>
@@ -525,8 +578,8 @@ export function Table({
                   className={c.align === "right" ? "text-right" : ""}
                   aria-sort={
                     sortable(c)
-                      ? sort?.key === c.key
-                        ? sort?.order === "asc"
+                      ? activeSorts[0]?.key === c.key
+                        ? activeSorts[0]?.order === "asc"
                           ? "ascending"
                           : "descending"
                         : "none"
@@ -535,9 +588,13 @@ export function Table({
                 >
                   {sortable(c)
                     ? (() => {
-                        const active = sort?.key === c.key;
+                        const priority = activeSorts.findIndex(
+                          (level) => level.key === c.key,
+                        );
+                        const active = priority >= 0;
+                        const order = activeSorts[priority]?.order;
                         const Icon = active
-                          ? sort?.order === "asc"
+                          ? order === "asc"
                             ? ArrowUp
                             : ArrowDown
                           : ArrowUpDown;
@@ -556,31 +613,36 @@ export function Table({
                             }}
                             title={[
                               c.description,
-                              "按原始值排序全部已加载记录后分页；未知值始终排末",
+                              multiSort
+                                ? "点击切为单项排序；多条件排序可在上方设置；未知值排末"
+                                : "按原始值排序全部已加载记录后分页；未知值始终排末",
                             ]
                               .filter(Boolean)
                               .join("\n")}
                             aria-label={
                               "按" +
                               String(caption) +
-                              (active && sort?.order === "desc"
-                                ? "升序"
-                                : "降序") +
+                              (active && order === "desc" ? "升序" : "降序") +
                               "排列"
                             }
                             onClick={() => {
-                              setSort({
+                              const next: TableSort = {
                                 key: c.key,
                                 order:
-                                  active && sort?.order === "desc"
-                                    ? "asc"
-                                    : "desc",
-                              });
+                                  active && order === "desc" ? "asc" : "desc",
+                              };
+                              if (multiSort) setSortLevels([next]);
+                              else setSort(next);
                               setPage(0);
                             }}
                           >
                             {caption}
                             <Icon size={12} />
+                            {multiSort && active && (
+                              <small className="table-sort-priority">
+                                {priority + 1}
+                              </small>
+                            )}
                           </button>
                         );
                       })()

@@ -279,15 +279,22 @@ def execute_check(job):
         raise
 
 
-def list_alerts(as_of=None,limit=100):
+def list_alerts(as_of=None,limit=100,scope='all'):
     if not isinstance(limit,int) or isinstance(limit,bool) or not 1<=limit<=1000:raise HTTPException(422,'提醒条数需1至1000')
+    if scope not in ('all','today','history'):raise HTTPException(422,'提醒范围需为today、history或all')
     with connect() as connection:
         clock=connection.execute('SELECT business_date FROM business_clock WHERE singleton=1').fetchone();day=clock[0] if clock else None
         if as_of is not None and (not _date(as_of) or not day or as_of>day):raise HTTPException(422,'提醒观察日期需要是不晚于业务日的有效日期')
         observed=as_of or day
-        items=[json.loads(row[0]) for row in connection.execute('SELECT event_json FROM line_alert_event WHERE trade_date<=? ORDER BY trade_date DESC,created_at_ms DESC,event_id DESC LIMIT ?',(observed or '',limit))]
-        total=connection.execute('SELECT count(*) FROM line_alert_event WHERE trade_date<=?',(observed or '',)).fetchone()[0]
-        latest=connection.execute('SELECT * FROM line_alert_check WHERE business_date<=? ORDER BY checked_at_ms DESC LIMIT 1',(observed or '',)).fetchone()
+        if scope=='today' and observed!=day:raise HTTPException(422,'今日提醒固定使用最新已发布业务日；回看请切换历史')
+        predicate='trade_date=?' if scope=='today' else 'trade_date<=?'
+        values=[observed or '']
+        if scope=='history':predicate+=' AND trade_date<?';values.append(day or '')
+        items=[json.loads(row[0]) for row in connection.execute('SELECT event_json FROM line_alert_event WHERE '+predicate+' ORDER BY trade_date DESC,created_at_ms DESC,event_id DESC LIMIT ?',[*values,limit])]
+        total=connection.execute('SELECT count(*) FROM line_alert_event WHERE '+predicate,values).fetchone()[0]
+        today_total=connection.execute('SELECT count(*) FROM line_alert_event WHERE trade_date=?',(day or '',)).fetchone()[0]
+        history_total=connection.execute('SELECT count(*) FROM line_alert_event WHERE trade_date<? AND trade_date<=?',(day or '',observed or '')).fetchone()[0]
+        latest=connection.execute('SELECT * FROM line_alert_check WHERE '+predicate.replace('trade_date','business_date')+' ORDER BY checked_at_ms DESC LIMIT 1',values).fetchone()
         unknowns=[];latest_view=None
         if latest:
             frozen_row=connection.execute('SELECT parameters_json,status FROM job WHERE job_id=?',(latest['job_id'],)).fetchone()
@@ -301,8 +308,21 @@ def list_alerts(as_of=None,limit=100):
             cleanup=retention.checkpoint(connection,latest['job_id'])
             if cleanup:latest_view['cleanup']=cleanup
             unknowns=[{'instrument_id':frozen.get(row['annotation_id']),'annotation_id':row['annotation_id'],'trade_date':row['trade_date'],'reason':row['reason']} for row in connection.execute("SELECT e.annotation_id,e.reason,e.trade_date,a.instrument_id FROM line_alert_evaluation e LEFT JOIN chart_annotation a USING(annotation_id) WHERE e.job_id=? AND e.state='unknown' ORDER BY e.annotation_id,e.rule",(latest['job_id'],))]
-        return {'items':items,'total':total,'business_date':day,'rules_total':sum(len(rule['alert_modes']) for rule in active_rules(connection)),
+        return {'items':items,'total':total,'business_date':day,'as_of':observed,'scope':scope,'today_total':today_total,'history_total':history_total,'rules_total':sum(len(rule['alert_modes']) for rule in active_rules(connection)),
                 'latest_check':latest_view,'unknowns':unknowns}
+
+
+def alert_summary():
+    """Bounded SQLite-only header badge; never evaluates rules or reads行情."""
+    with connect() as connection:
+        clock=connection.execute('SELECT business_date FROM business_clock WHERE singleton=1').fetchone()
+        day=clock[0] if clock else None
+        total=connection.execute('SELECT count(*) FROM line_alert_event WHERE trade_date=?',(day or '',)).fetchone()[0]
+        items=[]
+        for record in connection.execute('SELECT event_json FROM line_alert_event WHERE trade_date=? ORDER BY created_at_ms DESC,event_id DESC LIMIT 5',(day or '',)):
+            event=json.loads(record[0])
+            items.append({key:event.get(key) for key in ('event_id','instrument_id','code','name','rule','title','state','trade_date','created_at_ms')})
+        return {'business_date':day,'total':total,'items':items,'limit':5}
 
 
 def latest_by_stock(connection,identifiers,day):

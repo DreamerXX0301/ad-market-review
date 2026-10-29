@@ -17,9 +17,15 @@ def list_ids():
 
 
 @router.get('/line-alerts')
-def line_alerts(as_of: str | None = None, limit: int = Query(100, ge=1, le=1000)):
+def line_alerts(as_of: str | None = None, limit: int = Query(100, ge=1, le=1000), scope: str = 'all'):
     from app.services.line_alerts import list_alerts
-    return list_alerts(as_of, limit)
+    return list_alerts(as_of, limit, scope)
+
+
+@router.get('/line-alerts/summary')
+def line_alert_summary():
+    from app.services.line_alerts import alert_summary
+    return alert_summary()
 
 
 @router.post('/line-alerts/evaluate')

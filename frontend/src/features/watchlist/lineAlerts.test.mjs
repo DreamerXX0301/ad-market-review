@@ -473,6 +473,7 @@ const hotBrowseURL = await compile("../../components/HotBrowseFilter.tsx", {
   ),
 });
 const watchURL = await compile("./Watchlist.tsx", {
+  "./lineAlertNotification": encoded("export const LINE_ALERTS_OPEN='workbench-open-today-line-alerts';"),
   "../../lib/api": watchApi,
   "../../components/UI": ui,
   "../../lib/format": encoded(

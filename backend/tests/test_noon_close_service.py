@@ -105,17 +105,25 @@ def test_persist_idempotent_small_read_and_corrected_append(isolated, monkeypatc
 
 
 @pytest.mark.parametrize('direction', ['asc', 'desc'])
-def test_cursor_stable_null_last_and_filter_bound(isolated, monkeypatch, direction):
-    owner, _, close = populate(monkeypatch, 11)
+@pytest.mark.parametrize('sort', ['afternoon_change_pct', 'close_change_pct', 'noon_change_pct'])
+def test_cursor_stable_null_last_and_filter_bound(isolated, monkeypatch, direction, sort):
+    payload, close = facts(11)
     close['stocks'][-1]['volume'] = 0
+    if sort == 'noon_change_pct':
+        payload['stocks'][-1].update(prev_close=None, change_pct=None)
+    capture(payload)
+    owner = job('fixture-increment'); publication(owner['job_id'])
+    monkeypatch.setattr(inputs, 'load_inputs', lambda generation, day, noon: (close, {'kind': 'derived-same-day-projection', 'source_snapshot_id': generation}))
     service.after_increment(owner)
     review_id = service.read_view(DAY)['review']['review_id']; cursor = None; seen = []
     while True:
-        page = service.read_items(DAY, review_id=review_id, section='all', sort='afternoon_change_pct', direction=direction, limit=3, cursor=cursor)
+        page = service.read_items(DAY, review_id=review_id, section='all', sort=sort, direction=direction, limit=3, cursor=cursor)
         seen.extend(page['items']); cursor = page['next_cursor']
         if not cursor: break
     assert len(seen) == 11 and len({r['instrument_id'] for r in seen}) == 11
-    assert seen[-1]['afternoon_change_pct'] is None
+    assert seen[-1][sort] is None
+    observed = [row[sort] for row in seen if row[sort] is not None]
+    assert observed == sorted(observed, reverse=direction == 'desc')
     page = service.read_items(DAY, section='all', limit=2)
     with pytest.raises(HTTPException) as error:
         service.read_items(DAY, section='all', board='main', limit=2, cursor=page['next_cursor'])

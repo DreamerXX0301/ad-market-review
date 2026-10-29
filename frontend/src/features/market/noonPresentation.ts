@@ -186,7 +186,12 @@ export function noonSectorSelection(
     published.filter((day) => noonInitialDate(`#noon?date=${day}`) === day),
     capturedDay,
   );
-  if (!date) return null;
+  const snapshotId =
+    typeof row.noon_members_snapshot_id === "string" &&
+    /^noon_[0-9a-f]{32}$/.test(row.noon_members_snapshot_id)
+      ? row.noon_members_snapshot_id
+      : null;
+  if (!date && !snapshotId) return null;
   return {
     topic: {
       ...row,
@@ -195,10 +200,13 @@ export function noonSectorSelection(
       topic_code: code,
       topic_id: `fuyao-${code}`,
       noon_snapshot_date: capturedDay,
-      noon_chart_as_of: date,
-      noon_scope_notice: `来自${capturedDay}午评；详情使用最晚截至${date}的已发布盘后行情，午间报价与成员汇总仍以午评快照为准，成员名单按指定日独立核验`,
+      noon_chart_as_of: date || undefined,
+      ...(snapshotId ? { noon_members_snapshot_id: snapshotId } : {}),
+      noon_scope_notice: snapshotId
+        ? `来自${capturedDay}午评；成员价格使用同份午间快照，历史图与形成中报价分开展示`
+        : `来自${capturedDay}午评；详情使用最晚截至${date}的已发布盘后行情，午间报价与成员汇总仍以午评快照为准，成员名单按指定日独立核验`,
     },
-    date,
+    date: date || capturedDay,
     view,
   };
 }

@@ -471,3 +471,34 @@ def test_market_join_5600_rows_keeps_only_union_focus_not_all_prices():
     assert len(result['items']) == 3
     assert result['summary']['breadth']['common']['afternoon']['mean_pct'] == pytest.approx(1)
     assert len(json.dumps(result).encode()) < 50000
+
+
+@pytest.mark.parametrize('closing_price', [11, 10, 9, None])
+def test_focus_summaries_expose_same_day_daily_returns_without_replacing_noon(closing_price):
+    noon, close, ids = fixture()
+    noon['afternoon_observations'] = [{'instrument_id': ids[0], 'text': '合成原关注', 'recorded_at_ms': 123}]
+    if closing_price is None:
+        # A later day's real quote cannot backfill this day's saved comparison.
+        close['stocks'][0]['date'] = '2026-10-29'
+    else:
+        close['stocks'][0].update(close=closing_price, change_pct=(closing_price / 10 - 1) * 100)
+    before = deepcopy((noon, close))
+    result = build_close_review(noon, close)
+    assert (noon, close) == before
+    item = indexed(result)[ids[0]]
+    original = next(row for row in result['observations'] if row.get('key') == 'noon_observation_0')['objective'][0]
+    leader = result['summary']['leaders']['amount'][0]
+    for summary_row in (original, leader):
+        assert summary_row['name'] == item['name']
+        assert summary_row['noon_change_pct'] == item['noon_change_pct'] == pytest.approx(10)
+        assert summary_row['close_change_pct'] == item['close_change_pct']
+        assert summary_row['afternoon_change_pct'] == item['afternoon_change_pct']
+        if closing_price is None:
+            assert summary_row['close_change_pct'] is None
+        else:
+            assert summary_row['close_change_pct'] == pytest.approx((closing_price / 10 - 1) * 100)
+    for summary_rows in result['summary']['leaders'].values():
+        for summary_row in summary_rows:
+            full = indexed(result)[summary_row['instrument_id']]
+            assert summary_row['noon_change_pct'] == full['noon_change_pct']
+            assert summary_row['close_change_pct'] == full['close_change_pct']

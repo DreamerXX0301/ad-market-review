@@ -57,6 +57,8 @@ def create_task(kind: str, parameters: dict, target_date: str | None = None, req
     logical_key = digest({"kind": kind, "target_date": target_date, "parameters": parameters})
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
+        from .automatic_tasks import guard_creation
+        guard_creation(connection)
         from .increment_access import business_http_request
         from . import sync_progress
         locked = sync_progress.lock_record(connection)

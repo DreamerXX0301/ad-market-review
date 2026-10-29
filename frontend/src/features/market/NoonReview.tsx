@@ -1854,7 +1854,18 @@ export default function NoonReview({
                   boardFilter={boardFilter}
                   onStock={onStock}
                   chartDate={chartDate}
-                  onSector={onSector}
+                  onSector={
+                    onSector
+                      ? (row, view) =>
+                          onSector(
+                            {
+                              ...row,
+                              noon_members_snapshot_id: snapshot.snapshot_id,
+                            },
+                            view,
+                          )
+                      : undefined
+                  }
                 />
                 <div className="noon-main-grid">
                   <div className="noon-column">

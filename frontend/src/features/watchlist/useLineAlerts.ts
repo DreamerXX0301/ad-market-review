@@ -16,7 +16,7 @@ import {
   WATCHLIST_CHANGED,
 } from "./watchlistStore";
 
-export function useLineAlerts(asOf?: string) {
+export function useLineAlerts(asOf?: string, scope = "all", limit = 100) {
   const [active, setActive] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -26,7 +26,7 @@ export function useLineAlerts(asOf?: string) {
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const observedCompletions = useRef(new Set<string>());
-  const path = `/watchlist/line-alerts?limit=100${asOf ? `&as_of=${encodeURIComponent(asOf)}` : ""}`;
+  const path = `/watchlist/line-alerts?limit=${limit}${asOf ? `&as_of=${encodeURIComponent(asOf)}` : ""}${scope === "all" ? "" : `&scope=${scope}`}`;
   const result = useApi<Row>(active ? path : null);
   useEffect(() => {
     const accepted = activity.tasks.find(

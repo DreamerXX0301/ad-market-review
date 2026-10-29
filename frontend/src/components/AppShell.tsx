@@ -33,6 +33,7 @@ import ActiveTaskBanner from "./ActiveTaskBanner";
 import { Badge } from "./UI";
 import "./Brand.css";
 import "./AppShell.css";
+import LineAlertNotice from "../features/watchlist/LineAlertNotice";
 export const navigation = [
   {
     label: "盘面研究",
@@ -269,6 +270,7 @@ export default function AppShell({
                       : "未初始化")}
               </div>
             )}
+            <LineAlertNotice businessDate={dataDate} onNavigate={onNavigate} />
             <button className="avatar" title="本机个人研究空间">
               本
             </button>

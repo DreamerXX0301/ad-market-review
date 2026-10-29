@@ -32,6 +32,8 @@
 逐股行含`instrument_id,name,board,board_label,noon_state,close_state,transition,previous_board_count,final_board_count,relay_state,noon_price,close_price,noon_change_pct,close_change_pct,afternoon_change_pct,change_pct_points,noon_amount,close_amount,amount_delta,industries,topics,classification_keys,source_reason,sections,day_events`。状态为`limit_up/limit_break/limit_down/not_listed/unknown/conflict`；未入池必须有充分覆盖证据，缺报不能视为未封。
 
 - `afternoon_change_pct=(close_price/noon_price-1)*100`；必须同代码同日、正价和口径一致。日涨幅之差只叫`change_pct_points`，单位是百分点。
+- 股票明细、原关注客观结果、固定午间成交额与热榜回看均独立显示`noon_change_pct`（午间涨幅）、`close_change_pct`（今日收盘涨幅）、`afternoon_change_pct`（午后涨跌幅），按各自字段排序；今日指本份回看的固定观察日，不是当前系统最新日。日涨幅列即使本范围全未知也保留并显示—；不能用午后收益、日涨幅变化百分点或后续日期报价补填。主明细沿用固定review_id的服务器排序及游标，原关注/榜单只对已返回的小名单排序且保留午间原排名。
+- 新核验的`summary.leaders`各榜单行与`observations[].objective`复用同日完整逐股核验的午间/收盘涨幅；不新增来源请求或修改既有已保存版本。旧摘要没有这两个字段时仍显示未知，其完整同版本明细可查。原午评工作台及其昨日接力列表继续显示该快照的午间涨幅，不把收盘结果回填午间事实。
 - 成交额差仅在同来源、同币种单位及相同累计范围可核验时计算。负差/口径变化保留未知及原因；逐条时刻不足时标“快照后新增成交额”，不称精确午后成交额或净流入。
 - 午间未封不叫断板。昨日N板、今日收盘涨停且真实N+1板证据一致才确认晋级；收盘未涨停已确认才可确认断板。没有板数字段不猜高度，不解析几天几板替代连续板数。
 - 收盘最终封板状态与全天曾炸板事件分开。仅在来源明确声明炸板字段为日内事件时可与收盘涨停并存；来源语义未知或互斥终态冲突须保留unknown/conflict。

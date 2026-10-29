@@ -1118,9 +1118,24 @@ try {
         ascending.at(-1).change_pct <= next.items[0].change_pct),
   );
   check(
-    "manual sync configuration",
+    "sync and opt-in automatic configuration",
     typeof data.sync_configuration?.ready === "boolean" &&
-      data.automatic_schedule === false,
+      typeof data.automatic_schedule === "boolean",
+  );
+  const automatic = await get("/settings/automatic-tasks");
+  check(
+    "automatic settings match data status and preserve explicit activation",
+    automatic.timezone === "Asia/Shanghai" &&
+      Number.isSafeInteger(automatic.revision) &&
+      automatic.revision >= 0 &&
+      [automatic.noon, automatic.after_close].every(
+        (item) =>
+          typeof item?.enabled === "boolean" &&
+          typeof item.time === "string" &&
+          /^\d{2}:\d{2}$/.test(item.time),
+      ) &&
+      data.automatic_schedule ===
+        (automatic.noon.enabled || automatic.after_close.enabled),
   );
   const sources = await get("/sources");
   page("data sources", sources);
