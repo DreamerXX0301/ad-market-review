@@ -105,7 +105,13 @@ GET验正文SHA及每份来源原件SHA、大小、参数、时窗和sources闭�
 
 只对最多100个原代码请求同日已发布历史范围，要求唯一同日、同来源、人民币未复权OHLC及正成交量。缺日、重复、停牌或价形不符保持未知。开盘价与竞价价偏差超过0.011元时单列 `mismatch`，不纳入汇总。
 
-每行包含 `auction_price,auction_pct,open,close,high,low,auction_to_close_pct,open_check,state,reason`。`auction_to_close_pct=(close/auction_price-1)×100` 只称“竞价至收盘价差”，不称实际收益。汇总 `requested,valid,missing,above_auction,below_auction,flat,median_auction_to_close_pct,open_mismatch`，未知不填0。这不是可实现收益、胜率或策略回测，未假设竞价能成交，未纳入费用、滑点和交易限制。
+每行包含 `auction_price,auction_pct,pre_close_price,open,close,high,low,close_pct,close_pct_reason,auction_to_close_pct,open_check,state,reason`。`pre_close_price`仅用原冻结竞价来源前收；`close_pct=(close/pre_close_price-1)×100`，缺前收不按竞价价和竞价涨幅反推。`auction_to_close_pct=(close/auction_price-1)×100`只称“竞价至收盘价差/变化”，不称实际收益。开盘不一致等非`observed`行保留实际开收价格，不进入上述涨幅均值。
+
+汇总保留`requested,valid,missing,above_auction,below_auction,flat,median_auction_to_close_pct,open_mismatch`，另含`average_close_pct,close_valid_count,close_missing_count,average_auction_to_close_pct`。两种均值分别只以各自可核验的有限数值为分母，未知不填0；缺前收不把原可比价差行降级。这不是可实现收益、胜率或策略回测，未假设竞价能成交，未纳入费用、滑点和交易限制。
+
+`groups`复用同一纯`auction-feedback-v1`对原正文得到的盘前分类及成员，不用收盘结果改组。每组含`key,title,interpretation,count,valid_count,missing_count,open_mismatch,close_valid_count,close_missing_count,average_auction_pct,average_close_pct,average_auction_to_close_pct,items`；行另保留盘前`previous_state,previous_board_count,auction_state`及可用的`opening_reference`。一字参考组置前，其余已核验强弱组按盘前均幅降序，未知事件/报价/冲突组统一放后；分组依据不足时以`unclassified`接住原唯一报价，不能漏股或按收盘涨跌重建背景。组内canonical竞价值沿用原反馈核验结果，未知报价不能在子集计算中重新变成有效值。
+
+收盘前或同日行情未发布时，仍给出原分组、股数与竞价均幅，收盘相关字段保持null；顶层`summary=None,items=[]`的待发布语义保留，且不得读取盘后行情。到期/未采集返回空组。前端以紧凑组表比较竞价均幅、收盘均涨幅、竞价至收盘均变化及各自有效覆盖，整行展开个股与可复制代码；行业概念点选只按原成员交集重算均值和顺序，隐藏全量汇总避免与子集混淆。表格固定列宽并在独立行展开，不扩宽整页。
 
 ## 验证
 

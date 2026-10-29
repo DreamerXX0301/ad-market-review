@@ -246,3 +246,21 @@ html=renderFeedback([...orderGroups.filter(group=>group.key!=='limit_up_open'),{
 assert.equal(cardOrder(html)[0],'limit_up_open','explicit priority remains pinned regardless of reference mean');
 assert.equal(JSON.stringify(orderGroups),orderBefore,'render ordering does not mutate API groups');
 console.log('Auction feedback order: pinned opening reference, descending means, zero/unknown/stable ties and subset reordering passed');
+
+const closeStock={instrument_id:'600001.SH',name:'合成盘后转弱甲',state:'observed',auction_state:'observed',auction_price:9.8,auction_pct:-2,pre_close_price:10,open:9.8,close:10.78,close_pct:7.8,auction_to_close_pct:10,open_check:'matched',reason:null};
+const groupedClose={version:'auction-close-review-v1',date:day,state:'partial',posthoc:true,items:[closeStock],summary:{requested:2,valid:1,missing:1,above_auction:1,below_auction:0,flat:0,median_auction_to_close_pct:10,open_mismatch:0,average_close_pct:7.8,average_auction_to_close_pct:10},groups:[{key:'weaken',title:'昨日涨停→今日低开',items:[closeStock],count:1,average_auction_pct:-2},{key:'unknown_quote',title:'本次竞价报价未知',items:[{instrument_id:'000001.SZ',name:'合成盘后缺失乙',state:'unknown',auction_state:'unknown',auction_pct:null,close_pct:null,auction_to_close_pct:null}],count:1}]};
+html=render(retained,{0:true},groupedClose);
+assert.match(html,/data-close-group="weaken"/);assert.match(html,/盘前分组/);
+assert.match(html,/收盘均涨幅/);assert.match(html,/竞价至收盘均变化/);assert.match(html,/\+7\.80%/);assert.match(html,/\+10\.00%/);
+assert.match(html,/aria-label="全部冻结股票盘后汇总"/);
+assert.doesNotMatch(html,/<th>原冻结股票<\/th>/,'the grouped comparison replaces the long ungrouped close table');
+assert.match(html,/读取盘后结果/,'manual refresh remains alongside grouped automatic results');
+html=render(retained,{0:true,7:{date:day,key:'fuyao:concept:886001.TI'}},groupedClose,null,day,selectableTopics);
+assert.doesNotMatch(html,/aria-label="全部冻结股票盘后汇总"/,'a filtered group comparison does not mix in full-universe aggregate metrics');
+assert.match(html,/合成盘后转弱甲/);assert.match(html,/data-associated="true"/);
+assert.doesNotMatch(html,/合成盘后缺失乙/,'the posthoc list shares the selected frozen membership intersection');
+const pendingGroups={...groupedClose,state:'pending',summary:null,items:[],groups:groupedClose.groups.map(group=>({...group,items:group.items.map(row=>({...row,state:'unknown',open:null,close:null,close_pct:null,auction_to_close_pct:null}))}))};
+html=render(retained,{0:true},pendingGroups);
+assert.match(html,/data-close-group="weaken"/,'the original group preview exists before close prices are published');
+assert.doesNotMatch(html,/\+7\.80%|\+10\.00%/,'pending data cannot invent closing performance');
+console.log('Auction grouped close integration: original groups, separate means, automatic/manual controls, selected membership and honest pending preview passed');

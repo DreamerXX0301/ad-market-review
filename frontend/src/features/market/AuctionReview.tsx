@@ -44,6 +44,7 @@ import AuctionCopyText from "./AuctionCopyText";
 import AuctionAssociationSummary from "./AuctionAssociationSummary";
 import AuctionPageNavigation from "./AuctionPageNavigation";
 import useAuctionCloseRefresh from "./useAuctionCloseRefresh";
+import AuctionCloseGroups from "./AuctionCloseGroups";
 import {
   beginAuctionRun,
   acceptAuctionRun,
@@ -205,6 +206,9 @@ export default function AuctionReview({
       closeReview!.summary.requested >= 0 &&
       auctionNumber(closeReview?.summary?.valid) != null &&
       closeReview!.summary.valid >= 0);
+  const hasCloseGroups =
+    closeReview?.version === "auction-close-review-v1" &&
+    noonRows(closeReview.groups).length > 0;
   const [codes, setCodes] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [pendingDay, setPendingDay] = useState("");
@@ -1341,109 +1345,178 @@ export default function AuctionReview({
                     )}
                   {closeReview && hasCloseFacts && (
                     <>
-                      <div className="auction-close-metrics">
-                        <span>
-                          可比{" "}
-                          <b>
-                            {integer(auctionNumber(closeReview.summary?.valid))}
-                          </b>{" "}
-                          /{" "}
-                          {integer(
-                            auctionNumber(closeReview.summary?.requested),
-                          )}
-                          只
-                        </span>
-                        <span>
-                          收盘高于 / 低于竞价{" "}
-                          <b className="up">
-                            {integer(
-                              auctionNumber(closeReview.summary?.above_auction),
-                            )}
-                          </b>{" "}
-                          /{" "}
-                          <b className="down">
-                            {integer(
-                              auctionNumber(closeReview.summary?.below_auction),
-                            )}
-                          </b>
-                          只
-                        </span>
-                        <span>
-                          价差中位数{" "}
-                          <b
-                            className={tone(
-                              auctionNumber(
-                                closeReview.summary
-                                  ?.median_auction_to_close_pct,
-                              ),
-                            )}
+                      {(!hasCloseGroups || !selectedAssociationIds) && (
+                        <div
+                          className="auction-close-metrics"
+                          aria-label="全部冻结股票盘后汇总"
+                        >
+                          <span>全部样本</span>
+                          <span
+                            title={`相对原竞价来源前收；有效${integer(auctionNumber(closeReview.summary?.close_valid_count))}只`}
                           >
-                            {percent(
-                              auctionNumber(
-                                closeReview.summary
-                                  ?.median_auction_to_close_pct,
-                              ),
+                            收盘均涨幅{" "}
+                            <b
+                              className={tone(
+                                auctionNumber(
+                                  closeReview.summary?.average_close_pct,
+                                ),
+                              )}
+                            >
+                              {percent(
+                                auctionNumber(
+                                  closeReview.summary?.average_close_pct,
+                                ),
+                              )}
+                            </b>
+                          </span>
+                          <span
+                            title={`相对原竞价价；可比${integer(auctionNumber(closeReview.summary?.valid))}只`}
+                          >
+                            竞价至收盘均变化{" "}
+                            <b
+                              className={tone(
+                                auctionNumber(
+                                  closeReview.summary
+                                    ?.average_auction_to_close_pct,
+                                ),
+                              )}
+                            >
+                              {percent(
+                                auctionNumber(
+                                  closeReview.summary
+                                    ?.average_auction_to_close_pct,
+                                ),
+                              )}
+                            </b>
+                          </span>
+                          <span>
+                            可比{" "}
+                            <b>
+                              {integer(
+                                auctionNumber(closeReview.summary?.valid),
+                              )}
+                            </b>{" "}
+                            /{" "}
+                            {integer(
+                              auctionNumber(closeReview.summary?.requested),
                             )}
-                          </b>
-                        </span>
-                        <span>
-                          开盘价不一致{" "}
-                          {integer(
-                            auctionNumber(closeReview.summary?.open_mismatch),
-                          )}
-                          只 · 缺失{" "}
-                          {integer(auctionNumber(closeReview.summary?.missing))}
-                          只
-                        </span>
-                      </div>
-                      <div className="auction-table-wrap">
-                        <table className="auction-table">
-                          <thead>
-                            <tr>
-                              <th>原冻结股票</th>
-                              <th>盘前参照</th>
-                              <th>竞价价（元）</th>
-                              <th>开盘（元）</th>
-                              <th>收盘（元）</th>
-                              <th>竞价至收盘价差</th>
-                              <th>核对状态</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {closeItems.map((row) => (
-                              <tr key={row.instrument_id}>
-                                <td>{identity(row)}</td>
-                                <td>
-                                  {percent(auctionNumber(row.auction_pct))}
-                                </td>
-                                <td>{num(auctionNumber(row.auction_price))}</td>
-                                <td>{num(auctionNumber(row.open))}</td>
-                                <td>{num(auctionNumber(row.close))}</td>
-                                <td
-                                  className={tone(
-                                    row.state === "observed"
-                                      ? auctionNumber(row.auction_to_close_pct)
-                                      : null,
-                                  )}
-                                >
-                                  {row.state === "observed"
-                                    ? percent(
-                                        auctionNumber(row.auction_to_close_pct),
-                                      )
-                                    : "—"}
-                                </td>
-                                <td className="auction-row-state">
-                                  {row.reason ||
-                                    (row.state === "observed"
-                                      ? "同日价格已核验"
-                                      : "待核验")}
-                                </td>
+                            只
+                          </span>
+                          <span>
+                            收盘高于 / 低于竞价{" "}
+                            <b className="up">
+                              {integer(
+                                auctionNumber(
+                                  closeReview.summary?.above_auction,
+                                ),
+                              )}
+                            </b>{" "}
+                            /{" "}
+                            <b className="down">
+                              {integer(
+                                auctionNumber(
+                                  closeReview.summary?.below_auction,
+                                ),
+                              )}
+                            </b>
+                            只
+                          </span>
+                          <span>
+                            价差中位数{" "}
+                            <b
+                              className={tone(
+                                auctionNumber(
+                                  closeReview.summary
+                                    ?.median_auction_to_close_pct,
+                                ),
+                              )}
+                            >
+                              {percent(
+                                auctionNumber(
+                                  closeReview.summary
+                                    ?.median_auction_to_close_pct,
+                                ),
+                              )}
+                            </b>
+                          </span>
+                          <span>
+                            开盘价不一致{" "}
+                            {integer(
+                              auctionNumber(closeReview.summary?.open_mismatch),
+                            )}
+                            只 · 缺失{" "}
+                            {integer(
+                              auctionNumber(closeReview.summary?.missing),
+                            )}
+                            只
+                          </span>
+                        </div>
+                      )}
+                      {!hasCloseGroups && (
+                        <div className="auction-table-wrap">
+                          <table className="auction-table">
+                            <thead>
+                              <tr>
+                                <th>原冻结股票</th>
+                                <th>盘前参照</th>
+                                <th>竞价价（元）</th>
+                                <th>开盘（元）</th>
+                                <th>收盘（元）</th>
+                                <th>竞价至收盘价差</th>
+                                <th>核对状态</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                            </thead>
+                            <tbody>
+                              {closeItems.map((row) => (
+                                <tr key={row.instrument_id}>
+                                  <td>{identity(row)}</td>
+                                  <td>
+                                    {percent(auctionNumber(row.auction_pct))}
+                                  </td>
+                                  <td>
+                                    {num(auctionNumber(row.auction_price))}
+                                  </td>
+                                  <td>{num(auctionNumber(row.open))}</td>
+                                  <td>{num(auctionNumber(row.close))}</td>
+                                  <td
+                                    className={tone(
+                                      row.state === "observed"
+                                        ? auctionNumber(
+                                            row.auction_to_close_pct,
+                                          )
+                                        : null,
+                                    )}
+                                  >
+                                    {row.state === "observed"
+                                      ? percent(
+                                          auctionNumber(
+                                            row.auction_to_close_pct,
+                                          ),
+                                        )
+                                      : "—"}
+                                  </td>
+                                  <td className="auction-row-state">
+                                    {row.reason ||
+                                      (row.state === "observed"
+                                        ? "同日价格已核验"
+                                        : "待核验")}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </>
+                  )}
+                  {hasCloseGroups && (
+                    <AuctionCloseGroups
+                      date={selected}
+                      view={closeReview}
+                      selectedIds={selectedAssociationIds}
+                      onStock={onStock}
+                      chartDate={chartDate}
+                    />
                   )}
                   <p className="auction-reading-note">
                     {closeReview?.notice ||

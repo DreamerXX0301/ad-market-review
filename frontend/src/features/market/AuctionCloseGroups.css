@@ -1,0 +1,198 @@
+.auction-close-groups {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.auction-close-groups-note,
+.auction-close-groups-empty {
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.auction-close-groups-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+.auction-close-group-table,
+.auction-close-group-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 11px;
+}
+.auction-close-group-table {
+  min-width: 690px;
+}
+.auction-close-group-table > thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface2);
+  color: var(--muted);
+  padding: 9px 10px;
+  font-weight: 500;
+  text-align: right;
+}
+.auction-close-group-table > thead > tr > th:first-child {
+  text-align: left;
+}
+.auction-close-group-row {
+  --close-group-color: var(--muted);
+  border-top: 1px solid var(--border-soft);
+}
+.auction-close-group-row.positive {
+  --close-group-color: var(--red);
+}
+.auction-close-group-row.negative {
+  --close-group-color: var(--green);
+}
+.auction-close-group-row.limit {
+  --close-group-color: var(--red);
+}
+.auction-close-group-row > td,
+.auction-close-group-row > th {
+  padding: 8px 10px;
+  text-align: right;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.auction-close-group-row > th {
+  text-align: left;
+}
+.auction-close-group-row.is-expandable {
+  cursor: pointer;
+}
+.auction-close-group-row.is-expandable:hover,
+.auction-close-group-row.is-open {
+  background: color-mix(in srgb, var(--close-group-color) 5%, transparent);
+}
+.auction-close-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--close-group-color);
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  cursor: inherit;
+}
+.auction-close-group-toggle:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.auction-close-group-toggle > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.auction-close-group-toggle svg {
+  flex: 0 0 auto;
+  transition: transform 0.15s;
+}
+.auction-close-group-toggle svg.is-open {
+  transform: rotate(90deg);
+}
+.auction-close-group-toggle small {
+  padding: 1px 3px;
+  border: 1px solid
+    color-mix(in srgb, var(--close-group-color) 30%, transparent);
+  border-radius: 3px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.auction-close-group-coverage {
+  color: var(--muted);
+  font-size: 10px;
+}
+.auction-close-group-coverage > span {
+  display: block;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.auction-close-group-table .auction-close-group-detail-row > td {
+  padding: 0;
+}
+.auction-close-group-detail-scroll {
+  width: 100%;
+  min-width: 0;
+  max-height: 290px;
+  overflow: auto;
+}
+.auction-close-group-detail-table {
+  min-width: 860px;
+}
+.auction-close-group-detail-table th,
+.auction-close-group-detail-table td {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-soft);
+  text-align: right;
+  font-weight: 400;
+  vertical-align: top;
+}
+.auction-close-group-detail-table th {
+  color: var(--muted);
+  background: var(--surface2);
+}
+.auction-close-group-detail-table th:first-child,
+.auction-close-group-detail-table td:first-child,
+.auction-close-group-detail-table th:last-child,
+.auction-close-group-detail-table td:last-child {
+  text-align: left;
+}
+.auction-close-group-stock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.auction-close-group-stock-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.auction-close-group-stock-name > .auction-stock {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auction-close-group-stock-name > .auction-copy-text {
+  flex: 0 0 auto;
+}
+.auction-close-group-stock .copy-stock-code {
+  font-size: 10px;
+}
+.auction-close-group-status {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.auction-close-group-detail-table tr.is-associated {
+  background: color-mix(in srgb, var(--blue) 6%, transparent);
+}
+.auction-close-group-detail-table tr.is-associated td:first-child {
+  box-shadow: inset 2px 0 var(--blue);
+}
+.auction-close-group-detail-note {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  background: var(--surface2);
+  font-size: 10px;
+  line-height: 1.6;
+}
