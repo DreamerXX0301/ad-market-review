@@ -216,3 +216,27 @@ assert.match(anchor,/<details open=""/);assert.match(anchor,/data-associated="tr
 html=renderFeedback([{...referenceLimit,state:'unknown',count:77,average_auction_pct:777}]);anchor=limitCard(html);
 assert.match(anchor,/待核验/);assert.doesNotMatch(anchor,/77只|777|合成涨停开参考甲|复制|<details/,'unknown state wins over unverified numeric or stock fields');
 console.log('Auction limit-open card: first position, visible reference boundary, real subset statistics, unknown preservation and existing selection highlights passed');
+
+const orderRow=(id,change)=>({instrument_id:`600${id}.SH`,name:`合成排序${id}`,auction_pct:change});
+const orderGroup=(key,average,items)=>({key,title:key,count:items.length,average_auction_pct:average,items});
+const orderGroups=[
+ orderGroup('weaken',-1,[orderRow('105',-1)]),
+ orderGroup('flat_limit_up',0,[orderRow('106',0)]),
+ orderGroup('repair',3,[orderRow('101',1),orderRow('102',5)]),
+ orderGroup('weak_continuation',null,[orderRow('108',null)]),
+ orderGroup('flat_limit_break',0,[orderRow('107',0)]),
+ orderGroup('continuation',2,[orderRow('103',4),orderRow('104',0)]),
+ referenceLimit,
+];
+const cardOrder=markup=>Array.from(markup.matchAll(/data-feedback-group="([^"]+)"/g),match=>match[1]);
+const orderBefore=JSON.stringify(orderGroups);
+html=renderFeedback(orderGroups);
+assert.deepEqual(cardOrder(html),['limit_up_open','repair','continuation','flat_limit_up','flat_limit_break','weaken','weak_continuation'],'card means descend with zero between positive and negative, missing last, equal means stable');
+html=renderFeedback(orderGroups,new Set(['600007.SH','600101.SH','600103.SH','600105.SH','600106.SH','600107.SH','600108.SH']));
+assert.deepEqual(cardOrder(html),['limit_up_open','continuation','repair','flat_limit_up','flat_limit_break','weaken','weak_continuation'],'selected subset means are recomputed before ordering');
+assert.match(html,/点选行业概念后同步重排/);
+assert.match(html,/<details open=""/);assert.match(html,/data-associated="true"/);
+html=renderFeedback([...orderGroups.filter(group=>group.key!=='limit_up_open'),{...referenceLimit,average_auction_pct:-100}]);
+assert.equal(cardOrder(html)[0],'limit_up_open','explicit priority remains pinned regardless of reference mean');
+assert.equal(JSON.stringify(orderGroups),orderBefore,'render ordering does not mutate API groups');
+console.log('Auction feedback order: pinned opening reference, descending means, zero/unknown/stable ties and subset reordering passed');

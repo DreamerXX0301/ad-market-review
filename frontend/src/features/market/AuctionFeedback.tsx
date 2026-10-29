@@ -72,18 +72,26 @@ export default function AuctionFeedback({
       : [],
     selectedIds,
   );
-  const groups = restrictedGroups.filter(
+  const visibleGroups = restrictedGroups.filter(
     (group) =>
       TYPES[group.key] &&
       (group.key === "limit_up_open" || (auctionNumber(group.count) || 0) > 0),
   );
+  const groups = [
+    ...visibleGroups.filter((group) => group.key === "limit_up_open"),
+    ...auctionSortRows(
+      visibleGroups.filter((group) => group.key !== "limit_up_open"),
+      "average_auction_pct",
+      "desc",
+    ),
+  ];
   const unknown = restrictedGroups.filter(
     (group) => !TYPES[group.key] && (auctionNumber(group.count) || 0) > 0,
   );
   return (
     <Panel
       title="昨日 → 今日：强弱对照"
-      subtitle="先看昨日事件，再看今日竞价相对昨收的定价。"
+      subtitle="一字涨停开置前，其余按竞价均幅由高到低；点选行业概念后同步重排。"
     >
       <AuctionAssociationSummary
         view={topicView}
