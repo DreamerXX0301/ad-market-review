@@ -79,16 +79,21 @@ def _run_view(connection, row):
     if result['job_id']:
         job = connection.execute('SELECT status FROM job WHERE job_id=?', (result['job_id'],)).fetchone()
         retained = connection.execute('SELECT 1 FROM market_auction_snapshot WHERE job_id=?', (result['job_id'],)).fetchone()
+        purged = connection.execute("SELECT 1 FROM market_auction_purge WHERE source_job_id=? AND status='purged'", (result['job_id'],)).fetchone()
         if retained:
             state = 'available'
+        elif purged:
+            state = 'purged'
         elif job and job['status'] in ('queued', 'running', 'paused', 'cancelled'):
             state = job['status']
         elif job and state != 'waiting_retry' and state not in ('skipped', 'expired'):
             state = 'failed'
     return {'date': result['trade_date'], 'job_id': result['job_id'], 'state': state,
             'attempts': result['attempts'], 'max_attempts': MAX_ATTEMPTS,
-            'retry_after_at_ms': result['retry_after_at_ms'], 'reason': result['reason'],
-            'automatic_control': bool(result['automatic_control']), 'schedule_revision': result['schedule_revision']}
+            'retry_after_at_ms': None if state == 'purged' else result['retry_after_at_ms'],
+            'reason': '竞价已超过28自然日保留窗口，正文及原件已清理；原日名额继续保留。' if state == 'purged' else result['reason'],
+            'automatic_control': False if state == 'purged' else bool(result['automatic_control']),
+            'schedule_revision': result['schedule_revision']}
 
 
 def _next_day(day):
@@ -109,7 +114,7 @@ def read_view():
         today_run = _run_view(connection, connection.execute('SELECT * FROM market_auction_automation_run WHERE trade_date=?', (today,)).fetchone())
     enabled = config['mode'] != 'off'
     if config['mode'] == 'once' and (config['trade_date'] < today or
-            today_run and today_run['state'] in ('available', 'failed', 'paused', 'cancelled', 'skipped', 'expired')):
+            today_run and today_run['state'] in ('available', 'purged', 'failed', 'paused', 'cancelled', 'skipped', 'expired')):
         enabled = False
     next_at = None
     if enabled:
@@ -287,6 +292,8 @@ def _reconcile(connection, run, config, current):
     job = connection.execute('SELECT * FROM job WHERE job_id=?', (run['job_id'],)).fetchone()
     if not job:
         return
+    if connection.execute("SELECT 1 FROM market_auction_purge WHERE source_job_id=? AND status='purged'", (run['job_id'],)).fetchone():
+        return
     retained = connection.execute('SELECT 1 FROM market_auction_snapshot WHERE job_id=?', (run['job_id'],)).fetchone()
     if retained:
         connection.execute("UPDATE market_auction_automation_run SET state='available',retry_after_at_ms=NULL,reason='竞价终态已留存，请查看结果',updated_at_ms=? WHERE trade_date=?", (stamp(current), run['trade_date']))
@@ -412,9 +419,11 @@ def activity_fields(connection, identifier, *, parameters=None):
     run = connection.execute('SELECT * FROM market_auction_automation_run WHERE job_id=?', (identifier,)).fetchone()
     if not run:
         return {}
+    view = _run_view(connection, run)
     if parameters is None:
         job = connection.execute('SELECT parameters_json FROM job WHERE job_id=?', (identifier,)).fetchone()
         parameters = json.loads(job['parameters_json']) if job else {}
-    return {'automatic': parameters.get('automatic') is True, 'automatic_control': bool(run['automatic_control']),
-            'automation_state': run['state'], 'retry_after_at_ms': run['retry_after_at_ms'],
+    return {'automatic': parameters.get('automatic') is True,
+            'automatic_control': False if view['state'] == 'purged' else bool(run['automatic_control']),
+            'automation_state': view['state'], 'retry_after_at_ms': view['retry_after_at_ms'],
             'attempts': run['attempts'], 'max_attempts': MAX_ATTEMPTS}

@@ -20,6 +20,7 @@ def _raw_connection(path: Path) -> sqlite3.Connection:
     connection.create_function("workspace_purge_allowed", 2, lambda *_: 0)
     connection.create_function("line_alert_expiry_allowed", 2, lambda *_: 0)
     connection.create_function("noon_purge_allowed", 1, lambda *_: 0)
+    connection.create_function("auction_purge_allowed", 1, lambda *_: 0)
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA recursive_triggers=ON")
     connection.execute("PRAGMA busy_timeout=10000")

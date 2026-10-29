@@ -216,10 +216,13 @@ def test_real_frozen_next_noon_fragment_does_not_create_permanent_retention_chai
     noon, closing = facts()
     expired, _, path = capture(day, payload=noon)
     owner = close_job('close-before-next-noon'); publication(owner['job_id'], day)
-    monkeypatch.setattr(noon_close_inputs, 'load_inputs', lambda *_: (closing, {'kind': 'derived-same-day-projection'}))
-    assert noon_close_service.after_increment(owner)['created'] == 1
     started = next_day + 'T11:31:00+08:00'
     known_at = int(datetime.fromisoformat(started).timestamp()*1000)
+    # The fixture review must exist before the fixed next-noon capture, even
+    # when this regression is run after that historical time in the real world.
+    monkeypatch.setattr(noon_close_service, 'now_ms', lambda: known_at - 3600000)
+    monkeypatch.setattr(noon_close_inputs, 'load_inputs', lambda *_: (closing, {'kind': 'derived-same-day-projection'}))
+    assert noon_close_service.after_increment(owner)['created'] == 1
     frozen = noon_close_context.freeze_previous_close_summary(day, known_at)
     assert frozen['state'] in ('retained', 'partial') and frozen['items']
     identifier = frozen['review_id']

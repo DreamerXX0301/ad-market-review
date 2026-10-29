@@ -1,0 +1,102 @@
+.auction-page-reader {
+  display: grid;
+  grid-template-columns: 142px minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  min-width: 0;
+}
+.auction-page-reader-empty {
+  grid-template-columns: minmax(0, 1fr);
+}
+.auction-page-reader-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.auction-page-reader-main [id] {
+  scroll-margin-top: var(--auction-directory-anchor-offset, 110px);
+}
+.auction-page-reader-main [tabindex="-1"]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 4px;
+}
+.auction-page-directory {
+  position: sticky;
+  top: var(--auction-directory-top, 99px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 14px 7px 9px;
+}
+.auction-page-directory > strong {
+  display: block;
+  padding: 0 9px 11px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.auction-page-directory > div {
+  display: grid;
+  gap: 4px;
+}
+.auction-page-directory button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: left;
+  cursor: pointer;
+}
+.auction-page-directory button > span {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.auction-page-directory button:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+.auction-page-directory button[aria-current="location"] {
+  color: var(--blue);
+  background: var(--blue-bg);
+  border-color: color-mix(in srgb, var(--blue) 30%, var(--border));
+}
+.auction-page-directory button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+@media (max-width: 1100px) {
+  .auction-page-reader {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .auction-page-directory {
+    top: var(--auction-directory-top, 93px);
+    z-index: 12;
+    padding: 5px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .auction-page-directory > div {
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+  }
+  .auction-page-directory button {
+    flex: 0 0 auto;
+    width: auto;
+    padding: 9px 11px;
+    white-space: nowrap;
+  }
+  .auction-page-directory > strong,
+  .auction-page-directory button > span {
+    display: none;
+  }
+}

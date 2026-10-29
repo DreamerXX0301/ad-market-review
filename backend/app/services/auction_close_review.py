@@ -98,7 +98,13 @@ def read_close_review(day):
         raise HTTPException(422, '竞价盘后核对日期须为YYYY-MM-DD形式的真实日期')
     with connect() as connection:
         row = connection.execute('SELECT * FROM market_auction_snapshot WHERE trade_date=?', (day,)).fetchone()
+        from app.services.auction_retention import retention_status
+        retention = retention_status(connection, day)
     if row is None:
+        if retention['purged']:
+            return {'version': VERSION, 'date': day, 'state': 'purged', 'items': [], 'summary': None,
+                    'reason': '竞价已超过28自然日保留窗口，正文及内嵌原件已清理；不倒造盘前记录。',
+                    'posthoc': True, 'notice': NOTICE, 'retention': retention}
         return {'version': VERSION, 'date': day, 'state': 'not_collected', 'items': [],
                 'summary': None, 'reason': '该日未留存盘前竞价，不使用开盘价倒造盘前记录。', 'posthoc': True, 'notice': NOTICE}
     from app.services.auction_integrity import validate_snapshot

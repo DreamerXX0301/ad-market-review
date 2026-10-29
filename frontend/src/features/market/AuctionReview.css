@@ -1188,3 +1188,9 @@
   border-radius: 4px;
   margin: 3px 0;
 }
+.auction-retention-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}

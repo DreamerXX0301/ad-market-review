@@ -90,6 +90,7 @@ export const auctionStates: Record<string, string> = {
   failed: "本次采集未完成",
   cancelled: "本日采集已取消",
   available: "已留存竞价",
+  purged: "已到期清理",
 };
 
 export function auctionCaptureState(
@@ -115,11 +116,13 @@ export function auctionCaptureState(
       disabled: true,
       label: auctionStates[view.state] || "本日已提交",
       reason:
-        view.state === "failed"
-          ? "窗口内可手动重试原任务；候选名单保持原样。"
-          : view.state === "available"
-            ? "本日竞价已冻结，历史查看只读取这份留存。"
-            : "沿用本日原任务，暂停和取消不会自动继续。",
+        view.state === "purged"
+          ? "该日竞价已到期清理，保留日台账，不重新采集历史竞价。"
+          : view.state === "failed"
+            ? "窗口内可手动重试原任务；候选名单保持原样。"
+            : view.state === "available"
+              ? "本日竞价已冻结，历史查看只读取这份留存。"
+              : "沿用本日原任务，暂停和取消不会自动继续。",
     };
   if (auctionAutomaticToday(automation || null) && date === automation?.today)
     return {

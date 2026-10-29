@@ -64,18 +64,21 @@ def _configured(connection):
 
 
 def _dates(connection):
-    return [{'date': row['trade_date'], 'state': 'available' if row['snapshot_id'] else row['status']}
-            for row in connection.execute('''SELECT c.trade_date,j.status,s.snapshot_id
+    return [{'date': row['trade_date'], 'state': 'available' if row['snapshot_id'] else 'purged' if row['purged'] else row['status']}
+            for row in connection.execute('''SELECT c.trade_date,j.status,s.snapshot_id,p.snapshot_id AS purged
               FROM market_auction_capture c JOIN job j ON j.job_id=c.job_id
               LEFT JOIN market_auction_snapshot s ON s.trade_date=c.trade_date
+              LEFT JOIN market_auction_purge p ON p.trade_date=c.trade_date AND p.status='purged'
               ORDER BY c.trade_date DESC LIMIT 20000''')]
 
 
 def list_dates():
     with connect() as connection:
         rows = _dates(connection)
+        from app.services.auction_retention import retention_status
+        retention = retention_status(connection)
     return {'today': now_china().date().isoformat(), 'items': rows,
-            'dates': [row['date'] for row in rows], 'total': len(rows)}
+            'dates': [row['date'] for row in rows], 'total': len(rows), 'retention': retention}
 
 
 def preparation_view(day, now):
@@ -141,7 +144,9 @@ def read_view(day=None):
         dates = _dates(connection)
         from app.services.auction_automation import activity_fields
         automatic = activity_fields(connection, ledger['job_id']) if ledger else {}
-    state = 'available' if retained else job['status'] if job else 'not_collected'
+        from app.services.auction_retention import retention_status
+        retention = retention_status(connection, day)
+    state = 'available' if retained else 'purged' if retention['purged'] else job['status'] if job else 'not_collected'
     can_retry = bool(window['allowed'] and configured and initialized and state == 'failed')
     waiting_retry = automatic.get('automation_state') == 'waiting_retry' and automatic.get('automatic_control') is True
     if waiting_retry:
@@ -150,6 +155,8 @@ def read_view(day=None):
     reason = window['reason']
     if ledger and retained:
         reason = '当天竞价终态已留存，不再次采集'
+    elif state == 'purged':
+        reason = '该日竞价已超过28自然日保留窗口，正文及内嵌原件已随成功增量清理；采集日账保留，不补造历史竞价。'
     elif state == 'cancelled':
         reason = '当天竞价任务已显式取消，不自动继续或创建第二个任务'
     elif ledger:
@@ -168,7 +175,8 @@ def read_view(day=None):
             **automatic,
             'task': tasks.task_view(ledger['job_id']) if ledger else None,
             'snapshot': _snapshot_view(retained), 'available_dates': dates,
-            'preparation': preparation_view(day, now) if retained is None else None,
+            'preparation': preparation_view(day, now) if retained is None and state != 'purged' else None,
+            'retention': retention,
             'scope': '手动冻结的最多100只观察股票竞价样本；不代表全市场，不产生策略或跟踪信号。'}
 
 
@@ -249,6 +257,8 @@ def requeue_capture(identifier, action):
             raise HTTPException(409, '竞价任务与原始日台账不一致')
         if connection.execute('SELECT 1 FROM market_auction_snapshot WHERE job_id=?', (identifier,)).fetchone():
             raise HTTPException(409, '当天竞价终态已留存，不再次采集')
+        if connection.execute("SELECT 1 FROM market_auction_purge WHERE source_job_id=? AND status='purged'", (identifier,)).fetchone():
+            raise HTTPException(409, '该日竞价正文已到期清理，永久日账保留，不补采历史竞价')
         if row['status'] == 'cancelled':
             raise HTTPException(409, '竞价任务已显式取消，当天不再创建或继续采集')
         if not capture_window(row['target_date'])['allowed']:
@@ -416,6 +426,9 @@ def execute_capture(job, callback=None):
         job = dict(saved)
     with connect() as connection:
         retained = connection.execute('SELECT 1 FROM market_auction_snapshot WHERE job_id=?', (job['job_id'],)).fetchone()
+        purged = connection.execute("SELECT 1 FROM market_auction_purge WHERE source_job_id=? AND status='purged'", (job['job_id'],)).fetchone()
+    if purged:
+        raise ValueError('该日竞价正文已到期清理，永久日账保留，不补采历史竞价')
     if retained:
         return _execute_capture(job, callback)
     from app.services import auction_automation as automatic
@@ -472,6 +485,9 @@ def _execute_capture(job, callback=None):
     with connect() as connection:
         retained = connection.execute('SELECT snapshot_id,quality FROM market_auction_snapshot WHERE job_id=?', (job['job_id'],)).fetchone()
         ledger = connection.execute('SELECT * FROM market_auction_capture WHERE trade_date=?', (day,)).fetchone()
+        purged = connection.execute("SELECT 1 FROM market_auction_purge WHERE source_job_id=? AND status='purged'", (job['job_id'],)).fetchone()
+    if purged:
+        raise ValueError('该日竞价正文已到期清理，永久日账保留，不补采历史竞价')
     if retained:
         return {'quality': retained['quality'], 'snapshot_id': retained['snapshot_id'], 'message': '竞价终态已留存，复用原结果'}
     if not ledger or ledger['job_id'] != job['job_id']:

@@ -241,6 +241,24 @@ def _queue_local_sync_checks(job, completed_result=None):
                         {'check':name,'reason_code':type(error).__name__})
 
 
+def _auction_after_increment(job, completed_result=None):
+    """竞价清理仅在原授权成功发布后执行，失败不影响行情。"""
+    if job['kind']!='increment' or _parameters(job).get('auction_retention_policy')!='auction-retention-28d-v1':return
+    try:
+        from app.services.auction_retention import after_increment
+        return after_increment(job,completed_result)
+    except Exception as error:
+        logger.warning('竞价到期清理暂未完成 %s %s',job['job_id'],type(error).__name__)
+        try:
+            with connect() as connection:
+                connection.execute('BEGIN IMMEDIATE')
+                tasks.append_event(connection,job['job_id'],'auction_retention_warning',
+                    '竞价到期清理未完成，下次盘后增量补清；已发布行情保持有效','warning',
+                    {'error_type':type(error).__name__})
+        except Exception:
+            logger.warning('竞价清理警告回执暂未保存 %s',job['job_id'])
+
+
 def _noon_after_increment(job, completed_result=None):
     """An independent, versioned cleanup cannot roll back an accepted market day."""
     if job['kind']!='increment' or _parameters(job).get('noon_retention_policy')!='noon-retention-28d-v1':return
@@ -301,6 +319,7 @@ def dispatch(job):
         if state and state[0] in ('succeeded','partial','no_change'):
             _noon_close_after_increment(job)
             _noon_after_increment(job)
+            _auction_after_increment(job)
             _queue_local_sync_checks(job)
             _queue_followup(job)
         return
@@ -316,6 +335,7 @@ def dispatch(job):
         _noon_close_after_increment(job,result,allow_running=True,progress=callback)
         tasks.finish(identifier,status,result.get('message','行情数据已校验并发布'))
         _noon_after_increment(job,result)
+        _auction_after_increment(job,result)
         _queue_local_sync_checks(job,result)
         from app.services.workspace_automation import run_after_sync
         started=time.monotonic()

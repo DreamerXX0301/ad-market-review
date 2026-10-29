@@ -31,6 +31,7 @@ def safe_path(root,key):
 
 def connect_sqlite(path,mode='rw'):
     c=sqlite3.connect(Path(path).resolve().as_uri()+'?mode='+mode,uri=True,timeout=10)
+    c.create_function('auction_purge_allowed',1,lambda *_:0)
     c.row_factory=sqlite3.Row;c.execute('PRAGMA foreign_keys=ON');c.execute('PRAGMA recursive_triggers=ON');c.execute('PRAGMA busy_timeout=10000')
     return c
 

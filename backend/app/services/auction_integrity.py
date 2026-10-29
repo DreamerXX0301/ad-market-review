@@ -3,7 +3,7 @@
 Only the supplied row/connection is inspected. Importing this file has no app
 configuration, filesystem, network, migration or credential side effects.
 """
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from hashlib import sha256
 import json
 import re
@@ -103,3 +103,39 @@ def validate_snapshots(connection):
         columns = [item[0] for item in cursor.description]
         for row in cursor:
             validate_snapshot(dict(zip(columns, row)))
+    validate_purges(connection)
+
+
+def validate_purges(connection):
+    """清理回执没有正文；核验身份、自然日窗口及永久日账闭包。"""
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_purge'").fetchone():
+        return
+    cursor = connection.execute('SELECT * FROM market_auction_purge')
+    columns = [item[0] for item in cursor.description]
+    for values in cursor:
+        row = dict(zip(columns, values))
+        try:
+            anchor = date.fromisoformat(row['anchor_date'])
+            cutoff = (anchor - timedelta(days=27)).isoformat()
+            if (anchor.isoformat() != row['anchor_date'] or cutoff != row['cutoff_date']
+                    or date.fromisoformat(row['trade_date']).isoformat() != row['trade_date']
+                    or row['trade_date'] >= cutoff
+                    or not re.fullmatch('[0-9a-f]{64}', row['content_sha256'])
+                    or not 0 < row['payload_bytes'] <= LIMIT or not 0 <= row['evidence_count'] <= 3):
+                raise ValueError('Auction purge identity or retention window differs')
+            capture = connection.execute('SELECT job_id FROM market_auction_capture WHERE trade_date=?', (row['trade_date'],)).fetchone()
+            if not capture or capture[0] != row['source_job_id']:
+                raise ValueError('Auction purge differs from permanent capture ledger')
+            owner = connection.execute('SELECT kind,status,parameters_json FROM job WHERE job_id=?', (row['cleanup_job_id'],)).fetchone()
+            if (not owner or owner[0] != 'increment' or owner[1] not in ('succeeded', 'partial', 'no_change')
+                    or json.loads(owner[2]).get('auction_retention_policy') != 'auction-retention-28d-v1'):
+                raise ValueError('Auction purge has no successful authorized increment')
+            retained = connection.execute('SELECT snapshot_id,job_id,content_sha256 FROM market_auction_snapshot WHERE trade_date=?', (row['trade_date'],)).fetchone()
+            if row['status'] == 'purged':
+                if retained or row['purged_at_ms'] is None or row['reason'] is not None or row['evidence_count'] < 2:
+                    raise ValueError('Auction purge tombstone conflicts with retained content')
+            elif (row['status'] not in ('protected', 'warning') or row['purged_at_ms'] is not None
+                    or not retained or tuple(retained) != (row['snapshot_id'], row['source_job_id'], row['content_sha256'])):
+                raise ValueError('Auction pending purge receipt differs from retained content')
+        except (KeyError, TypeError, OverflowError, json.JSONDecodeError) as error:
+            raise ValueError('Auction purge receipt is invalid') from error

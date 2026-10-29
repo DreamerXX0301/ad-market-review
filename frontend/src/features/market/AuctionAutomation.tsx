@@ -23,6 +23,7 @@ const RUN_STATES: Record<string, string> = {
   completed: "任务完成",
   succeeded: "结果已就绪",
   expired: "已错过窗口",
+  purged: "已到期清理",
   skipped: "本次跳过",
   not_trading_day: "非交易日",
   waiting: "等待采集窗口",

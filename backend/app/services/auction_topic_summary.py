@@ -231,7 +231,12 @@ def read_view(day):
         raise HTTPException(422, '竞价题材日期须为YYYY-MM-DD')
     with connect() as connection:
         row = connection.execute('SELECT * FROM market_auction_snapshot WHERE trade_date=?', (day,)).fetchone()
+        from app.services.auction_retention import retention_status
+        retention = retention_status(connection, day)
     if row is None:
+        if retention['purged']:
+            return {**_empty({'date': day}, reason='竞价已超过28自然日保留窗口，原正文及内嵌原件已清理；不回填历史题材。'),
+                    'state': 'purged', 'retention': retention}
         return _empty({'date': day}, reason='所选日尚无已留存竞价，题材样本保持未知')
     try:
         payload = validate_snapshot(dict(row))

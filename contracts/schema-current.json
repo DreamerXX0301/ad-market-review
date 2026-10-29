@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 31,
+  "migration_version": 32,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -122,15 +122,19 @@
     {
       "name": "031_auction_automation.sql",
       "sha256": "6d97ff9659516d97acef4a8f99f69ee7dcd902f55036479229e537c820b37375"
+    },
+    {
+      "name": "032_auction_retention.sql",
+      "sha256": "0771b1c7729211396c8cbbc265753f9242406954e62777a4c717dc6fcdac9420"
     }
   ],
   "counts": {
-    "table": 65,
-    "index": 39,
+    "table": 66,
+    "index": 40,
     "view": 1,
-    "trigger": 135
+    "trigger": 140
   },
-  "schema_sha256": "930c858b93f4038c5b4ca54b4e08c920aa5b021d7c3129e5a489f0d75c53f015",
+  "schema_sha256": "6256b674bf7eeedaa4012fd2a59b8423b02e8d10504f4672de6a6454712c39f7",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -1931,6 +1935,160 @@
         "retain_auction_capture_update"
       ]
     },
+    "market_auction_purge": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "source_job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "cleanup_job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "anchor_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "cutoff_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "content_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "payload_bytes",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "evidence_count",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "reason",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 11,
+          "name": "check_sequence",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 12,
+          "name": "checked_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 13,
+          "name": "purged_at_ms",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "job",
+          "from": "cleanup_job_id",
+          "to": "job_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "job",
+          "from": "source_job_id",
+          "to": "job_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "market_auction_capture",
+          "from": "trade_date",
+          "to": "trade_date",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "guard_auction_purge_insert",
+        "guard_auction_purge_update",
+        "retain_auction_purge_delete",
+        "retain_auction_purge_replace"
+      ]
+    },
     "market_auction_snapshot": {
       "columns": [
         {
@@ -2029,6 +2187,7 @@
         }
       ],
       "triggers": [
+        "guard_auction_snapshot_after_purge",
         "guard_auction_snapshot_identity",
         "retain_auction_snapshot_delete",
         "retain_auction_snapshot_replace",
