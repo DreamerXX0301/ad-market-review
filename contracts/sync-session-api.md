@@ -4,6 +4,10 @@
 
 响应包含 `root_task_id/request_key/status/can_acknowledge/created_at_ms/observed_at_ms/finished_at_ms/elapsed_ms/tasks/waiting_followup/issues/estimate`。`tasks` 是至多32个去重任务的小型回执，不包含完整参数、凭据和日志。通过持久化的 `followup_queued/line_alert_check_queued/listing_status_check_queued` 事件追踪已授权子任务；主行情成功而后续尚未排队时保持 `awaiting_followup`，不能提前称整个增量成功。主行情发布后的本地策略核对仍包含在等待后续阶段内。
 
+0.1.15新建increment冻结`workspace_followup_version=after-data-chain-v1`；原冻结任务不补此字段或扩大范围。该相位必须核验原根的冻结目标日、主行情代际和发布回执、原链接板块批次完整请求回执及本次supplement的job/date/snapshot/SHA。数据链未结束保持waiting，不读旧日补充替代。本次目标日有已发布的合法partial输入时由具体规则保留unknown；整日目标池缺失、来源损坏、必要子任务失败或已非当前业务日则blocked。
+
+数据发布核验后才执行原策略开关授权的选股与跟踪，成功写`workspace_followup_completed`后接续划线提醒；`workspace_followup_started`尚未有`workspace_followup_released`时，相位仍视作running，不能通过SQL完成状态或提前COMPLETE确认解锁。暂停/取消持续等待真实finally释放；worker异常退出后仅由取得唯一worker锁的新进程补记旧执行退出，不恢复显式停止。重启通过原request_key与已有run/轮次幂等修复中断，失败计算保留阻断回执；有效停止的旧根在LIMIT前排除，避免占满有界恢复候选。
+
 只展示当前实际任务进度；任务总数会随已授权子任务排队增加，因此不把主行情100%当作整链100%。全部已授权任务结束才返回 `can_acknowledge=true`；失败、暂停、取消、排队受阻均明确展示后允许确认离开，不自动继续。仍有子任务运行时继续等待。`partial` 表示执行结束但来源仍有缺口，不等于数据完整。
 
 预计时间来自最近最多12次同 `data_chain_version`、整条链已完成的增量（含排队和后续阶段），至少3个正耗时样本才显示历史四分位区间及中位参考结束时刻。样本不足、超出历史区间或读状态失败时不编造倒计时。它是耗时参考，不是完成承诺。
