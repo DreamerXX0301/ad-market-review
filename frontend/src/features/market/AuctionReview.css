@@ -430,6 +430,34 @@
 .auction-feedback-card.negative {
   --feedback-color: var(--green);
 }
+.auction-feedback-card.limit-up-open {
+  --feedback-color: var(--red);
+  background: color-mix(in srgb, var(--feedback-color) 7%, var(--surface2));
+}
+.auction-feedback-pending {
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.auction-feedback-reference {
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--feedback-color) 35%, transparent);
+  border-radius: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.auction-feedback-card > .auction-feedback-reference-note {
+  margin: 5px 0;
+  line-height: 1.6;
+  font-size: 10px;
+}
+.auction-feedback-card > .auction-feedback-pending-reason {
+  margin-bottom: 0;
+  line-height: 1.6;
+}
 .auction-feedback-heading {
   display: flex;
   justify-content: space-between;

@@ -14,6 +14,7 @@ import CopyStockCode from "../../components/CopyStockCode";
 import AuctionAssociationSummary from "./AuctionAssociationSummary";
 
 const TYPES: Record<string, { title: string; color: string }> = {
+  limit_up_open: { title: "一字涨停开", color: "limit-up-open" },
   repair: { title: "修复观察", color: "positive" },
   weaken: { title: "转弱观察", color: "negative" },
   continuation: { title: "高开延续", color: "positive" },
@@ -21,6 +22,9 @@ const TYPES: Record<string, { title: string; color: string }> = {
   flat_limit_up: { title: "涨停后平开", color: "neutral" },
   flat_limit_break: { title: "炸板后平开", color: "neutral" },
 };
+const pendingLimitOpen = (group: Row) =>
+  group.key === "limit_up_open" &&
+  !["observed", "reference"].includes(group.state);
 
 export default function AuctionFeedback({
   date,
@@ -46,12 +50,32 @@ export default function AuctionFeedback({
     result.data?.date === date && result.data.version === "auction-feedback-v1"
       ? result.data
       : null;
+  const sourceGroups = noonRows(view?.groups);
+  const limitUpOpen = sourceGroups.find(
+    (group) => group.key === "limit_up_open",
+  );
   const restrictedGroups = auctionFilterFeedbackGroups(
-    noonRows(view?.groups),
+    view
+      ? [
+          limitUpOpen || {
+            key: "limit_up_open",
+            title: "今日涨停价开盘",
+            interpretation: "仅为竞价口径，不代表全天一字涨停。",
+            state: "unknown",
+            count: null,
+            average_auction_pct: null,
+            items: [],
+            reason: "原竞价来源未提供今日涨停价及涨停开盘标记，暂不能核验。",
+          },
+          ...sourceGroups.filter((group) => group.key !== "limit_up_open"),
+        ]
+      : [],
     selectedIds,
   );
   const groups = restrictedGroups.filter(
-    (group) => TYPES[group.key] && (auctionNumber(group.count) || 0) > 0,
+    (group) =>
+      TYPES[group.key] &&
+      (group.key === "limit_up_open" || (auctionNumber(group.count) || 0) > 0),
   );
   const unknown = restrictedGroups.filter(
     (group) => !TYPES[group.key] && (auctionNumber(group.count) || 0) > 0,
@@ -82,65 +106,109 @@ export default function AuctionFeedback({
             <article
               className={`auction-feedback-card ${TYPES[group.key].color}`}
               key={group.key}
+              data-feedback-group={group.key}
+              data-state={
+                group.key === "limit_up_open" ? group.state : undefined
+              }
             >
               <div className="auction-feedback-heading">
                 <strong>{TYPES[group.key].title}</strong>
-                <b>{integer(group.count)}只</b>
-                <AuctionCopyText
-                  label={`复制${TYPES[group.key].title}股票`}
-                  text={noonRows(group.items)
-                    .map((row) => `${row.instrument_id}\t${row.name || ""}`)
-                    .join("\n")}
-                />
+                {group.key === "limit_up_open" &&
+                  group.state === "reference" && (
+                    <span className="auction-feedback-reference">参考</span>
+                  )}
+                {pendingLimitOpen(group) ? (
+                  <b className="auction-feedback-pending">待核验</b>
+                ) : (
+                  <>
+                    <b>{integer(group.count)}只</b>
+                    {noonRows(group.items).length > 0 && (
+                      <AuctionCopyText
+                        label={`复制${TYPES[group.key].title}股票`}
+                        text={noonRows(group.items)
+                          .map(
+                            (row) => `${row.instrument_id}\t${row.name || ""}`,
+                          )
+                          .join("\n")}
+                      />
+                    )}
+                  </>
+                )}
               </div>
-              <p title={group.interpretation}>{group.title}</p>
+              <p title={group.interpretation}>
+                {group.key === "limit_up_open" && group.state === "reference"
+                  ? "竞价涨停开参考"
+                  : group.title}
+              </p>
               <div className="auction-feedback-average">
                 竞价均幅{" "}
                 <strong
-                  className={tone(auctionNumber(group.average_auction_pct))}
+                  className={tone(
+                    pendingLimitOpen(group)
+                      ? null
+                      : auctionNumber(group.average_auction_pct),
+                  )}
                 >
-                  {percent(auctionNumber(group.average_auction_pct))}
+                  {percent(
+                    pendingLimitOpen(group)
+                      ? null
+                      : auctionNumber(group.average_auction_pct),
+                  )}
                 </strong>
               </div>
-              <details
-                key={`${date}:${selectedKey || "all"}`}
-                open={!!selectedIds}
-              >
-                <summary>查看本组股票</summary>
-                <div className="auction-feedback-stocks">
-                  {auctionSortRows(
-                    noonRows(group.items),
-                    "auction_pct",
-                    "desc",
-                  ).map((row) => (
-                    <div
-                      key={row.instrument_id}
-                      className={`auction-feedback-stock${selectedIds ? " is-associated" : ""}`}
-                      data-associated={selectedIds ? "true" : undefined}
-                    >
-                      <div className="auction-feedback-stock-head">
-                        <button
-                          className="auction-stock"
-                          onClick={() => onStock?.(row.instrument_id)}
-                          disabled={!onStock || !chartDate}
-                        >
-                          {row.name || row.instrument_id}
-                        </button>
-                        <CopyStockCode instrumentId={row.instrument_id} />
-                        <span className={tone(auctionNumber(row.auction_pct))}>
-                          {percent(auctionNumber(row.auction_pct))}
-                        </span>
+              {group.key === "limit_up_open" && group.state === "reference" && (
+                <p className="auction-feedback-reference-note">
+                  常规档参考，不确认当日限价或全天一字。
+                </p>
+              )}
+              {pendingLimitOpen(group) ? (
+                <p className="auction-feedback-pending-reason">
+                  {group.reason ||
+                    "原竞价来源未提供今日涨停价及涨停开盘标记，暂不能核验。"}
+                </p>
+              ) : noonRows(group.items).length > 0 ? (
+                <details
+                  key={`${date}:${selectedKey || "all"}`}
+                  open={!!selectedIds}
+                >
+                  <summary>查看本组股票</summary>
+                  <div className="auction-feedback-stocks">
+                    {auctionSortRows(
+                      noonRows(group.items),
+                      "auction_pct",
+                      "desc",
+                    ).map((row) => (
+                      <div
+                        key={row.instrument_id}
+                        className={`auction-feedback-stock${selectedIds ? " is-associated" : ""}`}
+                        data-associated={selectedIds ? "true" : undefined}
+                      >
+                        <div className="auction-feedback-stock-head">
+                          <button
+                            className="auction-stock"
+                            onClick={() => onStock?.(row.instrument_id)}
+                            disabled={!onStock || !chartDate}
+                          >
+                            {row.name || row.instrument_id}
+                          </button>
+                          <CopyStockCode instrumentId={row.instrument_id} />
+                          <span
+                            className={tone(auctionNumber(row.auction_pct))}
+                          >
+                            {percent(auctionNumber(row.auction_pct))}
+                          </span>
+                        </div>
+                        <AuctionClassifications
+                          view={topicView}
+                          date={date}
+                          instrumentId={row.instrument_id}
+                          compact
+                        />
                       </div>
-                      <AuctionClassifications
-                        view={topicView}
-                        date={date}
-                        instrumentId={row.instrument_id}
-                        compact
-                      />
-                    </div>
-                  ))}
-                </div>
-              </details>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
             </article>
           ))}
         </div>
@@ -158,13 +226,22 @@ export default function AuctionFeedback({
             昨日事件 {view.previous_date || "未知"} · 已分组{" "}
             {integer(
               selectedIds
-                ? groups.reduce((sum, group) => sum + group.count, 0)
+                ? groups.reduce(
+                    (sum, group) =>
+                      pendingLimitOpen(group)
+                        ? sum
+                        : sum + (auctionNumber(group.count) ?? 0),
+                    0,
+                  )
                 : view.coverage?.classified,
             )}
             只 · 未分组{" "}
             {integer(
               selectedIds
-                ? unknown.reduce((sum, group) => sum + group.count, 0)
+                ? unknown.reduce(
+                    (sum, group) => sum + (auctionNumber(group.count) ?? 0),
+                    0,
+                  )
                 : view.coverage?.unknown,
             )}
             只

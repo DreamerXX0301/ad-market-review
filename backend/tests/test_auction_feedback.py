@@ -45,7 +45,7 @@ def test_all_fact_groups_are_disjoint_dated_and_keep_original_payload():
     result = feedback.build_feedback(payload)
     assert payload == original
     assert result['coverage'] == {'requested': 9, 'classified': 6, 'unknown': 3}
-    assert [item['key'] for item in result['groups'][:2]] == ['repair', 'weaken']
+    assert [item['key'] for item in result['groups'][:3]] == ['limit_up_open', 'repair', 'weaken']
     indexed = groups(result)
     expected = {'repair': 6, 'weaken': -3, 'continuation': 5, 'weak_continuation': -2,
                 'flat_limit_up': 0, 'flat_limit_break': 0}
@@ -62,6 +62,32 @@ def test_all_fact_groups_are_disjoint_dated_and_keep_original_payload():
     assert len(identities) == len(set(identities)) == 9
     assert indexed['repair']['items'][0]['previous_board_count'] is None
     assert indexed['continuation']['items'][0]['previous_board_count'] == 3
+
+
+@pytest.mark.parametrize('change', [5, 9.98, 10, 10.07, 20, 30])
+def test_limit_open_is_first_and_unknown_without_independent_today_limit_evidence(change):
+    value = packet()
+    quote = value['quotes']['items'][2]
+    quote.update(auction_pct=change, auction_price=10 * (1 + change / 100),
+                 open_price=10 * (1 + change / 100), auction_unmatched=100000)
+    # Unspecified source fields must not turn into a trusted limit-price contract.
+    quote.update(limit_up_price=quote['auction_price'], is_limit_up=True)
+    original = deepcopy(value)
+    result = feedback.build_feedback(value)
+    group = result['groups'][0]
+    assert group['key'] == 'limit_up_open' and group['state'] == 'unknown'
+    assert group['count'] is None and group['average_auction_pct'] is None and not group['items']
+    assert group['reason'] == feedback.LIMIT_OPEN_REASON
+    assert '不代表全天一字' in group['interpretation']
+    assert groups(result)['continuation']['items'][0]['auction_pct'] == change
+    assert result['coverage'] == {'requested': 9, 'classified': 6, 'unknown': 3}
+    assert value == original
+
+
+def test_limit_open_missing_capture_does_not_claim_zero_observations():
+    group = feedback.build_feedback({'date': DAY})['groups'][0]
+    assert group['key'] == 'limit_up_open' and group['count'] is None
+    assert group['state'] == 'unknown' and group['items'] == []
 
 
 @pytest.mark.parametrize('damage', ['cohort_day', 'unknown_cohort', 'item_day', 'missing_item_day', 'identity_conflict', 'duplicate'])
@@ -176,3 +202,161 @@ def test_reader_validates_sha_and_never_changes_immutable_capture(auction_enviro
     with pytest.raises(HTTPException) as error:
         feedback.read_view(DAY)
     assert error.value.status_code == 409
+
+
+def reference_packet(specifications):
+    """明确的合成分币价格与昨日事件；不读取市场身份或实际个股。"""
+    result = {'version': 'auction-snapshot-v1', 'date': DAY, 'previous_date': PREVIOUS,
+              'universe': {'items': []}, 'quotes': {'items': []},
+              'previous_review': {'date': PREVIOUS, 'event_cohorts': {
+                  kind: {'date': PREVIOUS, 'state': 'observed_sample', 'items': []}
+                  for kind in ('limit_up', 'limit_break')}}}
+    for index, specification in enumerate(specifications):
+        symbol, previous, price, change, kind = specification
+        name = '参考筛选合成样本' + str(index)
+        result['universe']['items'].append({'instrument_id': symbol, 'name': name})
+        result['quotes']['items'].append({'instrument_id': symbol, 'name': name, 'state': 'observed',
+            'pre_close_price': previous, 'auction_price': price, 'auction_pct': change,
+            'auction_volume': 100, 'auction_amount': price * 10000, 'auction_volume_ratio': 2,
+            'unit_check': {'state': 'verified'}})
+        result['previous_review']['event_cohorts'][kind]['items'].append({
+            'instrument_id': symbol, 'date': PREVIOUS, 'name': name, 'previous_board_count': 2})
+    return result
+
+
+def one_reference():
+    return reference_packet([(CODES[0], 14.23, 15.65, 9.9789, 'limit_up')])
+
+
+def test_rounded_reference_matches_six_synthetic_prices_not_a_ten_percent_threshold():
+    # 14.23×1.1=15.653→15.65，1.49×1.1=1.639→1.64。
+    # 两种分币舍入使真实比值分别约为9.9789%和10.0671%，都不能按10%硬切。
+    pairs = [(14.23, 15.65, 9.9789), (18.94, 20.83, 9.9789),
+             (1.49, 1.64, 10.0671), (2.98, 3.28, 10.0671),
+             (4.47, 4.92, 10.0671), (7.45, 8.20, 10.0671)]
+    value = reference_packet([(CODES[index], previous, price, change,
+                               'limit_up' if index % 2 else 'limit_break')
+                              for index, (previous, price, change) in enumerate(pairs)] + [
+        (CODES[6], 10, 10.5, 5, 'limit_up'), (CODES[7], 10, 10.2, 2, 'limit_break')])
+    original = deepcopy(value)
+    result = feedback.build_feedback(value)
+    indexed = groups(result); opening = result['groups'][0]
+    assert opening['key'] == 'limit_up_open' and opening['state'] == 'reference'
+    assert opening['count'] == opening['valid_count'] == 6 and opening['missing_count'] == 0
+    assert opening['checked_count'] == 8 and opening['confirmed_limit_price'] is False
+    assert opening['average_auction_pct'] == pytest.approx(10.0377)
+    assert opening['median_auction_pct'] == pytest.approx(10.0671)
+    assert [item['opening_reference']['reference_price'] for item in opening['items']] == [
+        15.65, 20.83, 1.64, 3.28, 4.92, 8.20]
+    assert all(item['opening_reference']['rate_pct'] == 10
+               and item['opening_reference']['basis'] == feedback.LIMIT_OPEN_BASIS
+               and item['opening_reference']['confirmed_limit_price'] is False for item in opening['items'])
+    assert {item['previous_state'] for item in opening['items']} == {'limit_up', 'limit_break'}
+    assert indexed['continuation']['count'] == indexed['repair']['count'] == 1
+    assert indexed['continuation']['average_auction_pct'] == 5
+    assert indexed['repair']['average_auction_pct'] == 2
+    identities = [item['instrument_id'] for group in result['groups'] for item in group['items']]
+    assert len(identities) == len(set(identities)) == 8
+    assert result['coverage'] == {'requested': 8, 'classified': 8, 'unknown': 0}
+    assert value == original
+
+
+@pytest.mark.parametrize('symbol,previous,price,change,rate', [
+    ('300001.SZ', 7.43, 8.92, 20.0538, 20),
+    ('688001.SH', 7.43, 8.92, 20.0538, 20),
+    ('830001.BJ', 5.15, 6.70, 30.0971, 30),
+    ('920001.BJ', 5.15, 6.70, 30.0971, 30),
+])
+def test_twenty_and_thirty_percent_reference_bands_use_cent_half_up(symbol, previous, price, change, rate):
+    value = reference_packet([(symbol, previous, price, change, 'limit_up')])
+    result = feedback.build_feedback(value)
+    opening = result['groups'][0]
+    assert opening['state'] == 'reference' and opening['count'] == opening['checked_count'] == 1
+    item = opening['items'][0]
+    assert item['opening_reference']['reference_price'] == price
+    assert item['opening_reference']['rate_pct'] == rate
+    assert groups(result)['continuation']['count'] == 0
+    assert result['coverage'] == {'requested': 1, 'classified': 1, 'unknown': 0}
+
+
+def test_near_ten_percent_does_not_match_and_extra_source_flags_do_not_override_reference():
+    value = reference_packet([(CODES[0], 10, 10.99, 9.9, 'limit_up')])
+    quote = value['quotes']['items'][0]
+    quote.update(limit_up_price=10.99, upper_limit=10.99, is_limit_up=True,
+                 is_one_price=True, auction_unmatched=999999999)
+    original = deepcopy(value)
+    result = feedback.build_feedback(value)
+    opening = result['groups'][0]
+    assert opening['state'] == 'reference' and opening['checked_count'] == 1
+    assert opening['count'] == opening['valid_count'] == 0 and opening['items'] == []
+    assert opening['average_auction_pct'] is opening['median_auction_pct'] is None
+    assert groups(result)['continuation']['count'] == 1
+    assert value == original
+    # 同样不能让来源外的冲突限价字段否决已经明确标注的常规参考价筛选。
+    matched = one_reference()
+    matched['quotes']['items'][0].update(limit_up_price=999, upper_limit=1, is_limit_up=False)
+    assert feedback.build_feedback(matched)['groups'][0]['count'] == 1
+
+
+@pytest.mark.parametrize('name', ['ST合成', '*ST合成', 'SST合成', 'S*ST合成',
+                                  'N合成', 'C合成', '', None])
+def test_unverified_risk_or_listing_name_does_not_move_positive_feedback(name):
+    value = one_reference(); value['quotes']['items'][0]['name'] = name
+    result = feedback.build_feedback(value)
+    assert result['groups'][0]['state'] == 'unknown' and result['groups'][0]['count'] is None
+    assert result['groups'][0]['checked_count'] == 0
+    assert groups(result)['continuation']['count'] == 1
+    assert result['coverage'] == {'requested': 1, 'classified': 1, 'unknown': 0}
+
+
+@pytest.mark.parametrize('field,bad', [
+    ('pre_close_price', None), ('pre_close_price', 0), ('pre_close_price', True),
+    ('auction_volume', 0), ('auction_volume', None), ('auction_volume', True),
+    ('auction_amount', 0), ('auction_amount', None),
+    ('unit_check', None), ('unit_check', {'state': 'mismatch'}),
+    ('unit_check', {'state': 'unknown'}), ('auction_pct', 11),
+    ('auction_price', 15.651),
+])
+def test_incomplete_or_invalid_reference_inputs_keep_existing_positive_group(field, bad):
+    value = one_reference(); value['quotes']['items'][0][field] = bad
+    result = feedback.build_feedback(value)
+    opening = result['groups'][0]
+    assert opening['state'] == 'unknown' and opening['count'] is None and opening['items'] == []
+    assert groups(result)['continuation']['count'] == 1
+    assert result['coverage'] == {'requested': 1, 'classified': 1, 'unknown': 0}
+
+
+@pytest.mark.parametrize('damage,expected', [
+    ('missing_event', 'unknown_event'), ('wrong_day', 'unknown_event'),
+    ('unknown_pool', 'unknown_event'), ('duplicate_event', 'unknown_event'),
+    ('both_events', 'event_conflict'), ('duplicate_quote', 'unknown_quote'),
+])
+def test_reference_price_cannot_bypass_unknown_conflicting_or_duplicate_evidence(damage, expected):
+    value = one_reference()
+    up = value['previous_review']['event_cohorts']['limit_up']
+    if damage == 'missing_event': up['items'] = []
+    elif damage == 'wrong_day': up['items'][0]['date'] = DAY
+    elif damage == 'unknown_pool': up['state'] = 'unknown'
+    elif damage == 'duplicate_event': up['items'].append(deepcopy(up['items'][0]))
+    elif damage == 'both_events':
+        value['previous_review']['event_cohorts']['limit_break']['items'] = deepcopy(up['items'])
+    else:
+        value['quotes']['items'].append(deepcopy(value['quotes']['items'][0]))
+    original = deepcopy(value)
+    result = feedback.build_feedback(value)
+    opening = result['groups'][0]
+    assert opening['items'] == [] and opening['count'] in (None, 0)
+    assert groups(result)[expected]['count'] == 1
+    assert groups(result)[expected]['items'][0]['instrument_id'] == CODES[0]
+    assert groups(result)['continuation']['count'] == groups(result)['repair']['count'] == 0
+    assert result['coverage'] == {'requested': 1, 'classified': 0, 'unknown': 1}
+    assert value == original
+
+
+def test_reference_builder_uses_only_frozen_payload_even_for_recognized_prices(monkeypatch):
+    value = one_reference(); original = deepcopy(value)
+    monkeypatch.setattr(core, 'get_market', lambda: pytest.fail('reference screen must not read current market'))
+    monkeypatch.setattr(source_service, 'client', lambda *_: pytest.fail('reference screen must not fetch'))
+    monkeypatch.setattr(feedback, 'connect', lambda: pytest.fail('reference screen must not query SQL'))
+    assert feedback.build_feedback(value)['groups'][0]['count'] == 1
+    assert value == original

@@ -75,6 +75,10 @@
 
 组包含`key,title,interpretation,count,valid_count,missing_count,median_auction_pct,average_auction_pct,items`，均值分母为该组有效报价，列表只取原100只交集。`coverage`区分已分类与未知；分组用于观察相对昨收定价，不自动判全天强弱、兑现或交易信号。昨日市场广度等冻结事实可作为独立背景，不据此断言个股被大盘拖累；没有已保存的文字预期不补造“昨日预期涨停”。
 
+首位另列`key='limit_up_open'`（页面“一字涨停开·参考”），仅作为竞价涨停开参考筛选，不证明今日实际限价或全天一字。`basis='auction-standard-band-price-reference-v1',confirmed_limit_price=false`。用原冻结代码的常规市场档（主板10%、创业板/科创板20%、北交所30%）与来源前收，以人民币分、ROUND_HALF_UP和至少一分价差计算参考价；竞价必须有正成交量/额、通过单位与价幅校验、价格精确相等。ST、N/C名称、未知市场身份、缺价或量额核验失败不猜档。未核验当日上市、重组、除权、制度变化等例外，不能把参考值当来源直接确认的涨停价；不支持的额外`limit_up_price`/标志字段不构成证据。
+
+只拆分已有修复/高开延续组中的匹配股票，未知前日事件/冲突保持原组；各组互斥、coverage及总数不变。每个匹配行附`opening_reference={basis,rate_pct,reference_price,confirmed_limit_price:false,matched:true}`。可计算时组`state='reference'`，数量与均幅为本次真实匹配样本，`checked_count`保留可计算参考的有效报价数；缺口不填零。完全无可计算输入时才返回`state='unknown',count=null,items=[],average_auction_pct=null,median_auction_pct=null,reason`，显示待核验。行业概念联动按真实子集重算参考组；完全未知保持未知。本次不扩采集请求、不修改原正文，也不以接近10%的宽阈值或昨日标签代替分价匹配。
+
 ### 原成员档案的题材数量与均幅
 
 `topic-summary.version='auction-topic-summary-v1'`。新任务在首次冻结输入时保存`market_context={source_snapshot_id,data_end,source,known_at_ms}`，成功正文携带该对象；旧冻结任务不扩大输入。旧正文只允许使用已经明确记录的前日事实代际；没有明确可核验代际保持unknown。

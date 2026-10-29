@@ -102,3 +102,11 @@ let restricted=auctionFilterFeedbackGroups(eventGroups,new Set(['600001.SH','000
 assert.equal(restricted.count,2);assert.equal(restricted.valid_count,1);assert.equal(restricted.missing_count,1);assert.equal(restricted.average_auction_pct,0);assert.equal(restricted.median_auction_pct,0);
 restricted=auctionFilterFeedbackGroups(eventGroups,new Set(['000002.SZ']))[0];assert.equal(restricted.average_auction_pct,null);assert.equal(restricted.median_auction_pct,null);
 assert.equal(auctionFilterFeedbackGroups(eventGroups,null),eventGroups);assert.equal(JSON.stringify(eventGroups),groupBefore);
+
+const unknownLimitOpen={key:'limit_up_open',state:'unknown',count:null,valid_count:0,missing_count:0,average_auction_pct:null,median_auction_pct:null,items:[]};
+assert.equal(auctionFilterFeedbackGroups([unknownLimitOpen],new Set(['600001.SH']))[0],unknownLimitOpen,'selection cannot turn missing limit evidence into a confirmed empty group');
+assert.equal(auctionFilterFeedbackGroups([unknownLimitOpen],new Set())[0].count,null);
+const referenceLimitOpen={...eventGroups[0],key:'limit_up_open',state:'reference'};
+restricted=auctionFilterFeedbackGroups([referenceLimitOpen],new Set(['600001.SH','000002.SZ']))[0];
+assert.equal(restricted.state,'reference');assert.equal(restricted.count,2);assert.equal(restricted.valid_count,1);assert.equal(restricted.average_auction_pct,0);
+assert.equal(auctionFilterFeedbackGroups([referenceLimitOpen],new Set())[0].count,0,'reference groups use the actual selected subset');

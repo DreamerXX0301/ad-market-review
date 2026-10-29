@@ -188,3 +188,31 @@ for(const id of ['auction-overview','auction-automation','auction-feedback','auc
 }
 html=render({...view,state:'purged',locked_for_day:true,retention:{notice:'保留28个自然日，到期随成功盘后增量清理。'}});
 assert.match(html,/竞价已按保留规则清理/);assert.match(html,/只保留日任务台账和清理回执/);assert.match(html,/保留28个自然日/);assert.doesNotMatch(html,/先留下一份真实的竞价观察/);
+
+const {default:AuctionFeedback}=await import(await moduleUrl(new URL('./AuctionFeedback.tsx',import.meta.url)));
+const unknownLimit={key:'limit_up_open',title:'今日涨停价开盘',state:'unknown',count:null,valid_count:0,missing_count:0,average_auction_pct:null,median_auction_pct:null,items:[],reason:'原竞价来源未提供今日涨停价及涨停开盘标记，暂不能核验。'};
+function renderFeedback(groups,ids=null){
+ setData(retained,null,null,null,{...feedback,groups});setStates({});
+ return renderToStaticMarkup(createElement(AuctionFeedback,{date:day,chartDate:'2026-10-28',onStock(){},topicView:classifiedTopics,selectedIds:ids,selectedKey:ids?'selected-topic':undefined})).replaceAll(/<!--[^]*?-->/g,'');
+}
+function limitCard(markup){return markup.match(/<article[^>]*data-feedback-group="limit_up_open"[^>]*>[^]*?<\/article>/)?.[0]||'';}
+html=renderFeedback([feedback.groups[0],unknownLimit]);
+assert.ok(html.indexOf('data-feedback-group="limit_up_open"')<html.indexOf('data-feedback-group="repair"'),'limit-open card stays first even when source groups are reordered');
+let anchor=limitCard(html);assert.match(anchor,/一字涨停开/);assert.match(anchor,/待核验/);assert.match(anchor,/竞价均幅[^]*?—/);
+assert.match(anchor,/原竞价来源未提供今日涨停价/);assert.doesNotMatch(anchor,/复制|查看本组股票|<details|0只/,'unknown evidence must not expose empty actions or zero counts');
+html=renderFeedback([unknownLimit,feedback.groups[0]],new Set(['600001.SH']));
+anchor=limitCard(html);assert.match(anchor,/待核验/);assert.doesNotMatch(anchor,/0只/);assert.match(html,/已分组 1只/);assert.doesNotMatch(html,/NaN/);
+assert.match(html,/<details open=""/);assert.match(html,/data-associated="true"/,'selection still expands and highlights the other groups');
+html=renderFeedback([feedback.groups[0]]);
+assert.match(limitCard(html),/待核验/,'older compatible API responses keep an honest first card instead of hiding the category');
+const referenceLimit={...unknownLimit,state:'reference',title:'涨停价高开参考',count:2,valid_count:2,missing_count:0,average_auction_pct:10.01,median_auction_pct:10.01,items:[{instrument_id:'600007.SH',name:'合成涨停开参考甲',auction_pct:10},{instrument_id:'600008.SH',name:'合成涨停开参考乙',auction_pct:10.02}]};
+html=renderFeedback([feedback.groups[0],referenceLimit]);anchor=limitCard(html);
+assert.match(anchor,/一字涨停开/);assert.match(anchor,/class="auction-feedback-reference">参考/);assert.match(anchor,/竞价涨停开参考/);
+assert.match(anchor,/常规档参考，不确认当日限价或全天一字/);assert.match(anchor,/2只/);assert.match(anchor,/\+10\.01%/);
+assert.match(anchor,/合成涨停开参考甲/);assert.match(anchor,/复制一字涨停开股票/);assert.match(anchor,/查看本组股票/);assert.doesNotMatch(anchor,/class="auction-feedback-pending"/);
+html=renderFeedback([referenceLimit,feedback.groups[0]],new Set(['600008.SH']));anchor=limitCard(html);
+assert.match(anchor,/1只/);assert.match(anchor,/\+10\.02%/);assert.match(anchor,/合成涨停开参考乙/);assert.doesNotMatch(anchor,/合成涨停开参考甲/);
+assert.match(anchor,/<details open=""/);assert.match(anchor,/data-associated="true"/);
+html=renderFeedback([{...referenceLimit,state:'unknown',count:77,average_auction_pct:777}]);anchor=limitCard(html);
+assert.match(anchor,/待核验/);assert.doesNotMatch(anchor,/77只|777|合成涨停开参考甲|复制|<details/,'unknown state wins over unverified numeric or stock fields');
+console.log('Auction limit-open card: first position, visible reference boundary, real subset statistics, unknown preservation and existing selection highlights passed');

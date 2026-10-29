@@ -1,6 +1,7 @@
 """纯计算冻结名单的前日事件→本次竞价对照；不读取当前行情或外部资料。"""
 from collections import Counter
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import math
 import re
 
@@ -14,6 +15,8 @@ SYMBOL = re.compile(r'[0-9]{6}\.(?:SH|SZ|BJ)\Z')
 SCOPE = ('仅对本份竞价最多100只冻结候选，按严格前日已核验事件和本次有效竞价报价作事实对照；'
          '高开/低开仅以0%为界，不作综合评分。高开不代表全天走强，低开不代表全天走弱，后续承接待核对；'
          '缺事件、缺报价或事件冲突保持未知，不补造昨日预期或上涨下跌原因。')
+LIMIT_OPEN_REASON = '缺少可计算常规涨停参考价的有效竞价、前收、股票身份或正成交量。'
+LIMIT_OPEN_BASIS = 'auction-standard-band-price-reference-v1'
 SPECS = [
     ('repair', '昨日炸板→今日高开', '前日炸板后本次高开，作为修复观察；后续承接与能否回封仍待核对。'),
     ('weaken', '昨日涨停→今日低开', '前日涨停后本次低开，作为转弱观察；后续承接与全天结果仍待核对。'),
@@ -25,6 +28,55 @@ SPECS = [
     ('unknown_quote', '本次竞价报价未知', '本次有效报价缺失、重复或无效，不按平开或零涨幅处理。'),
     ('unknown_event', '前日事件未知', '本份快照没有可唯一核验的严格前日涨停或炸板事件，不从涨幅、名称或当前板数倒推。'),
 ]
+
+
+def _limit_open_unknown():
+    return {'key': 'limit_up_open', 'title': '昨日涨停/炸板→今日涨停开参考', 'state': 'unknown',
+            'interpretation': '按冻结代码所属市场的常规10/20/30%档，用来源前收按分取整计算参考价，并与本次有效竞价价精确比较；'
+                              '不是来源直接确认的今日限价，未核验当日无涨跌幅限制等例外，不代表全天一字、封单稳定或可成交。',
+            'reason': LIMIT_OPEN_REASON, 'items': [], 'count': None, 'valid_count': 0,
+            'missing_count': 0, 'average_auction_pct': None, 'median_auction_pct': None,
+            'basis': LIMIT_OPEN_BASIS, 'confirmed_limit_price': False, 'checked_count': 0}
+
+
+def _price_tick(value):
+    number = _number(value, positive=True)
+    if number is None:
+        return None
+    try:
+        exact = Decimal(str(number))
+        rounded = exact.quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
+        return rounded if rounded > 0 and abs(exact - rounded) <= Decimal('.0000001') else None
+    except InvalidOperation:
+        return None
+
+
+def _opening_reference(quote, symbol):
+    """A labelled price-reference screen, never proof of today's actual limit."""
+    name = str(quote.get('name') or '').strip().upper()
+    # No dated risk-warning regime is frozen. Do not guess it from a name.
+    if not name or name.startswith(('ST', '*ST', 'SST', 'S*ST', 'N', 'C')):
+        return None
+    code, exchange = symbol.split('.')
+    rate = (20 if (exchange == 'SH' and code.startswith(('688', '689'))
+                    or exchange == 'SZ' and code.startswith(('300', '301')))
+            else 10 if (exchange == 'SH' and code.startswith(('600', '601', '603', '605'))
+                        or exchange == 'SZ' and code.startswith(('000', '001', '002', '003')))
+            else 30 if exchange == 'BJ' and code.startswith(('4', '8', '9')) else None)
+    price, previous = _price_tick(quote.get('auction_price')), _price_tick(quote.get('pre_close_price'))
+    if (rate is None or quote.get('state') != 'observed' or price is None or previous is None
+            or _number(quote.get('auction_pct')) is None
+            or _number(quote.get('auction_volume'), positive=True) is None
+            or _number(quote.get('auction_amount'), positive=True) is None
+            or not isinstance(quote.get('unit_check'), dict) or quote['unit_check'].get('state') != 'verified'):
+        return None
+    expected_change = (float(price / previous) - 1) * 100
+    if not math.isfinite(expected_change) or abs(expected_change - quote['auction_pct']) > .06:
+        return None
+    upper = (previous * (1 + Decimal(rate) / 100)).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
+    upper = max(upper, previous + Decimal('.01'))
+    return {'matched': price == upper, 'rate_pct': rate, 'reference_price': float(upper),
+            'basis': LIMIT_OPEN_BASIS, 'confirmed_limit_price': False}
 
 
 def _day(value):
@@ -124,6 +176,8 @@ def _market_background(payload, previous):
 
 
 def _statistics(group):
+    if group['key'] == 'limit_up_open' and group['state'] == 'unknown':
+        return
     values = sorted(item['auction_pct'] for item in group['items'] if item['auction_pct'] is not None)
     count = len(values)
     middle = count // 2
@@ -138,7 +192,7 @@ def build_feedback(payload):
     payload = payload if isinstance(payload, dict) else {}
     day, previous = payload.get('date'), payload.get('previous_date')
     result = {'version': VERSION, 'date': day, 'previous_date': previous, 'scope': SCOPE,
-              'groups': [{'key': key, 'title': title, 'interpretation': text, 'items': []}
+              'groups': [_limit_open_unknown()] + [{'key': key, 'title': title, 'interpretation': text, 'items': []}
                          for key, title, text in SPECS],
               'coverage': {'requested': 0, 'classified': 0, 'unknown': 0}, 'gaps': [],
               'market_background': _market_background(payload, previous)}
@@ -169,6 +223,10 @@ def build_feedback(payload):
     groups = {group['key']: group for group in result['groups']}
     for symbol, candidate in zip(codes, rows):
         quote = indexed.get(symbol, {})
+        opening = _opening_reference(quote, symbol)
+        if opening is not None:
+            groups['limit_up_open'].update(state='reference', reason=None)
+            groups['limit_up_open']['checked_count'] += 1
         change = _number(quote.get('auction_pct')) if quote.get('state') == 'observed' else None
         price = _number(quote.get('auction_price'), positive=True) if change is not None else None
         if price is None:
@@ -187,12 +245,15 @@ def build_feedback(payload):
             key = 'repair' if change > 0 else 'weak_continuation'
         else:
             key = 'continuation' if change > 0 else 'weaken'
+        if key in ('repair', 'continuation') and opening is not None and opening['matched']:
+            key = 'limit_up_open'
         groups[key]['items'].append({'instrument_id': symbol,
             'name': _text(quote.get('name') or candidate.get('name') or prior.get('name'), symbol),
             'previous_state': kind, 'previous_board_count': _height(prior.get('previous_board_count')) if kind == 'limit_up' else None,
             'auction_price': price, 'auction_pct': change,
             'auction_amount': _number(quote.get('auction_amount'), nonnegative=True) if change is not None else None,
-            'auction_volume_ratio': _number(quote.get('auction_volume_ratio'), nonnegative=True) if change is not None else None})
+            'auction_volume_ratio': _number(quote.get('auction_volume_ratio'), nonnegative=True) if change is not None else None,
+            **({'opening_reference': opening} if key == 'limit_up_open' else {})})
     for group in result['groups']:
         _statistics(group)
     unknown = sum(groups[key]['count'] for key in ('event_conflict', 'unknown_quote', 'unknown_event'))

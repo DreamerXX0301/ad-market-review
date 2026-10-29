@@ -198,6 +198,12 @@ export function auctionFilterFeedbackGroups(
 ): AuctionRow[] {
   if (!ids) return groups;
   return groups.map((group) => {
+    // Missing limit-price evidence cannot become a verified empty subgroup.
+    if (
+      group.key === "limit_up_open" &&
+      !["observed", "reference"].includes(group.state)
+    )
+      return group;
     const source: AuctionRow[] = Array.isArray(group.items)
       ? group.items.filter(
           (row: unknown) =>
