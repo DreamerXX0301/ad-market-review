@@ -41,6 +41,7 @@ import AuctionFeedback from "./AuctionFeedback";
 import AuctionResonance from "./AuctionResonance";
 import AuctionClassifications from "./AuctionClassifications";
 import AuctionCopyText from "./AuctionCopyText";
+import AuctionAssociationSummary from "./AuctionAssociationSummary";
 import {
   beginAuctionRun,
   acceptAuctionRun,
@@ -169,8 +170,6 @@ export default function AuctionReview({
   const [benchmarkDirection, setBenchmarkDirection] = useState<"asc" | "desc">(
     "desc",
   );
-  const [observationKind, setObservationKind] = useState("all");
-  const [observationGroup, setObservationGroup] = useState("");
   const [observationPage, setObservationPage] = useState(0);
   const submitting = useRef(false);
   const keys = useRef<Record<string, { key: string; ids: string[] }>>({});
@@ -188,7 +187,6 @@ export default function AuctionReview({
   useEffect(() => {
     setSubmitError("");
     setCloseOpen(false);
-    setObservationGroup("");
     setObservationPage(0);
   }, [selected]);
   useEffect(() => {
@@ -335,22 +333,7 @@ export default function AuctionReview({
     sort.direction,
   );
   const sources = noonRows(payload?.sources);
-  const observationGroups = auctionSortRows(
-    noonRows(topicView?.groups).filter((row) => row.kind === observationKind),
-    "sample_count",
-    "desc",
-  );
-  const selectedObservationGroup = observationGroups.find(
-    (row) => `${row.source}:${row.kind}:${row.topic_code}` === observationGroup,
-  );
-  const observationIds =
-    selectedObservationGroup &&
-    Array.isArray(selectedObservationGroup.instrument_ids)
-      ? new Set(selectedObservationGroup.instrument_ids)
-      : null;
-  const observationRows = observationIds
-    ? rows.filter((row) => observationIds.has(row.instrument_id))
-    : rows;
+  const observationRows = rows;
   const observationPages = Math.max(1, Math.ceil(observationRows.length / 20));
   const safeObservationPage = Math.min(observationPage, observationPages - 1);
   const visibleObservationRows = observationRows.slice(
@@ -971,68 +954,14 @@ export default function AuctionReview({
               </Badge>
             }
           >
+            <AuctionAssociationSummary view={topicView} date={selected} />
             <div className="auction-observation-controls">
-              <label>
-                分组{" "}
-                <select
-                  aria-label="观察单分组方式"
-                  value={observationKind}
-                  onChange={(event) => {
-                    setObservationKind(event.target.value);
-                    setObservationGroup("");
-                    setObservationPage(0);
-                  }}
-                >
-                  <option value="all">全部股票</option>
-                  <option value="industry">按行业</option>
-                  <option value="concept">按概念</option>
-                </select>
-              </label>
-              {observationKind !== "all" && (
-                <select
-                  aria-label="选择观察单行业概念"
-                  value={selectedObservationGroup ? observationGroup : ""}
-                  onChange={(event) => {
-                    setObservationGroup(event.target.value);
-                    setObservationPage(0);
-                  }}
-                >
-                  <option value="">
-                    选择{observationKind === "industry" ? "行业" : "概念"}（
-                    {observationGroups.length}组）
-                  </option>
-                  {observationGroups.map((group) => (
-                    <option
-                      key={`${group.source}:${group.kind}:${group.topic_code}`}
-                      value={`${group.source}:${group.kind}:${group.topic_code}`}
-                    >
-                      {group.name} · {group.sample_count}只 ·{" "}
-                      {percent(auctionNumber(group.average_auction_pct))}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <span>
-                {selectedObservationGroup?.name || "全部"}{" "}
-                {integer(observationRows.length)}只
-              </span>
-              {selectedObservationGroup && (
-                <span
-                  className={tone(
-                    auctionNumber(selectedObservationGroup.average_auction_pct),
-                  )}
-                >
-                  样本均幅{" "}
-                  {percent(
-                    auctionNumber(selectedObservationGroup.average_auction_pct),
-                  )}
-                </span>
-              )}
+              <span>全部 {integer(observationRows.length)}只 · 每页20只</span>
               <AuctionCopyText
                 text={observationRows
                   .map((row) => row.instrument_id.slice(0, 6))
                   .join("\n")}
-                label="复制当前分组全部股票代码"
+                label="复制观察单全部股票代码"
               />
             </div>
             <div className="auction-table-wrap">

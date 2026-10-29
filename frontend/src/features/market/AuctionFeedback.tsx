@@ -7,6 +7,7 @@ import { auctionNumber, auctionSortRows } from "./auctionPresentation";
 import AuctionClassifications from "./AuctionClassifications";
 import AuctionCopyText from "./AuctionCopyText";
 import CopyStockCode from "../../components/CopyStockCode";
+import AuctionAssociationSummary from "./AuctionAssociationSummary";
 
 const TYPES: Record<string, { title: string; color: string }> = {
   repair: { title: "修复观察", color: "positive" },
@@ -46,6 +47,7 @@ export default function AuctionFeedback({
       title="昨日 → 今日：强弱对照"
       subtitle="先看昨日事件，再看今日竞价相对昨收的定价。"
     >
+      <AuctionAssociationSummary view={topicView} date={date} />
       {result.loading && !view && <Loading />}
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />

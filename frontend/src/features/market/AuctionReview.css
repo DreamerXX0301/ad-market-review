@@ -1139,3 +1139,31 @@
   justify-content: flex-end;
   border-top: 1px solid var(--border-soft);
 }
+.auction-association-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 18px 0;
+}
+.auction-association-item {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--surface2);
+  font-size: 11px;
+}
+.auction-association-kind {
+  font-size: 9px;
+  color: var(--muted);
+}
+.auction-association-count {
+  color: var(--blue);
+}
+.auction-association-item b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}

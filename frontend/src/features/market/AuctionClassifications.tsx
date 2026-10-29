@@ -32,12 +32,24 @@ export default function AuctionClassifications({
   function average(row: Row, kind: string) {
     return groups.get(`${row.source}:${kind}:${row.topic_code}`);
   }
-  const industries = noonRows(item?.industries),
-    concepts = noonRows(item?.topics);
-  function tags(values: unknown, label: string, kind: string, count: number) {
-    const rows = noonRows(values).filter(
-      (row) => typeof row.name === "string" && row.name.trim(),
+  const related = (values: unknown, kind: string) =>
+    noonRows(values).sort(
+      (a, b) =>
+        (average(b, kind)?.sample_count || 0) -
+          (average(a, kind)?.sample_count || 0) ||
+        String(a.name).localeCompare(String(b.name)),
     );
+  const industries = related(item?.industries, "industry"),
+    concepts = related(item?.topics, "concept");
+  function tags(values: unknown, label: string, kind: string, count: number) {
+    const rows = noonRows(values)
+      .filter((row) => typeof row.name === "string" && row.name.trim())
+      .sort(
+        (a, b) =>
+          (average(b, kind)?.sample_count || 0) -
+            (average(a, kind)?.sample_count || 0) ||
+          String(a.name).localeCompare(String(b.name)),
+      );
     if (!rows.length)
       return (
         <div className={`auction-affiliation-line ${kind}`}>
@@ -114,7 +126,7 @@ export default function AuctionClassifications({
   return (
     <div className="auction-affiliations" aria-label="行业与概念归属">
       {tags(item?.industries, "行业", "industry", 1)}
-      {tags(item?.topics, "概念", "concept", 3)}
+      {tags(item?.topics, "概念", "concept", 1)}
     </div>
   );
 }

@@ -155,8 +155,5 @@ html=renderToStaticMarkup(createElement(AuctionStockTiles,{ids:['600003.SH','600
 assert.ok(html.indexOf('高开卡片')<html.indexOf('低开卡片'));
 assert.ok(html.indexOf('低开卡片')<html.indexOf('未知卡片'));
 assert.match(html,/\+5\.00%/);assert.match(html,/-2\.00%/);assert.doesNotMatch(html,/99\.00%/);
-const oneGroupTopics={...classifiedTopics,groups:[{...topics.groups[0],sample_count:1,valid_count:1,average_auction_pct:-2,instrument_ids:['600001.SH']}]};
-html=render(retained,{6:'concept',7:'fuyao:concept:886001.TI'},null,null,day,oneGroupTopics,feedback);
-const observationTable=html.slice(html.indexOf('<table class="auction-table"'),html.indexOf('</table>',html.indexOf('<table class="auction-table"')));
-assert.match(observationTable,/600001/);assert.doesNotMatch(observationTable,/000001/);
-assert.match(html,/每页20只/);assert.match(html,/样本均幅/);assert.match(html,/查看完整行业概念、样本均幅与代码/);
+html=render(retained,{},null,null,day,classifiedTopics,feedback);
+assert.match(html,/主要关联行业概念均幅/);assert.match(html,/每页20只/);assert.doesNotMatch(html,/观察单分组方式/);
