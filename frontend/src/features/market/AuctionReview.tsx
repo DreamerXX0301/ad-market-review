@@ -1343,6 +1343,15 @@ export default function AuctionReview({
                         {closeReview.reason || "等待同日盘后增量发布。"}
                       </p>
                     )}
+                  {hasCloseGroups && (
+                    <AuctionAssociationSummary
+                      date={selected}
+                      view={topicView}
+                      closeReview={closeReview}
+                      selectedKey={selectedAssociationKey}
+                      onSelect={selectAssociation}
+                    />
+                  )}
                   {closeReview && hasCloseFacts && (
                     <>
                       {(!hasCloseGroups || !selectedAssociationIds) && (
@@ -1513,6 +1522,7 @@ export default function AuctionReview({
                     <AuctionCloseGroups
                       date={selected}
                       view={closeReview}
+                      topicView={topicView}
                       selectedIds={selectedAssociationIds}
                       onStock={onStock}
                       chartDate={chartDate}

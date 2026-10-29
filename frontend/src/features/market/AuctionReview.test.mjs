@@ -264,3 +264,21 @@ html=render(retained,{0:true},pendingGroups);
 assert.match(html,/data-close-group="weaken"/,'the original group preview exists before close prices are published');
 assert.doesNotMatch(html,/\+7\.80%|\+10\.00%/,'pending data cannot invent closing performance');
 console.log('Auction grouped close integration: original groups, separate means, automatic/manual controls, selected membership and honest pending preview passed');
+
+html=render(retained,{0:true,7:{date:day,key:'fuyao:concept:886001.TI'}},groupedClose,null,day,selectableTopics);
+const groupedCloseSection=html.slice(html.indexOf('id="auction-close-review"'));
+assert.match(groupedCloseSection,/aria-label="盘后行业概念收盘均幅"/);
+assert.match(groupedCloseSection,/收盘均\+7\.80%/);
+assert.match(groupedCloseSection,/行业 合成核验行业/);assert.match(groupedCloseSection,/概念 合成核验概念/);
+assert.equal((html.match(/aria-pressed="true" aria-label="合成题材甲/g)||[]).length,3,'all three association strips share the same selected identity');
+
+const {default:AuctionAssociationSummary}=await import(await moduleUrl(new URL('./AuctionAssociationSummary.tsx',import.meta.url)));
+const sectorMembers=['600001.SH','600002.SH','600003.SH'];
+const sectorView={version:'auction-topic-summary-v1',date:day,groups:[{source:'fuyao',kind:'industry',topic_code:'881001.TI',name:'合成关联行业',sample_count:3,valid_count:3,instrument_ids:sectorMembers,average_auction_pct:9,members_observed_date:'2026-10-21'}]};
+const closeForSectors={version:'auction-close-review-v1',date:day,state:'partial',items:[{instrument_id:sectorMembers[0],state:'observed',close_pct:4},{instrument_id:sectorMembers[1],state:'observed',close_pct:0},{instrument_id:sectorMembers[2],state:'mismatch',close_pct:99}]};
+const renderSector=close=>renderToStaticMarkup(createElement(AuctionAssociationSummary,{view:sectorView,date:day,closeReview:close}));
+html=renderSector(closeForSectors);assert.match(html,/收盘均\+2\.00%/);assert.match(html,/收盘涨幅有效2\/3只/);assert.doesNotMatch(html,/9\.00%|99\.00%/,'posthoc chips use verified closing changes rather than auction or mismatch values');
+for(const unavailable of [{...closeForSectors,state:'pending'},{...closeForSectors,date:'2026-10-28'}]){
+ html=renderSector(unavailable);assert.match(html,/合成关联行业/);assert.match(html,/收盘均—/);assert.doesNotMatch(html,/\+2\.00%|9\.00%/);
+}
+console.log('Auction close affiliations: frozen per-stock labels, shared association selection and independently labelled closing means passed');

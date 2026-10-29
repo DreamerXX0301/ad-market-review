@@ -26,7 +26,7 @@ const data={version:'auction-close-review-v1',date,state:'partial',groups:[
  {key:'limit_up_open',state:'reference',title:'涨停价高开参考',items:[{instrument_id:'600001.SH',name:'合成盘后参考股',state:'mismatch',auction_pct:10,close_pct:987.65,auction_to_close_pct:876.54,open:10.5,close:11,reason:'开盘价不一致，保留同日事实'}]},
  {key:'unknown_event',title:'昨日事件未知',items:[{instrument_id:'600002.SH',name:'合成未知事件股',state:'unknown',auction_pct:0,close_pct:null,auction_to_close_pct:null,reason:'缺少同日报价'}]},
 ]};
-const render=(view,selectedIds=null)=>renderToStaticMarkup(createElement(AuctionCloseGroups,{date,view,selectedIds,chartDate:date,onStock(){}})).replaceAll(/<!--[^]*?-->/g,'');
+const render=(view,selectedIds=null,topicView=null)=>renderToStaticMarkup(createElement(AuctionCloseGroups,{date,view,topicView,selectedIds,chartDate:date,onStock(){}})).replaceAll(/<!--[^]*?-->/g,'');
 let html=render(data);
 assert.match(html,/盘前分组/);assert.match(html,/收盘均涨幅/);assert.match(html,/竞价至收盘均变化/);
 assert.ok(html.indexOf('data-close-group="limit_up_open"')<html.indexOf('data-close-group="repair"'));
@@ -49,4 +49,13 @@ assert.doesNotMatch(html,/\+3\.00%|收盘 0\/1|变化 0\/1|10\.10/,'pending publ
 const css=await fs.readFile(new URL('./AuctionCloseGroups.css',import.meta.url),'utf8');
 assert.match(css,/table-layout:\s*fixed/);assert.match(css,/min-width:\s*0/);assert.match(css,/overflow:\s*auto/);
 assert.match(css,/\.auction-close-group-row\.limit\s*\{\s*--close-group-color:\s*var\(--red\)/);
+const classifications={version:'auction-topic-summary-v1',date,groups:[],stock_classifications:{'000001.SZ':{industries:[{source:'fuyao',topic_code:'881001.TI',name:'合成盘后行业',members_observed_date:'2026-10-21'}],topics:[{source:'fuyao',topic_code:'886001.TI',name:'合成盘后概念',members_observed_date:'2026-10-21'}]}}};
+html=render(data,new Set(['000001.SZ']),classifications);
+assert.match(html,/行业 合成盘后行业/);assert.match(html,/概念 合成盘后概念/);
+assert.match(html,/查看完整行业概念、竞价均幅与代码/);assert.match(html,/复制六位代码 000001/);
+for(const stale of [{...classifications,date:'2026-10-28'},{...classifications,version:'other-version'}]){
+ html=render(data,new Set(['000001.SZ']),stale);
+ assert.doesNotMatch(html,/合成盘后行业|合成盘后概念/,'posthoc rows cannot borrow another date or version of membership');
+ assert.match(html,/行业 待核验/);assert.match(html,/概念 待核验/);
+}
 console.log('Auction close grouped table: first reference row, folded defaults, selected expansion, preserved mismatch facts, stock name/code copying and bounded detail layout passed');

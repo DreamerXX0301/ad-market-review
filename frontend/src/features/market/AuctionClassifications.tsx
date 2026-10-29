@@ -61,7 +61,7 @@ export default function AuctionClassifications({
       <span
         className={`auction-affiliation-chip ${kind}`}
         key={`${row.source}:${row.topic_code}`}
-        title={`${row.source} · ${row.topic_code} · 成员档案 ${row.members_observed_date} · 本次样本均幅，有效${average(row, kind)?.valid_count ?? "未知"}只`}
+        title={`${row.source} · ${row.topic_code} · 成员档案 ${row.members_observed_date} · 本次样本竞价均幅，有效${average(row, kind)?.valid_count ?? "未知"}只`}
       >
         <span>{row.name}</span>
         <b
@@ -99,7 +99,7 @@ export default function AuctionClassifications({
           type="button"
           className="auction-affiliations-preview"
           onClick={() => setOpened(identity)}
-          title="查看完整行业概念、样本均幅与代码"
+          title="查看完整行业概念、竞价均幅与代码"
         >
           <span className="industry">
             行业 {industries[0]?.name || "待核验"}
@@ -109,11 +109,11 @@ export default function AuctionClassifications({
         </button>
         {opened === identity && (
           <Modal
-            title="行业 / 概念 · 本次样本均幅"
+            title="行业 / 概念 · 本次样本竞价均幅"
             onClose={() => setOpened("")}
           >
             <p className="auction-topic-note">
-              成员档案归属，非上涨原因。均幅仅统计本次候选交集。
+              成员档案归属，非上涨原因。竞价均幅仅统计本次候选交集。
             </p>
             <div className="auction-affiliations">
               {tags(industries, "行业", "industry", industries.length)}

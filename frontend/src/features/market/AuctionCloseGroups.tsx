@@ -4,6 +4,7 @@ import type { Row } from "../../lib/api";
 import { integer, num, percent, tone } from "../../lib/format";
 import CopyStockCode from "../../components/CopyStockCode";
 import AuctionCopyText from "./AuctionCopyText";
+import AuctionClassifications from "./AuctionClassifications";
 import {
   auctionCloseGroupsView,
   auctionCloseNumber,
@@ -13,12 +14,14 @@ import "./AuctionCloseGroups.css";
 export default function AuctionCloseGroups({
   date,
   view,
+  topicView = null,
   selectedIds = null,
   onStock,
   chartDate,
 }: {
   date: string;
   view: Row | null;
+  topicView?: Row | null;
   selectedIds?: ReadonlySet<string> | null;
   onStock?: (id: string) => void;
   chartDate?: string;
@@ -158,12 +161,12 @@ export default function AuctionCloseGroups({
                         >
                           <table className="auction-close-group-detail-table">
                             <colgroup>
-                              <col style={{ width: "24%" }} />
-                              <col style={{ width: "12%" }} />
-                              <col style={{ width: "12%" }} />
+                              <col style={{ width: "28%" }} />
+                              <col style={{ width: "11%" }} />
+                              <col style={{ width: "11%" }} />
                               <col style={{ width: "14%" }} />
-                              <col style={{ width: "10%" }} />
-                              <col style={{ width: "10%" }} />
+                              <col style={{ width: "9%" }} />
+                              <col style={{ width: "9%" }} />
                               <col style={{ width: "18%" }} />
                             </colgroup>
                             <thead>
@@ -215,6 +218,12 @@ export default function AuctionCloseGroups({
                                       </div>
                                       <CopyStockCode
                                         instrumentId={row.instrument_id}
+                                      />
+                                      <AuctionClassifications
+                                        view={topicView}
+                                        date={date}
+                                        instrumentId={row.instrument_id}
+                                        compact
                                       />
                                     </div>
                                   </td>

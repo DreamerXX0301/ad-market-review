@@ -3,6 +3,9 @@
   width: 100%;
   max-width: 100%;
 }
+.auction-close-review .auction-association-summary {
+  padding: 0 0 10px;
+}
 .auction-close-groups-note,
 .auction-close-groups-empty {
   margin: 10px 0;
@@ -156,6 +159,7 @@
   align-items: flex-start;
   gap: 4px;
   min-width: 0;
+  width: 100%;
 }
 .auction-close-group-stock-name {
   display: flex;
