@@ -39,6 +39,18 @@
 .auction-fixed-table th .auction-sort {
   margin-left: auto;
 }
+.auction-resonance-fixed th .auction-sort {
+  width: 100%;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.auction-resonance-fixed th:first-child .auction-sort {
+  justify-content: flex-start;
+}
+.auction-resonance-fixed th[aria-sort="ascending"] .auction-sort,
+.auction-resonance-fixed th[aria-sort="descending"] .auction-sort {
+  color: var(--blue);
+}
 .auction-fixed-table td > small {
   display: block;
   margin-top: 3px;

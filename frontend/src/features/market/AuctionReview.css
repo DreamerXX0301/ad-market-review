@@ -1167,3 +1167,17 @@
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+.auction-association-item {
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+.auction-association-item:hover {
+  border-color: var(--blue);
+}
+.auction-association-item.is-selected {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, var(--surface2));
+  box-shadow: inset 0 0 0 1px var(--blue);
+}

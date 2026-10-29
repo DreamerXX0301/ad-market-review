@@ -2,14 +2,17 @@ import type { Row } from "../../lib/api";
 import { integer, percent, tone } from "../../lib/format";
 import { noonRows } from "./noonPresentation";
 import { auctionNumber } from "./auctionPresentation";
-import AuctionCopyText from "./AuctionCopyText";
 
 export default function AuctionAssociationSummary({
   view,
   date,
+  selectedKey = "",
+  onSelect,
 }: {
   view: Row | null;
   date: string;
+  selectedKey?: string;
+  onSelect?: (key: string) => void;
 }) {
   const groups =
     view?.date === date && view.version === "auction-topic-summary-v1"
@@ -34,9 +37,17 @@ export default function AuctionAssociationSummary({
     >
       {rows.length ? (
         rows.map((row) => (
-          <div
-            className="auction-association-item"
+          <button
+            type="button"
+            className={`auction-association-item${selectedKey === `${row.source}:${row.kind}:${row.topic_code}` ? " is-selected" : ""}`}
             key={`${row.source}:${row.kind}:${row.topic_code}`}
+            aria-pressed={
+              selectedKey === `${row.source}:${row.kind}:${row.topic_code}`
+            }
+            aria-label={`${row.name}，关联${integer(row.sample_count)}只，点击查看对应股票`}
+            onClick={() =>
+              onSelect?.(`${row.source}:${row.kind}:${row.topic_code}`)
+            }
             title={`按本次候选关联股数选取，每类前2组；成员档案 ${row.members_observed_date}，非上涨原因或全板块涨幅`}
           >
             <span className="auction-association-kind">
@@ -49,11 +60,7 @@ export default function AuctionAssociationSummary({
             <b className={tone(auctionNumber(row.average_auction_pct))}>
               均{percent(auctionNumber(row.average_auction_pct))}
             </b>
-            <AuctionCopyText
-              text={row.topic_code}
-              label={`复制${row.kind === "industry" ? "行业" : "概念"}代码 ${row.topic_code}`}
-            />
-          </div>
+          </button>
         ))
       ) : (
         <span className="auction-muted">行业概念均幅待核验</span>

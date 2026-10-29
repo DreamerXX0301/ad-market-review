@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import ts from "typescript";
 const code = await fs.readFile(new URL("./auctionPresentation.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { auctionNumber, auctionInitialDate, auctionCodes, auctionPayload, auctionCaptureState, auctionCanAct, auctionShouldPoll, auctionSortRows } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
+const { auctionNumber, auctionInitialDate, auctionCodes, auctionPayload, auctionCaptureState, auctionCanAct, auctionShouldPoll, auctionSortRows, auctionFilterFeedbackGroups } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
 const day = "2026-10-29";
 assert.equal(auctionInitialDate("#auction?date=" + day), day);
 assert.equal(auctionInitialDate("#auction?date=2024-02-29"), "2024-02-29");
@@ -95,3 +95,10 @@ assert.deepEqual(labels.map(value=>value.tone),['limit-up','break','watch','focu
 assert.equal(labels[0].source,'严格前日已核验涨停');
 assert.equal(reasons.length,5,'display formatting never edits frozen evidence');
 assert.deepEqual(auctionBackgroundTags(null),[]);
+
+const eventGroups=[{key:'repair',count:3,average_auction_pct:99,items:[{instrument_id:'600001.SH',auction_pct:0},{instrument_id:'000001.SZ',auction_pct:2},{instrument_id:'000002.SZ',auction_pct:null}]}];
+const groupBefore=JSON.stringify(eventGroups);
+let restricted=auctionFilterFeedbackGroups(eventGroups,new Set(['600001.SH','000002.SZ']))[0];
+assert.equal(restricted.count,2);assert.equal(restricted.valid_count,1);assert.equal(restricted.missing_count,1);assert.equal(restricted.average_auction_pct,0);assert.equal(restricted.median_auction_pct,0);
+restricted=auctionFilterFeedbackGroups(eventGroups,new Set(['000002.SZ']))[0];assert.equal(restricted.average_auction_pct,null);assert.equal(restricted.median_auction_pct,null);
+assert.equal(auctionFilterFeedbackGroups(eventGroups,null),eventGroups);assert.equal(JSON.stringify(eventGroups),groupBefore);

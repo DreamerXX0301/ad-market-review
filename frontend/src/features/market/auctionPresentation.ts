@@ -188,6 +188,43 @@ export function auctionSortRows(
     .map(({ row }) => row);
 }
 
+/** Restrict existing event groups to a selected frozen membership intersection. */
+export function auctionFilterFeedbackGroups(
+  groups: AuctionRow[],
+  ids: ReadonlySet<string> | null,
+): AuctionRow[] {
+  if (!ids) return groups;
+  return groups.map((group) => {
+    const source: AuctionRow[] = Array.isArray(group.items)
+      ? group.items.filter(
+          (row: unknown) =>
+            row !== null && typeof row === "object" && !Array.isArray(row),
+        )
+      : [];
+    const items = source.filter((row) => ids.has(row.instrument_id));
+    const values = items
+      .map((row) => auctionNumber(row.auction_pct))
+      .filter((value): value is number => value !== null)
+      .sort((a, b) => a - b);
+    const middle = Math.floor(values.length / 2);
+    return {
+      ...group,
+      items,
+      count: items.length,
+      valid_count: values.length,
+      missing_count: items.length - values.length,
+      average_auction_pct: values.length
+        ? values.reduce((sum, value) => sum + value / values.length, 0)
+        : null,
+      median_auction_pct: values.length
+        ? values.length % 2
+          ? values[middle]
+          : values[middle - 1] / 2 + values[middle] / 2
+        : null,
+    };
+  });
+}
+
 /** Join only the frozen previous-session notes to this snapshot's quotes. */
 export function auctionPreviousFocus(payload: AuctionRow | null) {
   const empty = {

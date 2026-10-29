@@ -157,3 +157,27 @@ assert.ok(html.indexOf('低开卡片')<html.indexOf('未知卡片'));
 assert.match(html,/\+5\.00%/);assert.match(html,/-2\.00%/);assert.doesNotMatch(html,/99\.00%/);
 html=render(retained,{},null,null,day,classifiedTopics,feedback);
 assert.match(html,/主要关联行业概念均幅/);assert.match(html,/每页20只/);assert.doesNotMatch(html,/观察单分组方式/);
+
+const {default:AuctionResonance}=await import(await moduleUrl(new URL('./AuctionResonance.tsx',import.meta.url)));
+const sortGroups=[2,0,null].map((value,index)=>({...resonance.groups[0],topic_code:`88600${index+1}.TI`,name:['排序高值','排序零值','排序未知'][index],top_count:2,concentration_lift:value,average_auction_pct:value,median_auction_pct:value,up_ratio:value===null?null:value/10,instrument_ids:[]}));
+for(const key of ['concentration_lift','average_auction_pct','median_auction_pct','up_ratio'])for(const direction of ['desc','asc']){
+ setData(retained,null,null,null,null,{...resonance,groups:sortGroups});setStates({2:{key,direction}});
+ const table=renderToStaticMarkup(createElement(AuctionResonance,{date:day,quotes:[]}));
+ assert.ok(table.indexOf(direction==='desc'?'排序高值':'排序零值')<table.indexOf(direction==='desc'?'排序零值':'排序高值'));
+ assert.ok(table.indexOf('排序未知')>table.indexOf('排序高值'));assert.ok(table.indexOf('排序未知')>table.indexOf('排序零值'));
+ assert.match(table,new RegExp('aria-sort="'+(direction==='desc'?'descending':'ascending')+'"'));
+}
+const selectableTopics={...classifiedTopics,groups:[{...topics.groups[0],sample_count:3,valid_count:3,instrument_ids:['600001.SH'],average_auction_pct:-2}]};
+html=render(retained,{7:{date:day,key:'fuyao:concept:886001.TI'}},null,null,day,selectableTopics,feedback);
+const selectedTable=html.slice(html.indexOf('<table class="auction-table"'),html.indexOf('</table>',html.indexOf('<table class="auction-table"')));
+assert.match(selectedTable,/600001/);assert.doesNotMatch(selectedTable,/000001/);assert.match(html,/取消选中/);
+assert.equal((html.match(/aria-pressed="true" aria-label="合成题材甲/g)||[]).length,2,'both association strips share selection');
+assert.ok((html.match(/<div class="auction-association-summary"[^]*?<\/div>/g)||[]).every(strip=>!strip.includes('复制概念代码')),'summary chip is selection, not copy');
+html=render(retained,{7:{date:'2026-10-28',key:'fuyao:concept:886001.TI'}},null,null,day,selectableTopics,feedback);assert.doesNotMatch(html,/取消选中/,'selection must be date-bound');
+for(const direction of ['asc','desc']){
+ setData(retained,null,null,null,null,{...resonance,groups:sortGroups.slice(0,2).map((row,index)=>({...row,name:index?'ZuluGroup':'AlphaGroup',top_count:index?4:2}))});
+ for(const key of ['name','top_count']){
+  setStates({2:{key,direction}});const result=renderToStaticMarkup(createElement(AuctionResonance,{date:day,quotes:[]}));
+  assert.ok(result.indexOf(direction==='asc'?'AlphaGroup':'ZuluGroup')<result.indexOf(direction==='asc'?'ZuluGroup':'AlphaGroup'));
+ }
+}

@@ -171,6 +171,10 @@ export default function AuctionReview({
     "desc",
   );
   const [observationPage, setObservationPage] = useState(0);
+  const [associationSelection, setAssociationSelection] = useState({
+    date: "",
+    key: "",
+  });
   const submitting = useRef(false);
   const keys = useRef<Record<string, { key: string; ids: string[] }>>({});
   const currentDay = useRef(selected);
@@ -333,7 +337,26 @@ export default function AuctionReview({
     sort.direction,
   );
   const sources = noonRows(payload?.sources);
-  const observationRows = rows;
+  const selectedAssociationKey =
+    associationSelection.date === selected ? associationSelection.key : "";
+  const selectedAssociation = noonRows(topicView?.groups).find(
+    (row) =>
+      `${row.source}:${row.kind}:${row.topic_code}` === selectedAssociationKey,
+  );
+  const selectedAssociationIds =
+    selectedAssociation && Array.isArray(selectedAssociation.instrument_ids)
+      ? new Set<string>(selectedAssociation.instrument_ids)
+      : null;
+  const observationRows = selectedAssociationIds
+    ? rows.filter((row) => selectedAssociationIds.has(row.instrument_id))
+    : rows;
+  function selectAssociation(key: string) {
+    setAssociationSelection((previous) => ({
+      date: selected,
+      key: previous.date === selected && previous.key === key ? "" : key,
+    }));
+    setObservationPage(0);
+  }
   const observationPages = Math.max(1, Math.ceil(observationRows.length / 20));
   const safeObservationPage = Math.min(observationPage, observationPages - 1);
   const visibleObservationRows = observationRows.slice(
@@ -719,6 +742,9 @@ export default function AuctionReview({
           <AuctionFeedback
             date={selected}
             topicView={topicView}
+            selectedKey={selectedAssociationKey}
+            selectedIds={selectedAssociationIds}
+            onAssociationSelect={selectAssociation}
             onStock={onStock}
             chartDate={chartDate}
           />
@@ -954,14 +980,30 @@ export default function AuctionReview({
               </Badge>
             }
           >
-            <AuctionAssociationSummary view={topicView} date={selected} />
+            <AuctionAssociationSummary
+              view={topicView}
+              date={selected}
+              selectedKey={selectedAssociationKey}
+              onSelect={selectAssociation}
+            />
             <div className="auction-observation-controls">
-              <span>全部 {integer(observationRows.length)}只 · 每页20只</span>
+              <span>
+                {selectedAssociation?.name || "全部"}{" "}
+                {integer(observationRows.length)}只 · 每页20只
+              </span>
+              {selectedAssociation && (
+                <button
+                  className="btn small"
+                  onClick={() => selectAssociation(selectedAssociationKey)}
+                >
+                  取消选中
+                </button>
+              )}
               <AuctionCopyText
                 text={observationRows
                   .map((row) => row.instrument_id.slice(0, 6))
                   .join("\n")}
-                label="复制观察单全部股票代码"
+                label="复制当前股票列表代码"
               />
             </div>
             <div className="auction-table-wrap">

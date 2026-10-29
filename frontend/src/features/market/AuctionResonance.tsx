@@ -1,5 +1,11 @@
 import { Fragment, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { Badge, Empty, ErrorBox, Loading, Panel } from "../../components/UI";
@@ -30,11 +36,41 @@ export default function AuctionResonance({
       : null;
   const [kind, setKind] = useState("all");
   const [expanded, setExpanded] = useState("");
-  const [order, setOrder] = useState("concentration_lift");
+  const [sort, setSort] = useState({
+    key: "concentration_lift",
+    direction: "desc" as "asc" | "desc",
+  });
   const groups = noonRows(view?.groups).filter(
     (row) => (kind === "all" || row.kind === kind) && row.top_count >= 2,
   );
-  const rows = auctionSortRows(groups, order, "desc").slice(0, 15);
+  const sorted =
+    sort.key === "name"
+      ? [...groups].sort((a, b) => {
+          const an =
+            typeof a.name === "string" && a.name.trim() ? a.name.trim() : null;
+          const bn =
+            typeof b.name === "string" && b.name.trim() ? b.name.trim() : null;
+          if (an === null || bn === null)
+            return an === bn ? 0 : an === null ? 1 : -1;
+          return (
+            an.localeCompare(bn, "zh-CN") * (sort.direction === "asc" ? 1 : -1)
+          );
+        })
+      : auctionSortRows(groups, sort.key, sort.direction);
+  const rows = sorted.slice(0, 15);
+  function changeSort(key: string) {
+    setSort({
+      key,
+      direction:
+        sort.key === key
+          ? sort.direction === "desc"
+            ? "asc"
+            : "desc"
+          : key === "name"
+            ? "asc"
+            : "desc",
+    });
+  }
   const names = new Map(
     quotes.map((row) => [row.instrument_id, row.name || row.instrument_id]),
   );
@@ -78,25 +114,6 @@ export default function AuctionResonance({
             <span>有效竞价 {integer(valid)}只</span>
             <span>每组至少3只样本、命中前列至少2只</span>
           </div>
-          <div
-            className="button-group auction-resonance-order"
-            aria-label="共振排序"
-          >
-            {[
-              ["concentration_lift", "集中度"],
-              ["average_auction_pct", "均幅"],
-              ["top_count", "命中数"],
-            ].map(([key, label]) => (
-              <button
-                key={key}
-                className={`btn small${order === key ? " active" : ""}`}
-                aria-pressed={order === key}
-                onClick={() => setOrder(key)}
-              >
-                {label} 高→低
-              </button>
-            ))}
-          </div>
           {rows.length ? (
             <div className="auction-table-scroll">
               <table className="auction-fixed-table auction-resonance-fixed">
@@ -110,12 +127,44 @@ export default function AuctionResonance({
                 </colgroup>
                 <thead>
                   <tr>
-                    <th>概念 / 行业</th>
-                    <th>前列命中</th>
-                    <th>集中倍数</th>
-                    <th>竞价均幅</th>
-                    <th>中位数</th>
-                    <th>高开占比</th>
+                    {[
+                      ["name", "概念 / 行业"],
+                      ["top_count", "前列命中"],
+                      ["concentration_lift", "集中倍数"],
+                      ["average_auction_pct", "竞价均幅"],
+                      ["median_auction_pct", "中位数"],
+                      ["up_ratio", "高开占比"],
+                    ].map(([key, label]) => (
+                      <th
+                        key={key}
+                        aria-sort={
+                          sort.key === key
+                            ? sort.direction === "asc"
+                              ? "ascending"
+                              : "descending"
+                            : "none"
+                        }
+                      >
+                        <button
+                          type="button"
+                          className="auction-sort"
+                          aria-label={`按${label}排序`}
+                          title={`点击按${label}${(sort.key === key && sort.direction === "desc") || (sort.key !== key && key === "name") ? "升序" : "降序"}`}
+                          onClick={() => changeSort(key)}
+                        >
+                          {label}
+                          {sort.key === key ? (
+                            sort.direction === "desc" ? (
+                              <ArrowDown size={12} />
+                            ) : (
+                              <ArrowUp size={12} />
+                            )
+                          ) : (
+                            <ArrowUpDown size={12} />
+                          )}
+                        </button>
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -259,7 +308,7 @@ export default function AuctionResonance({
           )}
           <p className="auction-topic-note">
             集中倍数＝组内前列占比 ÷
-            全样本前列占比，大于1表示相对集中。仅统计本次候选，展示前15组；均幅和中位数一起看，避免少数高开股拉高平均。前列按涨幅排名，弱市也可能包含低开。
+            全样本前列占比，大于1表示相对集中。仅统计本次候选，按当前排序展示前15组；均幅和中位数一起看，避免少数高开股拉高平均。前列按涨幅排名，弱市也可能包含低开。
           </p>
           <div className="auction-resonance-anchor">
             <strong>一字涨停关联题材</strong>

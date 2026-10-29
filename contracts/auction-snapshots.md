@@ -108,6 +108,8 @@ GET验正文SHA及每份来源原件SHA、大小、参数、时窗和sources闭�
 来源：[同花顺集合竞价API](https://fuyao.aicubes.cn/docs/api-reference/auction/)、[上交所2026年交易规则](https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml)、[深交所竞价撤单说明](https://investor.szse.cn/institute/video/classroom/knowledge/t20100721_537821.html)。真实终态验收须在当日合法窗口手动执行；自动测试和非就绪通路探测不等于真实竞价已采集或有效性已经获证。
 # 题材共振派生视图
 
+前端主要关联卡片以观察日及原(source,kind,topic_code)身份点选，同步过滤强弱分组与观察单，不创建任务或改写快照；取消回到原完整样本，切日不继承选择。筛选后的分组数量、有效分母、均幅和中位数均按关联候选交集重算，原API响应不变。共振表先按原始数值双向排序再截取15组；名称用中文顺序单独排序，零为有效值，缺失始终置后，展开仍绑定原组身份。
+
 前端共享一次按观察日期与版本核验的 `topic-summary` 响应，供强弱对照、低开复核、观察单及分组表展示行业和概念，切日不得沿用旧标签。标签保留来源、代码和成员日期；精简显示不改变完整数据，代码独立复制。两表固定列宽，展开股票以跨全部列的独立行展示，个股卡片只用同份竞价中 `state=observed` 的涨幅，缺失保持未知；不用当前报价补齐。
 
 `GET /api/v1/market/auction/resonance?date=YYYY-MM-DD` 返回 `auction-resonance-v1`。只读原竞价正文及题材汇总所核验的原成员代际，复用其SQLite发布锚点和SHA；不联网、不取当前归属、不修改原快照。

@@ -3,7 +3,11 @@ import type { Row } from "../../lib/api";
 import { Empty, ErrorBox, Loading, Panel } from "../../components/UI";
 import { integer, percent, tone } from "../../lib/format";
 import { noonRows } from "./noonPresentation";
-import { auctionNumber, auctionSortRows } from "./auctionPresentation";
+import {
+  auctionFilterFeedbackGroups,
+  auctionNumber,
+  auctionSortRows,
+} from "./auctionPresentation";
 import AuctionClassifications from "./AuctionClassifications";
 import AuctionCopyText from "./AuctionCopyText";
 import CopyStockCode from "../../components/CopyStockCode";
@@ -23,11 +27,17 @@ export default function AuctionFeedback({
   onStock,
   chartDate,
   topicView,
+  selectedKey,
+  selectedIds = null,
+  onAssociationSelect,
 }: {
   date: string;
   onStock?: (id: string) => void;
   chartDate?: string;
   topicView: Row | null;
+  selectedKey?: string;
+  selectedIds?: ReadonlySet<string> | null;
+  onAssociationSelect?: (key: string) => void;
 }) {
   const result = useApi<Row>(
     `/market/auction/feedback?date=${encodeURIComponent(date)}`,
@@ -36,10 +46,14 @@ export default function AuctionFeedback({
     result.data?.date === date && result.data.version === "auction-feedback-v1"
       ? result.data
       : null;
-  const groups = noonRows(view?.groups).filter(
+  const restrictedGroups = auctionFilterFeedbackGroups(
+    noonRows(view?.groups),
+    selectedIds,
+  );
+  const groups = restrictedGroups.filter(
     (group) => TYPES[group.key] && (auctionNumber(group.count) || 0) > 0,
   );
-  const unknown = noonRows(view?.groups).filter(
+  const unknown = restrictedGroups.filter(
     (group) => !TYPES[group.key] && (auctionNumber(group.count) || 0) > 0,
   );
   return (
@@ -47,7 +61,17 @@ export default function AuctionFeedback({
       title="昨日 → 今日：强弱对照"
       subtitle="先看昨日事件，再看今日竞价相对昨收的定价。"
     >
-      <AuctionAssociationSummary view={topicView} date={date} />
+      <AuctionAssociationSummary
+        view={topicView}
+        date={date}
+        selectedKey={selectedKey}
+        onSelect={onAssociationSelect}
+      />
+      {selectedIds && (
+        <p className="auction-topic-note">
+          仅显示所选行业概念对应股票，卡片数量与均幅按当前子集统计；再点选中卡片可恢复全部。
+        </p>
+      )}
       {result.loading && !view && <Loading />}
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
@@ -128,8 +152,18 @@ export default function AuctionFeedback({
         <div className="auction-feedback-foot">
           <span>
             昨日事件 {view.previous_date || "未知"} · 已分组{" "}
-            {integer(view.coverage?.classified)}只 · 未分组{" "}
-            {integer(view.coverage?.unknown)}只
+            {integer(
+              selectedIds
+                ? groups.reduce((sum, group) => sum + group.count, 0)
+                : view.coverage?.classified,
+            )}
+            只 · 未分组{" "}
+            {integer(
+              selectedIds
+                ? unknown.reduce((sum, group) => sum + group.count, 0)
+                : view.coverage?.unknown,
+            )}
+            只
           </span>
           {unknown.map((group) => (
             <span key={group.key}>
