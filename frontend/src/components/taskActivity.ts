@@ -1,7 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { api } from "../lib/api";
 import type { Row } from "../lib/api";
-import { LINE_ALERT_CHECK_FINISHED } from "../lib/workbenchEvents";
+import {
+  LINE_ALERT_CHECK_FINISHED,
+  MARKET_INCREMENT_FINISHED,
+} from "../lib/workbenchEvents";
 import {
   activeTaskStatuses,
   activityPollDelay,
@@ -27,6 +30,20 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 let controller: AbortController | null = null;
 let refreshAgain = false;
 const notifiedLineChecks = new Set<string>();
+const notifiedIncrements = new Set<string>();
+let hasIncrementBaseline = false;
+let previousIncrementKeys = new Set<string>();
+const successfulIncrement = (task: Row, observedAtMs: number) =>
+  task.kind === "increment" &&
+  ["succeeded", "partial", "no_change"].includes(task.status) &&
+  typeof task.job_id === "string" &&
+  task.job_id.length > 0 &&
+  task.job_id.length <= 200 &&
+  task.job_id.trim() === task.job_id &&
+  typeof task.finished_at_ms === "number" &&
+  Number.isFinite(task.finished_at_ms) &&
+  task.finished_at_ms > 0 &&
+  task.finished_at_ms <= observedAtMs;
 const isLineCheck = (task: Row) =>
   task.operation === "line_alert_check" || task.kind === "line_alert_check";
 const emit = () => listeners.forEach((listener) => listener());
@@ -111,6 +128,39 @@ async function poll() {
     }
     while (notifiedLineChecks.size > 256)
       notifiedLineChecks.delete(notifiedLineChecks.values().next().value!);
+    const incrementCompletions: Row[] = [];
+    // An invalid/missing server clock must not borrow the browser's clock to
+    // assert completion. The first accepted poll only establishes a baseline.
+    if (
+      Array.isArray(data.items) &&
+      typeof data.observed_at_ms === "number" &&
+      Number.isFinite(data.observed_at_ms) &&
+      data.observed_at_ms > 0
+    ) {
+      const currentKeys = new Set<string>();
+      for (const task of items) {
+        if (!successfulIncrement(task, data.observed_at_ms)) continue;
+        const key = `${task.job_id}:${task.finished_at_ms}`;
+        currentKeys.add(key);
+        if (
+          hasIncrementBaseline &&
+          !notifiedIncrements.has(key) &&
+          !previousIncrementKeys.has(key)
+        )
+          incrementCompletions.push({
+            job_id: task.job_id,
+            target_date:
+              typeof task.target_date === "string" ? task.target_date : null,
+            finished_at_ms: task.finished_at_ms,
+            status: task.status,
+          });
+        notifiedIncrements.add(key);
+      }
+      hasIncrementBaseline = true;
+      previousIncrementKeys = currentKeys;
+      while (notifiedIncrements.size > 256)
+        notifiedIncrements.delete(notifiedIncrements.values().next().value!);
+    }
     snapshot = {
       ...snapshot,
       tasks: items,
@@ -133,6 +183,12 @@ async function poll() {
       window.dispatchEvent(
         new CustomEvent(LINE_ALERT_CHECK_FINISHED, {
           detail: { keys: lineCompletions },
+        }),
+      );
+    if (incrementCompletions.length)
+      window.dispatchEvent(
+        new CustomEvent(MARKET_INCREMENT_FINISHED, {
+          detail: { tasks: incrementCompletions },
         }),
       );
   } catch (error: any) {

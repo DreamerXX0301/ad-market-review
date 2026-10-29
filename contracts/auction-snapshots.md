@@ -101,6 +101,8 @@ GET验正文SHA及每份来源原件SHA、大小、参数、时窗和sources闭�
 
 独立结果 `version='auction-close-review-v1',posthoc:true`，状态为 `not_collected/pending/unknown/partial/available`，绑定原 `snapshot_id/auction_content_sha256` 和当前已发布 `market_snapshot_id/source_sha256`。这份派生展示不会改变盘前正文或名单，明确标记为事后信息。
 
+前端复用共享`/tasks/activity`轮询，对明确`kind='increment'`、状态`succeeded/partial/no_change`且完成时间不晚于服务端观察时间的回执发出`workbench-market-increment-finished`；首轮只建立基线，按`job_id:finished_at_ms`有界去重，不把任务消失、解锁、暂停取消失败或午评/竞价完成视为成功增量。已展开、可见且有原竞价的核对区收到通知后只重新GET当前观察日期；任务`target_date=null`不猜成今天，也不据其改变view date。收起/隐藏时不追加读取，展开/激活由既有读取生命周期补读；手动读取按钮保留。不创建、继续或重跑任何采集任务。
+
 只对最多100个原代码请求同日已发布历史范围，要求唯一同日、同来源、人民币未复权OHLC及正成交量。缺日、重复、停牌或价形不符保持未知。开盘价与竞价价偏差超过0.011元时单列 `mismatch`，不纳入汇总。
 
 每行包含 `auction_price,auction_pct,open,close,high,low,auction_to_close_pct,open_check,state,reason`。`auction_to_close_pct=(close/auction_price-1)×100` 只称“竞价至收盘价差”，不称实际收益。汇总 `requested,valid,missing,above_auction,below_auction,flat,median_auction_to_close_pct,open_mismatch`，未知不填0。这不是可实现收益、胜率或策略回测，未假设竞价能成交，未纳入费用、滑点和交易限制。

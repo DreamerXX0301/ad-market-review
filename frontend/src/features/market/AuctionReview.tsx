@@ -43,6 +43,7 @@ import AuctionClassifications from "./AuctionClassifications";
 import AuctionCopyText from "./AuctionCopyText";
 import AuctionAssociationSummary from "./AuctionAssociationSummary";
 import AuctionPageNavigation from "./AuctionPageNavigation";
+import useAuctionCloseRefresh from "./useAuctionCloseRefresh";
 import {
   beginAuctionRun,
   acceptAuctionRun,
@@ -179,6 +180,12 @@ export default function AuctionReview({
   );
   const closeReview =
     closeResult.data?.date === selected ? closeResult.data : null;
+  useAuctionCloseRefresh({
+    active,
+    open: closeOpen,
+    hasSnapshot: !!payload,
+    reload: closeResult.reload,
+  });
   const topicResult = useApi<Row>(
     payload && selected
       ? `/market/auction/topic-summary?date=${encodeURIComponent(selected)}`
@@ -1307,7 +1314,9 @@ export default function AuctionReview({
                 </summary>
                 <div className="auction-panel-body">
                   <div className="auction-close-head">
-                    <p>事后核对保持独立，不改写盘前名单与判断。</p>
+                    <p>
+                      盘后增量完成后自动刷新；只核对盘后结果，保留原竞价记录。
+                    </p>
                     <button
                       className="btn small"
                       onClick={closeResult.reload}

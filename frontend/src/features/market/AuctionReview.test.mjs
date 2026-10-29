@@ -82,6 +82,8 @@ assert.ok(html.indexOf('基准平开样本')<html.indexOf('基准高开样本'))
 assert.ok(html.indexOf('基准高开样本')<html.indexOf('基准未知样本'),'unknown stays last in both directions');
 html=render(retained,{0:true},{date:day,state:'pending',reason:'等待同日盘后增量发布',posthoc:true});
 assert.match(html,/等待同日盘后增量发布/);
+assert.match(html,/盘后增量完成后自动刷新/);
+assert.match(html,/读取盘后结果/,'the manual refresh fallback remains available');
 assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",`/market/auction/close-review?date=${day}`,`/market/auction/topic-summary?date=${day}`,`/market/auction/feedback?date=${day}`,`/market/auction/resonance?date=${day}`]);
 html=render(retained,{0:true},{date:day,state:'partial',posthoc:true,summary:{requested:2,valid:1,missing:1,above_auction:1,below_auction:0,flat:0,median_auction_to_close_pct:2,open_mismatch:1},items:[{instrument_id:'600001.SH',name:'合成观察甲',state:'mismatch',auction_price:9.8,auction_pct:-2,open:10,close:11,auction_to_close_pct:987.65,reason:'开盘价不一致'}]});
 assert.match(html,/开盘价不一致/);
