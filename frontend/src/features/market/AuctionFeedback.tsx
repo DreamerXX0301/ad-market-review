@@ -102,7 +102,10 @@ export default function AuctionFeedback({
                   {percent(auctionNumber(group.average_auction_pct))}
                 </strong>
               </div>
-              <details>
+              <details
+                key={`${date}:${selectedKey || "all"}`}
+                open={!!selectedIds}
+              >
                 <summary>查看本组股票</summary>
                 <div className="auction-feedback-stocks">
                   {auctionSortRows(
@@ -112,7 +115,8 @@ export default function AuctionFeedback({
                   ).map((row) => (
                     <div
                       key={row.instrument_id}
-                      className="auction-feedback-stock"
+                      className={`auction-feedback-stock${selectedIds ? " is-associated" : ""}`}
+                      data-associated={selectedIds ? "true" : undefined}
                     >
                       <div className="auction-feedback-stock-head">
                         <button

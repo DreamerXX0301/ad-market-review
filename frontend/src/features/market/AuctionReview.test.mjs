@@ -170,7 +170,7 @@ for(const key of ['concentration_lift','average_auction_pct','median_auction_pct
 const selectableTopics={...classifiedTopics,groups:[{...topics.groups[0],sample_count:3,valid_count:3,instrument_ids:['600001.SH'],average_auction_pct:-2}]};
 html=render(retained,{7:{date:day,key:'fuyao:concept:886001.TI'}},null,null,day,selectableTopics,feedback);
 const selectedTable=html.slice(html.indexOf('<table class="auction-table"'),html.indexOf('</table>',html.indexOf('<table class="auction-table"')));
-assert.match(selectedTable,/600001/);assert.doesNotMatch(selectedTable,/000001/);assert.match(html,/取消选中/);
+assert.match(selectedTable,/600001/);assert.doesNotMatch(selectedTable,/000001/);assert.match(html,/取消选中/);assert.match(html,/<details open=""/);assert.match(html,/data-associated="true"/);
 assert.equal((html.match(/aria-pressed="true" aria-label="合成题材甲/g)||[]).length,2,'both association strips share selection');
 assert.ok((html.match(/<div class="auction-association-summary"[^]*?<\/div>/g)||[]).every(strip=>!strip.includes('复制概念代码')),'summary chip is selection, not copy');
 html=render(retained,{7:{date:'2026-10-28',key:'fuyao:concept:886001.TI'}},null,null,day,selectableTopics,feedback);assert.doesNotMatch(html,/取消选中/,'selection must be date-bound');
