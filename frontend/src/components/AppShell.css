@@ -1,0 +1,20 @@
+.sidebar .nav-item.nav-item-described {
+  height: auto;
+  min-height: 49px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.nav-item-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.45;
+}
+.nav-item-copy > small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+.nav-item.active .nav-item-copy > small {
+  color: color-mix(in srgb, var(--blue) 70%, var(--muted));
+}

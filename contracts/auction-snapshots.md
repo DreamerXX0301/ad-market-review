@@ -108,6 +108,8 @@ GET验正文SHA及每份来源原件SHA、大小、参数、时窗和sources闭�
 来源：[同花顺集合竞价API](https://fuyao.aicubes.cn/docs/api-reference/auction/)、[上交所2026年交易规则](https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml)、[深交所竞价撤单说明](https://investor.szse.cn/institute/video/classroom/knowledge/t20100721_537821.html)。真实终态验收须在当日合法窗口手动执行；自动测试和非就绪通路探测不等于真实竞价已采集或有效性已经获证。
 # 题材共振派生视图
 
+前端共享一次按观察日期与版本核验的 `topic-summary` 响应，供强弱对照、低开复核、观察单及分组表展示行业和概念，切日不得沿用旧标签。标签保留来源、代码和成员日期；精简显示不改变完整数据，代码独立复制。两表固定列宽，展开股票以跨全部列的独立行展示，个股卡片只用同份竞价中 `state=observed` 的涨幅，缺失保持未知；不用当前报价补齐。
+
 `GET /api/v1/market/auction/resonance?date=YYYY-MM-DD` 返回 `auction-resonance-v1`。只读原竞价正文及题材汇总所核验的原成员代际，复用其SQLite发布锚点和SHA；不联网、不取当前归属、不修改原快照。
 
 有效竞价按涨幅降序、代码升序取前20只，实际不足20时保留真实数量；这只是相对排名，弱市也可能包含低开。分组至少匹配3只冻结候选。每组给出有效/缺失数量、前列命中数、均幅、中位数、高开占比和竞价额有效覆盖；`up_ratio`、`top_share`、`top_ratio`单位均为0—1比例，分别以本组有效报价、全部前列实际数量、本组有效报价为分母。`concentration_lift = top_ratio / (前列实际数量 / 全部有效竞价数量)`，单位为倍数，缺分母保持未知。前端默认按集中倍数排序，只列命中至少2只前列股票的前15组，支持均幅、命中数排序；不能把宽标签高命中数直接称为板块整体强势。

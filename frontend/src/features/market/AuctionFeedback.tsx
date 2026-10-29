@@ -4,6 +4,9 @@ import { Empty, ErrorBox, Loading, Panel } from "../../components/UI";
 import { integer, percent, tone } from "../../lib/format";
 import { noonRows } from "./noonPresentation";
 import { auctionNumber, auctionSortRows } from "./auctionPresentation";
+import AuctionClassifications from "./AuctionClassifications";
+import AuctionCopyText from "./AuctionCopyText";
+import CopyStockCode from "../../components/CopyStockCode";
 
 const TYPES: Record<string, { title: string; color: string }> = {
   repair: { title: "修复观察", color: "positive" },
@@ -18,10 +21,12 @@ export default function AuctionFeedback({
   date,
   onStock,
   chartDate,
+  topicView,
 }: {
   date: string;
   onStock?: (id: string) => void;
   chartDate?: string;
+  topicView: Row | null;
 }) {
   const result = useApi<Row>(
     `/market/auction/feedback?date=${encodeURIComponent(date)}`,
@@ -55,6 +60,12 @@ export default function AuctionFeedback({
               <div className="auction-feedback-heading">
                 <strong>{TYPES[group.key].title}</strong>
                 <b>{integer(group.count)}只</b>
+                <AuctionCopyText
+                  label={`复制${TYPES[group.key].title}股票`}
+                  text={noonRows(group.items)
+                    .map((row) => `${row.instrument_id}\t${row.name || ""}`)
+                    .join("\n")}
+                />
               </div>
               <p title={group.interpretation}>{group.title}</p>
               <div className="auction-feedback-average">
@@ -73,17 +84,28 @@ export default function AuctionFeedback({
                     "auction_pct",
                     "desc",
                   ).map((row) => (
-                    <div key={row.instrument_id}>
-                      <button
-                        className="auction-stock"
-                        onClick={() => onStock?.(row.instrument_id)}
-                        disabled={!onStock || !chartDate}
-                      >
-                        {row.name || row.instrument_id}
-                      </button>
-                      <span className={tone(auctionNumber(row.auction_pct))}>
-                        {percent(auctionNumber(row.auction_pct))}
-                      </span>
+                    <div
+                      key={row.instrument_id}
+                      className="auction-feedback-stock"
+                    >
+                      <div className="auction-feedback-stock-head">
+                        <button
+                          className="auction-stock"
+                          onClick={() => onStock?.(row.instrument_id)}
+                          disabled={!onStock || !chartDate}
+                        >
+                          {row.name || row.instrument_id}
+                        </button>
+                        <span className={tone(auctionNumber(row.auction_pct))}>
+                          {percent(auctionNumber(row.auction_pct))}
+                        </span>
+                      </div>
+                      <CopyStockCode instrumentId={row.instrument_id} />
+                      <AuctionClassifications
+                        view={topicView}
+                        date={date}
+                        instrumentId={row.instrument_id}
+                      />
                     </div>
                   ))}
                 </div>

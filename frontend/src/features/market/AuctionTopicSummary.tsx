@@ -1,37 +1,46 @@
-import { useState } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
-import { useApi } from "../../lib/api";
+import { Fragment, useState } from "react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
 import type { Row } from "../../lib/api";
 import { Badge, Empty, ErrorBox, Loading, Panel } from "../../components/UI";
 import { integer, percent, tone } from "../../lib/format";
 import { noonRows } from "./noonPresentation";
 import { auctionNumber, auctionSortRows } from "./auctionPresentation";
+import AuctionStockTiles from "./AuctionStockTiles";
+import AuctionCopyText from "./AuctionCopyText";
+import "./AuctionTables.css";
 
 export default function AuctionTopicSummary({
   date,
   quotes,
   onStock,
   chartDate,
+  result,
 }: {
   date: string;
   quotes: Row[];
   onStock?: (id: string) => void;
   chartDate?: string;
+  result: {
+    data: Row | null;
+    loading: boolean;
+    error: string;
+    reload: () => void;
+  };
 }) {
-  const result = useApi<Row>(
-    `/market/auction/topic-summary?date=${encodeURIComponent(date)}`,
-  );
   const view =
     result.data?.date === date &&
     result.data.version === "auction-topic-summary-v1"
       ? result.data
       : null;
-  const [kind, setKind] = useState("concept");
+  const [kind, setKind] = useState("all");
+  const [expanded, setExpanded] = useState("");
   const [sort, setSort] = useState({
     key: "sample_count",
     direction: "desc" as "asc" | "desc",
   });
-  const groups = noonRows(view?.groups).filter((row) => row.kind === kind);
+  const groups = noonRows(view?.groups).filter(
+    (row) => kind === "all" || row.kind === kind,
+  );
   const rows = auctionSortRows(groups, sort.key, sort.direction);
   const names = new Map(
     quotes.map((row) => [row.instrument_id, row.name || row.instrument_id]),
@@ -44,7 +53,7 @@ export default function AuctionTopicSummary({
   const dates = [
     ...new Set(groups.map((row) => row.members_observed_date).filter(Boolean)),
   ].sort();
-  const label = kind === "concept" ? "题材" : "行业";
+  const label = kind === "all" ? "分组" : kind === "concept" ? "概念" : "行业";
   function changeSort(key: string) {
     setSort({
       key,
@@ -58,11 +67,18 @@ export default function AuctionTopicSummary({
       actions={
         <div className="button-group" aria-label="题材汇总分类">
           <button
+            className={`btn small${kind === "all" ? " active" : ""}`}
+            aria-pressed={kind === "all"}
+            onClick={() => setKind("all")}
+          >
+            全部
+          </button>
+          <button
             className={`btn small${kind === "concept" ? " active" : ""}`}
             aria-pressed={kind === "concept"}
             onClick={() => setKind("concept")}
           >
-            题材
+            概念
           </button>
           <button
             className={`btn small${kind === "industry" ? " active" : ""}`}
@@ -93,11 +109,16 @@ export default function AuctionTopicSummary({
               竞价 {date}
             </span>
           </div>
-          <div className="auction-topic-scroll">
-            <table className="auction-topic-table">
+          <div className="auction-table-scroll">
+            <table className="auction-fixed-table auction-summary-fixed">
+              <colgroup>
+                <col style={{ width: "58%" }} />
+                <col style={{ width: "22%" }} />
+                <col style={{ width: "20%" }} />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>{label}</th>
+                  <th>概念 / 行业</th>
                   {[
                     ["sample_count", "样本股数"],
                     ["average_auction_pct", "竞价均幅"],
@@ -129,51 +150,101 @@ export default function AuctionTopicSummary({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr
-                    key={`${row.source}:${row.topic_code}:${row.members_observed_date}`}
-                  >
-                    <td
-                      title={`${row.source} · ${row.topic_code} · 成员 ${row.members_observed_date}`}
-                    >
-                      {row.name}
-                    </td>
-                    <td>
-                      <details className="auction-topic-stocks">
-                        <summary>
-                          {row.members_complete === false ? "≥" : ""}
-                          {integer(row.sample_count)}只
-                        </summary>
-                        <div>
-                          {(Array.isArray(row.instrument_ids)
-                            ? row.instrument_ids
-                            : []
-                          ).map((id: string) => (
+                {rows.map((row) => {
+                  const key = `${date}:${row.source}:${row.kind}:${row.topic_code}:${row.members_observed_date}`;
+                  const open = expanded === key;
+                  const ids: string[] = Array.isArray(row.instrument_ids)
+                    ? row.instrument_ids
+                    : [];
+                  const text = `${row.name}\n${ids.map((id) => `${id}\t${names.get(id) || id}`).join("\n")}`;
+                  return (
+                    <Fragment key={key}>
+                      <tr>
+                        <td
+                          title={`${row.source} · ${row.topic_code} · 成员 ${row.members_observed_date}`}
+                        >
+                          <div className="auction-table-group">
+                            <span className={`auction-table-kind ${row.kind}`}>
+                              {row.kind === "industry" ? "行业" : "概念"}
+                            </span>
                             <button
-                              key={id}
-                              className="auction-stock"
-                              onClick={() => onStock?.(id)}
-                              disabled={!onStock || !chartDate}
+                              type="button"
+                              className="auction-table-toggle"
+                              aria-expanded={open}
+                              onClick={() => setExpanded(open ? "" : key)}
                             >
-                              {names.get(id) || id}
+                              {open ? (
+                                <ChevronDown size={13} />
+                              ) : (
+                                <ChevronRight size={13} />
+                              )}
+                              <span>{row.name}</span>
                             </button>
-                          ))}
-                        </div>
-                      </details>
-                    </td>
-                    <td
-                      className={tone(auctionNumber(row.average_auction_pct))}
-                    >
-                      {percent(auctionNumber(row.average_auction_pct))}
-                      {row.valid_count !== row.sample_count && (
-                        <small className="auction-muted">
-                          有效{integer(row.valid_count)}/
-                          {integer(row.sample_count)}
-                        </small>
+                            <AuctionCopyText
+                              text={String(row.name || row.topic_code)}
+                              label={`复制组名 ${row.name}`}
+                            />
+                            <AuctionCopyText
+                              text={String(row.topic_code)}
+                              label={`复制${row.kind === "industry" ? "行业" : "概念"}代码 ${row.topic_code}`}
+                            />
+                          </div>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="auction-table-count"
+                            aria-expanded={open}
+                            onClick={() => setExpanded(open ? "" : key)}
+                          >
+                            {row.members_complete === false ? "≥" : ""}
+                            {integer(row.sample_count)}只
+                          </button>
+                        </td>
+                        <td
+                          className={tone(
+                            auctionNumber(row.average_auction_pct),
+                          )}
+                        >
+                          {percent(auctionNumber(row.average_auction_pct))}
+                          {row.valid_count !== row.sample_count && (
+                            <small className="auction-muted">
+                              有效{integer(row.valid_count)}/
+                              {integer(row.sample_count)}
+                            </small>
+                          )}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="auction-table-expanded-row">
+                          <td colSpan={3}>
+                            <div className="auction-table-expanded">
+                              <div className="auction-table-expanded-heading">
+                                <strong>
+                                  {row.name} · 本组{integer(ids.length)}只
+                                </strong>
+                                <AuctionCopyText
+                                  text={text}
+                                  label="复制本组股票"
+                                />
+                                <span>
+                                  成员档案 {row.members_observed_date} · 竞价{" "}
+                                  {date}
+                                </span>
+                              </div>
+                              <AuctionStockTiles
+                                ids={ids}
+                                quotes={quotes}
+                                onStock={onStock}
+                                chartDate={chartDate}
+                              />
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                    </td>
-                  </tr>
-                ))}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

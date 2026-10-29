@@ -39,6 +39,7 @@ import AuctionAutomation from "./AuctionAutomation";
 import AuctionTopicSummary from "./AuctionTopicSummary";
 import AuctionFeedback from "./AuctionFeedback";
 import AuctionResonance from "./AuctionResonance";
+import AuctionClassifications from "./AuctionClassifications";
 import {
   beginAuctionRun,
   acceptAuctionRun,
@@ -138,6 +139,16 @@ export default function AuctionReview({
   );
   const closeReview =
     closeResult.data?.date === selected ? closeResult.data : null;
+  const topicResult = useApi<Row>(
+    payload && selected
+      ? `/market/auction/topic-summary?date=${encodeURIComponent(selected)}`
+      : null,
+  );
+  const topicView =
+    topicResult.data?.date === selected &&
+    topicResult.data?.version === "auction-topic-summary-v1"
+      ? topicResult.data
+      : null;
   const closeItems = noonRows(closeReview?.items).filter((row) =>
     /^\d{6}\.(SH|SZ|BJ)$/.test(row.instrument_id || ""),
   );
@@ -696,6 +707,7 @@ export default function AuctionReview({
           </div>
           <AuctionFeedback
             date={selected}
+            topicView={topicView}
             onStock={onStock}
             chartDate={chartDate}
           />
@@ -882,6 +894,11 @@ export default function AuctionReview({
                         </strong>
                       </div>
                       <BackgroundTags reasons={row.reasons} />
+                      <AuctionClassifications
+                        view={topicView}
+                        date={selected}
+                        instrumentId={row.instrument_id}
+                      />
                       <span>
                         竞价价 {num(auctionNumber(row.auction_price))}元 ·
                         竞价额 {amount(auctionNumber(row.auction_amount))}
@@ -900,12 +917,13 @@ export default function AuctionReview({
             </div>
           </Panel>
           <AuctionResonance
-            date={date}
+            date={selected}
             quotes={noonRows(payload.quotes?.items)}
             onStock={onStock}
             chartDate={chartDate}
           />
           <AuctionTopicSummary
+            result={{ ...topicResult, data: topicView }}
             date={selected}
             quotes={noonRows(payload.quotes?.items)}
             onStock={onStock}
@@ -931,6 +949,7 @@ export default function AuctionReview({
                   <tr>
                     <th>股票</th>
                     <th>入选背景</th>
+                    <th className="auction-affiliations-column">行业 / 概念</th>
                     {COLUMNS.map(([field, title, unit]) => (
                       <th
                         key={field}
@@ -979,6 +998,13 @@ export default function AuctionReview({
                             昨日{integer(row.previous_board_count)}板
                           </small>
                         )}
+                      </td>
+                      <td className="auction-affiliations-column">
+                        <AuctionClassifications
+                          view={topicView}
+                          date={selected}
+                          instrumentId={row.instrument_id}
+                        />
                       </td>
                       {COLUMNS.map(([field]) => (
                         <td

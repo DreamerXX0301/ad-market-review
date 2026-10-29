@@ -40,7 +40,7 @@ function render(packet,states={},close=null,automatic=null,observedDate=day,topi
 let html=render(view);
 assert.match(html,/先留下一份真实的竞价观察/);
 assert.doesNotMatch(html,/样本竞价涨幅中位数|昨日我的原判断/,'empty view cannot invent any snapshot statistics or prior text');
-assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",null],'collapsed posthoc review is not read before a snapshot exists');
+assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",null,null],'collapsed posthoc review is not read before a snapshot exists');
 html=render({...view,preparation:{...original,frozen:false,relation:'last_published_day_pending_calendar_check',notice:'最近已发布日材料，严格前日待核验'}});
 assert.match(html,/采集前准备 · 最近已发布日/);
 assert.match(html,/尚未冻结/);
@@ -61,7 +61,7 @@ assert.match(html,/98\.00万元/);
 assert.match(html,/同日基准缺失/);
 assert.match(html,/竞价缺失保持未知/);
 assert.doesNotMatch(html,/9,999|午间临时缺报不应显示/);
-assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",null,`/market/auction/feedback?date=${day}`,`/market/auction/resonance?date=${day}`,`/market/auction/topic-summary?date=${day}`]);
+assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",null,`/market/auction/topic-summary?date=${day}`,`/market/auction/feedback?date=${day}`,`/market/auction/resonance?date=${day}`]);
 html=render({...retained,date:'2026-10-28'});
 assert.doesNotMatch(html,/昨日我的原判断|98\.00万元/,'date switch must not leak prior response');
 const benchmarkSample={...retained,snapshot:{...retained.snapshot,payload:{...payload,benchmark:{state:'partial',items:[
@@ -82,7 +82,7 @@ assert.ok(html.indexOf('基准平开样本')<html.indexOf('基准高开样本'))
 assert.ok(html.indexOf('基准高开样本')<html.indexOf('基准未知样本'),'unknown stays last in both directions');
 html=render(retained,{0:true},{date:day,state:'pending',reason:'等待同日盘后增量发布',posthoc:true});
 assert.match(html,/等待同日盘后增量发布/);
-assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",`/market/auction/close-review?date=${day}`,`/market/auction/feedback?date=${day}`,`/market/auction/resonance?date=${day}`,`/market/auction/topic-summary?date=${day}`]);
+assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",`/market/auction/close-review?date=${day}`,`/market/auction/topic-summary?date=${day}`,`/market/auction/feedback?date=${day}`,`/market/auction/resonance?date=${day}`]);
 html=render(retained,{0:true},{date:day,state:'partial',posthoc:true,summary:{requested:2,valid:1,missing:1,above_auction:1,below_auction:0,flat:0,median_auction_to_close_pct:2,open_mismatch:1},items:[{instrument_id:'600001.SH',name:'合成观察甲',state:'mismatch',auction_price:9.8,auction_pct:-2,open:10,close:11,auction_to_close_pct:987.65,reason:'开盘价不一致'}]});
 assert.match(html,/开盘价不一致/);
 assert.doesNotMatch(html,/987\.65/,'mismatched opening reference must not display a comparable return');
@@ -138,3 +138,20 @@ assert.match(html,/80%/);
 assert.match(html,/今日快照缺少涨停价与一字证据/);
 html=render(retained,{},null,null,day,null,null,{...resonance,date:'2026-10-28'});
 assert.doesNotMatch(html,/合成共振题材/,'resonance response cannot cross dates');
+
+const classifiedTopics={...topics,stock_classifications:{'600001.SH':{industries:[{topic_code:'881001.TI',source:'fuyao',name:'合成核验行业',members_observed_date:'2026-10-21'}],topics:[{topic_code:'886001.TI',source:'fuyao',name:'合成核验概念',members_observed_date:'2026-10-21'}]}}};
+html=render(retained,{},null,null,day,classifiedTopics,feedback);
+assert.match(html,/行业 \/ 概念/);
+assert.match(html,/合成核验行业/);
+assert.match(html,/合成核验概念/);
+assert.match(html,/复制行业代码 881001.TI/);
+assert.match(html,/复制概念代码 886001.TI/);
+assert.match(html,/复制六位代码 600001/);
+html=render(retained,{},null,null,day,{...classifiedTopics,date:'2026-10-28'},feedback);
+assert.doesNotMatch(html,/合成核验行业|合成核验概念/,'classification tags cannot leak across dates');
+const {default:AuctionStockTiles}=await import(await moduleUrl(new URL('./AuctionStockTiles.tsx',import.meta.url)));
+setStates({});
+html=renderToStaticMarkup(createElement(AuctionStockTiles,{ids:['600003.SH','600004.SH','600005.SH'],quotes:[{instrument_id:'600003.SH',name:'低开卡片',state:'observed',auction_pct:-2},{instrument_id:'600004.SH',name:'高开卡片',state:'observed',auction_pct:5},{instrument_id:'600005.SH',name:'未知卡片',state:'unknown',auction_pct:99}]}));
+assert.ok(html.indexOf('高开卡片')<html.indexOf('低开卡片'));
+assert.ok(html.indexOf('低开卡片')<html.indexOf('未知卡片'));
+assert.match(html,/\+5\.00%/);assert.match(html,/-2\.00%/);assert.doesNotMatch(html,/99\.00%/);

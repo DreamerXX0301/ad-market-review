@@ -32,12 +32,18 @@ import MarketDatePicker from "./MarketDatePicker";
 import ActiveTaskBanner from "./ActiveTaskBanner";
 import { Badge } from "./UI";
 import "./Brand.css";
+import "./AppShell.css";
 export const navigation = [
   {
     label: "盘面研究",
     items: [
       { id: "market", name: "盘面总览", icon: BarChart3 },
-      { id: "auction", name: "盘前竞价", icon: Sunrise },
+      {
+        id: "auction",
+        name: "盘前竞价",
+        description: "昨日预期 × 竞价强弱",
+        icon: Sunrise,
+      },
       { id: "noon", name: "午评快照", icon: Sun },
       { id: "indices", name: "指数行情", icon: ChartCandlestick },
       { id: "emotion", name: "市场情绪", icon: Activity },
@@ -169,8 +175,9 @@ export default function AppShell({
               <div className="nav-group-title">{group.label}</div>
               {group.items.map((item) => (
                 <button
-                  className={route === item.id ? "nav-item active" : "nav-item"}
+                  className={`${route === item.id ? "nav-item active" : "nav-item"}${"description" in item ? " nav-item-described" : ""}`}
                   key={item.id}
+                  title={"description" in item ? item.description : undefined}
                   aria-current={route === item.id ? "page" : undefined}
                   onClick={() => {
                     onNavigate(item.id);
@@ -178,7 +185,14 @@ export default function AppShell({
                   }}
                 >
                   <item.icon size={16} />
-                  <span>{item.name}</span>
+                  <span
+                    className={
+                      "description" in item ? "nav-item-copy" : undefined
+                    }
+                  >
+                    {item.name}
+                    {"description" in item && <small>{item.description}</small>}
+                  </span>
                   {item.id === "backtest" && (
                     <span className="nav-new">研究</span>
                   )}
