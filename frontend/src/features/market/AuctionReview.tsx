@@ -104,11 +104,6 @@ const AUCTION_PAGE_SECTIONS = [
     label: "盘后核对",
     description: "竞价到收盘的事后核对",
   },
-  {
-    id: "auction-evidence",
-    label: "来源原件",
-    description: "请求时点、来源元数据与正文SHA",
-  },
 ];
 
 const COLUMNS = [
@@ -130,22 +125,6 @@ function metric(row: Row, field: string) {
   if (field === "auction_volume_ratio") return `${num(value)}倍`;
   return num(value);
 }
-function sourceName(row: Row) {
-  return (
-    (
-      {
-        calendar: "交易日历",
-        snapshot: "竞价终态",
-        auction: "竞价终态",
-        benchmark: "来源短线基准",
-      } as Record<string, string>
-    )[row.name] ||
-    row.name ||
-    row.endpoint ||
-    "来源请求"
-  );
-}
-
 function BackgroundTags({ reasons }: { reasons: unknown }) {
   const tags = auctionBackgroundTags(reasons);
   return (
@@ -395,7 +374,6 @@ export default function AuctionReview({
     sort.key,
     sort.direction,
   );
-  const sources = noonRows(payload?.sources);
   const selectedAssociationKey =
     associationSelection.date === selected ? associationSelection.key : "";
   const selectedAssociation = noonRows(topicView?.groups).find(
@@ -1465,38 +1443,6 @@ export default function AuctionReview({
                 </div>
               </details>
             </Panel>
-            <details
-              id="auction-evidence"
-              tabIndex={-1}
-              className="auction-source-details"
-            >
-              <summary>
-                来源与留存证据 ·{" "}
-                {integer(view?.snapshot?.evidence_count ?? sources.length)}份
-              </summary>
-              <div className="auction-panel-body">
-                <p>
-                  来源：扶摇 / 同花顺。响应阶段{" "}
-                  {payload.quotes?.auction_phase || "未知"}；状态{" "}
-                  {payload.quotes?.data_status || "未知"}
-                  。每份原件与正文随业务备份保留。
-                </p>
-                {sources.map((row, index) => (
-                  <div className="auction-source" key={index}>
-                    <strong>{sourceName(row)}</strong>
-                    <span>
-                      请求 {noonClock(row.requested_at)} · 接收{" "}
-                      {noonClock(row.received_at)}
-                    </span>
-                    <code>{row.sha256 || "原件SHA未提供"}</code>
-                  </div>
-                ))}
-                <div className="auction-source">
-                  <strong>正文SHA256</strong>
-                  <code>{view?.snapshot?.content_sha256 || "未提供"}</code>
-                </div>
-              </div>
-            </details>
           </>
         )}
         <p className="auction-boundary-note">

@@ -531,33 +531,6 @@
   flex-wrap: wrap;
   margin-top: 5px;
 }
-.auction-source-details {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
-  color: var(--muted);
-  font-size: 11px;
-}
-.auction-source-details > summary {
-  padding: 12px 17px;
-  cursor: pointer;
-}
-.auction-source-details > .auction-panel-body {
-  padding-top: 0;
-  font-size: 11px;
-}
-.auction-source {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  border-top: 1px solid var(--border-soft);
-  padding-top: 10px;
-  margin-top: 10px;
-}
-.auction-source code {
-  width: 100%;
-  overflow-wrap: anywhere;
-  font-size: 10px;
-}
 .auction-boundary-note {
   margin: 0;
   font-size: 10px;

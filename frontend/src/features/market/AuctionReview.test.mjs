@@ -183,9 +183,13 @@ for(const direction of ['asc','desc']){
 }
 html=render(retained,{},null,null,day,classifiedTopics,feedback,resonance);
 assert.match(html,/aria-label="盘前竞价页内目录"/);
-for(const id of ['auction-overview','auction-automation','auction-feedback','auction-previous','auction-low-open','auction-resonance','auction-topics','auction-observation','auction-benchmark','auction-close-review','auction-evidence']){
+for(const id of ['auction-overview','auction-automation','auction-feedback','auction-previous','auction-low-open','auction-resonance','auction-topics','auction-observation','auction-benchmark','auction-close-review']){
  assert.match(html,new RegExp('aria-controls="'+id+'"'));assert.match(html,new RegExp('id="'+id+'"'));
 }
+const technicalView={...retained,snapshot:{...retained.snapshot,content_sha256:'a'.repeat(64),evidence_count:3,payload:{...payload,sources:[{name:'snapshot',sha256:'b'.repeat(64),requested_at:day+'T09:25:10+08:00',received_at:day+'T09:25:11+08:00'}]}}};
+html=render(technicalView);
+assert.doesNotMatch(html,/来源与留存证据|正文SHA256|auction-evidence|来源原件/,'technical evidence has no reading-page section or directory entry');
+assert.ok(!html.includes('a'.repeat(64))&&!html.includes('b'.repeat(64)),'API evidence metadata is not rendered as product content');
 html=render({...view,state:'purged',locked_for_day:true,retention:{notice:'保留28个自然日，到期随成功盘后增量清理。'}});
 assert.match(html,/竞价已按保留规则清理/);assert.match(html,/只保留日任务台账和清理回执/);assert.match(html,/保留28个自然日/);assert.doesNotMatch(html,/先留下一份真实的竞价观察/);
 
