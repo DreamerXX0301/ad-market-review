@@ -133,11 +133,37 @@
   border: 1px solid var(--border);
   border-radius: 4px;
 }
+.zodiac-results {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  overflow-anchor: none;
+}
 .zodiac-table-scroll {
   width: 100%;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 10px;
+}
+.zodiac-floating-header {
+  position: fixed;
+  z-index: 20;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow:
+    0 4px 12px #0002,
+    0 0 0 1px var(--border);
+}
+.zodiac-floating-header-scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.zodiac-floating-header-scroll::-webkit-scrollbar {
+  display: none;
+}
+.zodiac-floating-header .zodiac-table {
+  table-layout: fixed;
+  min-width: 0;
 }
 .zodiac-table {
   border-collapse: separate;
@@ -412,7 +438,8 @@
   .zodiac-filters select {
     max-width: 100%;
   }
-  .zodiac-table-scroll {
+  .zodiac-table-scroll,
+  .zodiac-floating-header {
     display: none;
   }
   .zodiac-mobile-cards {

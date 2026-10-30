@@ -1,5 +1,5 @@
 import ZodiacSelect from "./ZodiacSelect";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -31,6 +31,7 @@ import {
 import { MetricCell } from "./ZodiacCells";
 import ZodiacEditor from "./ZodiacEditor";
 import ZodiacDetails from "./ZodiacDetails";
+import ZodiacTable from "./ZodiacTable";
 import "./Zodiac.css";
 
 function read(key: string) {
@@ -109,6 +110,12 @@ export default function Zodiac({
   });
   const result = useApi<Row>(`/zodiac-pools/${year}/members?${params}`);
   const data = result.data?.observation_year === year ? result.data : null;
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const tableScrollLeft = useRef(0);
+  const [sortSpace, setSortSpace] = useState(0);
+  useLayoutEffect(() => {
+    if (data || result.error || !active) setSortSpace(0);
+  }, [data, result.error, active]);
   const shown = selectedColumns(group, custom?.[group]);
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -233,12 +240,15 @@ export default function Zodiac({
     { key: "name", label: "股票名称" },
     ...columns.filter((c) => sortableFields.has(c.key)),
   ];
-  function sortColumn(key: string) {
+  function sortColumn(key: string, floating: boolean) {
+    // Reserve the list's space while the new order loads, without showing stale rows.
+    if (floating)
+      setSortSpace(resultsRef.current?.getBoundingClientRect().height || 0);
     setSort((current) => nextColumnSort(current, key));
     if (secondary.split(":")[0] === key) setSecondary("");
     setPage(0);
   }
-  function heading(key: string, label: string) {
+  function heading(key: string, label: string, floating = false) {
     const primary = sort.split(":")[0] === key;
     const direction = primary ? sort.split(":")[1] : undefined;
     const secondaryDirection =
@@ -260,8 +270,9 @@ export default function Zodiac({
         {sortableFields.has(key) ? (
           <button
             type="button"
+            tabIndex={floating ? -1 : undefined}
             className={`zodiac-column-sort ${primary ? "active" : ""}`}
-            onClick={() => sortColumn(key)}
+            onClick={() => sortColumn(key, floating)}
             aria-label={`${label}，${primary ? `当前${direction === "desc" ? "降序" : "升序"}，` : ""}点击${sort === `${key}:desc` ? "升序" : "降序"}`}
           >
             {label}
@@ -611,120 +622,125 @@ export default function Zodiac({
           </small>
         </div>
       </div>
-      {result.error && <ErrorBox message={result.error} retry={refresh} />}{" "}
-      {result.loading && <Loading />}
-      {data && (
-        <>
-          <MemberMetricCoverage coverage={data.coverage} />
-          {data.items.length ? (
-            <>
-              <div className="zodiac-table-scroll">
-                <table className="zodiac-table">
-                  <thead>
+      <div
+        className="zodiac-results"
+        ref={resultsRef}
+        style={{ minHeight: sortSpace || undefined }}
+      >
+        {result.error && <ErrorBox message={result.error} retry={refresh} />}{" "}
+        {result.loading && <Loading />}
+        {data && (
+          <>
+            <MemberMetricCoverage coverage={data.coverage} />
+            {data.items.length ? (
+              <>
+                <ZodiacTable
+                  active={active}
+                  scrollLeft={tableScrollLeft}
+                  header={(floating) => (
                     <tr>
-                      {heading("name", "股票")}
-                      {shown.map((c) => heading(c.key, c.label))}
+                      {heading("name", "股票", floating)}
+                      {shown.map((c) => heading(c.key, c.label, floating))}
                       <th>维护</th>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {data.items.map((row: Row) => (
-                      <tr key={row.member_id}>
-                        <td>{identity(row)}</td>
-                        {shown.map((c) => (
-                          <td key={c.key}>
-                            <MetricCell row={row} column={c} />
-                          </td>
-                        ))}
-                        <td>{rowActions(row)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="zodiac-mobile-cards">
-                {data.items.map((row: Row) => (
-                  <article key={row.member_id}>
-                    {identity(row)}
-                    <div className="zodiac-card-metrics">
-                      {selectedColumns("综合", undefined).map((c) => (
-                        <div
-                          className={c.type === "topics" ? "wide" : ""}
-                          key={c.key}
-                        >
-                          <small>{c.label}</small>
-                          <MetricCell row={row} column={c} />
-                        </div>
-                      ))}
-                    </div>
-                    <details>
-                      <summary>{group} · 全部显示字段</summary>
-                      {shown.map((c) => (
-                        <div className="zodiac-card-extra" key={c.key}>
-                          <span>{c.label}</span>
-                          <MetricCell row={row} column={c} />
-                        </div>
-                      ))}
-                    </details>
-                    {rowActions(row)}
-                  </article>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="zodiac-empty">
-              <CalendarDays size={34} />
-              <h3>
-                {data.total
-                  ? "没有符合筛选条件的股票"
-                  : status === "tracking"
-                    ? "这个年度还没有观察股票"
-                    : "暂无移出历史"}
-              </h3>
-              <p>
-                {data.total
-                  ? "调整搜索或过滤条件后再查看。"
-                  : status === "tracking"
-                    ? "从添加股票开始，保存你自己的关联理由。"
-                    : "结束观察后，原轮次及基准会保存在这里。"}
-              </p>
-              {!data.total && status === "tracking" && (
-                <button
-                  className="btn primary"
-                  disabled={!data.business_date}
-                  onClick={() => openEditor("add")}
+                  )}
                 >
-                  添加第一只股票
-                </button>
-              )}
-              {!data.business_date && <p>请先在数据中心发布真实行情。</p>}
+                  {data.items.map((row: Row) => (
+                    <tr key={row.member_id}>
+                      <td>{identity(row)}</td>
+                      {shown.map((c) => (
+                        <td key={c.key}>
+                          <MetricCell row={row} column={c} />
+                        </td>
+                      ))}
+                      <td>{rowActions(row)}</td>
+                    </tr>
+                  ))}
+                </ZodiacTable>
+                <div className="zodiac-mobile-cards">
+                  {data.items.map((row: Row) => (
+                    <article key={row.member_id}>
+                      {identity(row)}
+                      <div className="zodiac-card-metrics">
+                        {selectedColumns("综合", undefined).map((c) => (
+                          <div
+                            className={c.type === "topics" ? "wide" : ""}
+                            key={c.key}
+                          >
+                            <small>{c.label}</small>
+                            <MetricCell row={row} column={c} />
+                          </div>
+                        ))}
+                      </div>
+                      <details>
+                        <summary>{group} · 全部显示字段</summary>
+                        {shown.map((c) => (
+                          <div className="zodiac-card-extra" key={c.key}>
+                            <span>{c.label}</span>
+                            <MetricCell row={row} column={c} />
+                          </div>
+                        ))}
+                      </details>
+                      {rowActions(row)}
+                    </article>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="zodiac-empty">
+                <CalendarDays size={34} />
+                <h3>
+                  {data.total
+                    ? "没有符合筛选条件的股票"
+                    : status === "tracking"
+                      ? "这个年度还没有观察股票"
+                      : "暂无移出历史"}
+                </h3>
+                <p>
+                  {data.total
+                    ? "调整搜索或过滤条件后再查看。"
+                    : status === "tracking"
+                      ? "从添加股票开始，保存你自己的关联理由。"
+                      : "结束观察后，原轮次及基准会保存在这里。"}
+                </p>
+                {!data.total && status === "tracking" && (
+                  <button
+                    className="btn primary"
+                    disabled={!data.business_date}
+                    onClick={() => openEditor("add")}
+                  >
+                    添加第一只股票
+                  </button>
+                )}
+                {!data.business_date && <p>请先在数据中心发布真实行情。</p>}
+              </div>
+            )}
+            <div className="zodiac-pagination">
+              <button
+                className="btn"
+                disabled={!page || result.loading}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                上一页
+              </button>
+              <span>
+                第 {page + 1} /{" "}
+                {Math.max(1, Math.ceil(data.matched_count / pageSize))} 页 ·
+                每页50条
+              </span>
+              <button
+                className="btn"
+                disabled={
+                  (page + 1) * pageSize >= data.matched_count || result.loading
+                }
+                onClick={() => setPage((p) => p + 1)}
+              >
+                下一页
+              </button>
             </div>
-          )}
-          <div className="zodiac-pagination">
-            <button
-              className="btn"
-              disabled={!page || result.loading}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              上一页
-            </button>
-            <span>
-              第 {page + 1} /{" "}
-              {Math.max(1, Math.ceil(data.matched_count / pageSize))} 页 ·
-              每页50条
-            </span>
-            <button
-              className="btn"
-              disabled={
-                (page + 1) * pageSize >= data.matched_count || result.loading
-              }
-              onClick={() => setPage((p) => p + 1)}
-            >
-              下一页
-            </button>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
       {editor && (
         <ZodiacEditor
           {...editor}
