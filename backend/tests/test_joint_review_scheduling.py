@@ -84,7 +84,12 @@ def test_schema29_to32_preserves_old_facts_and_immutable_migration_sha(tmp_path,
         before = _facts(connection, names)
         ddl = dict(connection.execute("SELECT name,sql FROM sqlite_master WHERE sql IS NOT NULL"))
         versions = {row[0]: row[1] for row in connection.execute('SELECT name,sha256 FROM _schema_migration')}
-    monkeypatch.setattr(database, 'MIGRATIONS_DIR', original)
+    # This historical upgrade contract ends at032, independently of later migrations.
+    target_migrations = tmp_path / 'schema32'; target_migrations.mkdir()
+    for path in original.glob('[0-9]*.sql'):
+        if int(path.name.split('_', 1)[0]) <= 32:
+            shutil.copyfile(path, target_migrations / path.name)
+    monkeypatch.setattr(database, 'MIGRATIONS_DIR', target_migrations)
     core.ensure_ready()
     with core.connect() as connection:
         assert connection.execute('PRAGMA user_version').fetchone()[0] == 32

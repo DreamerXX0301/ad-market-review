@@ -24,13 +24,13 @@
 | -------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | 在同一观察日查看指数、市场广度、行业题材和涨停梯队 | 个股与板块分别配置日 / 周 / 月规则，组合历史事件与今日条件 | 把候选加入跟踪或自选，复查触发事件、加入基准和后续涨幅 |
 
-> **当前发行：v0.1.15**。功能变更见[版本记录](CHANGELOG.md#v0115)，配套源码见 [v0.1.15 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.15)，安装文件与镜像证据见[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.15)。完整源码 SHA、镜像摘要和平台结果以本版 `release-image.json` 为准；`master` 的文档更新不改变既有发行标签或运行版本。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
+> **当前发行目标：v0.1.17**。功能变更见[版本记录](CHANGELOG.md#v0117)，配套源码见 [v0.1.17 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.17)，安装文件与镜像证据见[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.17)。链接须在实际发行后核验，不能仅凭文档认定镜像已发布。完整源码 SHA、镜像摘要和平台结果以本版 `release-image.json` 为准；`master` 的文档更新不改变既有发行标签或运行版本。已有数据升级先阅读[版本升级与回滚](docs/版本升级与回滚.md)。
 
 本版包含原生重启辅助脚本`scripts/native_service.py`。它从私有部署控制文件读取已验收的独立版本，不将`master`应用源码直接作为现用服务，不安装依赖、迁移或重建数据。首次安装与升级仍需分别完成验收。详见[原生重启说明](docs/部署与运维.md#已有原生安装电脑重启后启动)。
 
 ## 近期新增与改进
 
-0.1.15将竞价、午评和盘后自动开关统一到数据中心，补齐竞价与炸板的昨日板型、板高排序和板别组合筛选。新盘后增量先核验本次主行情、板块尾部和补充发布，再按原设置执行选股、跟踪与划线提醒；同日选股复用也核对实际补充输入，来源变化不误用旧结果。新安装三个计划默认关闭，已有自定义时间不覆盖，恢复副本关闭自动开关并保留原台账；仅按原有明确授权在验收后的唯一正式实例重新开启。schema仍为32、无新增迁移。源码、镜像发行和本地/线上部署分别留证，不能用镜像发布成功代替实例部署验收。
+0.1.17包含生肖年度跟踪、搜索多选与粘贴名单、统一搜索、全池排序和可滚动概念浮层，并整合盘面日期提示、午评联动与性能优化。数据库终点为schema34；从0.1.15/schema32升级须应用033生肖表和034策略索引，完整保留旧业务及迁移SHA。新安装三个计划默认关闭，已有自定义时间不覆盖，恢复副本关闭自动开关并保留原台账；仅按原有明确授权在验收后的唯一正式实例重新开启。源码、镜像发行和本地/线上部署分别留证，不能用镜像发布成功代替实例部署验收。
 
 | 能力                     | 现在可以做什么                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -198,9 +198,9 @@ flowchart LR
 
 ## Docker 安装
 
-需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.15`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+需要 Docker Engine / Docker Desktop 和 Compose。以下流程使用 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.17`，只下载配套部署文件并拉取镜像，无需在本机构建；执行前核对上方发行记录中的镜像可用性、实际摘要及配套源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
 
-源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.15 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.15)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.15 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
+源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.17 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.17)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.17 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
 
 ```bash
 mkdir ad-market-review
@@ -208,18 +208,18 @@ cd ad-market-review
 
 test ! -e docker-compose.yml && test ! -L docker-compose.yml && \
   curl --fail --location --output docker-compose.yml \
-  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.15/docker-compose.yml'
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.15
+  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.17/docker-compose.yml'
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.17
 
 umask 077
 key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.15 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.17 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
-export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.15
+export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.17
 export SHIXU_HTTP_PORT=8788
 
 docker compose -p ad-market-review -f docker-compose.yml pull
