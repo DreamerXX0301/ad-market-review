@@ -9,7 +9,8 @@ export type StockNavigationItem = {
   historicalChecks?: unknown;
 };
 export type StockNavigation = {
-  source: "strategy" | "tracking" | "watchlist" | "market" | "members" | "zodiac";
+  source:
+    "strategy" | "tracking" | "watchlist" | "market" | "members" | "zodiac";
   scopeKey: string;
   label: string;
   asOf?: string;

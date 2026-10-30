@@ -6,12 +6,7 @@ export const relations = {
   business: "实际业务",
   custom: "自定义",
 };
-export const groups = [
-  "综合",
-  "涨幅表现",
-  "涨停活跃",
-  "跟踪过程",
-] as const;
+export const groups = ["综合", "涨幅表现", "涨停活跃", "跟踪过程"] as const;
 export type Column = {
   key: string;
   label: string;
