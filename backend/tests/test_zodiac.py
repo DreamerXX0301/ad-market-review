@@ -357,3 +357,23 @@ def test_full_capacity_pagination_and_bounded_market_reads(annual, monkeypatch):
     assert len(calls) <= 12 and max(calls) <= 129, '行情应按128只批读，扩展指标可另带一个基准指数'
     with core.connect() as c:
         assert c.execute('SELECT count(*) FROM zodiac_pool_member').fetchone()[0] == 500
+
+
+def test_pasted_partial_names_initials_and_pinyin_need_confirmation(annual, monkeypatch):
+    market, client = annual
+    monkeypatch.setattr(market, 'instruments', lambda *a, **k: [
+        {'instrument_id': '002724.SZ', 'name': '海洋王', 'kind': 'stock'},
+        {'instrument_id': '300053.SZ', 'name': '航宇微', 'kind': 'stock'},
+        {'instrument_id': '000001.SH', 'name': '海洋王', 'kind': 'index'},
+        {'instrument_id': '885728.TI', 'name': '海洋概念', 'kind': 'concept'},
+    ])
+    response = client.post('/api/v1/zodiac-pools/2027/preview', json={'text': '洋 hyw haiyangwang 002724 002724.SZ 885728.TI 000001.SH'})
+    assert response.status_code == 200
+    items = response.json()['items']
+    assert [r['state'] for r in items] == ['ambiguous', 'ambiguous', 'ambiguous', 'ready', 'duplicate', 'unrecognized', 'unrecognized']
+    assert {r['instrument_id'] for r in items[1]['candidates']} == {'002724.SZ', '300053.SZ'}
+    assert all(r['instrument_id'] is None for r in items[:3]), '部分名称和拼音即使只有一项匹配也须主动确认'
+    assert add(client, symbol='000001.SH').status_code == 422
+    assert add(client, symbol='885728.TI').status_code == 422
+    with core.connect() as c:
+        assert c.execute('SELECT count(*) FROM zodiac_pool_member').fetchone()[0] == 0

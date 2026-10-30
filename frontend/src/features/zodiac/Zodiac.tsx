@@ -1,6 +1,14 @@
 import ZodiacSelect from "./ZodiacSelect";
 import { useEffect, useRef, useState } from "react";
-import { CalendarDays, Plus, RefreshCw, Star } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  CalendarDays,
+  Plus,
+  RefreshCw,
+  Star,
+} from "lucide-react";
 import { post, useApi, usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { ErrorBox, Loading, useToast } from "../../components/UI";
@@ -8,7 +16,8 @@ import CopyStockCode from "../../components/CopyStockCode";
 import { createStockNavigation } from "../../components/stockNavigation";
 import type { StockNavigation } from "../../components/stockNavigation";
 import { MemberMetricCoverage } from "../topics/MemberHistoryCells";
-import { percent } from "../../lib/format";
+import { percent, tone } from "../../lib/format";
+import { nextColumnSort, poolSort, sortableFields } from "./zodiacInteractions";
 import {
   columns,
   groups,
@@ -94,7 +103,7 @@ export default function Zodiac({
     focused: String(focused),
     board,
     completeness,
-    sort: [sort, secondary].filter(Boolean).join(","),
+    sort: poolSort(sort, secondary),
     offset: String(page * pageSize),
     limit: String(pageSize),
   });
@@ -220,19 +229,57 @@ export default function Zodiac({
     [keys[i], keys[j]] = [keys[j], keys[i]];
     setCustom({ ...custom, [group]: keys });
   }
-  const sortOptions = columns.filter((c) =>
-    [
-      "change_pct",
-      "return_ytd_pct",
-      "change_30d_pct",
-      "limit_up_ytd",
-      "since_entry_pct",
-      "amount",
-      "turnover_rate",
-      "added_business_date",
-      "max_drawdown_pct",
-    ].includes(c.key),
-  );
+  const sortOptions = [
+    { key: "name", label: "股票名称" },
+    ...columns.filter((c) => sortableFields.has(c.key)),
+  ];
+  function sortColumn(key: string) {
+    setSort((current) => nextColumnSort(current, key));
+    if (secondary.split(":")[0] === key) setSecondary("");
+    setPage(0);
+  }
+  function heading(key: string, label: string) {
+    const primary = sort.split(":")[0] === key;
+    const direction = primary ? sort.split(":")[1] : undefined;
+    const secondaryDirection =
+      !primary && secondary.split(":")[0] === key
+        ? secondary.split(":")[1]
+        : undefined;
+    const currentDirection = direction || secondaryDirection;
+    return (
+      <th
+        key={key}
+        aria-sort={
+          direction === "desc"
+            ? "descending"
+            : direction === "asc"
+              ? "ascending"
+              : undefined
+        }
+      >
+        {sortableFields.has(key) ? (
+          <button
+            type="button"
+            className={`zodiac-column-sort ${primary ? "active" : ""}`}
+            onClick={() => sortColumn(key)}
+            aria-label={`${label}，${primary ? `当前${direction === "desc" ? "降序" : "升序"}，` : ""}点击${sort === `${key}:desc` ? "升序" : "降序"}`}
+          >
+            {label}
+            {currentDirection === "desc" ? (
+              <ArrowDown size={13} />
+            ) : currentDirection === "asc" ? (
+              <ArrowUp size={13} />
+            ) : (
+              <ArrowUpDown size={13} />
+            )}{" "}
+            {secondaryDirection && <small>次</small>}
+          </button>
+        ) : (
+          label
+        )}
+      </th>
+    );
+  }
   const sorter = (
     value: string,
     onChange: (v: string) => void,
@@ -394,15 +441,24 @@ export default function Zodiac({
           </span>
           <span>
             涨 / 跌 / 平{" "}
-            <b>
-              {data.summary.up} / {data.summary.down} / {data.summary.flat}
+            <b
+              className="zodiac-breadth"
+              aria-label={`上涨${data.summary.up}只，下跌${data.summary.down}只，平盘${data.summary.flat}只`}
+            >
+              <span className="up">{data.summary.up}</span>
+              <span className="muted"> / </span>
+              <span className="down">{data.summary.down}</span>
+              <span className="muted"> / {data.summary.flat}</span>
             </b>
           </span>
           <span>
-            涨幅未知 <b>{data.summary.unknown}</b>
+            涨幅未知 <b className="muted">{data.summary.unknown}</b>
           </span>
           <span>
-            当日涨幅中位数 <b>{percent(data.summary.median_change_pct)}</b>
+            当日涨幅中位数{" "}
+            <b className={tone(data.summary.median_change_pct)}>
+              {percent(data.summary.median_change_pct)}
+            </b>
             <small>
               {data.summary.known_count}/{data.summary.sample_count}只可核验
               {status === "ended" ? " · 各自移出日样本" : ""}
@@ -566,10 +622,8 @@ export default function Zodiac({
                 <table className="zodiac-table">
                   <thead>
                     <tr>
-                      <th>股票</th>
-                      {shown.map((c) => (
-                        <th key={c.key}>{c.label}</th>
-                      ))}
+                      {heading("name", "股票")}
+                      {shown.map((c) => heading(c.key, c.label))}
                       <th>维护</th>
                     </tr>
                   </thead>
@@ -675,10 +729,10 @@ export default function Zodiac({
         <ZodiacEditor
           {...editor}
           onClose={() => setEditor(null)}
-          onSaved={() => {
+          onSaved={(message) => {
             setEditor(null);
             refresh();
-            notify("生肖观察池已保存");
+            notify(message);
           }}
         />
       )}

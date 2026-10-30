@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { Search, X } from "lucide-react";
+import { Check, Search, X } from "lucide-react";
 import { list, useApi } from "../lib/api";
 import type { Row } from "../lib/api";
 import { Spinner } from "./UI";
@@ -24,12 +24,18 @@ export default function InstrumentSearch({
   compact = false,
   includeSectors = false,
   onSector,
+  stocksOnly = false,
+  multiple,
+  disabled = false,
 }: {
   onSelect: (id: string, row: Row) => void;
   placeholder?: string;
   compact?: boolean;
   includeSectors?: boolean;
   onSector?: (row: Row) => void;
+  stocksOnly?: boolean;
+  multiple?: { selectedIds: readonly string[]; limit: number };
+  disabled?: boolean;
 }) {
   const [query, setQuery] = useState(""),
     [debounced, setDebounced] = useState(""),
@@ -44,14 +50,16 @@ export default function InstrumentSearch({
   const composingRef = useRef(false);
   const [composing, setComposing] = useState(false);
   const listId = useId();
-  const visible = open && !!query.trim();
+  const visible = !disabled && open && !!query.trim();
   useEffect(() => {
     if (composing) return;
     const t = setTimeout(() => setDebounced(query.trim()), 200);
     return () => clearTimeout(t);
   }, [query, composing]);
   const result = useApi<Row>(
-    composing ? null : instrumentSearchRequest(debounced, includeSectors),
+    composing
+      ? null
+      : instrumentSearchRequest(debounced, includeSectors, stocksOnly),
   );
   // A newly typed query must not select the previous query's still-loaded rows.
   const searching = composing || query.trim() !== debounced || result.loading;
@@ -61,7 +69,9 @@ export default function InstrumentSearch({
       : list(result.data).filter((row) => {
           const view = searchResultView(row);
           return (
-            view.selectable && (!view.sector || (includeSectors && !!onSector))
+            view.selectable &&
+            (!stocksOnly || view.kind === "stock") &&
+            (!view.sector || (includeSectors && !!onSector))
           );
         });
   useLayoutEffect(() => {
@@ -122,14 +132,24 @@ export default function InstrumentSearch({
   }, [visible, activeIndex, debounced, result.data]);
   function choose(row: Row) {
     const view = searchResultView(row);
-    if (!view.selectable) return;
+    if (disabled || !view.selectable || optionDisabled(row)) return;
     if (view.sector) {
       if (!includeSectors || !onSector) return;
       onSector(row);
     } else onSelect(row.instrument_id, row);
-    setQuery("");
-    setOpen(false);
+    if (multiple) {
+      input.current?.focus();
+    } else {
+      setQuery("");
+      setOpen(false);
+    }
   }
+  const selected = (row: Row) =>
+    !!multiple?.selectedIds.includes(row.instrument_id);
+  const optionDisabled = (row: Row) =>
+    !!multiple &&
+    !selected(row) &&
+    multiple.selectedIds.length >= multiple.limit;
   return (
     <div
       ref={container}
@@ -138,6 +158,7 @@ export default function InstrumentSearch({
       <Search size={15} />
       <input
         ref={input}
+        disabled={disabled}
         role="combobox"
         aria-label={placeholder}
         aria-autocomplete="list"
@@ -196,9 +217,9 @@ export default function InstrumentSearch({
                     : rows.length - 1,
               );
           }
-          if (e.key === "Enter" && visible && rows[activeIndex]) {
+          if (e.key === "Enter" && visible) {
             e.preventDefault();
-            choose(rows[activeIndex]);
+            if (rows[activeIndex]) choose(rows[activeIndex]);
           }
         }}
       />
@@ -223,10 +244,13 @@ export default function InstrumentSearch({
             ref={popup}
             id={listId}
             role="listbox"
+            aria-multiselectable={multiple ? true : undefined}
             aria-label={
-              includeSectors
-                ? "匹配的股票、指数、行业与概念"
-                : "匹配的股票与指数"
+              stocksOnly
+                ? "匹配的A股股票"
+                : includeSectors
+                  ? "匹配的股票、指数、行业与概念"
+                  : "匹配的股票与指数"
             }
             aria-busy={searching}
             className="instrument-search-popover"
@@ -274,10 +298,21 @@ export default function InstrumentSearch({
                       aria-label={searchResultView(r).title}
                       id={`${listId}-${index}`}
                       role="option"
-                      aria-selected={index === activeIndex}
+                      aria-selected={
+                        multiple ? selected(r) : index === activeIndex
+                      }
+                      aria-disabled={optionDisabled(r) || undefined}
                       tabIndex={-1}
                       onClick={() => choose(r)}
                     >
+                      {multiple && (
+                        <span
+                          className="search-selection-mark"
+                          aria-hidden="true"
+                        >
+                          {selected(r) && <Check size={13} />}
+                        </span>
+                      )}
                       <span>
                         <strong>{r.name}</strong>
                         <small
@@ -306,6 +341,24 @@ export default function InstrumentSearch({
                   </div>
                 </Fragment>
               ))
+            )}
+            {multiple && (
+              <div className="search-multiple-footer">
+                <span>
+                  已选 {multiple.selectedIds.length} / {multiple.limit} 只 ·
+                  可继续搜索
+                </span>
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={() => {
+                    setOpen(false);
+                    input.current?.focus();
+                  }}
+                >
+                  完成选择
+                </button>
+              </div>
             )}
           </div>,
           portalHost,

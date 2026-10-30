@@ -238,7 +238,8 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 .zodiac-memberships small {
   color: var(--muted);
@@ -248,6 +249,11 @@
   padding: 3px 6px;
   border: 1px solid var(--border);
   border-radius: 5px;
+  min-width: 0;
+  max-width: 145px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .zodiac-memberships summary {
   cursor: pointer;
@@ -1464,4 +1470,212 @@
 .zodiac-detail .topic-history-cell > .badge {
   justify-self: start;
   width: fit-content;
+}
+
+/* Search selection, table sorting and bounded membership details. */
+.zodiac-editor .instrument-search {
+  width: 100%;
+  max-width: none;
+}
+.zodiac-column-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.zodiac-column-sort svg {
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.zodiac-column-sort:hover,
+.zodiac-column-sort.active {
+  color: var(--accent-secondary);
+}
+.zodiac-column-sort.active svg {
+  opacity: 1;
+}
+.zodiac-column-sort:focus-visible,
+.zodiac-memberships-more:focus-visible {
+  outline: 2px solid var(--accent-secondary);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.zodiac-summary .up {
+  color: var(--red);
+}
+.zodiac-summary .down {
+  color: var(--green);
+}
+.zodiac-summary .muted {
+  color: var(--muted);
+}
+.zodiac-summary .zodiac-breadth {
+  display: flex;
+  gap: 5px;
+  white-space: nowrap;
+}
+.zodiac-selected-stocks {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface2);
+}
+.zodiac-selected-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.zodiac-selected-heading small,
+.zodiac-selected-stocks p,
+.zodiac-selection-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.zodiac-selected-stocks ul {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  max-height: 170px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.zodiac-selected-stocks li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.zodiac-selected-stocks li > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.zodiac-selected-stocks li strong {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.zodiac-selected-stocks li small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.zodiac-selected-stocks .icon-btn {
+  flex-shrink: 0;
+}
+.zodiac-memberships-more {
+  justify-self: start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.modal:has(.zodiac-memberships-panel) {
+  width: 600px;
+}
+.zodiac-memberships-panel {
+  min-width: 0;
+  padding: 20px;
+  white-space: normal;
+}
+.zodiac-memberships-panel header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.zodiac-memberships-panel header span,
+.zodiac-memberships-panel header small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.zodiac-memberships-scroll {
+  max-height: min(440px, 50dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 4px 8px 0;
+}
+.zodiac-memberships-panel h3 {
+  font-size: 13px;
+  margin: 16px 0 10px;
+}
+.zodiac-memberships-panel h3 small {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.zodiac-memberships-panel section > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+.zodiac-memberships-panel .zodiac-tag {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.zodiac-memberships-panel footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.zodiac-memberships-panel footer small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.zodiac-memberships-panel footer button {
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .zodiac-memberships-panel {
+    padding: 16px;
+  }
+  .zodiac-memberships {
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+.zodiac-input-method {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.zodiac-input-method button {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 14px;
+  background: var(--surface2);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.zodiac-input-method button.active {
+  color: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-secondary) 12%, var(--surface));
+}
+.zodiac-input-method small {
+  color: var(--muted);
+  font-size: 11px;
 }

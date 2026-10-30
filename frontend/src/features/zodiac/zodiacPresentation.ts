@@ -10,8 +10,6 @@ export const groups = [
   "综合",
   "涨幅表现",
   "涨停活跃",
-  "量价规模",
-  "技术趋势",
   "跟踪过程",
 ] as const;
 export type Column = {

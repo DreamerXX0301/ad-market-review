@@ -66,9 +66,9 @@ def instruments(query:str='',limit:int=Query(50,ge=1,le=10000)):
     return {'items':items,'total':len(items)}
 
 @router.get('/search')
-def unified_search(query:str='',limit:int=Query(20,ge=1,le=100)):
+def unified_search(query:str='',limit:int=Query(20,ge=1,le=100),stocks_only:bool=False):
     from app.services.unified_search import search
-    return json_clean(search(query,limit))
+    return json_clean(search(query,limit,stocks_only=stocks_only))
 
 @router.get('/topic-hotspots')
 def topic_hotspots(limit:int=Query(8,ge=1,le=20)):

@@ -71,6 +71,26 @@ def test_exact_stock_identity_stays_ahead_of_sector_substring(local):
     assert result['items'][0]['kind'] == 'stock' and result['total'] == 2
 
 
+@pytest.mark.parametrize('query,expected', [
+    ('hyw', {'002724.SZ', '300053.SZ'}), ('海洋', {'002724.SZ'}),
+    ('haiyangwang', {'002724.SZ'}), ('hangyuwei', {'300053.SZ'}),
+    ('002724', {'002724.SZ'}), ('海羊王', {'002724.SZ'}),
+])
+def test_stock_only_search_reuses_global_matching_before_limit(local, query, expected):
+    local.rows = [
+        {'instrument_id': '002724.SZ', 'name': '海洋王', 'kind': 'stock'},
+        {'instrument_id': '300053.SZ', 'name': '航宇微', 'kind': 'stock'},
+        {'instrument_id': '000001.SH', 'name': '海洋王', 'kind': 'index'},
+    ]
+    local.reference_data = {'concept_catalog': [{'thscode': '885728.TI', 'name': '海洋王'}]}
+    result = unified_search.search(query, stocks_only=True)
+    assert {r['instrument_id'] for r in result['items']} == expected
+    assert all(r['kind'] == 'stock' for r in result['items'])
+    assert unified_search.search('海洋王', 1, stocks_only=True)['items'][0]['instrument_id'] == '002724.SZ'
+    global_stocks = {r['instrument_id'] for r in unified_search.search(query)['items'] if r['kind'] == 'stock'}
+    assert global_stocks == expected
+
+
 def test_duplicate_catalog_identity_is_deduplicated_and_conflict_is_quarantined(local):
     local.reference_data['concept_catalog'].append({'thscode': '885728.TI', 'name': '人工智能'})
     assert unified_search.search('人工智能')['total'] == 1
@@ -99,10 +119,13 @@ def test_api_unified_route_does_not_change_original_stock_picker(local, monkeypa
     with TestClient(app) as client:
         new = client.get('/api/v1/search', params={'query': '出版', 'limit': 100})
         old = client.get('/api/v1/instruments', params={'query': '出版'})
+        stocks = client.get('/api/v1/search', params={'query': '出版', 'stocks_only': True})
         invalid = client.get('/api/v1/search', params={'query': '出版', 'limit': 101})
     assert new.status_code == old.status_code == 200 and invalid.status_code == 422
     assert any(row['target_type'] == 'sector' for row in new.json()['items'])
     assert all(row['kind'] == 'stock' for row in old.json()['items'])
+    assert stocks.status_code == 200 and stocks.json()['stocks_only'] is True
+    assert all(row['kind'] == 'stock' for row in stocks.json()['items'])
     assert not any('topic_code' in row for row in old.json()['items'])
 
 

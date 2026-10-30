@@ -33,7 +33,7 @@ API 根路径 `/api/v1`，snake_case；成功直接返回业务对象，列表�
 
 ## 搜索与成员
 
-- 专用股票/研究选择器继续调用 `/instruments`；顶部全局搜索使用 `/search?query=&limit=`。按 `target_type/kind` 分股票、指数、行业、概念，不用代码形状猜类型。
+- 个股研究专用选择器继续调用 `/instruments`；顶部全局搜索使用 `/search?query=&limit=`。生肖添加显式使用 `/search?query=&limit=&stocks_only=true`，复用全局名称/代码/拼音/首字母及合理容错，仅显示股票结果。按 `target_type/kind` 分股票、指数、行业、概念，不用代码形状猜类型；提交仍须后端复核真实A股身份。
 - 全局检索支持名称/代码、全拼和首字母；同音/轻度错字单列“可能想找”，保留名称与代码，不自动选定。输入法组合期间不提交查询或响应回车选中，结束后沿用200ms防抖。板块点击传明确 topic_code，不能用名称拼接代码或向股票 chart 发请求。
 - 板块 K 与成员独立入口；members_available=false 不应禁用已有真实板块 K。
 - `/sectors/{topic_code}/members` 不需要跟踪轮次。latest 默认当前业务日报价，可对应较新的真实成员采集日；historical 只读所选日档案。两个日期醒目标明，历史缺档不回填当前成员。

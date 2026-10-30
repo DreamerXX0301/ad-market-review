@@ -2,10 +2,11 @@ type Row = Record<string, any>;
 export function instrumentSearchRequest(
   query: string,
   includeSectors = false,
+  stocksOnly = false,
 ): string | null {
   const text = query.trim();
   return text
-    ? `${includeSectors ? "/search" : "/instruments"}?query=${encodeURIComponent(text)}&limit=12`
+    ? `${includeSectors || stocksOnly ? "/search" : "/instruments"}?query=${encodeURIComponent(text)}&limit=12${stocksOnly ? "&stocks_only=true" : ""}`
     : null;
 }
 export function searchResultView(row: Row) {

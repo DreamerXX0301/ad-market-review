@@ -43,7 +43,7 @@
 | `GET /overview?date=` 或 `/market/overview?date=` | 四指数、广度、总成交额、成交额排行、封板观察、连板反馈概览等 |
 | `GET /market/indices?date=` | 指数页轻量读取，只含 `date/snapshot_id/indices/data_coverage/quality`；四指数报价与总览一致，不构建全市场股票面板、30日榜或年内涨停证明，不展开盘面补充历史 |
 | `GET /instruments?query=&limit=` | 原股票/指数检索；研究选择器继续使用此接口 |
-| `GET /search?query=&limit=` | 股票、指数、行业、概念统一检索；空白返回空，limit 为 1–100 |
+| `GET /search?query=&limit=&stocks_only=false` | 股票、指数、行业、概念统一检索；空白返回空，limit 为 1–100。`stocks_only=true` 在排序截取前仅保留股票，复用相同名称、代码、拼音、首字母及容错匹配；默认行为不变 |
 | `GET /instruments/{id}?as_of=` | 标的身份、所选日行情、可用题材/风险标签及缺口 |
 
 0.1.9的读取实现中，`GET /sources` 按当前凭据修订选取每项能力的最新本地核验记录，只解码被选中的证据；配置、修订和活动来源在同一SQLite读取快照中获取，凭据是否存在仍当次检查，不解密或返回Key，不缓存账号权限结论。`public_supplement` 保持原字段、日期与未知语义：只物化状态展示需要的当日池和资金字段及板块来源记录，但仍逐项验证完整补充索引的所有留存对象和嵌套引用。历史对象损坏仍使该状态未知，不能用裁剪读取掩盖来源缺口。`/bootstrap` 的来源列表不重复构建未使用的补充状态；容量统计继续遵循上述精确遍历口径。

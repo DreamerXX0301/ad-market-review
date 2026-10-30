@@ -18,7 +18,7 @@
 | GET `/zodiac-pools` | `default_year`、已有池列表及人数、`business_date/generation` |
 | GET `/zodiac-pools/{year}` | 虚拟或实际池描述、`exists/pool_revision`、写入前置条件 |
 | GET `/zodiac-pools/{year}/members` | `status/query/relation/focused/board/completeness/sort/offset/limit`；每页最多100项 |
-| POST `/zodiac-pools/{year}/preview` | 只读解析 `{text}`；逐项返回 `ready/active/duplicate/ambiguous/unrecognized` 和准确候选 |
+| POST `/zodiac-pools/{year}/preview` | 只读解析 `{text}`；逐项返回 `ready/active/duplicate/ambiguous/unrecognized` 和候选。准确身份优先；名称片段、全拼、首字母及容错建议复用统一匹配，即使仅一个候选也须用户主动确认。每项最多返回20个候选，`candidate_count` 为实际匹配数 |
 | GET `/zodiac-pool-members/{id}/metrics` | 单股指标、严格日 / 完整周 / 完整月技术数据、个人审计、已有事件摘要 |
 | GET `/zodiac-pool-members/{id}/history` | 本轮身份、按写入顺序排列的个人维护历史 |
 | GET `/zodiac-pool-members/{id}/evidence` | 独立冻结的入池收盘凭据 |
@@ -26,6 +26,12 @@
 列表包含 `items/total/matched_count/navigation/summary/coverage/pool_revision/business_date/generation`。`navigation` 是完整过滤排序后的证券导航摘要；已结束轮次的图表导航按相同截止日分组，避免切股后套用别的截止日。
 
 `sort` 最多3个白名单键，以逗号分隔，每项为 `字段:asc|desc`。先全池过滤排序再分页，未知在两个方向都置后；年内涨停下界不作为精确次数排名。`completeness=complete|missing` 指年内涨幅、30日涨幅、年内涨停三项是否齐备。
+
+前端支持点击有意义的表头切换主排序升降序，与下拉排序保持同步并回到第一页；不对当前页单独排序。汇总按涨红跌绿、平盘和未知中性色显示，同时保留文字、正负号和样本数量。
+
+「添加股票」「批量添加」都提供搜索多选与粘贴名单两种输入方式，草稿各自保留，仅提交当前方式。搜索可连续选中/取消最多100只，先用只读预览核对身份和已有成员，再一次提交现有批量接口；失败保留选择及同参数幂等键，成功按实际回执区分新增和已有成员。正式成员不存入浏览器存储。
+
+行业/概念列表每类展示最多两个截短标签，完整内容在可滚动浮层展示，不扩展表格行；浮层显示完整名称及来源日期提示，窄屏换行，关闭恢复触发位置。
 
 ## 写入与并发
 

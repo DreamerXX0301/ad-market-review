@@ -27,6 +27,19 @@ assert.equal(
   "/search?query=%E5%87%BA%E7%89%88&limit=12",
 );
 assert.equal(instrumentSearchRequest("  ", true), null);
+assert.equal(
+  instrumentSearchRequest(" hyw ", false, true),
+  "/search?query=hyw&limit=12&stocks_only=true",
+);
+assert.equal(
+  instrumentSearchRequest("海洋", false, true),
+  "/search?query=%E6%B5%B7%E6%B4%8B&limit=12&stocks_only=true",
+);
+assert.equal(
+  instrumentSearchRequest("hyw"),
+  "/instruments?query=hyw&limit=12",
+  "个股研究默认入口不改变",
+);
 const stock = {
   instrument_id: "600825.SH",
   code: "600825",

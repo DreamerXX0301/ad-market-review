@@ -1,4 +1,7 @@
 import type { Row } from "../../lib/api";
+import { useState } from "react";
+import { createPortal } from "react-dom";
+import { Modal } from "../../components/UI";
 import { num, percent, tone } from "../../lib/format";
 import {
   YearLimitCountCell,
@@ -7,6 +10,7 @@ import {
 import type { Column } from "./zodiacPresentation";
 
 export function Memberships({ row }: { row: Row }) {
+  const [expanded, setExpanded] = useState(false);
   const tags: Row[] = row.current_topics || [];
   const industries = tags.filter((t) => t.kind === "industry"),
     concepts = tags.filter((t) => t.kind !== "industry");
@@ -14,7 +18,7 @@ export function Memberships({ row }: { row: Row }) {
     <span
       className="zodiac-tag"
       key={tag.topic_id}
-      title={`来源采集日 ${tag.source_observed_date || "未知"}；当前归属，非历史成员证明`}
+      title={`${tag.name}；来源采集日 ${tag.source_observed_date || "未知"}；当前归属，非历史成员证明`}
     >
       {tag.name}
       {tag.manual_override === "include" ? " · 人工" : ""}
@@ -25,7 +29,7 @@ export function Memberships({ row }: { row: Row }) {
       <div>
         <small>行业</small>
         {industries.length ? (
-          industries.map(chip)
+          industries.slice(0, 2).map(chip)
         ) : (
           <span className="muted">未知</span>
         )}
@@ -38,12 +42,70 @@ export function Memberships({ row }: { row: Row }) {
           <span className="muted">暂无已知归属</span>
         )}
       </div>
-      {concepts.length > 2 && (
-        <details>
-          <summary>全部 {concepts.length} 项</summary>
-          {concepts.map(chip)}
-        </details>
+      {!!tags.length && (
+        <button
+          type="button"
+          className="zodiac-memberships-more"
+          aria-haspopup="dialog"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(true)}
+        >
+          全部 {tags.length} 项
+        </button>
       )}
+      {expanded &&
+        createPortal(
+          <Modal title="行业与概念" onClose={() => setExpanded(false)}>
+            <div className="zodiac-memberships-panel">
+              <header>
+                <strong>{row.name}</strong>
+                <span>{row.instrument_id}</span>
+                <small>
+                  当前归属 · {row.current_topics_observed_date || "日期未知"}
+                </small>
+              </header>
+              <div className="zodiac-memberships-scroll">
+                <section>
+                  <h3>
+                    行业 <small>{industries.length}项</small>
+                  </h3>
+                  <div>
+                    {industries.length ? (
+                      industries.map(chip)
+                    ) : (
+                      <span className="muted">暂无已知行业</span>
+                    )}
+                  </div>
+                </section>
+                <section>
+                  <h3>
+                    概念 <small>{concepts.length}项</small>
+                  </h3>
+                  <div>
+                    {concepts.length ? (
+                      concepts.map(chip)
+                    ) : (
+                      <span className="muted">暂无已知概念</span>
+                    )}
+                  </div>
+                </section>
+              </div>
+              <footer>
+                <small>
+                  当前归属不代表历史成员或上涨原因。悬停标签可查看来源日期。
+                </small>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setExpanded(false)}
+                >
+                  收起
+                </button>
+              </footer>
+            </div>
+          </Modal>,
+          document.body,
+        )}
     </div>
   );
 }

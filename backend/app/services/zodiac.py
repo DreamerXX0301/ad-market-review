@@ -12,6 +12,7 @@ from app.core import connect, get_market, now_ms, new_id
 from app.services.workspace_common import freeze_inputs, fail, js, obj, rows, money
 from app.services.stock_summary import _master
 from app.services.watchlist import _entry_baselines, _generation
+from app.services.search_matching import identity_match
 
 RELATIONS = {'name': '名称直接关联', 'homophone': '谐音', 'branch': '地支', 'culture': '文化 / IP', 'business': '实际业务', 'custom': '自定义'}
 MAX_ACTIVE = 500
@@ -157,9 +158,20 @@ def preview(year, payload):
     for token in tokens:
         matches = [dict(identity, instrument_id=symbol) for symbol, identity in master.items()
                    if token.upper() in (symbol, identity.get('code', symbol[:6])) or token == identity.get('name')]
-        symbol = matches[0]['instrument_id'] if len(matches) == 1 else None
-        state = 'unrecognized' if not matches else 'ambiguous' if len(matches) > 1 else 'duplicate' if symbol in seen else 'active' if symbol in active else 'ready'
-        result.append({'input': token, 'state': state, 'candidates': matches, 'instrument_id': symbol})
+        exact = bool(matches)
+        if not exact:
+            candidates = []
+            for symbol, identity in master.items():
+                match = identity_match(token, identity.get('name') or symbol, symbol, identity.get('code', symbol[:6]))
+                if match is not None:
+                    rank, evidence = match
+                    candidates.append((rank, {**identity, 'instrument_id': symbol, **evidence}))
+            candidates.sort(key=lambda pair: (pair[0], pair[1].get('name', ''), pair[1]['instrument_id']))
+            matches = [r for _, r in candidates]
+        candidate_count = len(matches)
+        symbol = matches[0]['instrument_id'] if exact and len(matches) == 1 else None
+        state = 'unrecognized' if not matches else 'ambiguous' if not exact or len(matches) > 1 else 'duplicate' if symbol in seen else 'active' if symbol in active else 'ready'
+        result.append({'input': token, 'state': state, 'candidates': matches[:20], 'candidate_count': candidate_count, 'instrument_id': symbol})
         if symbol: seen.add(symbol)
     return {'items': result}
 
