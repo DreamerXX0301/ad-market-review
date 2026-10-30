@@ -127,7 +127,7 @@ const shell = await fs.readFile(
 );
 assert.match(
   shell,
-  /isMarket \? \(\s*<MarketDatePicker value=\{date\} dates=\{dates\} onChange=\{onDate\}/,
+  /isMarket \? \(\s*<MarketDatePicker\s+value=\{date\}\s+dates=\{dates\}\s+onChange=\{onDate\}/,
 );
 assert.equal(
   shell.includes("dates.map("),
@@ -146,7 +146,10 @@ assert.match(
   picker,
   /!cell.inMonth \|\|[\s\S]*?!datePickerSelectable\(cell.date, model\)/,
 );
-assert.match(picker, /if \(selected !== value\) onChange\(selected\)/);
+assert.match(
+  picker,
+  /if \(selected !== value \|\| selectCurrent\) onChange\(selected\)/,
+);
 assert.equal(picker.includes("location.hash"), false);
 const marketPicker = await fs.readFile(
   new URL("./MarketDatePicker.tsx", import.meta.url),

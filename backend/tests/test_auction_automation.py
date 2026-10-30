@@ -187,8 +187,11 @@ def test_explicit_stop_during_failed_waiting_interval_prevents_auto_requeue(auto
     enable(auto); auto.source.hook = not_ready(auto)
     job = claimed(auto); fail_attempt(job)
     stopped = auto.client.post('/api/v1/tasks/' + job['job_id'] + '/' + action)
-    assert stopped.status_code == 200, stopped.text
-    assert stopped.json()['status'] == ('paused' if action == 'pause' else 'cancelled')
+    assert stopped.status_code == 409, stopped.text
+    assert row()['automatic_control'], 'HTTP stop must not revoke the scheduled attempt'
+    # Previously stopped/recovered records retain their internal stop semantics.
+    internal = tasks.change_task(job['job_id'], action)
+    assert internal['status'] == ('paused' if action == 'pause' else 'cancelled')
     auto.clock[0] += timedelta(seconds=30)
     automation.tick(); assert tasks.claim_next('not-resumed') is None
     assert not row()['automatic_control']

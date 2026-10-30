@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from contextvars import ContextVar
+from collections import OrderedDict
+from threading import RLock
 from hashlib import sha256
 import json
+import pickle
 from pathlib import Path
 
 from app.analytics.indicators import aggregate_weekly, enrich_bars, INDICATOR_VERSION
@@ -29,6 +32,50 @@ INCREMENT_CONTRACT = 'fuyao-sector-chart-increment-v1'
 MAX_LINEAGE_SEGMENTS = 1600
 SCOPE = '当前同花顺目录板块的来源历史指数点位；按正式留存窗口截取，不依赖或证明历史成分股'
 _read_files = ContextVar('sector_chart_verified_files', default=None)
+_chart_views = OrderedDict()
+_chart_views_lock = RLock()
+MAX_VIEW_BYTES = 12*1024*1024
+
+
+def _view_key(plan, calendar, period):
+    return (str(_root().resolve()), digest(plan), digest(calendar), period, INDICATOR_VERSION)
+
+
+def _read_view(key):
+    with _chart_views_lock:
+        entry = _chart_views.get(key)
+    if entry is None: return None
+    serialized, pointer_path, pointer_sha, files = entry
+    try:
+        # No mtime-only shortcut: every visit rehashes every actual source,
+        # including a same-size edit or replacement with restored timestamps.
+        _verified_bytes(pointer_path, pointer_sha)
+        for relative, checksum in files: _verified_bytes(relative, checksum)
+        # These bytes exist only in this process and are emitted by
+        # _remember_view below. Never accept pickle from disk, a source or API.
+        result = pickle.loads(serialized)
+    except (OSError, ValueError, TypeError, EOFError, pickle.UnpicklingError):
+        with _chart_views_lock: _chart_views.pop(key, None)
+        return None
+    with _chart_views_lock:
+        if key in _chart_views: _chart_views.move_to_end(key)
+    return result
+
+
+def _remember_view(key, result, verified):
+    # Later-cache projections retain their original path until independently
+    # bound proof metadata is available. Never infer their dependency closure.
+    if not isinstance(verified, _VerifiedRead): return
+    try:
+        serialized = pickle.dumps(result, protocol=5)
+    except (TypeError, ValueError, pickle.PicklingError):
+        return
+    if len(serialized) > MAX_VIEW_BYTES: return
+    with _chart_views_lock:
+        _chart_views[key] = (serialized, verified.pointer_path, verified.pointer_sha256, verified.files)
+        _chart_views.move_to_end(key)
+        while len(_chart_views)>8 or sum(len(value[0]) for value in _chart_views.values())>MAX_VIEW_BYTES:
+            _chart_views.popitem(last=False)
 
 
 class _VerifiedRead(tuple):
@@ -594,6 +641,10 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
     plan = plan_sector_chart(market, topic_code, as_of)
     calendar = market.calendar()
     from app.analytics.chart_session_distance import attach_chart_session_distance
+    key = _view_key(plan, calendar, period)
+    remembered = _read_view(key)
+    if remembered is not None:
+        return attach_chart_session_distance(remembered, calendar, same_snapshot=market.status().get('snapshot_id') == plan['snapshot_id'])
     base = {'instrument': plan['instrument'], 'period': period, 'as_of': plan['as_of'],
             'bars': [], 'snapshot_id': plan['snapshot_id'], 'available': False,
             'requested_price_basis': 'none', 'price_basis': 'none',
@@ -635,4 +686,5 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
             'indicator_gaps': _indicator_gaps(bars),
             'waves': candidate_waves(bars, threshold_pct=2.0 if period == 'D' else 4.0 if period == 'W' else 8.0)}
 
+    _remember_view(key, result, cached)
     return attach_chart_session_distance(result, calendar, same_snapshot=market.status().get('snapshot_id') == plan['snapshot_id'])

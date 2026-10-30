@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from copy import deepcopy
 from datetime import date
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 import os
@@ -25,6 +26,47 @@ ROLES = ('raw-daily.parquet', 'daily.parquet')
 _verified = OrderedDict()
 _descriptors = OrderedDict()
 _lock = threading.RLock()
+
+
+@dataclass(frozen=True)
+class MergePartitionProof:
+    """In-process token issued by the exact old/anti-join/incoming merge.
+
+    Never deserialize this capability from bundle metadata or an API payload.
+    Both the merged file and all old raw objects bind actual SHA bytes.
+    """
+    output_sha256: str
+    previous: tuple
+    changed_months: tuple
+
+
+def reusable_partitions(proof, output_sha, previous_folder, root, con, raw_relation, previous_files):
+    if not isinstance(proof, MergePartitionProof) or proof.output_sha256 != output_sha:
+        return {}
+    folder = Path(previous_folder)
+    if folder.parent.resolve() != Path(root).resolve(): return {}
+    try:
+        for role in ROLES:
+            item=next((item for item in previous_files if item['role']==role),None)
+            path=folder/manifest_name(role)
+            if item is None or item['path']!=str(Path('published')/folder.name/path.name): return {}
+            _verify(path,item['sha256'],item['bytes'])
+        documents = {role: read_descriptor(folder/manifest_name(role)) for role in ROLES}
+        raw = documents['raw-daily.parquet']
+        expected = tuple(sorted((str(safe_object(root, row['object_key']).resolve()), row['sha256']) for row in raw['partitions']))
+        if proof.previous != expected: return {}
+        # A schema/type change falls back to canonical full encoding. In
+        # particular do not retain old raw integer/decimal types under a new
+        # floating source schema, even when numerically equal.
+        source_schema = con.execute(f'DESCRIBE SELECT * FROM {raw_relation}').fetchall()
+        old_schema = con.execute('DESCRIBE SELECT * FROM read_parquet(?)', [[str(safe_object(root,p['object_key'])) for p in raw['partitions']]]).fetchall()
+        if source_schema != old_schema: return {}
+        return {role: {row['month']: row for row in document['partitions'] if row['month'] not in proof.changed_months}
+                for role, document in documents.items()}
+    except (OSError, ValueError, KeyError, TypeError):
+        # A reuse hint is optional. Corrupt/unavailable old objects never
+        # substitute for the independently validated current source relation.
+        return {}
 
 
 def file_sha(path):
@@ -156,7 +198,7 @@ def descriptor_path(folder, role):
     return legacy if legacy.is_file() else Path(folder) / manifest_name(role)
 
 
-def write_partitions(con, relation, role, root, stage, snapshot):
+def write_partitions(con, relation, role, root, stage, snapshot, *, reusable=None):
     """Canonical monthly encoding makes identical history reuse identical bytes.
 
     A single bounded partitioned COPY scans the input once. No object is
@@ -168,15 +210,31 @@ def write_partitions(con, relation, role, root, stage, snapshot):
     ordering = 'thscode,date_ms' if raw else 'instrument_id,date'
     months = con.execute(f'SELECT substr({day},1,7) AS month_key,count(*),min({day}),max({day}) FROM {relation} GROUP BY 1 ORDER BY 1').fetchall()
     parts = []; created = reused = 0
+    reusable = reusable or {}
+    accepted = {month: reusable[month] for month,count,begin,end in months
+                if month in reusable and (reusable[month]['rows'],reusable[month]['data_begin'],reusable[month]['data_end']) == (count,begin,end)}
+    dirty = [month for month, *_ in months if month not in accepted]
     temporary_root=stage/('partition-output-'+role)
     threads=con.execute("SELECT current_setting('threads')").fetchone()[0]
     # One writer gives canonical row groups/bytes across generations even when
     # the query connection normally has several execution threads.
     con.execute('SET threads=1')
     try:
-        con.execute(f'COPY (SELECT *,substr({day},1,7) AS market_month FROM {relation} ORDER BY market_month,{ordering}) TO ? (FORMAT PARQUET, PARTITION_BY (market_month), COMPRESSION ZSTD, ROW_GROUP_SIZE {ROW_GROUP_SIZE})',[str(temporary_root)])
+        if dirty:
+            parameters = {'destination': str(temporary_root)}
+            if accepted:
+                parameters.update({f'month_{i}': month for i,month in enumerate(dirty)})
+            condition = (' WHERE substr('+day+',1,7) IN ('+','.join('$month_'+str(i) for i in range(len(dirty)))+')') if accepted else ''
+            # COPY binds its destination before parameters inside the SELECT;
+            # named parameters keep filtered month values unambiguous.
+            con.execute(f'COPY (SELECT *,substr({day},1,7) AS market_month FROM {relation}{condition} ORDER BY market_month,{ordering}) TO $destination (FORMAT PARQUET, PARTITION_BY (market_month), COMPRESSION ZSTD, ROW_GROUP_SIZE {ROW_GROUP_SIZE})',parameters)
     finally:con.execute('SET threads='+str(threads))
     for month, count, begin, end in months:
+        if month in accepted:
+            part = accepted[month]
+            _verify(safe_object(root,part['object_key']),part['sha256'],part['bytes'])
+            parts.append(dict(part)); reused += part['bytes']
+            continue
         directory=temporary_root/('market_month='+month)
         outputs=list(directory.glob('*.parquet'))
         if len(outputs)!=1:raise ValueError('月份分片写入器未生成唯一有界对象')
@@ -199,7 +257,7 @@ def write_partitions(con, relation, role, root, stage, snapshot):
                 finally: os.close(descriptor)
             temporary.unlink()
         parts.append({'month': month, 'object_key': key, 'sha256': digest, 'bytes': size, 'rows': count, 'data_begin': begin, 'data_end': end})
-    shutil.rmtree(temporary_root)
+    if temporary_root.exists(): shutil.rmtree(temporary_root)
     if not parts: raise ValueError('不能发布空行情分片')
     document = {'version': VERSION, 'role': role, 'partitions': parts, 'rows': sum(part['rows'] for part in parts), 'data_begin': parts[0]['data_begin'], 'data_end': parts[-1]['data_end']}
     output = stage / manifest_name(role)
@@ -207,7 +265,8 @@ def write_partitions(con, relation, role, root, stage, snapshot):
     files = [{'role': role, 'path': str(Path('published') / snapshot / output.name), 'sha256': file_sha(output), 'bytes': output.stat().st_size}]
     prefix = role.removesuffix('.parquet') + '-partition/'
     files.extend({'role': prefix + part['month'], 'path': 'published/' + part['object_key'], 'sha256': part['sha256'], 'bytes': part['bytes']} for part in parts)
-    return files, {'partition_count': len(parts), 'new_object_bytes': created, 'reused_object_bytes': reused}
+    return files, {'partition_count': len(parts), 'new_object_bytes': created, 'reused_object_bytes': reused,
+                   'encoded_partition_count':len(dirty),'reused_without_encoding_count':len(accepted)}
 
 
 def activity_window(end, retained_begin, *, years=5):

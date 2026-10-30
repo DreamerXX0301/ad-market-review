@@ -29,6 +29,7 @@ import type { ReactNode } from "react";
 import type { Row } from "../lib/api";
 import InstrumentSearch from "./InstrumentSearch";
 import MarketDatePicker from "./MarketDatePicker";
+import MarketDateNotice from "./MarketDateNotice";
 import ActiveTaskBanner from "./ActiveTaskBanner";
 import { Badge } from "./UI";
 import "./Brand.css";
@@ -62,6 +63,7 @@ export const navigation = [
       { id: "strategy", name: "策略管理", icon: Settings2 },
       { id: "tracking", name: "策略跟踪", icon: Target },
       { id: "watchlist", name: "我的自选", icon: Star },
+      { id: "zodiac", name: "生肖跟踪", icon: CalendarDays },
       { id: "research", name: "个股研究", icon: BookOpen },
       { id: "backtest", name: "策略回测", icon: FlaskConical },
     ],
@@ -83,6 +85,10 @@ export default function AppShell({
   onNavigate,
   date,
   onDate,
+  onResetDate,
+  today,
+  dateFixed,
+  datePublished,
   dates,
   dataDate,
   dataLoading = false,
@@ -97,6 +103,10 @@ export default function AppShell({
   onNavigate: (route: string) => void;
   date: string;
   onDate: (date: string) => void;
+  onResetDate: () => void;
+  today: string;
+  dateFixed: boolean;
+  datePublished: boolean;
   dates: string[];
   dataDate?: string;
   dataLoading?: boolean;
@@ -252,12 +262,18 @@ export default function AppShell({
             <InstrumentSearch
               compact
               includeSectors
-              placeholder="搜索股票 / 指数 / 行业 / 概念"
+              placeholder="名称 / 代码 / 拼音 / 首字母"
               onSelect={(id) => onStock(id)}
               onSector={onSector}
             />
             {isMarket ? (
-              <MarketDatePicker value={date} dates={dates} onChange={onDate} />
+              <MarketDatePicker
+                value={date}
+                dates={dates}
+                onChange={onDate}
+                onLatest={onResetDate}
+                fixed={dateFixed}
+              />
             ) : (
               <div className="current-business-date">
                 <span className={`status-dot${dataDate ? " good" : ""}`} />
@@ -280,7 +296,7 @@ export default function AppShell({
           <div className="mobile-global-search">
             <InstrumentSearch
               includeSectors
-              placeholder="搜索股票 / 指数 / 行业 / 概念"
+              placeholder="名称 / 代码 / 拼音 / 首字母"
               onSector={(row) => {
                 setMobileSearchOpen(false);
                 onSector(row);
@@ -301,23 +317,17 @@ export default function AppShell({
         )}
         <div className="page-container">
           <ActiveTaskBanner onNavigate={onNavigate} />
-          {isMarket &&
-            route !== "noon" &&
-            route !== "auction" &&
-            date &&
-            dataDate &&
-            date !== dataDate && (
-              <div className="historical-banner">
-                <CalendarDays size={14} />
-                <span>
-                  正在回看 <b>{date}</b> 的盘面快照
-                </span>
-                <span className="desktop-only">
-                  仅作用于盘面研究，不改变策略、跟踪与回测
-                </span>
-                <button onClick={() => onDate(dataDate)}>回到最新</button>
-              </div>
-            )}
+          {isMarket && (
+            <MarketDateNotice
+              date={date}
+              today={today}
+              latest={dataDate || ""}
+              intraday={route === "noon" || route === "auction"}
+              fixed={dateFixed}
+              published={datePublished}
+              onReset={onResetDate}
+            />
+          )}
           {children}
           <footer className="workspace-footer dreamer-footer">
             <span>

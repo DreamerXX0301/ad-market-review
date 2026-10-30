@@ -19,7 +19,10 @@
 .noon-read-guide {
   max-height: calc(100dvh - 100px);
   overflow-y: auto;
-  padding: 4px 0 12px;
+  padding: 12px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
   color: var(--muted);
   scrollbar-width: thin;
 }
@@ -148,7 +151,7 @@
   }
   .noon-read-guide-heading {
     padding: 0 3px 6px;
-    font-size: 10px;
+    font-size: 11px;
   }
   .noon-read-guide-intro,
   .noon-read-guide-current,

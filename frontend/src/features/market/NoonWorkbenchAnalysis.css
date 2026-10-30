@@ -115,7 +115,7 @@
 }
 .noon-feedback-average {
   display: block;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--muted);
   line-height: 1.5;
 }
@@ -124,7 +124,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px 8px;
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 8px;
   font-variant-numeric: tabular-nums;
 }
@@ -269,8 +269,7 @@
   font-size: 11px;
   padding: 12px 0 4px;
 }
-.noon-negative-grid,
-.noon-direction-grid {
+.noon-negative-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
@@ -554,17 +553,150 @@
   color: var(--muted);
   white-space: nowrap;
 }
-.noon-direction-grid {
-  margin: 0 0 14px;
-}
-.noon-direction-grid > section {
-  min-width: 0;
-}
 .noon-direction-table {
-  min-width: 450px;
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
 }
 .noon-direction-table th {
-  white-space: nowrap;
+  white-space: normal;
+}
+.noon-direction-controls,
+.noon-direction-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.noon-direction-controls {
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface2) 35%, var(--surface));
+}
+.noon-direction-controls .segmented {
+  flex-wrap: wrap;
+}
+.noon-direction-controls .segmented button span {
+  margin-left: 6px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.noon-direction-filters .search-input {
+  width: 190px;
+  min-width: 0;
+}
+.noon-direction-explorer {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.36fr) minmax(0, 0.64fr);
+  align-items: start;
+  gap: 14px;
+}
+.noon-direction-ranking,
+.noon-direction-detail {
+  background: color-mix(in srgb, var(--surface2) 20%, var(--surface));
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.noon-direction-detail {
+  min-height: 640px;
+  max-height: 780px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-margin-top: var(--noon-scroll-offset, 110px);
+}
+.noon-direction-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.noon-direction-heading h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.noon-direction-heading small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 5px;
+}
+.noon-direction-ranking > .noon-table-wrap {
+  max-height: 610px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.noon-direction-table :is(th, td) {
+  min-width: 0;
+  padding: 10px 7px;
+  overflow-wrap: anywhere;
+}
+.noon-direction-table th:first-child {
+  width: 40%;
+}
+.noon-direction-table .noon-sort-button {
+  white-space: normal;
+  text-align: right;
+  line-height: 1.6;
+}
+.noon-direction-table th:first-child .noon-sort-button {
+  text-align: left;
+}
+.noon-direction-table tbody tr {
+  cursor: pointer;
+}
+.noon-direction-table tbody tr:hover {
+  background: var(--surface2);
+}
+.noon-direction-table tbody tr.selected {
+  background: color-mix(in srgb, var(--blue) 9%, var(--surface));
+  box-shadow: inset 3px 0 var(--blue);
+}
+.noon-workbench .noon-direction-table tbody tr.selected:hover {
+  background: color-mix(in srgb, var(--blue) 14%, var(--surface));
+}
+.noon-direction-table button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.noon-direction-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 0;
+  border-block: 1px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--muted);
+}
+.noon-direction-metrics b {
+  color: var(--text);
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.noon-direction-metrics b.up {
+  color: var(--red);
+}
+.noon-direction-metrics b.down {
+  color: var(--green);
+}
+@container (max-width: 900px) {
+  .noon-direction-explorer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .noon-direction-detail {
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+  }
 }
 .noon-watched-groups {
   display: grid;
@@ -633,7 +765,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .noon-negative-grid,
-  .noon-direction-grid,
+  .noon-direction-explorer,
   .noon-afternoon-list {
     grid-template-columns: minmax(0, 1fr);
   }

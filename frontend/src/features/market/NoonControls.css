@@ -1,0 +1,198 @@
+/* Shared by the workbench and its portal dialogs; independent of Market.css. */
+:is(.noon-workbench, .noon-sector-body) .btn {
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+:is(.noon-workbench, .noon-sector-body) .btn.small {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+:is(.noon-workbench, .noon-sector-body) .btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--blue) 50%, var(--border));
+}
+:is(.noon-workbench, .noon-sector-body) .btn.primary:hover:not(:disabled) {
+  color: #fff;
+}
+:is(.noon-workbench, .noon-sector-body) .btn:disabled {
+  color: var(--muted);
+  background: var(--surface2);
+  border-color: var(--border-soft);
+  box-shadow: none;
+  opacity: 0.55;
+}
+:is(.noon-workbench, .noon-sector-body) button.btn[aria-pressed="true"],
+.noon-sector-body .noon-sector-board-filter > button.active {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 48%, var(--border-soft));
+  background: var(--blue-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 8%, transparent);
+}
+:is(.noon-workbench, .noon-sector-body) .segmented {
+  padding: 4px;
+  gap: 3px;
+  border-color: var(--border-soft);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 40%, var(--surface));
+}
+:is(.noon-workbench, .noon-sector-body) .segmented > button {
+  min-height: 30px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+:is(.noon-workbench, .noon-sector-body) .segmented > button:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+:is(.noon-workbench, .noon-sector-body) .segmented > button.active {
+  color: var(--blue);
+  background: var(--blue-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 24%, transparent);
+}
+:is(.noon-workbench, .noon-sector-body)
+  :is(input:not([type="checkbox"]), select, textarea) {
+  border-color: var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  background-color: color-mix(in srgb, var(--bg) 20%, var(--surface));
+}
+:is(.noon-workbench, .noon-sector-body)
+  :is(input:not([type="checkbox"]), select) {
+  min-height: 36px;
+}
+:is(.noon-workbench, .noon-sector-body) select {
+  appearance: none;
+  padding-right: 30px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 12px) 50%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+:is(.noon-workbench, .noon-sector-body) :is(input, select, textarea):focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 14%, transparent);
+}
+:is(.noon-workbench, .noon-sector-body) :is(button, summary):focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+:is(.noon-workbench, .noon-sector-body) :is(table, td) {
+  font-size: 12px;
+}
+:is(.noon-workbench, .noon-sector-body) th {
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--surface2);
+}
+:is(.noon-workbench, .noon-sector-body) tbody tr:hover {
+  background: color-mix(in srgb, var(--blue) 5%, var(--surface));
+}
+.noon-workbench :is(.noon-sort-button, .noon-close-sort) {
+  min-height: 28px;
+  border-radius: 4px;
+  line-height: 1.5;
+}
+.noon-workbench :is(.noon-sort-button, .noon-close-sort):hover {
+  color: var(--blue);
+}
+:is(.noon-workbench, .noon-sector-body)
+  :is(.stock-link, .noon-stock-link, .noon-sector-link) {
+  font-size: 12px;
+  line-height: 1.6;
+  text-underline-offset: 3px;
+  border-radius: 3px;
+}
+.noon-workbench button.noon-sector-members-chip {
+  min-height: 26px;
+  padding: 3px 9px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+.noon-sector-body .stock-link strong {
+  font-size: 12px;
+}
+.noon-workbench .noon-sector-members-chip:hover:not(:disabled) {
+  background: var(--blue-bg);
+  border-color: var(--blue);
+}
+:is(.noon-workbench, .noon-sector-body) .copy-stock-code-button {
+  background: color-mix(in srgb, var(--surface2) 70%, transparent);
+  border-color: var(--border-soft);
+}
+:is(.noon-workbench, .noon-sector-body) .copy-stock-code-button:hover {
+  background: var(--blue-bg);
+  border-color: var(--blue);
+}
+.noon-workbench
+  :is(.noon-details, .noon-source-details, .noon-temperature-rules),
+.noon-sector-body details.market-members-details {
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface2) 42%, var(--surface));
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.noon-workbench
+  :is(.noon-details, .noon-source-details, .noon-temperature-rules)
+  > summary,
+.noon-sector-body .market-members-details > summary {
+  width: auto;
+  min-height: 22px;
+  padding: 0;
+  color: var(--subtle);
+  cursor: pointer;
+  font-size: 12px;
+}
+.noon-workbench
+  :is(.noon-details, .noon-source-details, .noon-temperature-rules)[open],
+.noon-sector-body .market-members-details[open] {
+  border-color: color-mix(in srgb, var(--blue) 32%, var(--border-soft));
+}
+:is(.noon-workbench, .noon-sector-body) summary::marker {
+  color: var(--blue);
+}
+:is(.noon-workbench, .noon-sector-body) summary:hover {
+  color: var(--blue);
+}
+.noon-workbench
+  :is(.noon-membership-more, .noon-reason-details, .noon-close-source)
+  > summary {
+  padding: 3px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--surface2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.noon-workbench p.noon-unknown {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface2) 35%, transparent);
+  line-height: 1.8;
+}
+.modal:has(> .noon-sector-body) > .modal-title {
+  padding: 16px 20px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+.modal:has(> .noon-sector-body) > .modal-title .icon-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}

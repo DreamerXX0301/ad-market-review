@@ -33,17 +33,21 @@ def _parameters(raw):
     except (TypeError,ValueError):return None
 
 
-def strategy_block_reason(connection,strategy_id,*,ignored_job_id=None):
+def strategy_block_reason(connection,strategy_id,*,ignored_job_id=None,facts=None):
     # Cleanup task parameters intentionally contain only purge_id; follow the
     # authorization registry rather than guessing strategy references in jobs.
-    if connection.execute("SELECT 1 FROM workspace_purge p LEFT JOIN backtest_run b ON p.target_kind='backtest' AND b.backtest_id=p.target_id WHERE p.status IN ('queued','cleaning') AND p.job_id IS NOT ? AND ((p.target_kind='strategy' AND p.target_id=?) OR b.strategy_id=?) LIMIT 1",(ignored_job_id,strategy_id,strategy_id)).fetchone():
+    purging=(any(row['status'] in ('queued','cleaning') and row['job_id']!=ignored_job_id
+                 and (row['target_kind']=='backtest' or row['target_kind']=='strategy' and row['target_id']==strategy_id)
+                 for row in facts['purges']) if facts is not None else connection.execute("SELECT 1 FROM workspace_purge p LEFT JOIN backtest_run b ON p.target_kind='backtest' AND b.backtest_id=p.target_id WHERE p.status IN ('queued','cleaning') AND p.job_id IS NOT ? AND ((p.target_kind='strategy' AND p.target_id=?) OR b.strategy_id=?) LIMIT 1",(ignored_job_id,strategy_id,strategy_id)).fetchone())
+    if purging:
         return '所属策略或关联报告已有永久清理任务，请先等待原任务结束'
-    for row in connection.execute('SELECT b.*,j.status job_status,j.lease_owner,j.lease_expires_at_ms FROM backtest_run b JOIN job j USING(job_id) WHERE b.strategy_id=?',(strategy_id,)):
+    backtests=facts['backtests'] if facts is not None else connection.execute('SELECT b.*,j.status job_status,j.lease_owner,j.lease_expires_at_ms FROM backtest_run b JOIN job j USING(job_id) WHERE b.strategy_id=?',(strategy_id,))
+    for row in backtests:
         reason=backtest_block_reason(dict(row))
         if reason:return reason
-    has_tracking=connection.execute("SELECT 1 FROM tracking_round WHERE strategy_id=? AND status='tracking' LIMIT 1",(strategy_id,)).fetchone() is not None
-    related_jobs={row[0] for row in connection.execute('SELECT job_id FROM selection_run WHERE strategy_id=?',(strategy_id,))}
-    jobs=connection.execute("SELECT * FROM job WHERE status NOT IN ('succeeded','no_change','partial','failed','cancelled') OR lease_owner IS NOT NULL OR lease_expires_at_ms IS NOT NULL")
+    has_tracking=bool(facts['active']) if facts is not None else connection.execute("SELECT 1 FROM tracking_round WHERE strategy_id=? AND status='tracking' LIMIT 1",(strategy_id,)).fetchone() is not None
+    related_jobs=facts['related_jobs'] if facts is not None else {row[0] for row in connection.execute('SELECT job_id FROM selection_run WHERE strategy_id=?',(strategy_id,))}
+    jobs=facts['jobs'] if facts is not None else connection.execute("SELECT * FROM job WHERE status NOT IN ('succeeded','no_change','partial','failed','cancelled') OR lease_owner IS NOT NULL OR lease_expires_at_ms IS NOT NULL")
     for row in jobs:
         if row['job_id']==ignored_job_id:continue
         parameters=_parameters(row['parameters_json'])
@@ -71,14 +75,17 @@ def strategy_block_reason(connection,strategy_id,*,ignored_job_id=None):
     return None
 
 
-def strategy_visibility(connection,strategy_id):
-    marker=connection.execute('SELECT * FROM strategy_deletion WHERE strategy_id=?',(strategy_id,)).fetchone()
-    count=connection.execute('SELECT count(*) FROM backtest_run WHERE strategy_id=?',(strategy_id,)).fetchone()[0]
-    visible=connection.execute('SELECT count(*) FROM backtest_run b LEFT JOIN backtest_deletion d USING(backtest_id) WHERE b.strategy_id=? AND d.backtest_id IS NULL',(strategy_id,)).fetchone()[0]
-    reason=None if marker else strategy_block_reason(connection,strategy_id)
+def strategy_visibility(connection,strategy_id,*,facts=None):
+    marker=facts['marker'] if facts is not None else connection.execute('SELECT * FROM strategy_deletion WHERE strategy_id=?',(strategy_id,)).fetchone()
+    count=len(facts['backtests']) if facts is not None else connection.execute('SELECT count(*) FROM backtest_run WHERE strategy_id=?',(strategy_id,)).fetchone()[0]
+    visible=sum(row['deleted_backtest'] is None for row in facts['backtests']) if facts is not None else connection.execute('SELECT count(*) FROM backtest_run b LEFT JOIN backtest_deletion d USING(backtest_id) WHERE b.strategy_id=? AND d.backtest_id IS NULL',(strategy_id,)).fetchone()[0]
+    reason=None if marker else strategy_block_reason(connection,strategy_id,facts=facts)
     from .workspace_purge import active_purge
-    purge=active_purge(connection,'strategy',strategy_id)
-    related_purge=connection.execute("SELECT 1 FROM workspace_purge p JOIN backtest_run b ON b.backtest_id=p.target_id WHERE p.target_kind='backtest' AND b.strategy_id=? AND p.status IN ('queued','cleaning') LIMIT 1",(strategy_id,)).fetchone() if marker else None
+    purge=(next(({key:row[key] for key in ('purge_id','status','business_deleted')} for row in facts['purges']
+                if row['target_kind']=='strategy' and row['target_id']==strategy_id and row['superseded_by'] is None and row['status'] in ('queued','cleaning','failed')),None)
+           if facts is not None else active_purge(connection,'strategy',strategy_id))
+    related_purge=(any(row['target_kind']=='backtest' and row['status'] in ('queued','cleaning') for row in facts['purges']) if facts is not None
+                   else connection.execute("SELECT 1 FROM workspace_purge p JOIN backtest_run b ON b.backtest_id=p.target_id WHERE p.target_kind='backtest' AND b.strategy_id=? AND p.status IN ('queued','cleaning') LIMIT 1",(strategy_id,)).fetchone()) if marker else None
     restore_reason='永久清理已确认，请查看清理任务' if (purge and purge['status'] in ('queued','cleaning')) or related_purge else None
     return {'active_purge':purge,'deleted':marker is not None,'deleted_at_ms':marker['deleted_at_ms'] if marker else None,
             'can_delete':marker is None and reason is None,'delete_blocked_reason':reason,

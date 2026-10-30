@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import ts from 'typescript';
+const source = await fs.readFile(new URL('./zodiacPresentation.ts', import.meta.url), 'utf8');
+const compiled = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText;
+const {yearLabel, shanghaiYear, safePreference, selectedColumns, groupKeys} = await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
+assert.equal(yearLabel(2026),'2026年观察 · 2027羊年');
+assert.equal(yearLabel(2027),'2027年观察 · 2028猴年');
+assert.equal(yearLabel(2028),'2028年观察 · 2029鸡年');
+assert.equal(shanghaiYear(new Date('2026-12-31T15:59:59Z')),2026);
+assert.equal(shanghaiYear(new Date('2026-12-31T16:00:00Z')),2027);
+assert.deepEqual(safePreference('{"follow":false,"year":2027}'),{follow:false,year:2027});
+assert.equal(safePreference('broken').follow,true);
+assert.notEqual(safePreference('{"year":99999}').year,99999);
+assert.deepEqual(selectedColumns('综合',undefined).map(c=>c.key),groupKeys.综合);
+for(const required of ['return_ytd_pct','change_30d_pct','limit_up_ytd','last_limit_up_date','current_topics']) assert.ok(groupKeys.综合.includes(required));
+assert.deepEqual(selectedColumns('综合',['amount','bad','return_ytd_pct','amount']).map(c=>c.key),['amount','return_ytd_pct']);
+console.log('生肖年度、上海跨年、偏好和默认字段检查通过');

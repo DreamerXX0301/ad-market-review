@@ -44,6 +44,7 @@ const replacements = {
   "../lib/api": apiProbe,
   "../lib/format": encode("export const dateTime=String,duration=String,statusText={};"),
   "./incrementSession": sessionProbe,
+  "./WorkspaceTaskSummary": encode("export default function Summary(){return null;}"),
   "./incrementProgress": encode(progressSource),
   "./NoonProgressContent": encode("export default function Noon(){return '午评采集分支';}export const useNoonRunProgress=()=>globalThis.__noonGate||({session:null,data:null,error:\"\",retry(){}});"),
   "./AuctionProgressContent": encode(`export default function Auction(){return "竞价采集分支";}export const useAuctionRunProgress=()=>globalThis.__auctionGate||({session:null,data:null,error:"",retry(){}});`),
@@ -96,12 +97,11 @@ const active = { ...receipt, can_acknowledge: false, status: "running", tasks: [
 const running = render(active);
 assert.match(running, /42%/);
 assert.ok(!buttons.some(value => String(value.children).includes("确认结果，继续使用")));
-await button("暂停本次更新").onClick();
-assert.deepEqual(requests, [["/sync/session/control", { task_id: "job-a", action: "pause", session_epoch: "epoch-a" }]]);
+assert.ok(!buttons.some(value => /暂停|取消/.test(String(value.children))), "running collection has no stop action");
+assert.deepEqual(requests, []);
 assert.deepEqual(cleared, []);
 render({ ...active, status: "stopping" });
-assert.equal(button("暂停本次更新").disabled, true);
-assert.equal(button("取消本次更新").disabled, true);
+assert.ok(!buttons.some(value => /暂停|取消/.test(String(value.children))));
 
 setResponse(async () => ({ acknowledged: true, status: "not_received" }));
 render(null, { requestKey: "unreceived", createdAt: 100 }, { identifier: "unreceived", missing: true, error: "404" });

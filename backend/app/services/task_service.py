@@ -115,7 +115,15 @@ def task_view(identifier: str, after_seq: int = 0) -> dict:
         if not row:
             raise HTTPException(404, "任务不存在")
         events = connection.execute("SELECT * FROM job_event WHERE job_id=? AND seq>? ORDER BY seq", (identifier, after_seq)).fetchall()
+        from .collection_controls import protected, estimate
+        stop_allowed = not protected(connection, row)
+        remaining = estimate(connection, row, now_ms()) if row['status'] in ('queued', 'running') and json.loads(row['parameters_json']).get('operation') in ('auction_snapshot', 'noon_snapshot') else None
+        workspace = None
+        if row['kind'] == 'increment':
+            from .workspace_progress import children, summary
+            workspace = summary(connection, row, children(connection, row))
     item = dict(row)
+    item.update(interactive_stop_allowed=stop_allowed, estimate=remaining, workspace=workspace)
     item.update(task_id=item["job_id"], parameters=json.loads(item.pop("parameters_json")), progress=100 if item["status"] in {"succeeded", "no_change", "partial"} else min(99, item["accepted_batches"]), stage=item["phase"], stage_progress=None)
     item["logs"] = [{**dict(e), "details": json.loads(e["details_json"])} for e in events]
     for event in item["logs"]:
@@ -202,6 +210,10 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
             current_item = batch['current_strategy']
             receipt.update(strategy_id=current_item['strategy_id'], strategy_name=current_item['name'],
                 stage=current_item['stage'], message=f'已完成策略 {batch["completed_count"]}/{batch["total_count"]} · 步骤 {batch["completed_steps"]}/{batch["total_steps"]} · 正在运行：{current_item["name"]}')
+    from .collection_controls import protected, estimate
+    receipt['interactive_stop_allowed'] = not protected(connection, row)
+    if operation in ('auction_snapshot', 'noon_snapshot') and item['status'] in ('queued', 'running'):
+        receipt['estimate'] = estimate(connection, row, now_ms())
     return receipt
 
 

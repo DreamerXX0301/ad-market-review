@@ -2,9 +2,19 @@
 from datetime import date
 from calendar import monthrange
 from math import isfinite
+from functools import lru_cache
 
 
 def latest_closed_date(calendar,as_of,period):
+    if len(calendar)>8192:
+        return _latest_closed_date.__wrapped__(calendar,as_of,period)
+    return _latest_closed_date(tuple(calendar),as_of,period)
+
+
+@lru_cache(maxsize=32)
+def _latest_closed_date(calendar,as_of,period):
+    # Pure calendar evidence only. A changed/reordered calendar makes a new
+    # key; no quotation, membership, rule or policy is retained here.
     if period=='D':return as_of if as_of in calendar else None
     result=None
     for position,session in enumerate(calendar):

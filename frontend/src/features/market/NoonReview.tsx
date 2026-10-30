@@ -36,6 +36,7 @@ import {
   noonStateText,
 } from "./noonPresentation";
 import "./NoonReview.css";
+import "./NoonControls.css";
 import NoonWorkbenchAnalysis from "./NoonWorkbenchAnalysis";
 import NoonReadGuide from "./NoonReadGuide";
 import NoonTemperature from "./NoonTemperature";
@@ -1851,6 +1852,7 @@ export default function NoonReview({
                 <NoonWorkbenchAnalysis
                   key={snapshot.snapshot_id}
                   workbench={snapshot.workbench}
+                  snapshotId={snapshot.snapshot_id}
                   boardFilter={boardFilter}
                   onStock={onStock}
                   chartDate={chartDate}

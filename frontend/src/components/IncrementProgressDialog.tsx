@@ -1,3 +1,4 @@
+import WorkspaceTaskSummary from "./WorkspaceTaskSummary";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -324,26 +325,6 @@ export default function IncrementProgressDialog({
       setActionBusy("");
     }
   };
-  const control = async (action: "pause" | "cancel") => {
-    if (!session?.taskId || actionBusy) return;
-    setActionBusy(action);
-    try {
-      await post("/sync/session/control", {
-        task_id: session.taskId,
-        action,
-        session_epoch: session.epoch,
-      });
-      setRefresh((value) => value + 1);
-    } catch (cause: any) {
-      setFailure({
-        identifier: identifier!,
-        missing: false,
-        error: cause.message,
-      });
-    } finally {
-      setActionBusy("");
-    }
-  };
   return createPortal(
     <div className="increment-progress-backdrop">
       <div
@@ -429,7 +410,9 @@ export default function IncrementProgressDialog({
             <div className="increment-progress-current" aria-live="polite">
               <div className="increment-progress-stage-heading">
                 <strong>
-                  {view.active?.title ||
+                  {(view.active
+                    ? `${view.active.title}${view.active.strategy_name ? " · " + view.active.strategy_name : ""}`
+                    : "") ||
                     data?.message ||
                     "正在确认本次增量请求"}
                 </strong>
@@ -451,31 +434,40 @@ export default function IncrementProgressDialog({
                 <p className="increment-progress-plan">
                   {data?.attempt_task_id
                     ? "本次仅处理所选重试步骤及其已授权后续分支；原链其它未完成阶段仍保留。"
-                    : "个股与指数行情 → 行业与题材板块K线 → 盘面补充 → 核验、发布与滚动清理"}
+                    : "采集与核验 → 策略筛选与跟踪 → 划线提醒；以下按本次任务实际记录展示，旧冻结任务保持原执行顺序"}
                 </p>
                 <small>
                   {view.completedLabel}
                   ；百分比只表示当前实际阶段，后续阶段尚未排队时继续等待
                 </small>
-                <ol className="increment-progress-tasks">
-                  {view.tasks.map((task) => (
-                    <li key={task.job_id}>
-                      <div>
-                        <strong>{task.title}</strong>
-                        <span>
-                          {task.historical_attempt ? "历史尝试 · " : ""}
-                          {statusText[task.status] || task.status}
-                          {typeof task.progress === "number"
-                            ? ` · ${task.progress}%`
-                            : ""}
-                        </span>
-                      </div>
-                      {task.message && <small>{task.message}</small>}
-                    </li>
-                  ))}
-                </ol>
+                <details className="increment-progress-detail">
+                  <summary>查看阶段明细</summary>
+                  <ol className="increment-progress-tasks">
+                    {view.tasks.map((task) => (
+                      <li key={task.job_id}>
+                        <div>
+                          <strong>
+                            {task.title}
+                            {task.strategy_name
+                              ? ` · ${task.strategy_name}`
+                              : ""}
+                          </strong>
+                          <span>
+                            {task.historical_attempt ? "历史尝试 · " : ""}
+                            {statusText[task.status] || task.status}
+                            {typeof task.progress === "number"
+                              ? ` · ${task.progress}%`
+                              : ""}
+                          </span>
+                        </div>
+                        {task.message && <small>{task.message}</small>}
+                      </li>
+                    ))}
+                  </ol>
+                </details>
               </>
             )}
+            <WorkspaceTaskSummary workspace={data?.workspace} />
             {!!data?.issues?.length && (
               <div className="increment-progress-error">
                 {data.issues.join("；")}
@@ -499,24 +491,10 @@ export default function IncrementProgressDialog({
                 没有把失联或404当作完成，也不会重复提交。可以请服务端核查并关闭未接收的请求；若原请求迟到，将被服务端拒绝，不会另建任务。已有任务仍在执行时保持锁定。
               </p>
             )}
-            {!view.done && session?.taskId && data?.locked && (
-              <footer className="increment-progress-controls">
-                <span>已发布数据保留；安全停止后需确认结果。</span>
-                <button
-                  className="btn"
-                  disabled={!!actionBusy || data?.status === "stopping"}
-                  onClick={() => control("pause")}
-                >
-                  {actionBusy === "pause" ? "请求安全暂停…" : "暂停本次更新"}
-                </button>
-                <button
-                  className="btn"
-                  disabled={!!actionBusy || data?.status === "stopping"}
-                  onClick={() => control("cancel")}
-                >
-                  {actionBusy === "cancel" ? "请求安全取消…" : "取消本次更新"}
-                </button>
-              </footer>
+            {!view.done && (
+              <p className="increment-progress-result">
+                本次采集及后续计算不提供暂停或取消，避免误触中断。关闭浏览器不会停止后台任务。
+              </p>
             )}
             {(view.done || unconfirmed) && (
               <footer>

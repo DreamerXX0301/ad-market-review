@@ -40,7 +40,7 @@ export const NOON_READING_SECTIONS: readonly NoonReadingSection[] = [
     step: "04",
     title: "主线方向",
     question: "哪些方向走强或转弱？",
-    detail: "对照板块与昨日原关注；名称看板块K线，成分股标签看成员。",
+    detail: "左侧选板块，右侧看午间成员；名称看K线，昨日原关注单独对照。",
   },
   {
     id: "noon-afternoon",

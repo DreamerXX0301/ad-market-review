@@ -1,5 +1,54 @@
 .noon-sector-body {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  min-width: 0;
+}
+.modal-backdrop:has(.noon-sector-body) {
+  z-index: 65;
+}
+.modal:has(> .noon-sector-body.sector-chart-dialog-body) {
+  width: min(1280px, calc(100vw - 32px));
+}
+.noon-sector-body .sector-chart-context,
+.noon-sector-body .market-members-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.noon-sector-body .sector-chart-scope {
+  font-size: 12px;
+  line-height: 1.8;
+}
+.noon-sector-body .market-members-details > div,
+.noon-sector-body .market-members-details > section {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+}
+.noon-sector-body .member-dialog-toolbar {
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--surface2) 35%, var(--surface));
+}
+.noon-sector-body .member-dialog-search-row {
+  background: transparent;
+  justify-content: flex-start;
+}
+.noon-sector-body .noon-sector-pagination {
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  font-size: 11px;
+}
+.noon-sector-pagination > span {
+  margin-right: auto;
 }
 .noon-sector-quote {
   display: grid;
@@ -29,7 +78,30 @@
   align-items: end;
 }
 .noon-sector-board-filter {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 6px;
+}
+.noon-sector-board-filter > button {
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--surface2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.noon-sector-board-filter > button:hover {
+  color: var(--text);
+  border-color: var(--blue);
+}
+.noon-sector-board-filter > button.active {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--border-soft));
+  background: color-mix(in srgb, var(--blue) 12%, var(--surface));
 }
 .noon-sector-board-filter > span {
   margin-right: 3px;
@@ -56,4 +128,53 @@
 }
 .noon-sector-member-table > .table-wrap {
   overflow: visible;
+}
+.noon-sector-embedded {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.noon-sector-embedded .member-dialog-toolbar {
+  position: static;
+}
+.noon-sector-embedded .market-members-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.noon-sector-embedded .member-context-item {
+  padding: 7px 9px;
+}
+.noon-sector-embedded .market-members-details {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.noon-sector-embedded .market-members-details summary {
+  cursor: pointer;
+}
+.noon-sector-embedded .market-members-details[open] > section {
+  margin-top: 10px;
+}
+.noon-sector-embedded .member-dialog-search-row {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.noon-sector-embedded .member-dialog-field-search {
+  flex-basis: 180px;
+}
+.noon-sector-embedded .noon-sector-member-table {
+  flex: none;
+  max-height: 440px;
+}
+.noon-sector-embedded .noon-sector-member-table table {
+  min-width: 600px;
+}
+.noon-sector-embedded .noon-sector-pagination {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.noon-sector-embedded .noon-sector-quote-note,
+.noon-sector-embedded .panel-footnote {
+  line-height: 1.7;
 }

@@ -340,11 +340,13 @@ globalThis.setTimeout = (callback) => {
 globalThis.clearTimeout = (item) => {
   if (item) item.cancelled = true;
 };
+let embedded = false;
 const render = () => {
   cursor = 0;
   tree = Dialog({
     topic: { topic_code: "884001.TI", name: "合成概念" },
     snapshotId: snapshot,
+    embedded,
     onClose() {},
     onStock: (...args) => openedStocks.push(args),
   });
@@ -570,6 +572,18 @@ try {
     nodes(tree).find((node) => node.type === "Empty").props.title,
     "未核验前一交易日",
   );
+  button("成分股").props.onClick();
+  embedded = true;
+  resultOverride = null;
+  render();
+  assert.equal(nodes(tree).some((node) => node.type === "Modal"), false, "inline members do not open a modal");
+  assert.equal(nodes(tree).some((node) => node.props?.role === "tablist"), false, "inline members keep chart actions in the parent heading");
+  assert.ok(nodes(tree).some((node) => node.type === "details" && text(node).includes("板块报价与采集时间") && !node.props.open));
+  assert.ok(table(), "inline mode reuses the actual frozen member table");
+  button("创业板").props.onClick();
+  render();
+  assert.equal(params().get("board"), "chinext");
+  assert.ok(paths.at(-1).startsWith(`/market/noon/${snapshot}/sector-members?`), "inline filter stays bound to the immutable capture");
   console.log(
     "Noon sector shortcuts: six accessible buttons, immutable snapshot/board query, page reset, search/sort composition, shared member/chart layout, unknown board and missing quotes, prior-day Kline scope passed",
   );

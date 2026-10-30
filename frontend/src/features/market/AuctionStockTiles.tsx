@@ -1,8 +1,17 @@
+import AuctionClassifications from "./AuctionClassifications";
+import AuctionExplorerSelect from "./AuctionExplorerSelect";
+import {
+  AUCTION_HEIGHT_OPTIONS,
+  auctionHeightMatches,
+  type AuctionHeightKey,
+} from "./auctionHeightPresentation";
+import { auctionStockEvent } from "./auctionStockBadgePresentation";
+import { auctionNumber } from "./auctionPresentation";
 import { useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { Row } from "../../lib/api";
 import CopyStockCode from "../../components/CopyStockCode";
-import { integer, percent, tone } from "../../lib/format";
+import { amount, num, integer, percent, tone } from "../../lib/format";
 import AuctionStockBadges from "./AuctionStockBadges";
 import {
   auctionStockBoardCounts,
@@ -17,18 +26,28 @@ export default function AuctionStockTiles({
   onStock,
   chartDate,
   topIds,
+  explorer,
 }: {
   ids: string[];
   quotes: Row[];
   onStock?: (id: string) => void;
   chartDate?: string;
   topIds?: Set<string>;
+  explorer?: {
+    date: string;
+    topics: Row | null;
+    visibleIds?: ReadonlySet<string>;
+    anchorId?: string;
+    group?: Row;
+  };
 }) {
   const [board, setBoard] = useState<AuctionStockBoardKey>("all");
   const [sort, setSort] = useState<{
     key: AuctionStockSortKey;
     direction: "asc" | "desc";
   }>({ key: "height", direction: "desc" });
+  const [query, setQuery] = useState("");
+  const [event, setEvent] = useState("all");
   const boardCounts = auctionStockBoardCounts(ids, quotes);
   const total = boardCounts.find((item) => item.key === "all")?.count ?? 0;
   const rows = auctionStockListRows(
@@ -37,7 +56,34 @@ export default function AuctionStockTiles({
     board,
     sort.key,
     sort.direction,
-  );
+  ).filter((row) => {
+    if (!explorer) return true;
+    if (explorer.visibleIds && !explorer.visibleIds.has(row.instrument_id))
+      return false;
+    if (
+      event === "broken"
+        ? auctionStockEvent(row)?.kind !== "limit_break"
+        : !auctionHeightMatches(row, event as AuctionHeightKey)
+    )
+      return false;
+    const related =
+      explorer.topics?.date === explorer.date
+        ? explorer.topics?.stock_classifications?.[row.instrument_id]
+        : null;
+    const labels = [
+      ...(related?.industries || []),
+      ...(related?.topics || []),
+    ].map((item: Row) => item.name);
+    return [
+      row.name,
+      row.instrument_id,
+      ...labels,
+      auctionStockEvent(row)?.label,
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query.trim().toLowerCase());
+  });
   function selectSort(key: AuctionStockSortKey) {
     setSort((previous) => ({
       key,
@@ -47,6 +93,34 @@ export default function AuctionStockTiles({
   }
   return (
     <div className="auction-stock-list">
+      {explorer && (
+        <div className="auction-explorer-stock-filters">
+          <label>
+            组内搜索
+            <input
+              aria-label="组内搜索"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="个股名称、代码或行业概念标签"
+            />
+          </label>
+          <label>
+            昨日事件
+            <AuctionExplorerSelect
+              aria-label="昨日事件"
+              value={event}
+              onChange={(e) => setEvent(e.target.value)}
+            >
+              {AUCTION_HEIGHT_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+              <option value="broken">昨日炸板</option>
+            </AuctionExplorerSelect>
+          </label>
+        </div>
+      )}
       <div className="auction-stock-list-toolbar">
         <div className="auction-stock-list-sort" aria-label="展开个股排序">
           <span>排序</span>
@@ -113,6 +187,9 @@ export default function AuctionStockTiles({
       <div className="auction-table-stock-grid">
         {rows.map((row) => (
           <div className="auction-table-stock-item" key={row.instrument_id}>
+            {explorer?.anchorId === row.instrument_id && (
+              <small className="auction-explorer-height">观察锚股 · 手选</small>
+            )}
             <div className="auction-table-stock-name">
               <button
                 className="auction-stock"
@@ -126,6 +203,38 @@ export default function AuctionStockTiles({
               )}
             </div>
             <AuctionStockBadges row={row} />
+            {explorer && (
+              <>
+                <p className="auction-explorer-quote">
+                  竞价价{" "}
+                  {num(
+                    row.state === "observed"
+                      ? auctionNumber(row.auction_price)
+                      : null,
+                  )}
+                  元 · 竞价额{" "}
+                  {amount(
+                    row.state === "observed"
+                      ? auctionNumber(row.auction_amount)
+                      : null,
+                  )}
+                  <br />
+                  来源量比{" "}
+                  {num(
+                    row.state === "observed"
+                      ? auctionNumber(row.auction_volume_ratio)
+                      : null,
+                  )}
+                  倍
+                </p>
+                <AuctionClassifications
+                  view={explorer.topics}
+                  date={explorer.date}
+                  instrumentId={row.instrument_id}
+                  focusGroup={explorer.group}
+                />
+              </>
+            )}
             <div className="auction-table-stock-footer">
               <CopyStockCode instrumentId={row.instrument_id} />
               <strong
@@ -140,7 +249,9 @@ export default function AuctionStockTiles({
       </div>
       {!rows.length && (
         <p className="auction-stock-list-empty" role="status">
-          本组没有符合当前上市板块的股票，可切换到“全部”。
+          {explorer
+            ? "本组没有符合当前条件的股票，可清空搜索或切换到“全部”。"
+            : "本组没有符合当前上市板块的股票，可切换到“全部”。"}
         </p>
       )}
     </div>

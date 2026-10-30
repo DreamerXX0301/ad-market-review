@@ -19,6 +19,13 @@ def new_id(prefix: str = "") -> str:
 
 
 def json_clean(value: Any) -> Any:
+    # Most chart/strategy leaves are already Python JSON scalars. Exact types
+    # keep numpy/custom scalar conversion and date handling on the old path.
+    kind = type(value)
+    if value is None or kind is str or kind is int or kind is bool:
+        return value
+    if kind is float:
+        return value if math.isfinite(value) else None
     if isinstance(value, dict):
         return {str(k): json_clean(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):

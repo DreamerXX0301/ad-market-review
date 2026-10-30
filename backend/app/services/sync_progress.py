@@ -74,6 +74,17 @@ def _chain(connection, root):
                         waiting.append(identifier)
     if pending:
         problems.append('后续任务链超过核验上限，请到任务记录核查')
+    # Inline selection jobs own the worker slot but are not followup_queued
+    # collection nodes. Their exact idempotency keys prove this root, including
+    # older increments that ran selection before sector collection.
+    from .workspace_progress import children
+    identifiers = {item['job_id'] for item in items}
+    for item in list(items):
+        if item['kind'] == 'increment':
+            for child in children(connection, item):
+                if child['job_id'] not in identifiers:
+                    items.append(child)
+                    identifiers.add(child['job_id'])
     return items, waiting, list(dict.fromkeys(problems))
 
 
@@ -305,8 +316,10 @@ def session(*, task_id=None, request_key=None):
         if root is None:
             raise HTTPException(404, '本次增量任务尚未确认')
         if root['kind'] != 'increment':
-            raise HTTPException(422, '此进度窗口仅用于手动盘后增量')
+            raise HTTPException(422, '此进度窗口仅用于盘后增量')
         items, waiting, problems, status, done, draining = _chain_state(connection, root)
+        from .workspace_progress import summary
+        workspace = summary(connection, root, items)
         saved = lock_record(connection)
         current = saved if saved and saved['root_task_id'] == root['job_id'] else None
         ack_row = connection.execute("SELECT details_json FROM job_event WHERE job_id=? AND stage='increment_session_acknowledged' ORDER BY seq DESC LIMIT 1", (root['job_id'],)).fetchone()
@@ -334,10 +347,11 @@ def session(*, task_id=None, request_key=None):
             'acknowledged': acknowledged and current is None, 'draining_task_ids': draining,
             'can_acknowledge': done, 'created_at_ms': started, 'root_created_at_ms': root['created_at_ms'], 'observed_at_ms': observed,
             'finished_at_ms': finished if done else None, 'elapsed_ms': elapsed,
-            'tasks': items, 'waiting_followup': bool(waiting), 'issues': problems, 'estimate': estimate,
+            'tasks': items, 'workspace': workspace, 'waiting_followup': bool(waiting), 'issues': problems, 'estimate': estimate,
             'message': '本次任务链记录尚未核验完整，请核查服务端任务存档' if status == 'unknown' else
                        '正在等待工作进程安全停止，已发布数据保留' if draining else
                        '本次数据链已结束，请确认结果后继续操作' if done else
+                       workspace['message'] if workspace['state'] == 'running' else
                        '等待已授权后续任务排队' if waiting and not any(item['status']=='running' for item in items) else
                        '本次增量数据链正在运行'}
 

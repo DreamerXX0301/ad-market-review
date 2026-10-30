@@ -32,8 +32,17 @@ export function searchResultView(row: Row) {
     label,
     code,
     selectable,
+    matchLabel:
+      (
+        {
+          pinyin: "拼音",
+          initials: "首字母",
+          homophone: "同音建议",
+          typo: "近似建议",
+        } as Record<string, string>
+      )[row.match_type] || null,
     key: `${sector ? "sector" : "security"}:${kind}:${code}`,
-    title: `${label} · ${row.name || code}（${row.code || code}）`,
+    title: `${row.is_suggestion === true ? "可能想找 · " : ""}${label} · ${row.name || code}（${row.code || code}）`,
   };
 }
 export function globalSectorSelection(

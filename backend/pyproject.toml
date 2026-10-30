@@ -1,6 +1,6 @@
 [project]
 name = "ad-market-review-backend"
-version = "0.1.15"
+version = "0.1.16"
 description = "冒险的梦想家 A股盘面与策略研究工作台"
 requires-python = ">=3.13,<3.15"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
   "pandas>=2.2,<4",
   "pyarrow>=19,<30",
   "cryptography>=44,<50",
+  "pypinyin==0.55.0",
 ]
 
 [dependency-groups]

@@ -43,6 +43,7 @@ const noApi = encode(
 let compiled = await compile("./DailyMainlines.tsx");
 for (const [name, replacement] of Object.entries({
   "react/jsx-runtime": runtime,
+  react: import.meta.resolve("react"),
   "lucide-react": import.meta.resolve("lucide-react"),
   "../../lib/api": noApi,
   "../../components/UI": ui,

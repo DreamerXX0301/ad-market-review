@@ -97,6 +97,29 @@ def crossed_down(previous_fast, previous_slow, fast, slow):
     return previous_fast >= previous_slow and fast < slow
 
 
+
+class _KDJRange:
+    """Exact nine-quote extrema with stable ties and a legacy fallback."""
+    def __init__(self): self.clear()
+    def clear(self):
+        self.rows=deque(maxlen=9);self.lows=deque();self.highs=deque();self.unordered=deque();self.index=0
+    def observe(self,row):
+        index=self.index;self.index+=1;self.rows.append(row)
+        low,high=row.get('low'),row.get('high')
+        ordinary=(type(low) in (int,float) and type(high) in (int,float)
+                  and (type(low) is int or isfinite(low)) and (type(high) is int or isfinite(high)))
+        if ordinary:
+            while self.lows and self.lows[-1][1]>low:self.lows.pop()
+            while self.highs and self.highs[-1][1]<high:self.highs.pop()
+            self.lows.append((index,low));self.highs.append((index,high))
+        else:self.unordered.append(index)
+        for queue in (self.lows,self.highs):
+            while queue and queue[0][0]<=index-9:queue.popleft()
+        while self.unordered and self.unordered[0]<=index-9:self.unordered.popleft()
+        if len(self.rows)<9:return None
+        if self.unordered:return min(r['low'] for r in self.rows),max(r['high'] for r in self.rows)
+        return self.lows[0][1],self.highs[0][1]
+
 def enrich_bars(rows, calendar=None, *, tail=None, include_chart_extremes=False):
     """Keep the original recurrence; optionally materialize only its last rows.
 
@@ -113,7 +136,7 @@ def enrich_bars(rows, calendar=None, *, tail=None, include_chart_extremes=False)
     out = []
     windows = {n: deque() for n in WINDOWS}
     totals = {n: 0.0 for n in WINDOWS}
-    last9 = deque(maxlen=9)
+    last9 = _KDJRange()
     closes = deque(maxlen=31)
     e12 = e26 = dea = None
     k = d = 50.0
@@ -163,10 +186,10 @@ def enrich_bars(rows, calendar=None, *, tail=None, include_chart_extremes=False)
             if count >= 36: row['macd_cross'] = old_dif <= old_dea and dif > dea
             traded_pair = prev is not None and all(isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value > 0 for value in (row.get('volume'), prev.get('volume')))
             if count >= 36 and traded_pair: row['macd_dead_cross'] = crossed_down(old_dif, old_dea, dif, dea)
-        last9.append(row)
+        extent = last9.observe(row)
         old_k, old_d = k, d
-        if len(last9) == 9:
-            low = min(r['low'] for r in last9); high = max(r['high'] for r in last9)
+        if extent is not None:
+            low, high = extent
             rsv = (close - low) / (high - low) * 100 if high > low else 50
             k = 2*k/3 + rsv/3; d = 2*d/3 + k/3
         breakout = high_state.observe(row,reset=bool(reset))

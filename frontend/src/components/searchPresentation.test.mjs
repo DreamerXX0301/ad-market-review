@@ -55,6 +55,26 @@ assert.equal(searchResultView(index).label, "指数");
 assert.equal(searchResultView(industry).sector, true);
 assert.equal(searchResultView(industry).label, "行业");
 assert.equal(searchResultView(concept).label, "概念");
+assert.equal(
+  searchResultView({ ...stock, match_type: "initials" }).matchLabel,
+  "首字母",
+);
+const suggestion = searchResultView({
+  ...stock,
+  match_type: "typo",
+  is_suggestion: true,
+});
+assert.equal(suggestion.matchLabel, "近似建议");
+assert.match(suggestion.title, /^可能想找 · 股票 · 新华传媒（600825）$/);
+assert.equal(
+  suggestion.code,
+  stock.instrument_id,
+  "suggestions preserve the selectable identity",
+);
+assert.equal(
+  searchResultView({ ...stock, match_type: "unknown-server-label" }).matchLabel,
+  null,
+);
 assert.notEqual(searchResultView(stock).key, searchResultView(industry).key);
 assert.equal(
   searchResultView({ target_type: "sector", instrument_id: "600825.SH" })

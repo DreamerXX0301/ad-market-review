@@ -1,0 +1,1467 @@
+.zodiac-page {
+  min-width: 0;
+  display: grid;
+}
+.zodiac-hero,
+.zodiac-hero-title,
+.zodiac-toolbar,
+.zodiac-year-panel,
+.zodiac-year-controls,
+.zodiac-filters,
+.zodiac-sort,
+.zodiac-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.zodiac-hero {
+  justify-content: space-between;
+}
+.zodiac-hero-title > svg {
+  color: var(--amber, #e9b956);
+}
+.zodiac-hero h2 {
+  margin: 0 0 8px;
+}
+.zodiac-hero p,
+.zodiac-year-panel p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.zodiac-year-panel {
+  justify-content: space-between;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber, #e9b956);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.zodiac-year-panel strong {
+  display: block;
+}
+.zodiac-year-controls label,
+.zodiac-sort label,
+.zodiac-table-toolbar > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.zodiac-year-controls input[type="number"] {
+  width: 95px;
+}
+.zodiac-check {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.zodiac-check input[type="checkbox"] {
+  min-height: auto;
+  flex: 0 0 auto;
+}
+.zodiac-scope {
+  color: var(--muted);
+  margin: -5px 0 0;
+  line-height: 1.7;
+}
+.zodiac-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.zodiac-summary > span {
+  color: var(--muted);
+}
+.zodiac-summary b {
+  display: block;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.zodiac-summary small {
+  display: block;
+}
+.zodiac-controls {
+  display: grid;
+}
+.zodiac-groups {
+  display: flex;
+  flex-wrap: wrap;
+}
+.zodiac-groups button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.zodiac-filters > input {
+  flex: 1;
+  min-width: 240px;
+}
+.zodiac-sort {
+  font-size: 12px;
+}
+.zodiac-sort small {
+  color: var(--muted);
+}
+.zodiac-column-picker {
+  position: relative;
+  margin-left: auto;
+}
+.zodiac-column-picker > summary {
+  cursor: pointer;
+}
+.zodiac-column-picker > div {
+  position: absolute;
+  right: 0;
+  z-index: 6;
+  width: 300px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 12px 30px #0003;
+}
+.zodiac-column-picker label {
+  padding: 5px 0;
+}
+.zodiac-column-picker button:not(.btn) {
+  padding: 2px 7px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.zodiac-table-scroll {
+  width: 100%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.zodiac-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 100%;
+  font-size: 13px;
+}
+.zodiac-table th {
+  color: var(--muted);
+  font-weight: 500;
+  text-align: left;
+  background: var(--surface);
+}
+.zodiac-table td,
+.zodiac-table th {
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.zodiac-table th:first-child,
+.zodiac-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+  min-width: 180px;
+  box-shadow: 1px 0 var(--border);
+}
+.zodiac-table tr:last-child td {
+  border-bottom: 0;
+}
+.zodiac-table tr:hover td {
+  background: var(
+    --surface2,
+    color-mix(in srgb, var(--surface) 94%, var(--text))
+  );
+}
+.zodiac-compact td,
+.zodiac-compact th {
+  padding: 9px 12px;
+}
+.zodiac-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.zodiac-identity > svg {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+.zodiac-identity > div {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+}
+.zodiac-star {
+  color: var(--amber, #e9b956);
+}
+.zodiac-stock-name {
+  color: var(--text);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.zodiac-stock-name:hover {
+  color: var(--accent-secondary);
+}
+.zodiac-identity small,
+.zodiac-metric small,
+.zodiac-page .topic-history-cell small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.zodiac-metric,
+.zodiac-page .topic-history-cell,
+.zodiac-detail .topic-history-cell {
+  display: grid;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.zodiac-row-actions {
+  display: flex;
+  gap: 6px;
+}
+.zodiac-memberships {
+  min-width: 190px;
+  max-width: 360px;
+  white-space: normal;
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+}
+.zodiac-memberships > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.zodiac-memberships small {
+  color: var(--muted);
+  margin-right: 4px;
+}
+.zodiac-tag {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.zodiac-memberships summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.zodiac-memberships details .zodiac-tag {
+  display: inline-block;
+  margin: 4px 4px 0 0;
+}
+.zodiac-empty {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  padding: 65px 20px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+.zodiac-empty > svg,
+.zodiac-empty p {
+  color: var(--muted);
+}
+.zodiac-pagination {
+  justify-content: center;
+  font-size: 12px;
+}
+.zodiac-mobile-cards {
+  display: none;
+}
+.zodiac-page .topic-metric-coverage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.zodiac-editor label:not(.zodiac-check) {
+  display: grid;
+}
+.zodiac-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.zodiac-form-wide {
+  grid-column: 1/-1;
+}
+.zodiac-editor textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 60px;
+}
+.zodiac-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.zodiac-selection {
+  border: 1px solid var(--border);
+}
+.zodiac-batch-preview {
+  display: grid;
+  gap: 12px;
+}
+.zodiac-batch-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.zodiac-batch-row > label {
+  flex-wrap: wrap;
+}
+.zodiac-batch-row details > summary {
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.zodiac-detail {
+  display: grid;
+}
+.zodiac-detail h3 {
+  margin: 8px 0 0;
+  font-size: 15px;
+}
+.zodiac-detail p {
+  margin: 0;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.zodiac-detail-grid {
+  display: grid;
+}
+.zodiac-detail-grid > div > small {
+  display: block;
+  color: var(--muted);
+}
+.zodiac-detail-grid p {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.zodiac-detail details > summary {
+  cursor: pointer;
+  padding: 10px 0;
+}
+.zodiac-detail pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+  font-size: 11px;
+}
+.zodiac-user-text {
+  white-space: pre-wrap;
+}
+.zodiac-audit {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.zodiac-audit > small {
+  display: block;
+  color: var(--muted);
+  margin: 6px 0;
+}
+@media (max-width: 1100px) {
+  .zodiac-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .zodiac-hero-title {
+    align-items: flex-start;
+  }
+  .zodiac-year-panel {
+    padding: 15px;
+  }
+  .zodiac-year-panel strong {
+    font-size: 17px;
+  }
+  .zodiac-year-controls {
+    gap: 10px;
+  }
+  .zodiac-year-controls > label {
+    font-size: 12px;
+  }
+  .zodiac-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .zodiac-filters > input {
+    width: 100%;
+    min-width: 0;
+    flex-basis: 100%;
+  }
+  .zodiac-filters select {
+    max-width: 100%;
+  }
+  .zodiac-table-scroll {
+    display: none;
+  }
+  .zodiac-mobile-cards {
+    display: grid;
+    gap: 14px;
+  }
+  .zodiac-mobile-cards article {
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    display: grid;
+    gap: 16px;
+  }
+  .zodiac-card-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .zodiac-card-metrics .wide {
+    grid-column: 1/-1;
+  }
+  .zodiac-card-metrics > div > small {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-bottom: 6px;
+  }
+  .zodiac-card-extra {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 0;
+  }
+  .zodiac-card-extra > span {
+    color: var(--muted);
+  }
+  .zodiac-detail-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .zodiac-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .zodiac-dialog-actions .primary {
+    white-space: normal;
+    height: auto;
+  }
+  .zodiac-row-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* Shared module controls: the popup is a real themed listbox, not an OS menu. */
+.zodiac-select {
+  display: inline-flex;
+  min-width: 0;
+  position: relative;
+  vertical-align: middle;
+}
+.zodiac-select-trigger {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.zodiac-select-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zodiac-select-trigger svg {
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.zodiac-select-trigger svg.rotated {
+  transform: rotate(180deg);
+}
+.zodiac-select-trigger:hover {
+  border-color: color-mix(in srgb, var(--accent-secondary) 50%, var(--border));
+}
+.zodiac-select-trigger[aria-expanded="true"] {
+  border-color: var(--accent-secondary);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--accent-secondary) 12%, transparent);
+}
+.zodiac-select-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.zodiac-select-menu {
+  position: fixed;
+  z-index: 250;
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, var(--text));
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow:
+    0 12px 36px #0004,
+    0 2px 8px #0002;
+  font-size: 12px;
+}
+.zodiac-select-menu [role="option"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+}
+.zodiac-select-menu [role="option"].highlighted {
+  background: var(--surface2);
+}
+.zodiac-select-menu [role="option"].selected {
+  color: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-secondary) 12%, var(--surface));
+  font-weight: 600;
+}
+.zodiac-select-menu [role="option"][aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.zodiac-page button:focus-visible,
+.zodiac-editor button:focus-visible,
+.zodiac-detail button:focus-visible {
+  outline: 2px solid var(--accent-secondary);
+  outline-offset: 3px;
+}
+.zodiac-check input[type="checkbox"] {
+  appearance: none;
+  display: grid;
+  place-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  cursor: pointer;
+}
+.zodiac-check input[type="checkbox"]:checked {
+  background: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+}
+.zodiac-check input[type="checkbox"]:checked:after {
+  content: "";
+  width: 7px;
+  height: 4px;
+  border: solid white;
+  border-width: 0 0 2px 2px;
+  transform: rotate(-45deg) translateY(-1px);
+}
+.zodiac-check input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.zodiac-page {
+  gap: 14px;
+}
+.zodiac-hero h2 {
+  font-size: 21px;
+  margin-bottom: 5px;
+}
+.zodiac-hero p {
+  font-size: 12px;
+}
+.zodiac-year-panel {
+  padding: 16px 18px;
+  border-left-width: 2px;
+}
+.zodiac-year-panel strong {
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+.zodiac-year-panel p {
+  font-size: 12px;
+}
+.zodiac-year-controls {
+  gap: 10px;
+}
+.zodiac-year-controls label {
+  font-size: 11px;
+}
+.zodiac-scope {
+  font-size: 11px;
+}
+.zodiac-summary {
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 65%, transparent);
+  padding: 12px 0;
+}
+.zodiac-summary > span {
+  padding: 0 16px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  font-size: 11px;
+}
+.zodiac-summary > span:last-child {
+  border-right: 0;
+}
+.zodiac-summary b {
+  font-size: 18px;
+  margin-top: 6px;
+}
+.zodiac-summary small {
+  font-size: 10px;
+  margin-top: 3px;
+}
+.zodiac-controls {
+  gap: 12px;
+}
+.zodiac-groups {
+  gap: 3px;
+}
+.zodiac-groups button {
+  padding: 7px 11px;
+  font-size: 12px;
+  border-radius: 7px;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.zodiac-groups button:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+.zodiac-groups button.active {
+  color: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-secondary) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-secondary) 22%, var(--border));
+  font-weight: 600;
+}
+.zodiac-filters {
+  gap: 8px;
+}
+.zodiac-filters > input {
+  min-height: 36px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.zodiac-table-toolbar {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.zodiac-sort {
+  gap: 16px;
+}
+.zodiac-sort label {
+  font-size: 11px;
+}
+.zodiac-sort .zodiac-select-trigger {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+.zodiac-sort > small {
+  margin-left: auto;
+  max-width: 360px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.zodiac-row-actions .btn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 5px 7px;
+}
+.zodiac-row-actions .btn:first-child {
+  color: var(--accent-secondary);
+}
+.zodiac-row-actions .btn:hover {
+  color: var(--text);
+  background: var(--surface2);
+  border-color: var(--border);
+}
+.zodiac-tag {
+  background: color-mix(in srgb, var(--accent-secondary) 7%, var(--surface2));
+  border-color: color-mix(in srgb, var(--accent-secondary) 13%, var(--border));
+}
+.zodiac-column-picker > summary {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.zodiac-column-picker[open] > summary {
+  color: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+}
+.zodiac-column-picker > div {
+  margin-top: 8px;
+  padding: 12px;
+}
+.zodiac-column-picker label {
+  font-size: 12px;
+}
+.zodiac-column-picker label button:first-of-type {
+  margin-left: auto;
+}
+
+/* Editors use a padded, independently scrolling body and a stable action bar. */
+.modal:has(.zodiac-editor) {
+  width: 600px;
+}
+.modal.wide:has(.zodiac-editor) {
+  width: 860px;
+}
+.modal:has(.zodiac-editor) .modal-title,
+.modal:has(.zodiac-detail) .modal-title {
+  padding: 18px 24px;
+  background: var(--surface);
+}
+.modal:has(.zodiac-editor) .modal-title h2,
+.modal:has(.zodiac-detail) .modal-title h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.zodiac-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.zodiac-editor-body {
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+  display: grid;
+  gap: 20px;
+}
+.zodiac-editor-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.zodiac-editor-context > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.zodiac-editor-context > small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.zodiac-selection {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px;
+  border-color: color-mix(in srgb, var(--accent-secondary) 20%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-secondary) 5%, var(--surface2));
+}
+.zodiac-stock-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  color: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-secondary) 15%, var(--surface));
+  border: 1px solid
+    color-mix(in srgb, var(--accent-secondary) 20%, var(--border));
+  font-size: 18px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.zodiac-selection > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.zodiac-selection strong {
+  font-size: 15px;
+  color: var(--text);
+}
+.zodiac-selection small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.zodiac-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  color: var(--accent-secondary);
+  border: 1px solid
+    color-mix(in srgb, var(--accent-secondary) 25%, var(--border));
+  border-radius: 20px;
+  font-size: 10px;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--accent-secondary) 8%, var(--surface));
+}
+.zodiac-selection > .zodiac-status-pill {
+  margin-left: auto;
+}
+.zodiac-form-grid {
+  gap: 18px 14px;
+}
+.zodiac-editor label:not(.zodiac-check) {
+  color: var(--text);
+  font-size: 12px;
+  gap: 8px;
+}
+.zodiac-form-grid em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 10px;
+  margin-left: 5px;
+}
+.zodiac-form-grid .zodiac-select {
+  width: 100%;
+}
+.zodiac-form-grid .zodiac-select-trigger,
+.zodiac-form-grid input:not([type="checkbox"]) {
+  min-height: 39px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.zodiac-editor textarea {
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.8;
+  background: color-mix(in srgb, var(--surface2) 80%, var(--surface));
+}
+.zodiac-editor textarea::placeholder,
+.zodiac-editor input::placeholder {
+  color: var(--muted);
+  opacity: 0.65;
+}
+.zodiac-reason-field {
+  position: relative;
+}
+.zodiac-reason-field textarea {
+  min-height: 110px;
+  padding-bottom: 25px;
+}
+.zodiac-reason-field > small {
+  position: absolute;
+  bottom: 8px;
+  right: 12px;
+  font-size: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.zodiac-editor .zodiac-focus-control {
+  grid-column: 1/-1;
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface2) 45%, var(--surface));
+  cursor: pointer;
+}
+.zodiac-focus-control > svg {
+  color: var(--muted);
+}
+.zodiac-focus-control:has(input:checked) > svg {
+  color: var(--amber, #e9b956);
+}
+.zodiac-focus-control > span {
+  display: grid;
+  gap: 4px;
+}
+.zodiac-focus-control strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.zodiac-focus-control small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.zodiac-focus-control input {
+  appearance: none;
+  width: 34px;
+  height: 20px;
+  min-height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--surface3);
+  margin-left: auto;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.zodiac-focus-control input:after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.15s;
+}
+.zodiac-focus-control input:checked {
+  background: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+}
+.zodiac-focus-control input:checked:after {
+  transform: translateX(14px);
+  background: #fff;
+}
+.zodiac-links-field {
+  grid-column: 1/-1;
+}
+.zodiac-links-field > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+  padding: 3px 0;
+}
+.zodiac-links-field > summary small {
+  font-size: 10px;
+  margin-left: auto;
+}
+.zodiac-links-field > summary::-webkit-details-marker {
+  display: none;
+}
+.zodiac-links-field[open] > summary svg:last-child {
+  transform: rotate(90deg);
+}
+.zodiac-links-field > label {
+  margin-top: 12px;
+}
+.zodiac-links-field > label > small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.zodiac-dialog-actions {
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 15px 24px;
+  margin: 0;
+  background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
+}
+.zodiac-dialog-actions > small {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+.zodiac-dialog-actions .btn {
+  min-width: 72px;
+}
+.zodiac-dialog-actions .primary {
+  min-width: 104px;
+}
+
+/* Detail: compact performance header, metrics workspace, personal research sidebar. */
+.modal.wide:has(.zodiac-detail) {
+  width: 1000px;
+}
+.zodiac-detail {
+  padding: 22px 24px 26px;
+  overflow-y: auto;
+  gap: 18px;
+}
+.zodiac-detail-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.zodiac-detail-heading {
+  min-width: 0;
+}
+.zodiac-detail .zodiac-detail-heading h3 {
+  font-size: 19px;
+  margin: 0 0 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.zodiac-detail-heading > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.zodiac-detail-hero > button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.zodiac-detail-dates {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: -6px;
+}
+.zodiac-detail-dates i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.zodiac-detail-year {
+  margin-left: auto;
+}
+.zodiac-detail-highlights {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 16px 0;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--surface2) 50%, var(--surface));
+}
+.zodiac-detail-highlights > div {
+  padding: 0 18px;
+  border-right: 1px solid var(--border);
+}
+.zodiac-detail-highlights > div:last-child {
+  border-right: 0;
+}
+.zodiac-detail-highlights > div > small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.zodiac-detail-highlights .zodiac-metric > span {
+  font-size: 23px;
+  font-weight: 600;
+}
+.zodiac-detail-highlights .topic-history-cell > span:not(.badge) {
+  font-size: 23px;
+  font-weight: 600;
+}
+.zodiac-detail-highlights .zodiac-metric small,
+.zodiac-detail-highlights .topic-history-cell small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.zodiac-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 22px;
+  align-items: start;
+}
+.zodiac-detail-primary,
+.zodiac-detail-aside {
+  min-width: 0;
+}
+.zodiac-detail-aside {
+  display: grid;
+  gap: 14px;
+}
+.zodiac-detail-tabs {
+  display: flex;
+  gap: 13px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+.zodiac-detail-tabs button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 11px 0;
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: 11px;
+  cursor: pointer;
+}
+.zodiac-detail-tabs button.active {
+  border-bottom-color: var(--accent-secondary);
+  color: var(--accent-secondary);
+  font-weight: 600;
+}
+.zodiac-detail-tabs button:hover {
+  color: var(--text);
+}
+.zodiac-detail-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 18px 0 4px;
+  min-height: 32px;
+  gap: 10px;
+}
+.zodiac-detail h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.zodiac-detail-group-head > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.zodiac-detail-group-head .zodiac-select-trigger {
+  min-height: 30px;
+  font-size: 11px;
+  padding: 5px 9px;
+}
+.zodiac-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 20px;
+}
+.zodiac-detail-grid > div {
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  border-radius: 0;
+  padding: 14px 0;
+  min-width: 0;
+}
+.zodiac-detail-grid > div > small {
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+.zodiac-detail-grid .zodiac-metric > span {
+  font-size: 15px;
+}
+.zodiac-detail .zodiac-detail-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 12px 0 18px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.zodiac-detail-hint svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.zodiac-aside-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 15px;
+  background: color-mix(in srgb, var(--surface2) 35%, var(--surface));
+}
+.zodiac-aside-card h4 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 14px;
+}
+.zodiac-aside-card h4 > svg {
+  color: var(--muted);
+}
+.zodiac-aside-card h4 > button {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+}
+.zodiac-aside-card .zodiac-memberships {
+  min-width: 0;
+  font-size: 11px;
+}
+.zodiac-aside-card .zodiac-memberships > div {
+  align-items: flex-start;
+}
+.zodiac-detail .zodiac-aside-caption {
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 12px;
+}
+.zodiac-relation-pill {
+  display: inline-flex;
+  padding: 4px 8px;
+  font-size: 10px;
+  border-radius: 5px;
+  color: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-secondary) 10%, var(--surface));
+}
+.zodiac-detail .zodiac-user-text {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.9;
+  margin-top: 10px;
+}
+.zodiac-note-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.zodiac-note-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+.zodiac-detail .zodiac-evidence > summary,
+.zodiac-detail .zodiac-detail-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.zodiac-detail .zodiac-evidence > summary::-webkit-details-marker,
+.zodiac-detail .zodiac-detail-section > summary::-webkit-details-marker {
+  display: none;
+}
+.zodiac-evidence > summary > svg:first-child {
+  color: var(--muted);
+}
+.zodiac-evidence > summary > svg:last-child,
+.zodiac-detail-section > summary > svg:last-child {
+  margin-left: auto;
+  color: var(--muted);
+}
+.zodiac-evidence[open] > summary > svg:last-child,
+.zodiac-detail-section[open] > summary > svg:last-child {
+  transform: rotate(90deg);
+}
+.zodiac-evidence dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  font-size: 11px;
+  margin-top: 16px;
+}
+.zodiac-evidence dt {
+  color: var(--muted);
+}
+.zodiac-evidence dd {
+  text-align: right;
+  margin: 0;
+}
+.zodiac-evidence details > summary {
+  font-size: 10px;
+  color: var(--muted);
+}
+.zodiac-detail-section {
+  padding: 15px 0;
+  border-top: 1px solid var(--border);
+}
+.zodiac-detail-section > summary > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.zodiac-section-content {
+  padding-top: 14px;
+}
+.zodiac-inline-empty {
+  padding: 15px;
+  text-align: center;
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 12px;
+}
+.zodiac-inline-empty p {
+  font-size: 10px;
+  margin-top: 5px;
+}
+.zodiac-event-line {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  align-items: baseline;
+  font-size: 11px;
+}
+.zodiac-event-line > span {
+  color: var(--muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.zodiac-timeline .zodiac-audit {
+  display: flex;
+  gap: 12px;
+  border: 0;
+  padding: 8px 0 16px;
+}
+.zodiac-timeline-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--accent-secondary);
+  box-shadow: 0 0 0 4px
+    color-mix(in srgb, var(--accent-secondary) 10%, transparent);
+  flex-shrink: 0;
+}
+.zodiac-audit > div {
+  min-width: 0;
+}
+.zodiac-audit strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.zodiac-audit small {
+  display: block;
+  margin: 5px 0 7px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.zodiac-audit p {
+  font-size: 11px;
+}
+.zodiac-audit details > summary {
+  color: var(--muted);
+  font-size: 10px;
+}
+.zodiac-detail pre {
+  padding: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+@media (max-width: 1100px) {
+  .zodiac-summary {
+    row-gap: 16px;
+  }
+  .zodiac-summary > span:nth-child(3) {
+    border-right: 0;
+  }
+}
+@media (max-width: 720px) {
+  .zodiac-detail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .zodiac-detail-aside {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .zodiac-evidence {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 640px) {
+  .zodiac-summary > span {
+    padding: 0 12px;
+  }
+  .zodiac-summary > span:nth-child(3) {
+    border-right: 1px solid var(--border);
+  }
+  .zodiac-summary > span:nth-child(even) {
+    border-right: 0;
+  }
+  .zodiac-filters .zodiac-select {
+    flex: 1;
+    min-width: 130px;
+  }
+  .zodiac-year-controls .zodiac-select {
+    width: 90px;
+  }
+  .zodiac-sort > small {
+    max-width: none;
+    margin: 0;
+  }
+  .modal:has(.zodiac-editor) .modal-title,
+  .modal:has(.zodiac-detail) .modal-title {
+    padding: 15px 16px;
+  }
+  .zodiac-editor-body,
+  .zodiac-detail {
+    padding: 16px;
+    gap: 16px;
+  }
+  .zodiac-editor-context {
+    gap: 7px;
+  }
+  .zodiac-editor-context > small {
+    width: 100%;
+  }
+  .zodiac-selection {
+    padding: 12px;
+  }
+  .zodiac-selection strong {
+    font-size: 14px;
+  }
+  .zodiac-dialog-actions {
+    padding: 12px 16px;
+  }
+  .zodiac-dialog-actions > small {
+    width: 100%;
+    margin-bottom: 3px;
+  }
+  .zodiac-detail-highlights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px 0;
+    gap: 18px 0;
+  }
+  .zodiac-detail-highlights > div:nth-child(2) {
+    border-right: 0;
+  }
+  .zodiac-detail-highlights > div {
+    padding: 0 12px;
+  }
+  .zodiac-detail-highlights .zodiac-metric > span {
+    font-size: 20px;
+  }
+  .zodiac-detail-heading > div {
+    gap: 6px;
+  }
+  .zodiac-detail .zodiac-detail-heading h3 {
+    font-size: 16px;
+  }
+  .zodiac-detail-hero {
+    flex-wrap: wrap;
+  }
+  .zodiac-detail-hero > button {
+    width: 100%;
+    margin-top: 2px;
+  }
+  .zodiac-detail-year {
+    margin: 0;
+  }
+  .zodiac-detail-aside {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .zodiac-detail-tabs {
+    gap: 16px;
+  }
+  .zodiac-detail-grid {
+    gap: 0 16px;
+  }
+}
+.zodiac-dialog-actions .btn {
+  height: 36px;
+  min-height: 36px;
+  padding: 8px 14px;
+  line-height: 18px;
+  flex-shrink: 0;
+}
+.zodiac-page .topic-history-cell > .badge,
+.zodiac-detail .topic-history-cell > .badge {
+  justify-self: start;
+  width: fit-content;
+}

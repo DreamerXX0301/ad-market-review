@@ -105,10 +105,8 @@ try {
   assert.ok(html.includes("合成测试样本41"), "height cards must show the complete group's names directly, beyond the detail page");
   assert.ok(html.includes("1 / 4"), "all 42 samples are reachable through four pages");
   assert.ok(html.includes("昨日事件样本未留存"));
-  assert.ok(html.includes("共 710 个方向"));
-  assert.ok(html.includes("1 / 60"), "710 directions must use 12-row pages");
-  assert.ok(html.includes("合成板块12") && !html.includes("合成板块13"), "comparison renders one bounded page rather than all history rows");
-  assert.ok(!html.includes("合成板块0<"), "missing current quotes sort after all valid directional percentages");
+  assert.ok(html.includes("板块跨日对照<span>710</span>"));
+  assert.ok(!html.includes("合成板块12"), "inactive comparison tab does not render its 710 rows");
   assert.ok(html.includes("合成当前证据") && html.includes("合成待验证条件"));
   assert.ok(html.indexOf("昨日接力反馈") < html.indexOf("今日连板梯队"));
   assert.ok(html.indexOf("今日连板梯队") < html.indexOf("主线与板块对照"));

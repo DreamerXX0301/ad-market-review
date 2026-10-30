@@ -1,0 +1,63 @@
+# 生肖跟踪 API
+
+版本：`zodiac-pools-v1`。独立于自选、题材和个股 / 板块策略跟踪。所有读取使用已发布本地行情，不发起网络请求、研究或 worker 任务，也不打开可写 DuckDB。
+
+## 年度与成员
+
+- `observation_year` 为1900—2199整数；`target_year=observation_year+1`。2026观察2027羊，2027观察2028猴，2028观察2029鸡。默认年度按 Asia/Shanghai 公历年份确定。
+- GET 不创建年度池、成员或补齐基准。第一次明确添加在同一 SQLite 短事务创建池与成员。
+- 每池最多500个观察中成员；每次添加 / 核验最多100项。只接受本地证券名录核验过的完整A股身份。批量添加整体成功或回滚，重复项返回原记录，不覆盖备注或价格。
+- `status=tracking|ended`。同年度同证券仅一个活跃轮次，移出后重加创建新轮次；不同年度各自独立。跨年仅改变默认入口，不迁移或结束成员。
+- 维护字段：`relation_type=name|homophone|branch|culture|business|custom`、`custom_label`（30字）、`reason`（1000字）、`focused`（boolean）、`links`（最多3个http/https地址，每个2000字）。依据由用户提供，不自动核实。
+- 入池日为实际已发布业务日，提前创建未来年度池也不改变这一事实。行情 / 年内统计截止日为当前业务日；已结束轮次所有行情指标截止到各自结束日。当前行业概念另标当前归属日。
+
+## 读取
+
+| 方法与路径（前缀 `/api/v1`） | 返回 / 参数 |
+| --- | --- |
+| GET `/zodiac-pools` | `default_year`、已有池列表及人数、`business_date/generation` |
+| GET `/zodiac-pools/{year}` | 虚拟或实际池描述、`exists/pool_revision`、写入前置条件 |
+| GET `/zodiac-pools/{year}/members` | `status/query/relation/focused/board/completeness/sort/offset/limit`；每页最多100项 |
+| POST `/zodiac-pools/{year}/preview` | 只读解析 `{text}`；逐项返回 `ready/active/duplicate/ambiguous/unrecognized` 和准确候选 |
+| GET `/zodiac-pool-members/{id}/metrics` | 单股指标、严格日 / 完整周 / 完整月技术数据、个人审计、已有事件摘要 |
+| GET `/zodiac-pool-members/{id}/history` | 本轮身份、按写入顺序排列的个人维护历史 |
+| GET `/zodiac-pool-members/{id}/evidence` | 独立冻结的入池收盘凭据 |
+
+列表包含 `items/total/matched_count/navigation/summary/coverage/pool_revision/business_date/generation`。`navigation` 是完整过滤排序后的证券导航摘要；已结束轮次的图表导航按相同截止日分组，避免切股后套用别的截止日。
+
+`sort` 最多3个白名单键，以逗号分隔，每项为 `字段:asc|desc`。先全池过滤排序再分页，未知在两个方向都置后；年内涨停下界不作为精确次数排名。`completeness=complete|missing` 指年内涨幅、30日涨幅、年内涨停三项是否齐备。
+
+## 写入与并发
+
+所有业务写入都携带 `request_key`（8—128位字母数字 / `:_-`）、`expected_business_date`、`expected_generation`。相同请求键和相同规范化参数重放原回执；同键不同参数409。`generation` 是行情、分析与日历发布指针的规范化指纹；`primary_snapshot_id` 单独返回主要快照标识。市场读取在 SQLite 写事务外进行，提交时再次核对业务日和完整行情发布指纹，不能仅凭分析快照未变忽略原始行情更新。编辑 / 移出额外携带整数 `revision`，陈旧版本409。
+
+列表与详情在全部数据读取完成后，用同一个 SQLite 只读事务核对行情指纹和池 / 成员修订。详情校验覆盖事件与维护历史读取；期间发生变更返回409，避免把旧指标与新维护记录组合。列表报价与指标按最多128条成员分批读取，扩展指标批次可额外携带一个基准指数。
+
+| 方法与路径 | 业务参数 |
+| --- | --- |
+| POST `/zodiac-pools/{year}/members` | `items: [{instrument_id,...维护字段}]`；逐项返回 `added/readded/already_active` |
+| PATCH `/zodiac-pool-members/{id}` | `revision` 与需要修改的维护字段 |
+| POST `/zodiac-pool-members/{id}/end` | `revision/end_reason`，原因最多1000字 |
+| POST `/zodiac-pools/{year}/verify-baselines` | `member_ids`，只核验缺失的基准；成功基准永不重写 |
+
+无发布行情可浏览空池，但新增409。非法参数422，不存在记录404，容量 / 版本 / 发布变化409。核验期间成员变化整批回滚。
+
+## 指标口径
+
+- 年内、本月、30日、年内涨停和最近涨停复用 `topic_member_metrics.member_metrics`；各条保留原原因和覆盖。年内端点证据未满足时保持未知，不另发明年初首价算法。
+- 新增5/10/20/60日收益调用同一个连续价格端点函数，严格取市场日历 T/T−N。端点收益和路径完整性分开：中间缺日可保留可比端点收益，不能据此计算完整路径回撤。
+- 当日收盘要求唯一正OHLC、正成交量。涨停次数只有完整覆盖才是确数（包括0）；不完整次数为null，已确认事件单独作为下界。近30日涨停同样逐日核验。
+- 同日板高、板型、跌停复用共享来源 / 原价核验；行业概念来自当前本地归属，不冒充历史上涨原因。
+- MA/MACD/KDJ复用严格日历指标，BOLL复用严格周期计算；周期和复权锚单独标示。图表使用已有日 / 周 / 月入口，不改变策略信号。
+- 量单位股、价格元、成交额源值元（UI显示亿元）。换手率只用同日可核验字段；日量相对前5个交易日均量不是盘口量比。未接入同日可核验市值来源时市值为null。
+- 加入后收益采用冻结原始收盘与精确截止收盘；跨日公司行动覆盖未核验或区间有行动时保持未知。最高收盘收益、当前距最高收盘回撤及最大收盘回撤要求完整、可比且与冻结起点一致的路径。最大回撤按时间顺序滚动峰值计算。相对上证表现是同起止日收益差，单位百分点。
+- 池统计给出上涨 / 下跌 / 平盘 / 未知、重点数与样本口径的日涨幅中位数；不把不同入池基准平均为投资组合收益。
+- 已有事件摘要读取本轮日期范围内的划线提醒（最多100条）、已保存研究（最多30份）和留存龙虎榜（最多30日），不代表完整历史或确认无事件。
+
+## 留证与备份
+
+迁移 `033_zodiac_pools.sql` 新建年度池、轮次、审计与幂等回执表。唯一索引约束活跃成员；触发器保护已确认基准、结束事实、审计和回执，不提供永久删除接口。
+
+每个入池基准内嵌原始OHLCV报价、报价SHA、源快照清单与源artifact SHA、日历SHA、获取时间和算法版本。凭据与定点收盘一同保存在业务SQLite，不依赖当前快照继续存在，也不为一个观察点永久锁定整份行情代际。标准SQLite完整备份自然包含四张表；独立恢复需验证完整性、凭据SHA及轮次 / 审计数量。历史路径能否重新计算仍受实际行情留存范围限制，不能凭冻结单日报价补齐整个区间。
+
+部署仍遵守版本升级与回滚流程：在独立版本和恢复副本上迁移验收后再切换，不在现用唯一库上试跑迁移。

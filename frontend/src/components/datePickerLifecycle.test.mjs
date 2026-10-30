@@ -345,6 +345,56 @@ assert.equal(
 props = { ...props, disabled: true };
 render();
 assert.equal(isOpen(), false);
+// A manual click can pin the currently displayed default day. Returning to the
+// default is a separate action even if its calendar date has not changed yet.
+let resets = 0;
+props = {
+  ...props,
+  disabled: false,
+  selectCurrent: true,
+  shortcut: { label: "回到最新", date: props.value },
+  shortcutActive: true,
+  onShortcut: () => resets++,
+};
+render();
+open();
+changes = [];
+nodes(
+  tree,
+  (node) => node.props["data-calendar-date"] === props.value,
+)[0].props.onClick();
+render();
+assert.deepEqual(changes, [props.value]);
+assert.equal(isOpen(), false);
+open();
+const shortcut = nodes(
+  tree,
+  (node) => node.type === "button" && node.props.children === "回到最新",
+)[0];
+assert.equal(shortcut.props.disabled, false);
+shortcut.props.onClick();
+render();
+assert.equal(resets, 1);
+assert.deepEqual(
+  changes,
+  [props.value],
+  "resetting automatic mode must not pin the latest day again",
+);
+assert.equal(isOpen(), false);
+open();
+const staleShortcut = nodes(
+  tree,
+  (node) => node.type === "button" && node.props.children === "回到最新",
+)[0];
+mutate("hidden", true);
+staleShortcut.props.onClick();
+render();
+assert.equal(
+  resets,
+  1,
+  "a hidden page's stale portal cannot reset the shared date",
+);
+mutate("hidden", false);
 for (const hook of hooks) hook.cleanup?.();
 assert.equal(observers.size, 0);
 assert.equal(

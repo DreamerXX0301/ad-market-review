@@ -142,7 +142,15 @@ def validate_raw(con,table):
     if invalid or duplicate:raise ValueError(f'原始行情校验失败：无效OHLC/口径{invalid}行，重复键{duplicate}行')
 
 
+class _MergeCoverage(dict):
+    partition_reuse = None
+
+
 def merge_daily(incoming,previous,output,start,end,calendar,master,*,unchanged_rows=None):
+    previous_paths=previous if isinstance(previous,list) else [previous] if previous else []
+    # Bind the proof before any scan, then rehash after the merge. A changing
+    # immutable source must never authorize skipping canonical re-encoding.
+    previous_sha=tuple(sorted((str(Path(path).resolve()),hash_file(Path(path))) for path in previous_paths))
     con=duckdb.connect(':memory:')
     try:
         con.execute("SET memory_limit='512MB'");con.execute('SET threads=2')
@@ -158,7 +166,8 @@ def merge_daily(incoming,previous,output,start,end,calendar,master,*,unchanged_r
         if previous:
             con.read_parquet(previous if isinstance(previous,list) else str(previous)).project(RAW_COLUMNS).create_view('old')
             validate_raw(con,'old')
-            overlap,changed=con.execute('SELECT count(*),count(*) FILTER(WHERE i.open_price<>o.open_price OR i.high_price<>o.high_price OR i.low_price<>o.low_price OR i.close_price<>o.close_price OR i.volume<>o.volume OR i.turnover<>o.turnover) FROM incoming i JOIN old o USING(thscode,date_ms)').fetchone()
+            different='i.open_price<>o.open_price OR i.high_price<>o.high_price OR i.low_price<>o.low_price OR i.close_price<>o.close_price OR i.volume<>o.volume OR i.turnover<>o.turnover'
+            overlap,changed,changed_days=con.execute('SELECT count(o.thscode),count(*) FILTER(WHERE o.thscode IS NOT NULL AND ('+different+')),list(DISTINCT i.date_ms) FILTER(WHERE o.thscode IS NULL OR '+different+' OR signbit(i.volume) IS DISTINCT FROM signbit(o.volume) OR signbit(i.turnover) IS DISTINCT FROM signbit(o.turnover)) FROM incoming i LEFT JOIN old o USING(thscode,date_ms)').fetchone()
             con.execute('CREATE VIEW merged_all AS SELECT o.* FROM old o ANTI JOIN incoming i USING(thscode,date_ms) UNION ALL SELECT * FROM incoming')
         else:
             overlap=changed=0;con.execute('CREATE VIEW merged_all AS SELECT * FROM incoming')
@@ -193,7 +202,13 @@ def merge_daily(incoming,previous,output,start,end,calendar,master,*,unchanged_r
                 except Exception:
                     if not copy_failed:raise
         unknown_identity=[r['thscode'] for r in master if not r.get('list_date')]
-        return {'rows':count,'unexplained_missing':None if unknown_identity else missing,'confirmed_missing_lower_bound':missing,'identity_unknown_count':len(unknown_identity),'identity_unknown_symbols':unknown_identity,'expected_coverage_state':'unknown' if unknown_identity else 'partial','overlap_rows':overlap,'revised_overlap_rows':changed,'derived_file_written':write_output,'missing_classification':'上市日期未知时总缺口不可核验；已知身份中的缺口尚未区分停牌/数据缺失，不填0'}
+        if any(hash_file(Path(path))!=checksum for path,checksum in previous_sha):
+            raise ValueError('合并期间历史行情来源发生变化，拒绝发布')
+        result=_MergeCoverage({'rows':count,'unexplained_missing':None if unknown_identity else missing,'confirmed_missing_lower_bound':missing,'identity_unknown_count':len(unknown_identity),'identity_unknown_symbols':unknown_identity,'expected_coverage_state':'unknown' if unknown_identity else 'partial','overlap_rows':overlap,'revised_overlap_rows':changed,'derived_file_written':write_output,'missing_classification':'上市日期未知时总缺口不可核验；已知身份中的缺口尚未区分停牌/数据缺失，不填0'})
+        if previous and write_output:
+            from app.analytics.market_storage import MergePartitionProof
+            result.partition_reuse=MergePartitionProof(hash_file(output),previous_sha,tuple(sorted({date_ms(value)[:7] for value in changed_days or []})))
+        return result
     finally:con.close()
 
 
@@ -452,7 +467,8 @@ def execute_sync(job_id,progress=None):
     atomic_json(collector.root/'bundle.json',bundle)
     collector.tick('发布前核验数据包',76)
     validate_frozen_target(target,now_china())
-    status=MarketData(data_dir()).import_audit(collector.root,lambda stage,pct:collector.tick(stage,76+int(pct*.05)))
+    reuse=getattr(coverage,'partition_reuse',None)
+    status=MarketData(data_dir()).import_audit(collector.root,lambda stage,pct:collector.tick(stage,76+int(pct*.05)),**({'partition_reuse':reuse} if reuse is not None else {}))
     collector.tick('登记并原子切换全部模块',81)
     validate_frozen_target(target,now_china())
     registration=register_market(status,job_id,lambda stage,pct:collector.tick(stage,pct))

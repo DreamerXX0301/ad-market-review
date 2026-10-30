@@ -46,7 +46,7 @@ const modulePath=path.join(directory,"component.mjs");
 await fs.writeFile(modulePath,code);
 const store=new Map(),events=[];
 globalThis.localStorage={getItem:key=>store.get(key)||null,setItem:(key,value)=>store.set(key,value),removeItem:key=>store.delete(key)};
-globalThis.window={dispatchEvent:event=>events.push(event),setTimeout,clearTimeout};
+globalThis.window={dispatchEvent:event=>events.push(event),addEventListener(){},removeEventListener(){},setTimeout,clearTimeout};
 const {default:NoonReview,readNoonRun,releaseNoonRun,reconcileNoonRun}=await import(pathToFileURL(modulePath).href);
 const day="2026-10-28";
 const task=(status,key="receipt",logs=[])=>({task_id:"noon-original",kind:"source_check",parameters:{operation:"noon_snapshot"},target_date:day,request_key:key,created_at_ms:1,status,logs});

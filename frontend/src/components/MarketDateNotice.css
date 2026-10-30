@@ -1,0 +1,47 @@
+.market-date-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 15px;
+  margin-bottom: 17px;
+  color: var(--blue);
+  border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--border));
+  border-left: 3px solid var(--blue);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--blue) 6%, var(--surface));
+}
+.market-date-notice.is-history {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 32%, var(--border));
+  border-left-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, var(--surface));
+}
+.market-date-notice > svg {
+  flex-shrink: 0;
+}
+.market-date-notice-copy {
+  display: grid;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+.market-date-notice-copy strong {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.market-date-notice-copy span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.market-date-notice .btn {
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .market-date-notice {
+    flex-wrap: wrap;
+  }
+  .market-date-notice .btn {
+    margin-left: 30px;
+  }
+}

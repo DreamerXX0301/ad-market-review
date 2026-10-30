@@ -197,15 +197,26 @@ def _view(connection, sid):
     strategy = one(connection, 'SELECT * FROM sector_strategy WHERE strategy_id=?', (sid,), '板块策略不存在')
     version = one(connection, 'SELECT * FROM sector_strategy_version WHERE strategy_id=? AND version=?', (sid, strategy['current_version']))
     latest = connection.execute('SELECT run_id,business_date,status FROM sector_selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1', (sid,)).fetchone()
-    return {**strategy, 'id': sid, 'target_type': 'sector', 'version': version['version'],
+    return _present(strategy,version,dict(latest) if latest else None)
+
+
+def _present(strategy,version,latest):
+    return {**strategy, 'id': strategy['strategy_id'], 'target_type': 'sector', 'version': version['version'],
             'period': version['period'], 'sector_kind': version['sector_kind'],
             'definition': obj(version['definition_json'], {}), 'policy': obj(version['policy_json'], {}),
-            'evaluator_version': version['evaluator_version'], 'latest_run': dict(latest) if latest else None}
+            'evaluator_version': version['evaluator_version'], 'latest_run': latest}
 
 
 def list_strategies():
     with connect() as connection:
-        data = [_view(connection, row[0]) for row in connection.execute('SELECT strategy_id FROM sector_strategy ORDER BY created_at_ms,strategy_id')]
+        connection.execute('BEGIN')
+        strategies=rows(connection,'SELECT * FROM sector_strategy ORDER BY created_at_ms,strategy_id')
+        versions={row['strategy_id']:row for row in rows(connection,'SELECT v.* FROM sector_strategy_version v JOIN sector_strategy s ON s.strategy_id=v.strategy_id AND s.current_version=v.version')}
+        # Seek the latest run using the strategy index; do not rank or hydrate
+        # the entire historical run table for a management-page read.
+        latest={row['strategy_id']:{key:row[key] for key in ('run_id','business_date','status')} if row['run_id'] else None for row in rows(connection,
+            'SELECT s.strategy_id,r.run_id,r.business_date,r.status FROM sector_strategy s LEFT JOIN sector_selection_run r ON r.rowid=(SELECT rowid FROM sector_selection_run WHERE strategy_id=s.strategy_id ORDER BY created_at_ms DESC,rowid DESC LIMIT 1)')}
+        data=[_present(strategy,versions[strategy['strategy_id']],latest[strategy['strategy_id']]) for strategy in strategies]
     return {'items': data, 'total': len(data), 'target_type': 'sector'}
 
 

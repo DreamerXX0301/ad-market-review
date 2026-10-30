@@ -69,6 +69,24 @@ export default function LineAlertNotice({
   };
   const summary = currentLineAlertSummary(result.data, businessDate);
   const total = summary?.total;
+  const noticeLabel = result.error
+    ? "提醒读取失败"
+    : result.loading && !summary
+      ? "正在读取提醒"
+      : !summary
+        ? "提醒状态待确认"
+        : `今日划线提醒 ${total} 条`;
+  const badge = result.error
+    ? "!"
+    : !summary
+      ? result.loading
+        ? "…"
+        : "?"
+      : total > 0
+        ? total > 99
+          ? "99+"
+          : total
+        : null;
   return (
     <div className="line-alert-notice" ref={root}>
       <button
@@ -77,13 +95,20 @@ export default function LineAlertNotice({
           setOpen(!open);
           if (!open) result.reload();
         }}
-        aria-label={`今日划线提醒${typeof total === "number" ? ` ${total} 条` : ""}`}
+        aria-label={noticeLabel}
         aria-expanded={open}
         aria-controls="today-line-alerts-popover"
-        title="今日划线提醒"
+        title={noticeLabel}
       >
         <BellRing size={18} />
-        {total > 0 && <b aria-live="polite">{total > 99 ? "99+" : total}</b>}
+        {badge !== null && (
+          <b
+            className={result.error ? "is-error" : !summary ? "is-pending" : ""}
+            aria-live="polite"
+          >
+            {badge}
+          </b>
+        )}
       </button>
       {open && (
         <section
@@ -107,7 +132,7 @@ export default function LineAlertNotice({
           <p>按最新已发布业务日统计，不是电脑日期。共 {total ?? "—"} 条。</p>
           {result.error ? (
             <p className="line-alert-notice-error">
-              提醒暂未读取，可稍后重新打开。
+              提醒暂未读取，可稍后重新打开。上方如有旧数量，仅为上次结果。
             </p>
           ) : !summary && result.loading ? (
             <p>正在读取提醒…</p>

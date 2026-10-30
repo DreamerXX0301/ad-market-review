@@ -1,8 +1,10 @@
-# 手动盘后增量的阻塞进度
+# 盘后增量的阻塞进度
 
 `GET /api/v1/sync/session?task_id=...` 或 `?request_key=...` 只读查询用户已经提交的一次 `increment`。不创建、恢复、重试或取消任务，不取行情。尚未找到404，非increment任务422。不带标识时返回 `{active: null|receipt}`，供首次挂载、新标签页、清空浏览器存储后的全局恢复；只读查询一个持久会话指针，不扫描行情目录。
 
-响应包含 `root_task_id/request_key/status/can_acknowledge/created_at_ms/observed_at_ms/finished_at_ms/elapsed_ms/tasks/waiting_followup/issues/estimate`。`tasks` 是至多32个去重任务的小型回执，不包含完整参数、凭据和日志。通过持久化的 `followup_queued/line_alert_check_queued/listing_status_check_queued` 事件追踪已授权子任务；主行情成功而后续尚未排队时保持 `awaiting_followup`，不能提前称整个增量成功。主行情发布后的本地策略核对仍包含在等待后续阶段内。
+响应包含 `root_task_id/request_key/status/can_acknowledge/created_at_ms/observed_at_ms/finished_at_ms/elapsed_ms/tasks/workspace/waiting_followup/issues/estimate`。采集链最多追踪32个去重节点；另以原根 `job_id:selection:strategy_id` 和 `job_id:tracking-review` 的精确幂等键关联本次策略/跟踪任务，核对策略身份与创建时序，不按名称或同日任意运行关联。小回执不含完整参数、凭据和日志。运行中的策略参与整链状态与完成确认，不能仍显示“等待后续采集排队”。
+
+`workspace` 返回阶段、已完成策略数、原结果事件中的逐策略命中/未知/入池数及跟踪摘要；原回执缺失不填0，失败策略不计入成功完成数。未取得完整计划时，不把“已创建任务数”当成全部待跑策略数。旧版先选股再采集和新版先数据后计算均按原任务记录投影，不重跑、不改变顺序。`GET /tasks/{id}` 的increment详情也返回同一小摘要。
 
 0.1.15新建increment冻结`workspace_followup_version=after-data-chain-v1`；原冻结任务不补此字段或扩大范围。该相位必须核验原根的冻结目标日、主行情代际和发布回执、原链接板块批次完整请求回执及本次supplement的job/date/snapshot/SHA。数据链未结束保持waiting，不读旧日补充替代。本次目标日有已发布的合法partial输入时由具体规则保留unknown；整日目标池缺失、来源损坏、必要子任务失败或已非当前业务日则blocked。
 
@@ -22,13 +24,15 @@
 
 `POST /api/v1/sync/session/acknowledge` 接受 `request_key/task_id/session_epoch`。短写事务重新核对当前根、会话轮次和整条链的实际结束状态，通过后持久记录确认并移除锁。旧根或旧轮次不能解锁新会话；链仍运行、仍等待已冻结后续阶段或工作进程尚未安全释放时返回409。另一个标签页确认后，原具体会话查询返回 `acknowledged=true, locked=false`，浏览器同步收敛。
 
-`POST /api/v1/sync/session/control` 接受 `task_id/session_epoch/action`，action仅支持 `pause/cancel`。停止本条已有数据链，不新建、恢复或重试取数；尚未排队的后续阶段不再派发，停止竞态中迟到的子任务在创建事务内直接保持停止。运行步骤先显示 `stopping`，等真实worker finally回执才允许确认。worker异常退出时，只能由新worker取得既有唯一执行锁后证明旧执行已退出并补记释放，不能用清空lease或超时猜测停止。queued步骤可直接停止；显式resume/retry重新建立同链锁，不自动继续。
+`POST /api/v1/sync/session/control` 保留路径兼容但返回409，不再提供暂停/取消。`POST /tasks/{id}/{pause|cancel}` 对盘后增量、盘前竞价、午评以及可核验的增量后续步骤同样返回409，拒绝前不改任务或事件。任务回执增加 `interactive_stop_allowed`；进度窗口与任务记录均隐藏这些停止按钮，独立策略计算等其它原有控制不受影响。
+
+已经保存的暂停/取消、恢复副本及内部安全退出仍沿用原语义：显式停止不自动继续，执行未实际释放不允许确认；不删除旧证据，不因移除按钮把旧任务改回running。
 
 整根increment重试创建新increment任务与独立根。单个子步骤的手动恢复/重试以 `attempt_task_id` 冻结本次分支：历史根仅保留来源身份，`historical_attempt=true` 的旧失败不参与本次进度和结果；UI明确称“本次重试步骤/分支”，不能称原整链已完整成功。后续权限依赖原持久链接及内部派发父步骤，子分支的新epoch只解除该分支的停止；原根、兄弟步骤的显式停止继续有效，不能因重试本地核验便自动启动未建的板块阶段。
 
 若本地仅持有请求标识且尚无已接收task_id，404或等待30秒都不能解锁。用户可显式调用确认接口核查并关闭未接收请求：事务证明无对应job、无当前会话后写该request_key的放弃墓碑；迟到的原POST必须在创建任务的事务内核对墓碑并拒绝，确认成功后才清本地层。已知task_id却真实缺失时保持未知，要求核查服务端存档；断网或确认请求失败保持锁定。
 
-API中间件在锁定时拒绝所有新的业务GET/写请求并返回409与当前会话身份。静态资源、SPA、health、会话进度/确认/停止和同链任务读取及pause/cancel保持可达；`POST /sync/tasks`只允许相同已接收request_key的幂等重读。统一任务创建在 `BEGIN IMMEDIATE` 内再次校验HTTP会话锁，防止提前通过中间件的选股或批量请求趁并发窗口新排队。worker不处于HTTP上下文，不会锁死自己的授权链或心跳；不强杀已接收任务，增量沿原唯一worker规则排队。开始锁定前已接收的HTTP读取可能正常完成，此门禁不追溯取消它们。
+API中间件在锁定时拒绝所有新的业务GET/写请求并返回409与当前会话身份。静态资源、SPA、health、会话进度/确认和同链任务读取保持可达；旧停止路径仍到达路由，但按上述规则返回409；`POST /sync/tasks`只允许相同已接收request_key的幂等重读。统一任务创建在 `BEGIN IMMEDIATE` 内再次校验HTTP会话锁，防止提前通过中间件的选股或批量请求趁并发窗口新排队。worker不处于HTTP上下文，不会锁死自己的授权链或心跳；不强杀已接收任务，增量沿原唯一worker规则排队。开始锁定前已接收的HTTP读取可能正常完成，此门禁不追溯取消它们。
 
 ## 更新完成后的重复请求
 

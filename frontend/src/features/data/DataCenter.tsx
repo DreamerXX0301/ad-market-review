@@ -1,3 +1,4 @@
+import WorkspaceTaskSummary from "../../components/WorkspaceTaskSummary";
 import { useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -163,12 +164,15 @@ function TaskProgress({
       <div className="progress-caption">
         <span>
           当前阶段：
-          {statusText[task.stage] || task.stage || task.message || "等待执行"}
+          {activeStatuses.includes(task.status)
+            ? task.message || statusText[task.stage] || "正在等待任务回报"
+            : "此任务步骤已结束，结果以实际回执为准"}
         </span>
         {task.stage_progress != null && (
           <span>{num(Number(task.stage_progress), 0)}%</span>
         )}
       </div>
+      <WorkspaceTaskSummary workspace={task.workspace} />
       {sectors && (
         <div className="data-sector-progress" aria-live="polite">
           <span>
@@ -259,26 +263,33 @@ function TaskProgress({
         </span>
         {onAction && (
           <div className="button-group">
-            {activeStatuses.includes(task.status) && (
-              <>
-                <button
-                  className="btn small"
-                  onClick={() => onAction(task.task_id || task.job_id, "pause")}
-                >
-                  <Pause size={13} />
-                  暂停
-                </button>
-                <button
-                  className="btn small"
-                  onClick={() =>
-                    onAction(task.task_id || task.job_id, "cancel")
-                  }
-                >
-                  <X size={13} />
-                  取消
-                </button>
-              </>
-            )}
+            {activeStatuses.includes(task.status) &&
+              task.interactive_stop_allowed !== false &&
+              task.kind !== "increment" &&
+              !["auction_snapshot", "noon_snapshot"].includes(
+                task.operation || task.parameters?.operation,
+              ) && (
+                <>
+                  <button
+                    className="btn small"
+                    onClick={() =>
+                      onAction(task.task_id || task.job_id, "pause")
+                    }
+                  >
+                    <Pause size={13} />
+                    暂停
+                  </button>
+                  <button
+                    className="btn small"
+                    onClick={() =>
+                      onAction(task.task_id || task.job_id, "cancel")
+                    }
+                  >
+                    <X size={13} />
+                    取消
+                  </button>
+                </>
+              )}
             {task.status === "paused" &&
               noonControls.canResumeHere &&
               !blockedSectorInitialization && (
@@ -369,6 +380,14 @@ function DataWarnings({ items }: { items: unknown }) {
     </details>
   );
 }
+function linkedTaskId() {
+  if (typeof location === "undefined" || !location.hash.startsWith("#data?"))
+    return "";
+  const id =
+    new URLSearchParams(location.hash.split("?")[1] || "").get("task") || "";
+  return /^job_[a-zA-Z0-9_-]{1,180}$/.test(id) ? id : "";
+}
+
 export default function DataCenter({
   onPublished,
   initialTaskId,
@@ -379,11 +398,22 @@ export default function DataCenter({
   const result = useApi<Row>("/data/status"),
     history = useApi<Row>("/tasks?limit=200&summary=true");
   const active = usePageActive();
-  const [selectedId, setSelectedId] = useState(""),
-    [followChain, setFollowChain] = useState(true),
+  const [selectedId, setSelectedId] = useState(linkedTaskId),
+    [followChain, setFollowChain] = useState(() => !linkedTaskId()),
     [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
     [showAllJobs, setShowAllJobs] = useState(false);
+  useEffect(() => {
+    const followLink = () => {
+      const id = linkedTaskId();
+      if (id) {
+        setSelectedId(id);
+        setFollowChain(false);
+      }
+    };
+    window.addEventListener("hashchange", followLink);
+    return () => window.removeEventListener("hashchange", followLink);
+  }, []);
   const task = useApi<Row>(selectedId ? `/tasks/${selectedId}` : null);
   const toast = useToast();
   const data = result.data,

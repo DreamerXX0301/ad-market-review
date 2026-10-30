@@ -1,4 +1,11 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { Search, X } from "lucide-react";
 import { list, useApi } from "../lib/api";
@@ -34,17 +41,20 @@ export default function InstrumentSearch({
   const container = useRef<HTMLDivElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const composingRef = useRef(false);
+  const [composing, setComposing] = useState(false);
   const listId = useId();
   const visible = open && !!query.trim();
   useEffect(() => {
+    if (composing) return;
     const t = setTimeout(() => setDebounced(query.trim()), 200);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [query, composing]);
   const result = useApi<Row>(
-    instrumentSearchRequest(debounced, includeSectors),
+    composing ? null : instrumentSearchRequest(debounced, includeSectors),
   );
   // A newly typed query must not select the previous query's still-loaded rows.
-  const searching = query.trim() !== debounced || result.loading;
+  const searching = composing || query.trim() !== debounced || result.loading;
   const rows =
     searching || result.error
       ? []
@@ -140,12 +150,22 @@ export default function InstrumentSearch({
         maxLength={100}
         value={query}
         onFocus={() => setOpen(true)}
+        onCompositionStart={() => {
+          composingRef.current = true;
+          setComposing(true);
+        }}
+        onCompositionEnd={(e) => {
+          composingRef.current = false;
+          setQuery(e.currentTarget.value);
+          setComposing(false);
+        }}
         onChange={(e) => {
           setQuery(e.target.value);
           setActiveIndex(0);
           setOpen(true);
         }}
         onKeyDown={(e) => {
+          if (composingRef.current || e.nativeEvent.isComposing) return;
           if (e.key === "Tab") {
             const copyButton =
               visible && !e.shiftKey
@@ -233,43 +253,58 @@ export default function InstrumentSearch({
               <div className="search-hint">没有匹配的标的</div>
             ) : (
               rows.map((r, index) => (
-                <div
-                  className="instrument-search-result"
-                  key={searchResultView(r).key}
-                  data-search-index={index}
-                  data-active={index === activeIndex}
-                  onMouseEnter={() => setActiveIndex(index)}
-                >
-                  <button
-                    type="button"
-                    className="instrument-search-choose"
-                    title={searchResultView(r).title}
-                    aria-label={searchResultView(r).title}
-                    id={`${listId}-${index}`}
-                    role="option"
-                    aria-selected={index === activeIndex}
-                    tabIndex={-1}
-                    onClick={() => choose(r)}
-                  >
-                    <span>
-                      <strong>{r.name}</strong>
-                      <small
-                        className={`search-result-type type-${searchResultView(r).kind}`}
-                      >
-                        {searchResultView(r).label}
-                      </small>
-                    </span>
-                    {searchResultView(r).sector && (
-                      <code>{r.code || r.topic_code}</code>
+                <Fragment key={searchResultView(r).key}>
+                  {r.is_suggestion === true &&
+                    rows[index - 1]?.is_suggestion !== true && (
+                      <div className="search-suggestion-heading">
+                        可能想找 · 请核对名称和代码
+                      </div>
                     )}
-                  </button>
-                  {!searchResultView(r).sector && (
-                    <CopyStockCode
-                      code={r.code}
-                      instrumentId={r.instrument_id}
-                    />
-                  )}
-                </div>
+                  <div
+                    className="instrument-search-result"
+                    key={searchResultView(r).key}
+                    data-search-index={index}
+                    data-active={index === activeIndex}
+                    onMouseEnter={() => setActiveIndex(index)}
+                  >
+                    <button
+                      type="button"
+                      className="instrument-search-choose"
+                      title={searchResultView(r).title}
+                      aria-label={searchResultView(r).title}
+                      id={`${listId}-${index}`}
+                      role="option"
+                      aria-selected={index === activeIndex}
+                      tabIndex={-1}
+                      onClick={() => choose(r)}
+                    >
+                      <span>
+                        <strong>{r.name}</strong>
+                        <small
+                          className={`search-result-type type-${searchResultView(r).kind}`}
+                        >
+                          {searchResultView(r).label}
+                        </small>
+                        {searchResultView(r).matchLabel && (
+                          <small
+                            className={`search-match-label${r.is_suggestion === true ? " is-suggestion" : ""}`}
+                          >
+                            {searchResultView(r).matchLabel}
+                          </small>
+                        )}
+                      </span>
+                      {searchResultView(r).sector && (
+                        <code>{r.code || r.topic_code}</code>
+                      )}
+                    </button>
+                    {!searchResultView(r).sector && (
+                      <CopyStockCode
+                        code={r.code}
+                        instrumentId={r.instrument_id}
+                      />
+                    )}
+                  </div>
+                </Fragment>
               ))
             )}
           </div>,

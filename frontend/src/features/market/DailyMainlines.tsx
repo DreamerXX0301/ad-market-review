@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { Empty, ErrorBox, Loading } from "../../components/UI";
 import type { Row } from "../../lib/api";
@@ -108,6 +109,9 @@ export default function DailyMainlines({
   const focus = plan.groups
     .map((group) => ({ ...group, visible: visibleItems(group, search) }))
     .filter((group) => group.visible.length);
+  const [selectedKey, setSelectedKey] = useState("");
+  const selected =
+    focus.find((group) => `${date}:${group.key}` === selectedKey) || focus[0];
   const others = plan.otherGroups
     .map((group) => ({ ...group, visible: visibleItems(group, search) }))
     .filter((group) => group.visible.length);
@@ -244,46 +248,117 @@ export default function DailyMainlines({
                   <b>{plan.classifiedCount - plan.missingReasonCount}</b> 只
                 </span>
               </div>
-              <div className="daily-mainline-focus-groups">
-                {focus.map((group) => {
-                  const ordered = [...group.visible].sort(
-                    (a, b) => (b.height || 0) - (a.height || 0),
-                  );
-                  const representatives = ordered.slice(0, 2),
-                    remaining = ordered.slice(2);
-                  return (
-                    <section className="daily-mainline-focus" key={group.key}>
-                      <header>
-                        <h3>{group.name}</h3>
+              {!!focus.length && (
+                <div className="daily-mainline-focus-groups daily-mainline-comparison">
+                  <div
+                    className="daily-mainline-direction-list"
+                    aria-label="主线方向对比"
+                  >
+                    <div className="daily-mainline-direction-head">
+                      <span>方向 / 原样本</span>
+                      <span>首板</span>
+                      <span>2板</span>
+                      <span>3板+</span>
+                      <span>待核验</span>
+                    </div>
+                    {focus.map((group) => (
+                      <button
+                        key={group.key}
+                        className={`daily-mainline-direction-row${selected?.key === group.key ? " is-selected" : ""}`}
+                        aria-pressed={selected?.key === group.key}
+                        onClick={() => setSelectedKey(`${date}:${group.key}`)}
+                      >
                         <span>
-                          {group.count} 只
-                          {search && group.visible.length !== group.count
-                            ? ` · 匹配 ${group.visible.length} 只`
+                          <strong>{group.name}</strong>
+                          <small>
+                            {group.count} 只
+                            {search && group.visible.length !== group.count
+                              ? ` · 匹配 ${group.visible.length}`
+                              : ""}
+                          </small>
+                          <i
+                            style={{
+                              width: `${(100 * group.count) / Math.max(1, ...focus.map((value) => value.count))}%`,
+                            }}
+                          />
+                        </span>
+                        <b>
+                          {
+                            group.items.filter((item) => item.height === 1)
+                              .length
+                          }
+                        </b>
+                        <b>
+                          {
+                            group.items.filter((item) => item.height === 2)
+                              .length
+                          }
+                        </b>
+                        <b>
+                          {
+                            group.items.filter(
+                              (item) => item.height != null && item.height >= 3,
+                            ).length
+                          }
+                        </b>
+                        <b>
+                          {
+                            group.items.filter((item) => item.height == null)
+                              .length
+                          }
+                        </b>
+                      </button>
+                    ))}
+                    <p className="daily-mainline-caption">
+                      左侧数量保留原方向统计；搜索只影响匹配名单。
+                    </p>
+                  </div>
+                  {selected && (
+                    <section
+                      className="daily-mainline-focus"
+                      key={`${date}:${selected.key}`}
+                    >
+                      <header>
+                        <h3>{selected.name}</h3>
+                        <span>
+                          {selected.count} 只
+                          {search && selected.visible.length !== selected.count
+                            ? ` · 匹配 ${selected.visible.length} 只`
                             : ""}
                         </span>
                       </header>
                       <div className="daily-mainline-focus-body">
                         <p className="daily-mainline-group-height">
-                          {group.maxKnownHeight == null
+                          {selected.maxKnownHeight == null
                             ? "板高信息不足"
-                            : `本方向已核验最高 ${group.maxKnownHeight}板`}
+                            : `本方向已核验最高 ${selected.maxKnownHeight}板`}
                         </p>
                         <ul className="daily-mainline-representatives">
-                          {representatives.map((value) => item(value, true))}
+                          {[...selected.visible]
+                            .sort((a, b) => (b.height || 0) - (a.height || 0))
+                            .slice(0, 2)
+                            .map((value) => item(value, true))}
                         </ul>
-                        {remaining.length > 0 && (
+                        {selected.visible.length > 2 && (
                           <details className="daily-mainline-more-members">
-                            <summary>展开其余 {remaining.length} 只</summary>
+                            <summary>
+                              展开其余 {selected.visible.length - 2} 只
+                            </summary>
                             <ul className="daily-mainline-source-list">
-                              {remaining.map((value) => item(value))}
+                              {[...selected.visible]
+                                .sort(
+                                  (a, b) => (b.height || 0) - (a.height || 0),
+                                )
+                                .slice(2)
+                                .map((value) => item(value))}
                             </ul>
                           </details>
                         )}
                       </div>
                     </section>
-                  );
-                })}
-              </div>
+                  )}
+                </div>
+              )}
               {!plan.groups.length && !search && (
                 <p className="daily-mainline-caption">
                   当日来源尚未形成集中的重点方向，可继续查看下方方向与个股线索。

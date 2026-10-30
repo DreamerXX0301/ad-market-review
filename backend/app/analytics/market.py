@@ -136,7 +136,7 @@ class MarketData:
             if not head: return {'ready':False,'rows':0,'symbols':0,'data_begin':None,'data_end':None,'snapshot_id':None,'quality':'empty'}
             return {**head, 'ready':True, 'path':str(self.data_dir/'published'/head['snapshot_id']), 'manifest':load_json(self.data_dir/'published'/head['snapshot_id']/'manifest.json')}
 
-    def import_audit(self, audit_dir, progress=None):
+    def import_audit(self, audit_dir, progress=None, *, partition_reuse=None):
         source = Path(audit_dir).resolve()
         bundle=load_json(source/'bundle.json',{})
         if bundle.get('source','fuyao')!='fuyao' or bundle.get('price_basis','none')!='none':raise ValueError('此导入器仅接已验收Fuyao未复权股/CNY口径，不混接其他来源')
@@ -199,8 +199,15 @@ class MarketData:
             if partitioned:
                 report('复用历史月份，仅发布变化分片',40)
                 con.read_parquet(str(daily)).create_view('raw_partition_source')
+                reusable={}
+                if partition_reuse is not None:
+                    from .market_storage import reusable_partitions
+                    prior=self.status()
+                    if (prior.get('ready') and prior.get('storage_encoder')==ENCODER_VERSION
+                            and prior.get('algorithm_version')==ALGORITHM):
+                        reusable=reusable_partitions(partition_reuse,raw_sha,root/prior['snapshot_id'],root,con,'raw_partition_source',prior['files'])
                 for relation,role in [('raw_partition_source','raw-daily.parquet'),('normalized','daily.parquet')]:
-                    files,stats=write_partitions(con,relation,role,root,stage,snapshot)
+                    files,stats=write_partitions(con,relation,role,root,stage,snapshot,reusable=reusable.get(role))
                     partition_files.extend(files);storage_stats[role]=stats
         finally:
             con.close()
@@ -941,7 +948,7 @@ class MarketData:
         valid_amount=lambda value:isinstance(value,(int,float)) and not isinstance(value,bool) and isfinite(value) and value>=0
         for symbol in INDEX_NAMES:
             values=sorted((dict(row) for row in self._reference().get('indices',{}).get(symbol,[]) if not as_of or row['date']<=as_of),key=lambda row:row['date'])
-            bars=enrich_bars(values,calendar)
+            bars=enrich_bars(values,calendar,tail=2)
             if not bars:continue
             comparison={'amount_change':None,'amount_previous_date':previous_day,'amount_previous':None,'amount_change_reason':None,'amount_change_scope':'本指数相邻市场交易日原始日K成交额之差，单位CNY；各指数不能相加作为全市场总额'}
             current=[row for row in values if row['date']==as_of]

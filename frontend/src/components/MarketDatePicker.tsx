@@ -9,10 +9,14 @@ export default function MarketDatePicker({
   value,
   dates,
   onChange,
+  onLatest,
+  fixed = false,
 }: {
   value: string;
   dates: string[];
   onChange: (date: string) => void;
+  onLatest?: () => void;
+  fixed?: boolean;
 }) {
   const retained = useMemo(() => retainedMarketDates(dates), [dates]);
   const previous = adjacentMarketDate(retained, value, -1),
@@ -39,6 +43,9 @@ export default function MarketDatePicker({
         title="盘面观察日"
         help="仅改变盘面研究，策略与跟踪保持独立"
         shortcut={{ label: "回到最新", date: newest }}
+        onShortcut={onLatest}
+        shortcutActive={fixed}
+        selectCurrent
       />
       <button
         type="button"
@@ -55,8 +62,8 @@ export default function MarketDatePicker({
         className="market-date-step market-date-latest"
         aria-label="回到最新交易日"
         title={newest ? `回到最新交易日 ${newest}` : "暂无已留存交易日"}
-        disabled={!newest || value === newest}
-        onClick={() => newest && onChange(newest)}
+        disabled={!newest || (value === newest && !fixed)}
+        onClick={() => newest && (onLatest ? onLatest() : onChange(newest))}
       >
         <RotateCcw size={13} />
       </button>

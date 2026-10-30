@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.gzip import GZipMiddleware
 from app.core import APP_NAME,APP_ID,APP_VERSION,PROJECT_ROOT,ensure_ready
 from app.routers import platform,workspace,backtests,watchlist,chart_annotations,market_mainlines,market_sentiment_snapshots,dragon_tiger,noon,auction,automatic_tasks
+from app.routers import zodiac
 from app.services.supplement_access import SupplementWriteMiddleware
 from app.services.increment_access import IncrementWorkbenchMiddleware
 
@@ -31,6 +32,7 @@ app.include_router(platform.router)
 app.include_router(workspace.router)
 app.include_router(backtests.router)
 app.include_router(watchlist.router)
+app.include_router(zodiac.router)
 app.include_router(chart_annotations.router)
 
 @app.get('/health',include_in_schema=False)

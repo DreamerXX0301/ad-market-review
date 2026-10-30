@@ -1,3 +1,4 @@
+import CollectionEstimate from "./CollectionEstimate";
 import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import { api, post } from "../lib/api";
@@ -274,9 +275,6 @@ export default function AuctionProgressContent({
   value: ReturnType<typeof useAuctionRunProgress>;
 }) {
   const { session, data, error, retry } = value;
-  const [busy, setBusy] = useState("");
-  const [controlError, setControlError] = useState("");
-  const inFlight = useRef(false);
   const progress =
     typeof data?.progress === "number" &&
     Number.isFinite(data.progress) &&
@@ -286,27 +284,11 @@ export default function AuctionProgressContent({
       : null;
   const waiting = data?.status === "waiting_retry";
   const run = data?.automatic_run;
-  const taskId = session?.taskId;
   const retrySeconds =
     typeof run?.retry_after_at_ms === "number" &&
     Number.isFinite(run.retry_after_at_ms)
       ? Math.max(0, Math.ceil((run.retry_after_at_ms - Date.now()) / 1000))
       : null;
-  async function control(action: "pause" | "cancel") {
-    if (!taskId || inFlight.current) return;
-    inFlight.current = true;
-    setBusy(action);
-    setControlError("");
-    try {
-      await post(`/tasks/${encodeURIComponent(taskId)}/${action}`);
-      retry();
-    } catch (cause: any) {
-      setControlError(cause.message || "操作未完成，仍保留任务进度。");
-    } finally {
-      inFlight.current = false;
-      setBusy("");
-    }
-  }
   return (
     <>
       <header>
@@ -335,6 +317,7 @@ export default function AuctionProgressContent({
           </span>
         </div>
       )}
+      <CollectionEstimate estimate={data?.estimate} />
       <div className="increment-progress-current" aria-live="polite">
         <div className="increment-progress-stage-heading">
           <strong>
@@ -355,9 +338,9 @@ export default function AuctionProgressContent({
         max={100}
         {...(waiting || progress == null ? {} : { value: progress })}
       />
-      {(error || controlError) && (
+      {error && (
         <div className="increment-progress-error" role="alert">
-          {controlError || error}
+          {error}
           <button className="btn small" onClick={retry}>
             <RefreshCw size={14} />
             重新读取
@@ -365,28 +348,8 @@ export default function AuctionProgressContent({
         </div>
       )}
       <p className="increment-progress-result">
-        沿用已提交的同日原任务，不重复采集；暂停或取消后不自动继续。来源未就绪的旧数值不会当作结果。
+        沿用已提交的同日原任务，不重复采集；不提供暂停或取消，避免误触。来源未就绪的旧数值不会当作结果。
       </p>
-      {taskId &&
-        ["queued", "running", "waiting_retry"].includes(data?.status) && (
-          <footer className="increment-progress-controls">
-            <span>等待有效结果；可以显式停止本次采集。</span>
-            <button
-              className="btn"
-              disabled={!!busy}
-              onClick={() => control("pause")}
-            >
-              {busy === "pause" ? "正在暂停…" : "暂停本次采集"}
-            </button>
-            <button
-              className="btn"
-              disabled={!!busy}
-              onClick={() => control("cancel")}
-            >
-              {busy === "cancel" ? "正在取消…" : "取消本次采集"}
-            </button>
-          </footer>
-        )}
     </>
   );
 }

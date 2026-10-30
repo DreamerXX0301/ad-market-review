@@ -4,6 +4,8 @@
 
 ## HTTP
 
+前端默认日期及跨页规则见[页面与日期域](frontend-needs.md#页面与日期域)：未主动选择时午评默认服务端今天，基础行情默认最新已发布日；手动历史选择共用并保留，历史提示醒目显示。当日缺失不回退，切日仍须核对响应、快照与正文日期。
+
 - `GET /api/v1/market/noon?date=YYYY-MM-DD`：本地只读。缺省今天。返回`date,today,now,capture_window,can_capture,locked_for_day,state,task,snapshot,available_dates,retention`。`state`为`not_collected/queued/running/paused/failed/cancelled/available/purged`。`task`使用现有任务摘要字段；`snapshot`可空，有值时含`snapshot_id,date,collected_start_at,collected_end_at,recorded_at_ms,quality,content_sha256,payload,membership_context,prior_event_context,workbench`。后三项为独立证据或版本化只读派生展示，不属于原始正文及其SHA。
 - `POST /api/v1/market/noon/jobs`：只接受`date,request_key`。同一请求重放返回原任务；其他请求在当天已有台账时409。新任务仅允许今天11:31至13:00前；API只核验时间/星期/配置/初始化，精确交易日由worker读取来源日历验证。成功响应为现有task_view（含task_id）。
 - `GET /api/v1/market/noon/dates`：永久小台账日期列表，含state/清理状态，不读正文和原件。供午评页合并盘面观察日期；不扩大策略/回测日期范围。

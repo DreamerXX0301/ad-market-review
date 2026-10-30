@@ -14,6 +14,8 @@
 
 逐股图表读者的固定代际只读连接限定为 `:memory:`，由实例原有可重入锁串行执行；只开启Parquet元信息缓存，关闭外部文件页缓存。连接随代际切换、显式关闭、全行情Arrow缓存接管或查询失败释放。轻清单结构最多缓存64份，每次仍检查实际分片签名和目录/文件符号链接；字节签名改变时重新核验SHA，不能因连接或清单缓存隐去来源篡改。
 
+唯一 worker 的原始行情合并可生成仅在进程内传递的 `MergePartitionProof`，绑定合并文件SHA、合并前后逐个核验的旧原始对象SHA及新增/修订月份。合并过程中实际来源改变则拒绝发布。不得从任务参数、检查点或用户导入JSON反序列化此凭证。导入还须核验前代编码器/算法、已发布清单SHA、完整对象闭包及原始列类型；只有未变化月份的行数和起止日也完全相同，才跳过该月 COPY、直接引用原对象。历史修订与窗口裁剪仍重写受影响月份；无凭证、旧布局、类型变化、清单损坏或复用核验失败均走原完整写入路径。编码、行序、压缩等级与清单格式不变，不削减指标种子或来源保留范围。`storage_write` 的行情角色增加 `encoded_partition_count` 和 `reused_without_encoding_count` 计数，临时少写的字节不等于最终磁盘新增节省。
+
 `daily.manifest.json` 的 `version=market-partitions-v1`，包含 role、rows、data_begin/data_end 和有序 partitions；每个分片保存 month、object_key、SHA、bytes、rows、日期边界。路径必须精确对应内容地址；同角色内月份不能重复或失序。查询支持 legacy 字符串路径及固定清单解析后的路径数组，不跟随另一个代际的 head。
 
 `reference.json` 的 `storage_version=market-reference-parts-v2`。证券目录以列对象和明确证券键保存，重复的上市日期继承证据共享同值；四个指数日K按月保存；其他字段按内容对象保存。重建后的字段、值、缺失与 null 和原参考资料相同，不删除来源属性。兼容早期 `market-reference-parts-v1` 和未分片的普通 JSON。参考来源的前代 ID 是审计血缘，不等于求值时需要读取其文件；真正可读依赖以当前对象闭包和业务快照依赖为准。

@@ -65,6 +65,11 @@ playwright-report/
 !/docs/午评快照.md
 !/docs/盘前竞价.md
 !/docs/今日划线提醒.md
+!/docs/生肖跟踪模块设计.md
+!/docs/第三方组件说明.md
+!/docs/third-party/
+/docs/third-party/*
+!/docs/third-party/pypinyin-MIT.txt
 !/docs/自动午评与盘后复盘.md
 !/docs/炸板结构与后续反馈.md
 !/docs/research/

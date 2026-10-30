@@ -8,7 +8,7 @@ const encode = (value) => "data:text/javascript;base64," + Buffer.from(value).to
 const react = import.meta.resolve("react"), runtime = import.meta.resolve("react/jsx-runtime");
 const reactProbe = encode(`import * as React from ${JSON.stringify(react)}; export * from ${JSON.stringify(react)};
 let cursor=0,states={};export function setStates(value){cursor=0;states=value;}
-export function useState(initial){const index=cursor++;return React.useState(Object.hasOwn(states,index)?states[index]:initial);}`);
+export function useState(initial){const index=cursor++;return React.useState(Object.hasOwn(states,index)?states[index]:initial==="focus"&&states.auctionScope?states.auctionScope:initial);}`);
 const apiProbe = encode(`let packet=null,close=null,automatic=null,topics=null,feedback=null,resonance=null;export const requests=[];export function setData(value,review,settings=null,topicView=null,feedbackView=null,resonanceView=null){packet=value;close=review;automatic=settings;topics=topicView;feedback=feedbackView;resonance=resonanceView;requests.length=0;}
 export const usePageActive=()=>true;export function useApi(path){requests.push(path);return{data:path?.startsWith('/market/auction?')?packet:path?.startsWith('/market/auction/close-review?')?close:path==='/market/auction/automation'?automatic:path?.startsWith('/market/auction/topic-summary?')?topics:path?.startsWith('/market/auction/feedback?')?feedback:path?.startsWith('/market/auction/resonance?')?resonance:null,loading:false,error:'',reload(){}};}
 export function api(){throw Error('Rendering never reads outside useApi');}export function post(){throw Error('Page rendering must not submit a source task');}export const requestKey=()=> 'fixture-request';`);
@@ -36,7 +36,9 @@ const { setData, requests } = await import(apiProbe), { setStates } = await impo
 const day='2026-10-29';
 const original={date:'2026-10-28',state:'retained',recorded_at_ms:Date.parse('2026-10-28T20:00:00+08:00'),summary:['原留存氛围'],payload:{atmosphere:{summary:'原留存氛围'}},observations:[{instrument_id:'600001.SH',name:'合成观察甲',mainline:'昨日原线',latest_price:9999,reason:'午间临时缺报不应显示'}],mainlines:[{date:'2026-10-28',instrument_id:'600001.SH',display_mainline:'昨日原线',recorded_at_ms:Date.parse('2026-10-28T19:00:00+08:00'),attributions:[{user_note:'昨日我的原判断',source_reason:'昨日来源转述',source_name:'合成来源'}]}]};
 const view={date:day,today:day,now:day+'T09:00:00+08:00',state:'not_collected',can_capture:false,capture_window:{allowed:false,reason:'请在09:25后手动采集'}};
-function render(packet,states={},close=null,automatic=null,observedDate=day,topics=null,feedback=null,resonance=null){setData(packet,close,automatic,topics,feedback,resonance);setStates(states);return renderToStaticMarkup(createElement(AuctionReview,{date:observedDate,onDate(){},onStock(){},chartDate:'2026-10-28'})).replaceAll(/<!--[^]*?-->/g,'');}
+// These legacy one/two-stock fixtures exercise the full association view.
+// Focus-mode folding is covered separately by presentation and browser checks.
+function render(packet,states={},close=null,automatic=null,observedDate=day,topics=null,feedback=null,resonance=null){setData(packet,close,automatic,topics,feedback,resonance);setStates({auctionScope:"all",...states});return renderToStaticMarkup(createElement(AuctionReview,{date:observedDate,onDate(){},onStock(){},chartDate:'2026-10-28'})).replaceAll(/<!--[^]*?-->/g,'');}
 let html=render(view);
 assert.match(html,/自动竞价尚未开启/);
 assert.doesNotMatch(html,/样本竞价涨幅中位数|昨日我的原判断/,'empty view cannot invent any snapshot statistics or prior text');
@@ -110,7 +112,7 @@ assert.match(html,/服务自动竞价：已开启/,'global schedule remains toda
 assert.doesNotMatch(html,/已安排今天的自动竞价/,'historical snapshot must not be labeled as today scheduled run');
 const topics={version:'auction-topic-summary-v1',date:day,state:'observed',coverage:{requested:2,classified:2,unclassified:0},groups:[{topic_code:'886001.TI',name:'合成题材甲',kind:'concept',source:'fuyao',members_observed_date:'2026-10-21',sample_count:2,valid_count:2,missing_count:0,average_auction_pct:1.5,instrument_ids:['600001.SH','000001.SZ']}]};
 html=render(retained,{},null,null,day,topics);
-assert.match(html,/题材数量与均幅/);
+assert.match(html,/竞价板块与个股/);
 assert.match(html,/合成题材甲/);
 assert.match(html,/竞价均幅/);
 assert.match(html,/\+1\.50%/);
@@ -133,11 +135,15 @@ assert.match(html,/昨日3板/);
 console.log('Actual auction page: honest empty/preparation states, original judgment versus source text, missing/zero, lazy posthoc read and date isolation passed');
 
 const resonance={version:'auction-resonance-v1',date:day,strong_sample:{count:20,valid_count:100},groups:[{topic_code:'886001.TI',name:'合成共振题材',kind:'concept',source:'fuyao',members_observed_date:'2026-10-21',sample_count:5,valid_count:5,top_count:3,concentration_lift:3,up_count:4,up_ratio:.8,average_auction_pct:2,median_auction_pct:1.5,top_instrument_ids:['600001.SH']}],anchors:{state:'unknown'}};
-html=render(retained,{},null,null,day,null,null,resonance);
+const joinedTopics={...topics,source_snapshot_id:'auction-proof',source_sha256:'original-proof',groups:[{...topics.groups[0],name:'合成共振题材'}]};
+const joinedResonance={...resonance,source_snapshot_id:'auction-proof',source_sha256:'original-proof'};
+html=render(retained,{},null,null,day,joinedTopics,null,joinedResonance);
 assert.match(html,/合成共振题材/);
-assert.match(html,/3.00倍/);
-assert.match(html,/80%/);
-assert.match(html,/今日快照缺少涨停价与一字证据/);
+assert.match(html,/3.00×/);
+assert.match(html,/80.00%/);
+assert.match(html,/今日一字状态未核验/);
+assert.match(html,/同题材跟随观察/);
+assert.match(html,/按昨日最高排序/);
 html=render(retained,{},null,null,day,null,null,{...resonance,date:'2026-10-28'});
 assert.doesNotMatch(html,/合成共振题材/,'resonance response cannot cross dates');
 
@@ -185,7 +191,7 @@ for(const direction of ['asc','desc']){
 }
 html=render(retained,{},null,null,day,classifiedTopics,feedback,resonance);
 assert.match(html,/aria-label="盘前竞价页内目录"/);
-for(const id of ['auction-overview','auction-automation','auction-feedback','auction-previous','auction-low-open','auction-resonance','auction-topics','auction-observation','auction-benchmark','auction-close-review']){
+for(const id of ['auction-overview','auction-automation','auction-feedback','auction-previous','auction-low-open','auction-topics','auction-observation','auction-benchmark','auction-close-review']){
  assert.match(html,new RegExp('aria-controls="'+id+'"'));assert.match(html,new RegExp('id="'+id+'"'));
 }
 const technicalView={...retained,snapshot:{...retained.snapshot,content_sha256:'a'.repeat(64),evidence_count:3,payload:{...payload,sources:[{name:'snapshot',sha256:'b'.repeat(64),requested_at:day+'T09:25:10+08:00',received_at:day+'T09:25:11+08:00'}]}}};

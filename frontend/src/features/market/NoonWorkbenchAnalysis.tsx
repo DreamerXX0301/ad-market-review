@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import CopyStockCode from "../../components/CopyStockCode";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -21,6 +21,8 @@ import { noonSortRows } from "./noonQuotePresentation";
 import { NoonBoardTag } from "./NoonBoardFilter";
 import { noonFilterBoards } from "./noonBoardPresentation";
 import type { NoonBoardFilterValue } from "./noonBoardPresentation";
+import NoonSectorDialog from "./NoonSectorDialog";
+import { noonSectorEndpoint } from "./noonSectorPresentation";
 import "./NoonWorkbenchAnalysis.css";
 
 type StockProps = {
@@ -30,6 +32,7 @@ type StockProps = {
 };
 type SectorProps = {
   onSector?: (row: Row, view?: "chart" | "members") => void;
+  snapshotId?: string;
 };
 const sourceReason = (row: Row) =>
   typeof row.limit_up_reason === "string" && row.limit_up_reason.trim()
@@ -1038,7 +1041,15 @@ function SectorTable({
   label,
   compare = false,
   onSector,
-}: { rows: Row[]; label: string; compare?: boolean } & SectorProps) {
+  selected,
+  onSelect,
+}: {
+  rows: Row[];
+  label: string;
+  compare?: boolean;
+  selected: Row | undefined;
+  onSelect: (row: Row) => void;
+} & SectorProps) {
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<SortOrder>({
     key: "change_pct",
@@ -1056,26 +1067,9 @@ function SectorTable({
     ...(rows.some((row) => sectorLimitUpText(row) !== "—")
       ? [{ key: "member_limit_up_count", label: "样本涨停" }]
       : []),
-    ...(compare
-      ? rows.some((row) => row.state && row.state !== "unknown")
-        ? [{ key: "state", label: "跨日表现", text: true }]
-        : []
-      : rows.some(
-            (row) =>
-              noonNumber(row.member_up) != null ||
-              noonNumber(row.member_down) != null,
-          )
-        ? [{ key: "member_up", label: "已留存成员上涨 / 下跌" }]
-        : []),
   ];
   const ordered = noonSortRows(rows, sort.key, sort.direction, (row, key) =>
-    key === "name"
-      ? row.name || row.instrument_id
-      : key === "state"
-        ? row.state === "unknown"
-          ? null
-          : noonDirectionState(row.state)
-        : noonNumber(row[key]),
+    key === "name" ? row.name || row.instrument_id : noonNumber(row[key]),
   );
   const visible = noonFeedbackPage(ordered, page);
   const selectSort = (key: string) => {
@@ -1105,7 +1099,12 @@ function SectorTable({
           </thead>
           <tbody>
             {(compare ? visible.rows : ordered).map((row, index) => (
-              <tr key={row.instrument_id || index}>
+              <tr
+                key={row.instrument_id || index}
+                aria-selected={row === selected}
+                className={row === selected ? "selected" : ""}
+                onClick={() => onSelect(row)}
+              >
                 {columns.map((column) => {
                   const key = column.key;
                   return (
@@ -1121,30 +1120,37 @@ function SectorTable({
                     >
                       {key === "name" ? (
                         <>
-                          {onSector ? (
-                            <div className="noon-sector-actions">
+                          <div className="noon-sector-actions">
+                            {onSector ? (
                               <button
                                 type="button"
                                 className="noon-sector-link"
                                 title="查看该来源板块K线"
                                 aria-label={`查看${row.name || row.instrument_id}板块K线`}
-                                onClick={() => onSector(row, "chart")}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onSector(row, "chart");
+                                }}
                               >
                                 {row.name || row.instrument_id}
                               </button>
-                              <button
-                                type="button"
-                                className="noon-sector-link noon-sector-members-chip"
-                                aria-label={`查看${row.name || row.instrument_id}成分股`}
-                                title="查看该来源板块成分股"
-                                onClick={() => onSector(row, "members")}
-                              >
-                                成分股
-                              </button>
-                            </div>
-                          ) : (
-                            row.name || row.instrument_id
-                          )}
+                            ) : (
+                              <span>{row.name || row.instrument_id}</span>
+                            )}
+                            <button
+                              type="button"
+                              className="noon-sector-link noon-sector-members-chip"
+                              aria-label={`查看${row.name || row.instrument_id}成分股`}
+                              title="在右侧查看该来源板块成分股"
+                              aria-pressed={row === selected}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onSelect(row);
+                              }}
+                            >
+                              成分股
+                            </button>
+                          </div>
                           <small>
                             {row.kind === "industry"
                               ? "行业"
@@ -1156,42 +1162,8 @@ function SectorTable({
                         </>
                       ) : key.includes("change_pct") ? (
                         percent(noonNumber(row[key]))
-                      ) : key === "member_limit_up_count" ? (
-                        sectorLimitUpText(row)
-                      ) : key === "state" ? (
-                        row.state === "unknown" ? (
-                          "—"
-                        ) : (
-                          noonDirectionState(row.state)
-                        )
                       ) : (
-                        <>
-                          <span
-                            className={
-                              noonNumber(row.member_up) == null
-                                ? undefined
-                                : "up"
-                            }
-                          >
-                            {integer(noonNumber(row.member_up))}
-                          </span>{" "}
-                          /{" "}
-                          <span
-                            className={
-                              noonNumber(row.member_down) == null
-                                ? undefined
-                                : "down"
-                            }
-                          >
-                            {integer(noonNumber(row.member_down))}
-                          </span>
-                          <small>
-                            名单日 {row.members_observed_date || "未核验"} ·
-                            有效{" "}
-                            {integer(noonNumber(row.member_coverage?.valid))} /{" "}
-                            {integer(noonNumber(row.member_coverage?.total))}
-                          </small>
-                        </>
+                        sectorLimitUpText(row)
                       )}
                     </td>
                   );
@@ -1236,46 +1208,237 @@ function SectorTable({
     </>
   );
 }
-function Directions({
+export function NoonDirections({
   value,
   onSector,
+  snapshotId,
   ...stockProps
 }: StockProps & SectorProps & { value: Row }) {
   const watched = noonRows(value.watched);
+  const modes = [
+    ["current_leaders", "本次领涨方向"],
+    ["current_laggards", "本次偏弱方向"],
+    ["comparison", "板块跨日对照"],
+  ] as const;
+  const [mode, setMode] = useState<string>("current_leaders");
+  const [kind, setKind] = useState("all");
+  const [query, setQuery] = useState("");
+  const [selection, setSelection] = useState("");
+  const detailRef = useRef<HTMLElement>(null);
+  const scope = `${snapshotId || ""}:${mode}:${kind}:${query}`;
+  const identity = (row: Row) =>
+    `${row.kind}:${row.instrument_id || row.topic_code}`;
+  const rows = noonSortRows(
+    noonRows(value[mode]).filter(
+      (row) =>
+        (kind === "all" || row.kind === kind) &&
+        `${row.name || ""} ${row.instrument_id || row.topic_code || ""}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase()),
+    ),
+    "change_pct",
+    mode === "current_laggards" ? "asc" : "desc",
+    (row, key) => noonNumber(row[key]),
+  );
+  const selected =
+    rows.find((row) => selection === `${scope}:${identity(row)}`) || rows[0];
+  const code = selected?.topic_code || selected?.instrument_id;
+  const canReadMembers =
+    !!selected &&
+    !!snapshotId &&
+    ["industry", "concept"].includes(selected.kind) &&
+    !(
+      selected.topic_code &&
+      selected.instrument_id &&
+      selected.topic_code !== selected.instrument_id
+    ) &&
+    !!noonSectorEndpoint(snapshotId, code);
+  const selectRow = (row: Row) => {
+    setSelection(`${scope}:${identity(row)}`);
+    const detail = detailRef.current;
+    detail?.scrollTo({ top: 0 });
+    if (
+      detail &&
+      detail.parentElement &&
+      detail.getBoundingClientRect().width >
+        detail.parentElement.getBoundingClientRect().width * 0.9
+    )
+      detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
   return (
     <Panel
       title="主线与板块对照"
-      subtitle="同代码指数表现与昨日原关注分别列示，不按同名或当前成员回填昨日"
+      subtitle="左侧选方向，右侧看午间成分股；点击板块名称查看K线"
     >
-      <div className="noon-direction-grid">
-        <section>
-          <h3>本次领涨方向</h3>
+      <div className="noon-direction-controls">
+        <div className="segmented" role="group" aria-label="午间板块观察方式">
+          {modes.map(([key, label]) => (
+            <button
+              type="button"
+              key={key}
+              className={mode === key ? "active" : ""}
+              aria-pressed={mode === key}
+              onClick={() => setMode(key)}
+            >
+              {label}
+              <span>{noonRows(value[key]).length}</span>
+            </button>
+          ))}
+        </div>
+        <div className="noon-direction-filters">
+          <div className="segmented" role="group" aria-label="午间方向类型">
+            {[
+              ["all", "全部"],
+              ["industry", "行业"],
+              ["concept", "概念"],
+            ].map(([key, label]) => (
+              <button
+                type="button"
+                key={key}
+                className={kind === key ? "active" : ""}
+                aria-pressed={kind === key}
+                onClick={() => setKind(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <input
+            className="search-input"
+            aria-label="搜索午间板块"
+            placeholder="板块名称 / 代码"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {query && (
+            <button
+              className="btn small"
+              type="button"
+              onClick={() => setQuery("")}
+            >
+              清除搜索
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="noon-direction-explorer">
+        <section className="noon-direction-ranking" aria-label="午间板块榜单">
+          <div className="noon-direction-heading">
+            <h3>{modes.find(([key]) => key === mode)?.[1]}</h3>
+            <Badge>{rows.length} 个方向</Badge>
+          </div>
+          <Note>
+            {mode === "comparison"
+              ? `同来源代码 · 前日 ${value.previous_date || "待核验"}`
+              : "行业、概念各取本份快照前三项"}{" "}
+            · 点行看成分股
+          </Note>
           <SectorTable
-            rows={noonRows(value.current_leaders)}
-            label="本次领涨方向"
+            key={scope}
+            rows={rows}
+            label={modes.find(([key]) => key === mode)?.[1] || "午间板块"}
+            compare={mode === "comparison"}
             onSector={onSector}
+            selected={selected}
+            onSelect={selectRow}
           />
         </section>
-        <section>
-          <h3>本次偏弱方向</h3>
-          <SectorTable
-            rows={noonRows(value.current_laggards)}
-            label="本次偏弱方向"
-            onSector={onSector}
-          />
+        <section
+          className="noon-direction-detail"
+          aria-label="所选午间方向与成员"
+          ref={detailRef}
+        >
+          <div className="noon-direction-heading">
+            <div>
+              <h3>{selected?.name || selected?.instrument_id || "方向展开"}</h3>
+              <small>
+                {selected
+                  ? `${selected.kind === "industry" ? "行业" : selected.kind === "concept" ? "概念" : "分类待核验"} · ${code || "代码未核验"}`
+                  : "选中左侧方向查看本份午间成员"}
+              </small>
+            </div>
+            {selected && onSector && (
+              <button
+                className="btn small"
+                type="button"
+                onClick={() => onSector(selected, "chart")}
+              >
+                板块K线
+              </button>
+            )}
+          </div>
+          {selected ? (
+            <>
+              <div className="noon-direction-metrics">
+                <span>
+                  午间涨幅{" "}
+                  <b className={tone(noonNumber(selected.change_pct))}>
+                    {percent(noonNumber(selected.change_pct))}
+                  </b>
+                </span>
+                <span
+                  title={
+                    selected.member_limit_up_reason ||
+                    "成员涨停样本或覆盖范围尚未核验"
+                  }
+                >
+                  样本涨停 <b>{sectorLimitUpText(selected)}</b>
+                </span>
+                <span>
+                  成员上涨 / 下跌{" "}
+                  <b className="up">
+                    {integer(noonNumber(selected.member_up))}
+                  </b>{" "}
+                  /{" "}
+                  <b className="down">
+                    {integer(noonNumber(selected.member_down))}
+                  </b>
+                </span>
+                {mode === "comparison" && (
+                  <>
+                    <span>
+                      前日收盘涨幅{" "}
+                      <b
+                        className={tone(
+                          noonNumber(selected.previous_change_pct),
+                        )}
+                      >
+                        {percent(noonNumber(selected.previous_change_pct))}
+                      </b>
+                    </span>
+                    <span>
+                      跨日表现 <b>{noonDirectionState(selected.state)}</b>
+                    </span>
+                  </>
+                )}
+              </div>
+              <Note>
+                名单日 {selected.members_observed_date || "未核验"} · 有效{" "}
+                {integer(noonNumber(selected.member_coverage?.valid))} /{" "}
+                {integer(noonNumber(selected.member_coverage?.total))}
+                ；成员缺档不影响板块自身报价。
+              </Note>
+              {canReadMembers ? (
+                <NoonSectorDialog
+                  key={`${snapshotId}:${identity(selected)}`}
+                  topic={{ ...selected, topic_code: code }}
+                  snapshotId={snapshotId!}
+                  embedded
+                  onStock={stockProps.onStock}
+                />
+              ) : (
+                <p className="noon-unknown">
+                  未取得本份午评身份或明确来源代码，成分股暂不可用。
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="noon-unknown">
+              当前范围没有匹配方向，可切换榜单、类型或清除搜索。
+            </p>
+          )}
         </section>
       </div>
-      <details className="noon-details" open>
-        <summary>
-          同来源代码跨日对照 · 前日 {value.previous_date || "待核验"}
-        </summary>
-        <SectorTable
-          rows={noonRows(value.comparison)}
-          label="板块跨日对照"
-          compare
-          onSector={onSector}
-        />
-      </details>
       {watched.length > 0 && (
         <div className="noon-watched-groups">
           {watched.map((row, index) => (
@@ -1416,6 +1579,7 @@ function PreviousCloseFeedback({
 export default function NoonWorkbenchAnalysis({
   workbench,
   onSector,
+  snapshotId,
   ...stockProps
 }: StockProps & SectorProps & { workbench: Row | null | undefined }) {
   if (!workbench || workbench.version !== "noon-workbench-v1")
@@ -1439,9 +1603,11 @@ export default function NoonWorkbenchAnalysis({
         <TodayLadder value={workbench.today_ladder || {}} {...stockProps} />
       </section>
       <section id="noon-directions">
-        <Directions
+        <NoonDirections
+          key={snapshotId}
           value={workbench.directions || {}}
           onSector={onSector}
+          snapshotId={snapshotId}
           {...stockProps}
         />
       </section>

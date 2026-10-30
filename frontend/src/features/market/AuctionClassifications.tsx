@@ -5,17 +5,20 @@ import { percent, tone } from "../../lib/format";
 import { auctionNumber } from "./auctionPresentation";
 import { noonRows } from "./noonPresentation";
 import AuctionCopyText from "./AuctionCopyText";
+import { isAuctionGeneralAttribute } from "./auctionExplorerPresentation";
 
 export default function AuctionClassifications({
   view,
   date,
   instrumentId,
   compact = false,
+  focusGroup,
 }: {
   view: Row | null;
   date: string;
   instrumentId: string;
   compact?: boolean;
+  focusGroup?: Row;
 }) {
   const [opened, setOpened] = useState("");
   const identity = `${date}:${instrumentId}`;
@@ -32,9 +35,20 @@ export default function AuctionClassifications({
   function average(row: Row, kind: string) {
     return groups.get(`${row.source}:${kind}:${row.topic_code}`);
   }
+  function priority(row: Row, kind: string) {
+    if (!focusGroup) return 0;
+    if (
+      focusGroup.source === row.source &&
+      focusGroup.kind === kind &&
+      focusGroup.topic_code === row.topic_code
+    )
+      return 0;
+    return isAuctionGeneralAttribute({ ...row, kind }) ? 2 : 1;
+  }
   const related = (values: unknown, kind: string) =>
     noonRows(values).sort(
       (a, b) =>
+        priority(a, kind) - priority(b, kind) ||
         (average(b, kind)?.sample_count || 0) -
           (average(a, kind)?.sample_count || 0) ||
         String(a.name).localeCompare(String(b.name)),
@@ -46,6 +60,7 @@ export default function AuctionClassifications({
       .filter((row) => typeof row.name === "string" && row.name.trim())
       .sort(
         (a, b) =>
+          priority(a, kind) - priority(b, kind) ||
           (average(b, kind)?.sample_count || 0) -
             (average(a, kind)?.sample_count || 0) ||
           String(a.name).localeCompare(String(b.name)),
@@ -84,7 +99,10 @@ export default function AuctionClassifications({
           {rows.slice(0, count).map(chip)}
           {rows.length > count && (
             <details className="auction-affiliations-more">
-              <summary>+{rows.length - count}</summary>
+              <summary>
+                {focusGroup ? "其余 " : "+"}
+                {rows.length - count}
+              </summary>
               <div>{rows.slice(count).map(chip)}</div>
             </details>
           )}

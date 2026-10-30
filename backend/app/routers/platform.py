@@ -1,7 +1,7 @@
 """Platform HTTP endpoints; all data and job behavior lives in services."""
 from fastapi import APIRouter,Body,HTTPException,Query
 from fastapi.responses import JSONResponse
-from app.core import APP_NAME,APP_ID,json_clean
+from app.core import APP_NAME,APP_ID,json_clean,connect
 from app.services import platform_service,market_service,task_service,source_service,research_service,workspace_automation
 from app.adapters.public_fund_budget import FUND_REQUEST_BUDGET_VERSION
 
@@ -31,10 +31,11 @@ def market_topic_members(date:str|None=None,topic_id:str|None=Query(None,max_len
     return market_service.market_topic_members(date,topic_id=topic_id,source_code=source_code,kind=kind,source_name=source_name)
 
 @router.get('/market/sector-chart')
-def sector_chart(topic_code:str=Query(...,max_length=30),date:str|None=None,period:str=Query('D',pattern='^(D|W|M)$')):
+def sector_chart(topic_code:str=Query(...,max_length=30),date:str|None=None,period:str=Query('D',pattern='^(D|W|M)$'),encoding:str=Query('rows',pattern='^(rows|columns-v1)$')):
     from app.services.sector_chart_jobs import chart_view
     market,_,day=market_service.context(date)
-    return JSONResponse(json_clean(chart_view(market,topic_code,day,period)))
+    from app.services.chart_transport import chart_payload
+    return JSONResponse(chart_payload(chart_view(market,topic_code,day,period),encoding))
 
 @router.post('/market/sector-chart/jobs')
 def sector_chart_create(payload:dict=Body(...)):
@@ -75,12 +76,13 @@ def topic_hotspots(limit:int=Query(8,ge=1,le=20)):
     return json_clean(list_hot_topics(limit=limit))
 
 @router.get('/instruments/{instrument_id}/chart')
-def chart(instrument_id:str,period:str='D',as_of:str|None=None,price_basis:str='none',indicator_continuity:str=Query('quotes',pattern='^(quotes|market_sessions)$')):
+def chart(instrument_id:str,period:str='D',as_of:str|None=None,price_basis:str='none',indicator_continuity:str=Query('quotes',pattern='^(quotes|market_sessions)$'),encoding:str=Query('rows',pattern='^(rows|columns-v1)$')):
     from app.services.chart_limits import enrich_chart_limits
     market,_,_=market_service.context(as_of)
     result=market.chart(instrument_id,period,as_of,price_basis,indicator_continuity=indicator_continuity)
     if not result['bars']:raise HTTPException(404,'该标的没有已留存K线')
-    return JSONResponse(json_clean(enrich_chart_limits(market,result)))
+    from app.services.chart_transport import chart_payload
+    return JSONResponse(chart_payload(enrich_chart_limits(market,result),encoding))
 
 @router.get('/instruments/{instrument_id}/summary')
 def instrument_summary(instrument_id:str,as_of:str|None=None):
@@ -169,8 +171,7 @@ def sync_session_acknowledge(payload:dict=Body(...)):
 
 @router.post('/sync/session/control')
 def sync_session_control(payload:dict=Body(...)):
-    from app.services.sync_progress import control
-    return json_clean(control(task_id=payload.get('task_id'),action=payload.get('action'),epoch=payload.get('session_epoch')))
+    raise HTTPException(409, '盘后增量不提供暂停或取消，请等待本次任务结束后确认结果')
 
 @router.get('/tasks/{task_id}')
 def task(task_id:str,after_seq:int=Query(0,ge=0)):
@@ -185,6 +186,11 @@ def task(task_id:str,after_seq:int=Query(0,ge=0)):
 @router.post('/tasks/{task_id}/{action}')
 def task_action(task_id:str,action:str):
     if action not in ('pause','resume','cancel','retry'):raise HTTPException(404,'任务操作不存在')
+    from app.services.collection_controls import require_interactive_action
+    with connect() as connection:
+        row = connection.execute('SELECT * FROM job WHERE job_id=?', (task_id,)).fetchone()
+        if row is not None:
+            require_interactive_action(connection, row, action)
     return task_service.change_task(task_id,action)
 
 @router.post('/sync/tasks')

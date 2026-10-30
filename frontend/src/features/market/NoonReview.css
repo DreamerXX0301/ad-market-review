@@ -1,5 +1,12 @@
 .noon-workbench {
-  gap: 16px;
+  gap: 18px;
+}
+.noon-workbench .panel-head p {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.noon-workbench .panel-head h2 {
+  font-size: 15px;
 }
 .noon-quick-navigation {
   position: fixed;
@@ -153,7 +160,15 @@
 }
 .noon-page-head {
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: linear-gradient(
+    115deg,
+    color-mix(in srgb, var(--blue) 10%, var(--surface)),
+    var(--surface) 70%
+  );
 }
 .noon-page-head h1 {
   margin: 3px 0 6px;
@@ -174,7 +189,7 @@
 }
 .noon-head-actions {
   justify-content: flex-end;
-  padding-top: 9px;
+  padding-top: 0;
 }
 .noon-scope-strip {
   padding: 10px 13px;
@@ -199,6 +214,8 @@
   color: var(--amber);
   border-radius: var(--radius);
   font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 20%, var(--border-soft));
+  line-height: 1.7;
 }
 .noon-indices {
   display: grid;
@@ -206,11 +223,12 @@
   gap: 12px;
 }
 .noon-index {
-  padding: 15px;
-  background: var(--surface);
+  padding: 17px;
+  background: linear-gradient(145deg, var(--surface2), var(--surface) 65%);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   min-width: 0;
+  box-shadow: var(--panel-shadow);
 }
 .noon-index > span {
   display: block;
@@ -241,20 +259,33 @@
 }
 .noon-tabs {
   display: flex;
-  gap: 24px;
-  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 5px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--border-soft);
+  border-radius: 11px;
+  background: var(--surface);
 }
 .noon-tabs button {
-  border: 0;
-  border-radius: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  padding: 8px 0 12px;
+  min-height: 38px;
+  padding: 8px 18px;
   font-size: 13px;
+}
+.noon-tabs button:hover {
+  color: var(--text);
+  background: var(--surface2);
 }
 .noon-tabs button[aria-selected="true"] {
   color: var(--blue);
-  border-bottom: 2px solid var(--blue);
+  background: var(--blue-bg);
+  border-color: color-mix(in srgb, var(--blue) 30%, var(--border-soft));
+  font-weight: 600;
 }
 .noon-main-grid {
   display: grid;
@@ -283,6 +314,10 @@
   display: grid;
   gap: 5px;
   min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface2) 45%, var(--surface));
 }
 .noon-breadth-values strong,
 .noon-event-values strong {
@@ -364,6 +399,12 @@
   border-bottom: 1px solid var(--border-soft);
   vertical-align: top;
   font-variant-numeric: tabular-nums;
+}
+.noon-quote-table .noon-text-column {
+  min-width: 140px;
+}
+.noon-quote-table .noon-text-column:last-child {
+  min-width: 190px;
 }
 .noon-table th:not(:first-child),
 .noon-table td:not(:first-child) {
@@ -466,9 +507,17 @@ th[aria-sort="descending"] > .noon-sort-button {
   border-top: 1px solid var(--border-soft);
 }
 .noon-pool-classifications > details > summary {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--subtle);
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface2);
   cursor: pointer;
+}
+.noon-pool-classifications > details[open] > summary {
+  border-color: color-mix(in srgb, var(--blue) 30%, var(--border-soft));
 }
 .noon-pool-classifications > details > summary > span + span {
   margin-left: 12px;
@@ -494,6 +543,30 @@ th[aria-sort="descending"] > .noon-sort-button {
   gap: 3px 5px;
 }
 @media (max-width: 700px) {
+  .noon-page-head {
+    padding: 16px;
+    gap: 16px;
+  }
+  .noon-head-actions {
+    justify-content: flex-start;
+  }
+  .noon-tabs {
+    width: 100%;
+  }
+  .noon-tabs button {
+    flex: 1;
+    padding-inline: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .noon-breadth-values,
+  .noon-event-values {
+    gap: 6px;
+  }
+  .noon-breadth-values > div,
+  .noon-event-values > div {
+    padding: 10px 8px;
+  }
   .noon-pool-mean-change {
     float: none;
     display: flex;

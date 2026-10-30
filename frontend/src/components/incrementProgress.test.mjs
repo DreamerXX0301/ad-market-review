@@ -29,7 +29,7 @@ assert.match(ui, /root\.inert = true/);
 assert.match(ui, /event\.key === "Escape"/);
 assert.match(ui, /view\.done \|\| unconfirmed/);
 assert.match(ui, /post<Row>\("\/sync\/session\/acknowledge"/, "unlock requires an actual server acknowledgement");
-assert.match(ui, /post\("\/sync\/session\/control"/);
+assert.doesNotMatch(ui, /post\("\/sync\/session\/control"/, "collection progress cannot stop a running chain");
 assert.doesNotMatch(ui, /post\([^\n]*(?:sync\/tasks|resume|retry)/, "restoring the dialog must never create or resume collection");
 assert.doesNotMatch(ui, /elapsed\s*>=\s*30000/, "time or 404 cannot prove that a request did not arrive");
 assert.match(ui, /value\.acknowledged === true && value\.locked === false/);

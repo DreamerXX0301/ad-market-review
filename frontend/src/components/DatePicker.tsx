@@ -39,6 +39,9 @@ export default function DatePicker({
   help,
   compact = false,
   shortcut,
+  onShortcut,
+  shortcutActive = false,
+  selectCurrent = false,
 }: {
   value: string;
   onChange: (date: string) => void;
@@ -52,6 +55,9 @@ export default function DatePicker({
   help?: string;
   compact?: boolean;
   shortcut?: { label: string; date: string };
+  onShortcut?: () => void;
+  shortcutActive?: boolean;
+  selectCurrent?: boolean;
 }) {
   // Calendar convenience only; it never declares market data available today.
   const today = new Date();
@@ -110,7 +116,7 @@ export default function DatePicker({
   function applyDate(selected: string) {
     if (blocked || !open || !triggerActive()) return close();
     if (!datePickerSelectable(selected, model)) return;
-    if (selected !== value) onChange(selected);
+    if (selected !== value || selectCurrent) onChange(selected);
     close(true);
   }
 
@@ -481,10 +487,16 @@ export default function DatePicker({
                 <button
                   type="button"
                   disabled={
-                    value === shortcut.date ||
+                    (value === shortcut.date && !shortcutActive) ||
                     !datePickerSelectable(shortcut.date, model)
                   }
-                  onClick={() => applyDate(shortcut.date)}
+                  onClick={() => {
+                    if (!onShortcut) return applyDate(shortcut.date);
+                    if (blocked || !open || !triggerActive()) return close();
+                    if (!datePickerSelectable(shortcut.date, model)) return;
+                    onShortcut();
+                    close(true);
+                  }}
                 >
                   {shortcut.label}
                 </button>

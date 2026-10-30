@@ -35,9 +35,8 @@ import {
   auctionStates,
 } from "./auctionPresentation";
 import AuctionAutomation from "./AuctionAutomation";
-import AuctionTopicSummary from "./AuctionTopicSummary";
 import AuctionFeedback from "./AuctionFeedback";
-import AuctionResonance from "./AuctionResonance";
+import AuctionBoardExplorer from "./AuctionBoardExplorer";
 import AuctionClassifications from "./AuctionClassifications";
 import AuctionHeightFilters from "./AuctionHeightFilters";
 import AuctionHeightBadge from "./AuctionHeightBadge";
@@ -82,14 +81,9 @@ const AUCTION_PAGE_SECTIONS = [
     description: "本次样本中开盘后需要关注的低开股",
   },
   {
-    id: "auction-resonance",
-    label: "题材共振",
-    description: "前列股票的集中程度与整体竞价表现",
-  },
-  {
     id: "auction-topics",
-    label: "行业概念",
-    description: "关联数量、样本均幅与组内股票",
+    label: "板块与个股",
+    description: "行业概念与共振合并，左侧板块、右侧冻结个股",
   },
   {
     id: "auction-observation",
@@ -924,16 +918,9 @@ export default function AuctionReview({
                 </div>
               </Panel>
             </section>
-            <section id="auction-resonance" tabIndex={-1}>
-              <AuctionResonance
-                date={selected}
-                quotes={sourceRows}
-                onStock={onStock}
-                chartDate={chartDate}
-              />
-            </section>
             <section id="auction-topics" tabIndex={-1}>
-              <AuctionTopicSummary
+              <AuctionBoardExplorer
+                key={selected}
                 result={{ ...topicResult, data: topicView }}
                 date={selected}
                 quotes={sourceRows}

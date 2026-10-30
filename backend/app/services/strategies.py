@@ -84,17 +84,17 @@ def save_policy(c,sid,version,policy):
 def policy_view(r):
     return {**{k:v for k,v in r.items() if k not in ('alerts_json','exits_json')},'alerts':obj(r.get('alerts_json'),[]),'exits':obj(r.get('exits_json'),[]),'allow_entry_day_alerts':bool(r['allow_entry_day_alerts']),'allow_entry_day_exits':bool(r['allow_entry_day_exits'])}
 
-def active_policy_scope(c,sid):
+def active_policy_scope(c,sid,*,facts=None):
     """Entry defaults keep following defaults; an explicit round edit opts out.
 
     Application/event evidence, rather than equal policy values, identifies the
     scope. Thus an older entry default is still eligible after a future-only
     update, while a round with manually chosen rules is preserved.
     """
-    active=rows(c,"SELECT round_id,strategy_id,current_policy_version,entry_snapshot_id,entry_business_date FROM tracking_round WHERE strategy_id=? AND status='tracking'",(sid,))
-    applications=rows(c,'SELECT a.* FROM tracking_policy_application a JOIN tracking_round r USING(round_id) WHERE r.strategy_id=? AND r.status=\'tracking\' ORDER BY a.effective_business_date,a.recorded_at_ms,a.rowid',(sid,))
+    active=facts['active'] if facts is not None else rows(c,"SELECT round_id,strategy_id,current_policy_version,entry_snapshot_id,entry_business_date FROM tracking_round WHERE strategy_id=? AND status='tracking'",(sid,))
+    applications=facts['applications'] if facts is not None else rows(c,'SELECT a.* FROM tracking_policy_application a JOIN tracking_round r USING(round_id) WHERE r.strategy_id=? AND r.status=\'tracking\' ORDER BY a.effective_business_date,a.recorded_at_ms,a.rowid',(sid,))
     latest={row['round_id']:row for row in applications}
-    default_applications={obj(row['evidence_json'],{}).get('application_id') for row in rows(c,"SELECT e.evidence_json FROM tracking_event e JOIN tracking_round r USING(round_id) WHERE r.strategy_id=? AND r.status='tracking' AND e.event_type='policy_change'",(sid,)) if obj(row['evidence_json'],{}).get('scope')=='strategy_default'}
+    default_applications=facts['default_applications'] if facts is not None else {obj(row['evidence_json'],{}).get('application_id') for row in rows(c,"SELECT e.evidence_json FROM tracking_event e JOIN tracking_round r USING(round_id) WHERE r.strategy_id=? AND r.status='tracking' AND e.event_type='policy_change'",(sid,)) if obj(row['evidence_json'],{}).get('scope')=='strategy_default'}
     following=[];custom=[]
     for row in active:
         application=latest.get(row['round_id'])
@@ -110,19 +110,20 @@ def apply_tracking_policy(c,r,version,day,calendar,*,reason,scope='round'):
     insert(c,'tracking_event',dict(event_id=new_id('event'),event_key=new_id('policy-event'),round_id=r['round_id'],event_type='policy_change',business_date=day,data_snapshot_id=r['entry_snapshot_id'],data_state='not_applicable',outcome='not_applicable',trading_age=trading_age(calendar,r['entry_business_date'],day) or 0,evidence_json=js({'application_id':application_id,'previous_policy_version':r['current_policy_version'],'policy_version':version,'scope':scope,'effective_business_date':day,'reason':reason}),recorded_at_ms=recorded))
     return True
 
-def strategy_view(c,sid,*,run_context=None):
-    r=one(c,'SELECT * FROM strategy WHERE strategy_id=?',(sid,),'策略不存在')
-    v=one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,r['current_version']))
-    p=one(c,'SELECT * FROM tracking_policy_version WHERE strategy_id=? AND policy_version=?',(sid,r['current_policy_version']))
-    latest=c.execute('SELECT run_id,business_date,status FROM selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1',(sid,)).fetchone()
-    following,custom=active_policy_scope(c,sid)
-    result={**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'price_basis':v.get('price_basis','none'),'price_basis_contract':PRICE_BASIS_CONTRACT if v.get('price_basis')=='forward' else None,'definition':obj(v['definition_json'],{}),'hot_universe':obj(v.get('hot_universe_json')),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid)}
+def strategy_view(c,sid,*,run_context=None,facts=None):
+    r=facts['strategy'] if facts is not None else one(c,'SELECT * FROM strategy WHERE strategy_id=?',(sid,),'策略不存在')
+    v=facts['version'] if facts is not None else one(c,'SELECT * FROM strategy_version WHERE strategy_id=? AND version=?',(sid,r['current_version']))
+    p=facts['policy'] if facts is not None else one(c,'SELECT * FROM tracking_policy_version WHERE strategy_id=? AND policy_version=?',(sid,r['current_policy_version']))
+    latest=facts.get('latest') if facts is not None else c.execute('SELECT run_id,business_date,status FROM selection_run WHERE strategy_id=? ORDER BY created_at_ms DESC,rowid DESC LIMIT 1',(sid,)).fetchone()
+    following,custom=active_policy_scope(c,sid,facts=facts)
+    result={**r,'version':v['version'],'period':v.get('signal_period') or v['period'],'price_basis':v.get('price_basis','none'),'price_basis_contract':PRICE_BASIS_CONTRACT if v.get('price_basis')=='forward' else None,'definition':obj(v['definition_json'],{}),'hot_universe':obj(v.get('hot_universe_json')),'trade_rules':obj(v['trade_rules_json'],{'entry':None,'exit':None}),'policy':policy_view(p),'latest_run':dict(latest) if latest else None,'tracking_count':len(following)+len(custom),'default_policy_tracking_count':len(following),'custom_policy_tracking_count':len(custom),**strategy_visibility(c,sid,facts=facts)}
     result['run_availability']=stock_daily_once.availability(c,result,context=run_context)
     return result
 
 def list_strategies(deleted=False,limit=None,offset=0):
     if not isinstance(deleted,bool) or (limit is not None and (isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=100)) or isinstance(offset,bool) or not isinstance(offset,int) or offset<0:fail('策略列表分页参数无效')
     with connect() as c:
+        c.execute('BEGIN')
         condition='d.strategy_id IS NOT NULL' if deleted else 'd.strategy_id IS NULL'
         query='SELECT s.strategy_id FROM strategy s LEFT JOIN strategy_deletion d USING(strategy_id) WHERE '+condition+' ORDER BY s.created_at_ms,s.name,s.strategy_id'
         parameters=()
@@ -130,8 +131,11 @@ def list_strategies(deleted=False,limit=None,offset=0):
         elif offset:query+=' LIMIT -1 OFFSET ?';parameters=(offset,)
         ids=[r[0] for r in c.execute(query,parameters)]
         run_context=stock_daily_once.read_context(c,strategy_ids=ids)
-        data=[strategy_view(c,sid,run_context=run_context) for sid in ids]
+        from .strategy_list import read_facts
+        facts=read_facts(c,ids)
         total=c.execute('SELECT count(*) FROM strategy s LEFT JOIN strategy_deletion d USING(strategy_id) WHERE '+condition).fetchone()[0]
+        c.commit()  # File proof reads for run availability remain outside SQL transactions.
+        data=[strategy_view(c,sid,run_context=run_context,facts=facts[sid]) for sid in ids]
         return {'items':data,'total':total,'limit':limit,'offset':offset,'has_more':offset+len(data)<total}
 
 def get_strategy(sid):

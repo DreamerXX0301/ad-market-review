@@ -155,3 +155,19 @@
     flex-wrap: wrap;
   }
 }
+
+.increment-workspace-summary {
+  margin: 14px 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--blue) 5%, var(--surface));
+  font-size: 13px;
+}
+.increment-workspace-summary p {
+  margin: 8px 0;
+  line-height: 1.7;
+}
+.increment-workspace-summary small {
+  color: var(--muted);
+}

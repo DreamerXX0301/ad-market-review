@@ -165,7 +165,8 @@ def test_failed_or_cancelled_day_cannot_bypass_daily_slot_through_generic_retry_
 
 def test_generic_resume_reuses_same_daily_task_only_inside_original_window(manual_noon):
     client, identifier, clock = manual_noon
-    assert client.post('/api/v1/tasks/' + identifier + '/pause').status_code == 200
+    assert client.post('/api/v1/tasks/' + identifier + '/pause').status_code == 409
+    tasks.change_task(identifier, 'pause')  # A pre-existing stopped task, not a UI action.
     clock[0] = NOON.replace(hour=11, minute=30, second=59)
     early = client.post('/api/v1/tasks/' + identifier + '/resume')
     assert early.status_code == 409 and '11:31' in early.json()['detail']
@@ -173,7 +174,7 @@ def test_generic_resume_reuses_same_daily_task_only_inside_original_window(manua
     clock[0] = NOON.replace(hour=11, minute=31, second=0)
     within = client.post('/api/v1/tasks/' + identifier + '/resume')
     assert within.status_code == 200 and within.json()['task_id'] == identifier and within.json()['status'] == 'queued'
-    client.post('/api/v1/tasks/' + identifier + '/pause')
+    tasks.change_task(identifier, 'pause')
     clock[0] = NOON.replace(hour=13, minute=0)
     expired = client.post('/api/v1/tasks/' + identifier + '/resume')
     assert expired.status_code == 409 and '窗口' in expired.json()['detail']

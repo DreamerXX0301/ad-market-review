@@ -15,7 +15,7 @@ const realTimeout=globalThis.setTimeout,realClear=globalThis.clearTimeout;
 globalThis.setTimeout=fn=>{timers.set(++timerId,fn);return timerId;};globalThis.clearTimeout=id=>timers.delete(id);
 async function compile(name,jsx=false){return ts.transpileModule(await fs.readFile(new URL(name,import.meta.url),"utf8"),{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022,...(jsx?{jsx:ts.JsxEmit.ReactJSX}:{})}}).outputText;}
 const sessionModule=encode(await compile("./noonRunLock.ts"));
-const imports={react:encode("export const {useState,useRef,useEffect}=globalThis.__noonHooks;"),"../lib/api":encode("export const {api}=globalThis.__noonAPI;"),"./taskActivity":encode("export const useTaskActivity=()=>globalThis.__noonActivity();export const refreshTaskActivity=()=>{};"),"./noonRunLock":sessionModule,"../lib/format":encode("export const dateTime=String,duration=String;")};
+const imports={"./CollectionEstimate":encode("export default function Estimate(){return null;}"),react:encode("export const {useState,useRef,useEffect}=globalThis.__noonHooks;"),"../lib/api":encode("export const {api}=globalThis.__noonAPI;"),"./taskActivity":encode("export const useTaskActivity=()=>globalThis.__noonActivity();export const refreshTaskActivity=()=>{};"),"./noonRunLock":sessionModule,"../lib/format":encode("export const dateTime=String,duration=String;")};
 let source=await compile("./NoonProgressContent.tsx",true);
 for(const match of [...source.matchAll(/from (["'])([^"']+)\1/g)])source=source.replace(match[0],"from "+JSON.stringify(imports[match[2]]||import.meta.resolve(match[2])));
 const {useNoonRunProgress}=await import(encode(source));

@@ -4,15 +4,17 @@ import { useToast } from "../../components/UI";
 export default function AuctionCopyText({
   text,
   label,
+  visibleLabel,
 }: {
   text: string;
   label: string;
+  visibleLabel?: string;
 }) {
   const notify = useToast();
   return (
     <button
       type="button"
-      className="auction-copy-text"
+      className={`auction-copy-text${visibleLabel ? " with-label" : ""}`}
       title={label}
       aria-label={label}
       onClick={async (event) => {
@@ -27,6 +29,7 @@ export default function AuctionCopyText({
       }}
     >
       <Copy size={12} />
+      {visibleLabel && <span>{visibleLabel}</span>}
     </button>
   );
 }

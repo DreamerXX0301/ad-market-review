@@ -1,0 +1,448 @@
+.auction-board-explorer > .panel-head {
+  background: var(--surface);
+}
+.auction-explorer-body {
+  padding: 18px;
+}
+.auction-explorer-controls {
+  display: grid;
+  grid-template-columns: 120px 160px 140px auto minmax(160px, 1fr);
+  align-items: end;
+  gap: 12px;
+}
+.auction-explorer-controls label,
+.auction-explorer-stock-filters label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.auction-explorer-select {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.auction-explorer-select > select {
+  width: 100%;
+  appearance: none;
+  padding-right: 32px;
+}
+.auction-explorer-select > svg {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.auction-explorer-controls input,
+.auction-explorer-select > select,
+.auction-explorer-stock-filters input {
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--surface2);
+  font-size: 12px;
+  min-width: 0;
+}
+.auction-explorer-controls input:hover,
+.auction-explorer-select > select:hover,
+.auction-explorer-stock-filters input:hover {
+  border-color: var(--blue);
+}
+.auction-explorer-controls .auction-explorer-order {
+  height: 36px;
+  padding: 0 12px;
+}
+.auction-explorer-search-field {
+  display: flex;
+  position: relative;
+  min-width: 0;
+}
+.auction-explorer-search-field > svg {
+  position: absolute;
+  left: 11px;
+  top: 11px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.auction-explorer-search-field > input {
+  width: 100%;
+  padding-left: 33px;
+}
+.auction-explorer-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 0 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.auction-explorer-anchor {
+  display: grid;
+  grid-template-columns: minmax(200px, 300px) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface);
+  margin-bottom: 20px;
+}
+.auction-explorer-anchor label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--subtle);
+}
+.auction-explorer-anchor p {
+  margin: 0;
+}
+.auction-explorer-anchor p,
+.auction-explorer-peers p,
+.auction-explorer-height-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.auction-explorer-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 350px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.auction-explorer-directions {
+  max-height: 720px;
+  overflow: auto;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.auction-explorer-direction-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+.auction-explorer-direction-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.auction-explorer-direction-table th {
+  padding: 7px 4px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.auction-explorer-direction-table th:first-child {
+  width: 35%;
+}
+.auction-explorer-direction-table td {
+  padding: 12px 8px;
+  text-align: right;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+.auction-explorer-direction-table th:first-child,
+.auction-explorer-direction-table td:first-child {
+  text-align: left;
+  padding-left: 10px;
+}
+.auction-explorer-direction-table button {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.auction-explorer-sort-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+}
+.auction-explorer-sort-button > span {
+  min-width: 0;
+}
+.auction-explorer-sort-button > svg {
+  flex-shrink: 0;
+}
+.auction-explorer-direction-table th:first-child .auction-explorer-sort-button {
+  justify-content: flex-start;
+}
+.auction-explorer-sort-button:hover {
+  border-color: var(--border);
+  background: var(--surface3);
+  color: var(--text);
+}
+.auction-explorer-direction-table th[aria-sort="ascending"] button,
+.auction-explorer-direction-table th[aria-sort="descending"] button {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--border));
+  background: var(--blue-bg);
+}
+.auction-explorer-direction-table tbody tr {
+  cursor: pointer;
+  background: var(--surface);
+}
+.auction-explorer-direction-table tbody tr:hover {
+  background: color-mix(in srgb, var(--blue) 5%, var(--surface));
+}
+.auction-explorer-direction-table tbody tr.is-selected {
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface));
+}
+.auction-explorer-direction-table tr.is-selected td:first-child {
+  box-shadow: inset 3px 0 var(--blue);
+}
+.auction-explorer-direction-table td:first-child button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  padding: 4px 0;
+  text-align: left;
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+.auction-explorer-direction-table tr.is-selected td:first-child strong {
+  color: var(--blue);
+}
+.auction-explorer-directions strong,
+.auction-explorer-directions small {
+  display: block;
+}
+.auction-explorer-directions small {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.auction-explorer-height {
+  color: var(--blue);
+}
+.auction-explorer-directions .auction-explorer-more {
+  display: flex;
+  width: calc(100% - 20px);
+  margin: 10px;
+  white-space: normal;
+  height: auto;
+  min-height: 34px;
+  padding: 7px;
+}
+.auction-explorer-stocks {
+  min-width: 0;
+}
+.auction-explorer-stocks > header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 12px;
+  align-items: flex-start;
+}
+.auction-explorer-selection-heading,
+.auction-explorer-selection-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.auction-explorer-stocks h3 {
+  font-size: 17px;
+  line-height: 1.5;
+  margin: 0;
+}
+.auction-explorer-selection-actions > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-explorer-stocks header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.auction-board-explorer .auction-copy-text.with-label {
+  width: auto;
+  min-height: 30px;
+  padding: 4px 8px;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--subtle);
+  font-size: 11px;
+}
+.auction-board-explorer .auction-copy-text.with-label:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+  background: var(--blue-bg);
+}
+.auction-explorer-height-note {
+  margin: 8px 0 12px;
+}
+.auction-explorer-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 12px 0 16px;
+}
+.auction-explorer-metrics > span {
+  padding: 10px 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+}
+.auction-explorer-metrics b {
+  display: block;
+  margin-top: 5px;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.auction-explorer-metrics b.up {
+  color: var(--up);
+}
+.auction-explorer-metrics b.down {
+  color: var(--down);
+}
+.auction-explorer-peers {
+  border-top: 1px solid var(--border-soft);
+  padding: 16px 0 6px;
+  margin-top: 16px;
+}
+.auction-explorer-peer-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.auction-explorer-peer-filters .btn[aria-pressed="true"] {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: var(--blue-bg);
+}
+.auction-explorer-stock-filters {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(100px, 140px);
+  gap: 10px;
+  margin: 14px 0;
+}
+.auction-explorer-stocks .auction-table-stock-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-height: 560px;
+  overflow: auto;
+  padding: 2px;
+}
+.auction-explorer-stocks .auction-table-stock-item {
+  min-width: 0;
+  padding: 12px;
+}
+.auction-explorer-quote {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 8px 0;
+}
+.auction-board-explorer .auction-affiliations-more > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--surface2);
+  color: var(--muted);
+  cursor: pointer;
+}
+.auction-board-explorer .auction-affiliations-more > summary:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.auction-board-explorer .auction-topic-note {
+  margin: 18px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border-soft);
+}
+@media (max-width: 1200px) {
+  .auction-explorer-controls {
+    grid-template-columns: 1fr 1.3fr 1.2fr auto;
+  }
+  .auction-explorer-search {
+    grid-column: 1 / -1;
+  }
+  .auction-explorer-layout {
+    grid-template-columns: minmax(285px, 310px) minmax(0, 1fr);
+  }
+  .auction-explorer-stocks .auction-table-stock-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 900px) {
+  .auction-explorer-layout {
+    grid-template-columns: 1fr;
+  }
+  .auction-explorer-directions {
+    max-height: 330px;
+  }
+  .auction-explorer-anchor {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+@media (max-width: 520px) {
+  .auction-explorer-body {
+    padding: 12px;
+  }
+  .auction-explorer-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .auction-explorer-controls .auction-explorer-order {
+    width: 100%;
+  }
+  .auction-explorer-scope {
+    margin-bottom: 12px;
+  }
+  .auction-explorer-anchor {
+    padding: 12px;
+  }
+  .auction-explorer-direction-table th {
+    padding: 6px 2px;
+  }
+  .auction-explorer-direction-table td {
+    padding: 10px 5px;
+  }
+  .auction-explorer-direction-table th:first-child {
+    width: 34%;
+  }
+  .auction-explorer-sort-button {
+    gap: 2px;
+    padding: 3px 1px;
+  }
+  .auction-explorer-stock-filters {
+    grid-template-columns: minmax(120px, 1fr) 105px;
+  }
+  .auction-explorer-metrics > span {
+    padding: 9px;
+  }
+}

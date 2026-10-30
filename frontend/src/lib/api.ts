@@ -14,21 +14,172 @@ export const ApiPageActivity = createContext<boolean | null>(null);
 export function usePageActive() {
   return useContext(ApiPageActivity) !== false;
 }
-export async function api<T = any>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const response = await fetch("/api/v1" + path, {
+type ResponseText = { ok: boolean; status: number; content: string };
+type PendingRead = {
+  controller: AbortController;
+  promise: Promise<ResponseText>;
+  users: number;
+  settled: boolean;
+};
+const pendingReads = new Map<string, PendingRead>();
+export function decodeChartColumns(value: any): any {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !Object.hasOwn(value, "bars_columnar")
+  )
+    return value;
+  const { version, count, fields, columns, missing } =
+    value.bars_columnar || {};
+  const invalid = () => {
+    throw new Error("图表数据格式不完整，请重新加载");
+  };
+  if (
+    version !== "chart-bars-columns-v1" ||
+    !Number.isInteger(count) ||
+    count < 0 ||
+    count > 100000 ||
+    !Array.isArray(fields) ||
+    fields.length > 512 ||
+    new Set(fields).size !== fields.length ||
+    fields.some((field: unknown) => typeof field !== "string") ||
+    !Array.isArray(columns) ||
+    columns.length !== fields.length ||
+    !missing ||
+    typeof missing !== "object" ||
+    Array.isArray(missing)
+  )
+    return invalid();
+  const bars: Row[] = Array.from({ length: count }, () => ({}));
+  fields.forEach((field: string, index: number) => {
+    const column = columns[index];
+    const absent = Object.hasOwn(missing, field) ? missing[field] : [];
+    if (
+      !Array.isArray(column) ||
+      column.length !== count ||
+      !Array.isArray(absent) ||
+      absent.some(
+        (position: unknown) =>
+          !Number.isInteger(position) ||
+          (position as number) < 0 ||
+          (position as number) >= count,
+      )
+    )
+      return invalid();
+    const skipped = new Set(absent);
+    for (let i = 0; i < count; i++)
+      if (!skipped.has(i)) {
+        if (field === "__proto__")
+          Object.defineProperty(bars[i], field, {
+            value: column[i],
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else bars[i][field] = column[i];
+      }
+  });
+  const { bars_columnar: _encoded, ...metadata } = value;
+  return { ...metadata, bars };
+}
+async function readResponse(path: string, options: RequestInit) {
+  const chart =
+    /^\/(?:market\/sector-chart|instruments\/[^/?]+\/chart)(?:\?|$)/.test(path);
+  const transportPath =
+    chart && !/[?&]encoding=/.test(path)
+      ? path + (path.includes("?") ? "&" : "?") + "encoding=columns-v1"
+      : path;
+  const response = await fetch("/api/v1" + transportPath, {
     ...options,
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...options.headers,
     },
   });
-  const content = await response.text();
+  return {
+    ok: response.ok,
+    status: response.status,
+    content: await response.text(),
+  };
+}
+function responseText(
+  path: string,
+  options: RequestInit,
+): Promise<ResponseText> {
+  // Share only concurrent default GETs. Each consumer parses its own value;
+  // no completed responses, policies or task states are cached here.
+  const method = (options.method || "GET").toUpperCase();
+  if (method !== "GET") {
+    pendingReads.clear();
+    return readResponse(path, options).finally(() => pendingReads.clear());
+  }
+  if (
+    Object.keys(options).some((key) => key !== "signal") ||
+    pendingReads.size >= 64
+  )
+    return readResponse(path, options);
+  const signal = options.signal;
+  if (signal?.aborted)
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  let entry = pendingReads.get(path);
+  if (!entry) {
+    const controller = new AbortController();
+    entry = {
+      controller,
+      users: 0,
+      settled: false,
+      promise: readResponse(path, { signal: controller.signal }),
+    };
+    const owned = entry;
+    entry.promise = entry.promise.finally(() => {
+      owned.settled = true;
+      if (pendingReads.get(path) === owned) pendingReads.delete(path);
+    });
+    pendingReads.set(path, entry);
+  }
+  const owned = entry;
+  owned.users++;
+  return new Promise((resolve, reject) => {
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      signal?.removeEventListener("abort", abort);
+      if (--owned.users === 0 && !owned.settled) {
+        if (pendingReads.get(path) === owned) pendingReads.delete(path);
+        owned.controller.abort();
+      }
+    };
+    const abort = () => {
+      release();
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    owned.promise.then(
+      (value) => {
+        if (!released) {
+          release();
+          resolve(value);
+        }
+      },
+      (error) => {
+        if (!released) {
+          release();
+          reject(error);
+        }
+      },
+    );
+  });
+}
+export async function api<T = any>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const response = await responseText(path, options);
+  const content = response.content;
   let data: any;
   try {
-    data = content ? JSON.parse(content) : null;
+    data = content ? decodeChartColumns(JSON.parse(content)) : null;
   } catch {
     throw Object.assign(
       new Error(
@@ -71,7 +222,10 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
   const previousPath = useRef<string | null>(null);
   const resolvedPath = useRef<string | null>(null);
   const incrementBlocked = useRef(false);
-  const reload = useCallback(() => setKey((x) => x + 1), []);
+  const reload = useCallback(() => {
+    if (path) pendingReads.delete(path);
+    setKey((x) => x + 1);
+  }, [path]);
   useEffect(() => {
     if (!active) {
       setLoading(false);

@@ -12,6 +12,10 @@
   position: sticky;
   top: 96px;
   min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 .noon-close-sidebar nav {
   display: grid;
@@ -43,6 +47,10 @@
   border-color: color-mix(in srgb, var(--blue) 22%, transparent);
   color: var(--blue);
 }
+.noon-close-sidebar button:hover {
+  color: var(--blue);
+  background: var(--blue-bg);
+}
 .noon-close-sidebar button small {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -72,6 +80,11 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  flex-wrap: wrap;
 }
 .noon-close-heading h2 {
   font-size: 20px;

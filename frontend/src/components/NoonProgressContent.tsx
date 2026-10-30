@@ -1,3 +1,4 @@
+import CollectionEstimate from "./CollectionEstimate";
 import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
@@ -208,6 +209,7 @@ export default function NoonProgressContent({
           </span>
         </div>
       )}
+      <CollectionEstimate estimate={data?.estimate} />
       <div className="increment-progress-current" aria-live="polite">
         <div className="increment-progress-stage-heading">
           <strong>
@@ -234,7 +236,7 @@ export default function NoonProgressContent({
         </div>
       )}
       <p className="increment-progress-result">
-        只读取本次已提交任务的进度；不会重新提交采集，也不会因暂时失联放开其他操作。
+        本次采集不提供暂停或取消，避免误触中断。关闭浏览器不会停止后台任务；暂时失联时保留锁定。
       </p>
     </>
   );

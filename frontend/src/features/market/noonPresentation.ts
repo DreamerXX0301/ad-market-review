@@ -4,7 +4,7 @@ type NoonRow = Record<string, any>;
 export const noonNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
-/** Only an explicit noon deep link chooses a date; ordinary entry keeps the published default. */
+/** An explicit deep link pins the shared date; ordinary entry uses the server's today. */
 export function noonInitialDate(hash: string): string {
   const [route, search = ""] = hash.replace(/^#/, "").split("?", 2);
   if (route !== "noon") return "";

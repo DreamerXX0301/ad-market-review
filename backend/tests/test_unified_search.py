@@ -40,7 +40,7 @@ def test_publication_query_finds_exact_board_before_longer_stock_name(local):
     assert first['target_type'] == 'sector' and first['kind'] == first['sector_kind'] == 'industry'
     assert first['topic_code'] == '881161.TI' and first['topic_id'] == 'fuyao-881161.TI'
     assert first['code'] == '881161'
-    assert local.calls == [('出版', 10000)]
+    assert local.calls == [('', 10000)]
     assert result['historical_membership'] is False
 
 
@@ -104,3 +104,53 @@ def test_api_unified_route_does_not_change_original_stock_picker(local, monkeypa
     assert any(row['target_type'] == 'sector' for row in new.json()['items'])
     assert all(row['kind'] == 'stock' for row in old.json()['items'])
     assert not any('topic_code' in row for row in old.json()['items'])
+
+
+@pytest.mark.parametrize('query,code,match_type', [
+    ('zhongwenchuanmei', '600373.SH', 'pinyin'), ('ZHONG WEN CHUAN MEI', '600373.SH', 'pinyin'),
+    ('zwcm', '600373.SH', 'initials'), ('ＺＷＣＭ', '600373.SH', 'initials'),
+    ('rgzn', '885728.TI', 'initials'), ('rengongzhineng', '885728.TI', 'pinyin'),
+    ('人工智熊', '885728.TI', 'typo'), ('中闻传媒', '600373.SH', 'homophone'),
+    ('zhongwenchuanme', '600373.SH', 'pinyin'), ('zhongwenchuanmwi', '600373.SH', 'typo'),
+    ('中文传煤', '600373.SH', 'homophone'),
+])
+def test_phonetic_and_typo_search_retains_identity(local, query, code, match_type):
+    row = unified_search.search(query)['items'][0]
+    assert row['instrument_id'] == code and row['match_type'] == match_type
+    assert row['is_suggestion'] == (match_type in ('homophone', 'typo'))
+
+
+def test_numeric_typo_is_never_guessed_and_exact_wins(local):
+    assert unified_search.search('600374')['items'] == []
+    assert unified_search.search('600373.SZ')['items'] == []
+    local.rows.append({'instrument_id': '600371.SH', 'name': '中文传煤', 'kind': 'stock'})
+    result = unified_search.search('中文传媒')['items']
+    assert result[0]['instrument_id'] == '600373.SH'
+    assert result[-1]['instrument_id'] == '600371.SH' and result[-1]['is_suggestion']
+
+
+def test_name_cache_cannot_keep_renamed_removed_or_new_catalog_entries(local):
+    assert unified_search.search('zwcm')['items']
+    local.rows[0]['name'] = '新名股份'
+    assert not unified_search.search('zwcm')['items']
+    assert unified_search.search('xmgf')['items'][0]['instrument_id'] == '600373.SH'
+    local.rows.pop(0)
+    assert not unified_search.search('xmgf')['items']
+    local.reference_data['concept_catalog'].append({'thscode':'885999.TI','name':'冷链物流'})
+    assert unified_search.search('llwl')['items'][0]['topic_code'] == '885999.TI'
+
+
+def test_short_typo_not_widened_and_multisyllable_place_names(local):
+    assert not unified_search.search('中闻')['items']
+    assert not unified_search.search('zvcm')['items']  # No approximate acronym guesses.
+    local.rows.append({'instrument_id':'600999.SH','name':'重庆银行','kind':'stock'})
+    assert unified_search.search('cqyh')['items'][0]['name'] == '重庆银行'
+    assert unified_search.search('chongqingyinhang')['items'][0]['name'] == '重庆银行'
+
+
+def test_matching_cache_is_bounded_and_results_are_not_shared(local):
+    from app.services.search_matching import phonetic_keys
+    assert phonetic_keys.cache_info().maxsize == 20000
+    rows = unified_search.search('zwcm')['items']
+    rows[0]['name'] = 'caller mutation'
+    assert unified_search.search('zwcm')['items'][0]['name'] == '中文传媒'

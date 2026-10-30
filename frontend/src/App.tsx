@@ -1,11 +1,22 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { CheckCircle2, X, XCircle } from "lucide-react";
 import { ApiPageActivity, useApi } from "./lib/api";
 import type { Row } from "./lib/api";
+import { lazyView } from "./components/LazyView";
 import AppShell, { marketRoutes, routeTitles } from "./components/AppShell";
+import { isCalendarDate } from "./components/marketDate";
+import {
+  completedReviewDate,
+  isIntradayReview,
+  marketViewDate,
+  updateReviewDateLink,
+} from "./components/marketViewDate";
+import type { MarketDateChoice } from "./components/marketViewDate";
 import { Empty, ErrorBox, ToastContext, Loading, Panel } from "./components/UI";
-import { StockDrawer } from "./components/Charts";
+const StockDrawer = lazyView(() =>
+  import("./components/Charts").then((m) => ({ default: m.StockDrawer })),
+);
 import type { ChartEventBaseline } from "./components/Charts";
 import {
   stockSelectionForOpen,
@@ -13,10 +24,17 @@ import {
   trackingEventBaseline,
 } from "./components/stockNavigation";
 import type { StockNavigation } from "./components/stockNavigation";
-import { MarketOverview, MarketPage } from "./features/market/Market";
-import DragonTiger from "./features/market/DragonTiger";
-import NoonReview from "./features/market/NoonReview";
-import AuctionReview from "./features/market/AuctionReview";
+const MarketOverview = lazyView(() =>
+  import("./features/market/Market").then((m) => ({
+    default: m.MarketOverview,
+  })),
+);
+const MarketPage = lazyView(() =>
+  import("./features/market/Market").then((m) => ({ default: m.MarketPage })),
+);
+const DragonTiger = lazyView(() => import("./features/market/DragonTiger"));
+const NoonReview = lazyView(() => import("./features/market/NoonReview"));
+const AuctionReview = lazyView(() => import("./features/market/AuctionReview"));
 import { auctionInitialDate } from "./features/market/auctionPresentation";
 import {
   noonCalendarDates,
@@ -28,18 +46,25 @@ import {
   noonCloseChartDate,
   noonCloseSectorSelection,
 } from "./features/market/noonCloseNavigation";
-import Topics from "./features/topics/Topics";
-import Strategies from "./features/strategies/Strategies";
-import Tracking from "./features/tracking/Tracking";
-import Watchlist from "./features/watchlist/Watchlist";
-import Backtests from "./features/backtests/Backtests";
-import DataCenter from "./features/data/DataCenter";
-import Sources from "./features/sources/Sources";
-import Research from "./features/research/Research";
+const Topics = lazyView(() => import("./features/topics/Topics"));
+const Strategies = lazyView(() => import("./features/strategies/Strategies"));
+const Tracking = lazyView(() => import("./features/tracking/Tracking"));
+const Watchlist = lazyView(() => import("./features/watchlist/Watchlist"));
+const Zodiac = lazyView(() => import("./features/zodiac/Zodiac"));
+const Backtests = lazyView(() => import("./features/backtests/Backtests"));
+const DataCenter = lazyView(() => import("./features/data/DataCenter"));
+const Sources = lazyView(() => import("./features/sources/Sources"));
+const Research = lazyView(() => import("./features/research/Research"));
 import ReadonlyPreviewBanner from "./components/ReadonlyPreviewBanner";
-import SectorChartDialog from "./features/market/SectorChartDialog";
-import SectorMembersDialog from "./features/sector/SectorMembersDialog";
-import NoonSectorDialog from "./features/market/NoonSectorDialog";
+const SectorChartDialog = lazyView(
+  () => import("./features/market/SectorChartDialog"),
+);
+const SectorMembersDialog = lazyView(
+  () => import("./features/sector/SectorMembersDialog"),
+);
+const NoonSectorDialog = lazyView(
+  () => import("./features/market/NoonSectorDialog"),
+);
 import { globalSectorSelection } from "./components/searchPresentation";
 import { marketInstallationState } from "./components/marketInstallation";
 import IncrementProgressDialog from "./components/IncrementProgressDialog";
@@ -91,9 +116,11 @@ export default function App() {
   const [incrementBlocked, setIncrementBlocked] = useState(true);
   const [route, setRoute] = useState(currentRoute),
     [visited, setVisited] = useState<string[]>([currentRoute()]),
-    [date, setDate] = useState(
-      () => auctionInitialDate(location.hash) || noonInitialDate(location.hash),
-    ),
+    [dateChoice, setDateChoice] = useState<MarketDateChoice>(() => {
+      const day =
+        auctionInitialDate(location.hash) || noonInitialDate(location.hash);
+      return day ? { date: day, mode: "manual" } : null;
+    }),
     [stock, setStock] = useState<{
       id: string;
       asOf?: string;
@@ -106,11 +133,57 @@ export default function App() {
     [toast, setToast] = useState<{ message: string; kind: string } | null>(
       null,
     );
-  const previousPublishedDate = useRef<string | undefined>(undefined);
-  const noonDates = useApi<Row>(route === "noon" ? "/market/noon/dates" : null);
-  const auctionDates = useApi<Row>(
-    route === "auction" ? "/market/auction/dates" : null,
+  const noonDates = useApi<Row>(
+    marketRoutes.has(route) && route !== "auction" && visible
+      ? "/market/noon/dates"
+      : null,
   );
+  const auctionDates = useApi<Row>(
+    route === "auction" && visible ? "/market/auction/dates" : null,
+  );
+  const reviewDates = route === "auction" ? auctionDates : noonDates;
+  const [knownToday, setKnownToday] = useState("");
+  const responseToday =
+    typeof reviewDates.data?.today === "string" &&
+    isCalendarDate(reviewDates.data.today)
+      ? reviewDates.data.today
+      : "";
+  const today = responseToday > knownToday ? responseToday : knownToday;
+  useEffect(() => {
+    if (responseToday)
+      setKnownToday((previous) =>
+        responseToday > previous ? responseToday : previous,
+      );
+    if (responseToday)
+      setDateChoice((choice) =>
+        choice?.mode === "result" && choice.date === responseToday
+          ? null
+          : choice,
+      );
+  }, [responseToday]);
+  const dates = [...(bootstrap.data?.market_dates || [])].sort();
+  const latestDate = bootstrap.data?.data_date || dates.at(-1) || "";
+  const date = marketViewDate(route, dateChoice, latestDate, today);
+  const setDate = useCallback((day: string) => {
+    if (!isCalendarDate(day)) return;
+    setDateChoice({ date: day, mode: "manual" });
+    const hash = updateReviewDateLink(location.hash, day);
+    if (hash !== location.hash)
+      window.history.replaceState(window.history.state, "", hash);
+  }, []);
+  const resetDate = useCallback(() => {
+    setDateChoice(null);
+    const hash = updateReviewDateLink(location.hash);
+    if (hash !== location.hash)
+      window.history.replaceState(window.history.state, "", hash);
+  }, []);
+  // The small date directory also lets a direct base-market visit distinguish
+  // the latest published close from today, without a browser-local clock.
+  useEffect(() => {
+    if (!visible || !marketRoutes.has(route)) return;
+    const timer = window.setInterval(reviewDates.reload, 60000);
+    return () => window.clearInterval(timer);
+  }, [visible, route, reviewDates.reload]);
   const notify = useCallback(
     (message: string, kind = "success") => setToast({ message, kind }),
     [],
@@ -130,26 +203,20 @@ export default function App() {
   useEffect(() => {
     const f = () => {
       const next = currentRoute();
+      const day =
+        auctionInitialDate(location.hash) || noonInitialDate(location.hash);
+      if (day) setDate(day);
       setRoute(next);
       setVisited((v) => (v.includes(next) ? v : [...v, next]));
     };
     window.addEventListener("hashchange", f);
     return () => window.removeEventListener("hashchange", f);
-  }, []);
+  }, [setDate]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     persistTheme(theme);
     window.dispatchEvent(new Event("workbench-theme"));
   }, [theme]);
-  useEffect(() => {
-    if (!bootstrap.data) return;
-    const latest =
-      bootstrap.data.data_date || bootstrap.data.market_dates?.at(-1) || "";
-    const previous = previousPublishedDate.current;
-    previousPublishedDate.current = latest;
-    // Follow a newly published latest day only when the user was already viewing latest.
-    setDate((current) => (!current || current === previous ? latest : current));
-  }, [bootstrap.data]);
   useEffect(() => {
     document.title = `${routeTitles[route]} · 冒险的梦想家`;
   }, [route]);
@@ -165,12 +232,11 @@ export default function App() {
       }),
     );
   }, [route]);
-  const dates = [...(bootstrap.data?.market_dates || [])].sort();
   const shellDates =
     route === "noon"
-      ? noonCalendarDates(dates, noonDates.data)
+      ? noonCalendarDates(dates, { ...noonDates.data, today })
       : route === "auction"
-        ? noonCalendarDates(dates, auctionDates.data)
+        ? noonCalendarDates(dates, { ...auctionDates.data, today })
         : dates;
   const noonChartAsOf = noonChartDate(dates, date);
   const openStock = useCallback(
@@ -273,6 +339,24 @@ export default function App() {
             />
           </Panel>
         );
+      if (isIntradayReview(key) && !date)
+        return (
+          <Panel title="正在核验今天的日期">
+            {reviewDates.error ? (
+              <ErrorBox
+                message={reviewDates.error}
+                retry={reviewDates.reload}
+              />
+            ) : reviewDates.loading || !reviewDates.data ? (
+              <Loading />
+            ) : (
+              <ErrorBox
+                message="服务尚未返回有效的当天日期，请重新读取。"
+                retry={reviewDates.reload}
+              />
+            )}
+          </Panel>
+        );
       if (key !== "noon" && key !== "auction" && date && !dates.includes(date))
         return (
           <Panel title="该日盘后行情尚未发布">
@@ -287,13 +371,7 @@ export default function App() {
                   <button className="btn" onClick={() => navigate("noon")}>
                     查看当日午评
                   </button>
-                  <button
-                    className="btn primary"
-                    onClick={() =>
-                      bootstrap.data?.data_date &&
-                      setDate(bootstrap.data.data_date)
-                    }
-                  >
+                  <button className="btn primary" onClick={resetDate}>
                     回到已发布盘后日
                   </button>
                 </div>
@@ -307,7 +385,7 @@ export default function App() {
         return (
           <AuctionReview
             date={date}
-            onDate={setDate}
+            onDate={resetDate}
             onDatesChanged={auctionDates.reload}
             onStock={openStock}
             chartDate={noonChartAsOf || undefined}
@@ -317,7 +395,7 @@ export default function App() {
         return (
           <NoonReview
             date={date}
-            onDate={setDate}
+            onDate={resetDate}
             onDatesChanged={noonDates.reload}
             onStock={openStock}
             chartDate={noonChartAsOf || undefined}
@@ -393,6 +471,8 @@ export default function App() {
             initialStrategyId={context.tracking?.strategy_id}
           />
         );
+      case "zodiac":
+        return <Zodiac onStock={openStock} />;
       case "watchlist":
         return <Watchlist onStock={openStock} />;
       case "backtest":
@@ -434,6 +514,13 @@ export default function App() {
           onNavigate={navigate}
           date={date}
           onDate={setDate}
+          onResetDate={resetDate}
+          today={today}
+          dateFixed={
+            dateChoice?.mode === "manual" ||
+            (isIntradayReview(route) && dateChoice !== null)
+          }
+          datePublished={dates.includes(date)}
           dates={shellDates}
           dataDate={bootstrap.data?.data_date}
           dataLoading={bootstrap.loading}
@@ -558,13 +645,17 @@ export default function App() {
         <IncrementProgressDialog
           onBlockedChange={setIncrementBlocked}
           onAuctionFinished={(task) => {
-            if (typeof task.target_date === "string") setDate(task.target_date);
+            setDateChoice((choice) =>
+              completedReviewDate(choice, task.target_date, today),
+            );
             auctionDates.reload();
             window.dispatchEvent(new Event("workbench-auction-unlocked"));
             navigate("auction");
           }}
           onNoonFinished={(task) => {
-            if (typeof task.target_date === "string") setDate(task.target_date);
+            setDateChoice((choice) =>
+              completedReviewDate(choice, task.target_date, today),
+            );
             noonDates.reload();
             window.dispatchEvent(new Event("workbench-noon-unlocked"));
             navigate("noon");

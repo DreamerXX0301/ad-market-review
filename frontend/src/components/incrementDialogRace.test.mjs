@@ -114,6 +114,7 @@ const imports = {
   "./incrementSession": encode(
     'export const INCREMENT_SESSION_EVENT="session",INCREMENT_SESSION_KEY="key";export const {readIncrementSession,restoreIncrementSession,acknowledgeIncrementSession}=globalThis.__incrementSession;',
   ),
+  "./WorkspaceTaskSummary": encode("export default function Summary(){return null;}"),
   "./incrementProgress": encode(progress),
   "./NoonProgressContent": encode("export default function Noon(){return '午评采集分支';}export const useNoonRunProgress=()=>globalThis.__noonGate||({session:null,data:null,error:\"\",retry(){}});"),
   "./AuctionProgressContent": encode(`export default function Auction(){return "竞价采集分支";}export const useAuctionRunProgress=()=>globalThis.__auctionGate||({session:null,data:null,error:"",retry(){}});`),
