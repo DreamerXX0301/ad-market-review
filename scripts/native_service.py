@@ -169,6 +169,21 @@ class Inspector:
         state = self.run(['ps', '-p', str(pid), '-o', 'stat=']).strip()
         return not state or state.startswith('Z')
 
+    def linux_exited_after_error(self, pid):
+        # An exiting Linux process can revoke /proc environ/cwd access before
+        # it is reaped. Only a zombie or ESRCH proves exit: empty ps output on
+        # its own must not hide a live process whose identity is unreadable.
+        state = self.run(['ps', '-p', str(pid), '-o', 'stat=']).strip()
+        if state:
+            return state.startswith('Z')
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        return False
+
     def read(self, pid):
         if type(pid) is not int or pid <= 0:
             return None
@@ -215,6 +230,10 @@ class Inspector:
             return Process(pid, argv, cwd, environment, token)
         except (FileNotFoundError, ProcessLookupError):
             return None
+        except PermissionError:
+            if sys.platform.startswith('linux') and self.linux_exited_after_error(pid):
+                return None
+            raise  # A live/unverifiable process must still fail closed.
 
     def listeners(self, port):
         return sorted({int(line[1:]) for line in self.run(
