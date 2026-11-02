@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1270" viewBox="0 0 1600 1270" role="img" aria-labelledby="title desc">
+  <title id="title">AI研究对话：从提问到流式回答与历史</title>
+  <desc id="desc">项目原创功能流程示意。用户提问经API入队，模型只做一次plan_stock_task，后端整体校验后执行受限只读资料，模型继续自然回答，SSE与Markdown展示并保存历史和费用。每轮至多三次模型请求，本地三次实质读取加两次可用性检查，支持模型至多一次可选搜索。不是行情或用户会话截图，schema合规不保证全部事实正确。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#7087aa" stroke-width="1.6"/></marker>
+    <style>
+      text { font-family: -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans CJK SC",sans-serif; }
+      .title { fill:#e7effb; font-size:39px; font-weight:650; }
+      .heading { fill:#e7effb; font-size:27px; font-weight:650; }
+      .body { fill:#a9bad3; font-size:21px; }
+      .small { fill:#a9bad3; font-size:19px; }
+      .label { fill:#80adff; font-size:22px; font-weight:600; }
+      .step { fill:#80adff; font-size:20px; font-weight:700; }
+      .node { fill:#18283f; stroke:#354b69; stroke-width:2; }
+      .pipe { fill:none; stroke:#7087aa; stroke-width:3; marker-end:url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1600" height="1270" fill="#0d1727"/>
+  <rect x="20" y="20" width="1560" height="1230" rx="28" fill="none" stroke="#354b69" stroke-width="2"/>
+  <text x="54" y="66" class="small">冒险的梦想家 · AI研究与复盘</text>
+  <rect x="1290" y="42" width="252" height="42" rx="9" fill="#253750"/>
+  <text x="1416" y="71" text-anchor="middle" class="label">流程示意</text>
+  <text x="54" y="127" class="title">一次提问，怎样变成可追问的回答</text>
+  <text x="54" y="170" class="body">从正常提问，到按需取数与解释；本图不含真实行情或私人会话。</text>
+  <rect x="54" y="197" width="392" height="45" rx="8" fill="#223750"/>
+  <text x="250" y="227" text-anchor="middle" class="label">每轮模型请求最多 3 次</text>
+  <rect x="470" y="197" width="574" height="45" rx="8" fill="#1b3943"/>
+  <text x="757" y="227" text-anchor="middle" fill="#58c8b5" font-size="21" font-weight="600">本地读取：3 份实质资料 ＋ 2 次可用性检查</text>
+  <rect x="1068" y="197" width="474" height="45" rx="8" fill="#332d43"/>
+  <text x="1305" y="227" text-anchor="middle" fill="#bea8ed" font-size="21" font-weight="600">支持联网的模型：至多 1 次搜索</text>
+
+  <rect x="52" y="278" width="330" height="183" rx="17" class="node"/>
+  <text x="76" y="315" class="step">01</text><text x="118" y="317" class="heading">用户正常提问</text>
+  <text x="76" y="361" class="body">首问、追问、切换股票或日期</text>
+  <text x="76" y="398" class="body">无需选择“本地 / 联网”</text>
+  <text x="76" y="435" class="body">页面锚点只是查询起点</text>
+  <rect x="442" y="278" width="330" height="183" rx="17" class="node"/>
+  <text x="466" y="315" class="step">02</text><text x="508" y="317" class="heading">API 校验与入队</text>
+  <text x="466" y="361" class="body">核对绑定、幂等与实例额度</text>
+  <text x="466" y="398" class="body">唯一 worker 领取任务</text>
+  <text x="466" y="435" class="body">行情任务忙时等待，不重复发</text>
+  <rect x="832" y="278" width="330" height="183" rx="17" class="node"/>
+  <text x="856" y="315" class="step">03</text><text x="898" y="317" class="heading">模型语义计划</text>
+  <text x="856" y="361" class="body">只做一次 plan_stock_task</text>
+  <text x="856" y="398" class="body">完整真实用户问题与时间</text>
+  <text x="856" y="435" class="body">不先输出结论或过渡正文</text>
+  <rect x="1222" y="278" width="326" height="183" rx="17" class="node"/>
+  <text x="1246" y="315" class="step">04</text><text x="1288" y="317" class="heading">后端整体校验</text>
+  <text x="1246" y="361" class="body">引用、参数、能力与授权</text>
+  <text x="1246" y="398" class="body">整份计划通过后再读取</text>
+  <text x="1246" y="435" class="body">域外不读业务、不搜索</text>
+  <path d="M393 368H428" class="pipe"/><path d="M783 368H818" class="pipe"/><path d="M1173 368H1208" class="pipe"/>
+  <path d="M1385 471V495H411V520" class="pipe"/>
+
+  <rect x="52" y="532" width="718" height="277" rx="17" class="node"/>
+  <text x="78" y="574" class="step">05</text><text x="120" y="576" class="heading">六类受限只读资料</text>
+  <text x="78" y="619" class="body">盘面与时段 · 可用性 · 个股报价</text>
+  <text x="78" y="657" class="body">涨停梯队 · 盘面明细 · 已存研究</text>
+  <text x="78" y="696" class="body">读已有发布与记录，不采集新行情、不写业务</text>
+  <rect x="78" y="721" width="666" height="62" rx="8" fill="#21364e"/>
+  <text x="97" y="749" class="small">同一模型响应可提出多项查询，后端依序执行。</text>
+  <text x="97" y="775" class="small">配对真实结果或“本轮未读取”，不是每工具一次 HTTP。</text>
+  <rect x="830" y="532" width="718" height="277" rx="17" class="node"/>
+  <text x="856" y="574" class="step">06</text><text x="898" y="576" class="heading">模型依据资料自然回答</text>
+  <text x="856" y="619" class="body">在剩余请求内整理已有事实、日期、样本与缺口</text>
+  <text x="856" y="657" class="body">额度用完就总结，不加第四次、不自动付费重试</text>
+  <rect x="856" y="686" width="666" height="97" rx="8" fill="#302c43" stroke="#5c4d76"/>
+  <text x="878" y="718" fill="#bea8ed" font-size="21" font-weight="600">联网授权通过后，至多一次受限搜索</text>
+  <text x="878" y="750" class="small">用户指定本系统统计时，不用网页替代内部排名。</text>
+  <text x="878" y="775" class="small">原生来源关联不等于每个数字已自动核实。</text>
+  <path d="M781 670H816" class="pipe"/>
+  <path d="M1189 819V849" class="pipe"/>
+
+  <rect x="52" y="862" width="1496" height="169" rx="17" fill="#1e2e46" stroke="#354b69" stroke-width="2"/>
+  <text x="78" y="904" class="step">07</text><text x="120" y="906" class="heading">SSE → 受控 Markdown → 历史与逐次费用</text>
+  <text x="78" y="950" class="body">逐段排版与跟随滚动；上翻暂停，断线只续读原流。保存每轮实际来源，旧回答不改写。</text>
+  <text x="78" y="992" class="body">正文完成与费用结清是两个状态：回答可已完成，usage 或搜索费用仍待核；不隐藏、不补零。</text>
+
+  <rect x="52" y="1062" width="718" height="133" rx="14" class="node"/>
+  <text x="78" y="1100" fill="#58c8b5" font-size="23" font-weight="600">强势股分布：原始前 1000，同份题材 / 行业 Top5</text>
+  <text x="78" y="1138" class="small">样本在搜索、重排和分页前确定；多标签可重叠，未知不补零。</text>
+  <text x="78" y="1174" class="small">具体题材按真实身份续查，不拿模糊匹配或子概念替换。</text>
+  <rect x="830" y="1062" width="718" height="133" rx="14" class="node"/>
+  <text x="856" y="1100" fill="#e9c16c" font-size="23" font-weight="600">程序能力有界，schema 不是事实与语义正确保证</text>
+  <text x="856" y="1138" class="small">没有任意 SQL、执行代码、修改策略、自选写入或交易能力。</text>
+  <text x="856" y="1174" class="small">成交额不是净流入；没有真实时序就不推造资金轮转。</text>
+  <text x="54" y="1230" class="small">项目原创示意 · 无行情数值或私人会话 · 具体能力、来源与限制以对应源码及契约为准</text>
+</svg>
