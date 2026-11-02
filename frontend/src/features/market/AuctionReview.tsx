@@ -550,7 +550,9 @@ export default function AuctionReview({
                               已留存关注，暂无逐股判断原文。
                             </p>
                           )}
-                          <small>竞价尚未采集，09:25:30后留存结果再逐项对照。</small>
+                          <small>
+                            竞价尚未采集，09:25:30后留存结果再逐项对照。
+                          </small>
                         </article>
                       ))}
                     </div>
