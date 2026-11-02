@@ -517,6 +517,104 @@ def test_process_exiting_between_ps_and_cwd_is_not_a_foreign_process(monkeypatch
     assert inspector.read(os.getpid()) is None
 
 
+@pytest.mark.parametrize('boundary', ['cmdline', 'environ', 'cwd'])
+@pytest.mark.parametrize('outcome', ['zombie', 'gone', 'live', 'reused'])
+def test_linux_proc_permission_race_only_accepts_confirmed_exit(monkeypatch, boundary, outcome):
+    inspector = native.Inspector()
+    monkeypatch.setattr(native.sys, 'platform', 'linux')
+    denied = False
+    probes = []
+    process_root = Path('/proc/123')
+
+    def run(arguments):
+        if 'stat=' in arguments:
+            return 'R' if not denied else {'zombie': 'Z', 'gone': '', 'live': 'S', 'reused': 'R'}[outcome]
+        assert 'lstart=' in arguments
+        return 'new-start-token' if denied and outcome == 'reused' else 'original-start-token'
+
+    def read_bytes(path):
+        nonlocal denied
+        assert path.parent == process_root
+        if path.name == boundary:
+            denied = True
+            raise PermissionError(errno.EACCES, 'synthetic exiting /proc access')
+        return b'python\0-m\0app.worker\0' if path.name == 'cmdline' else b'SHIXU_DATA_DIR=/synthetic-only\0'
+
+    original_resolve = Path.resolve
+
+    def resolve(path, *args, **kwargs):
+        nonlocal denied
+        if path == process_root / 'cwd':
+            if boundary == 'cwd':
+                denied = True
+                raise PermissionError(errno.EACCES, 'synthetic exiting cwd access')
+            return Path('/synthetic-only')
+        return original_resolve(path, *args, **kwargs)
+
+    def probe(pid, sig):
+        probes.append((pid, sig))
+        assert (pid, sig) == (123, 0), 'Exit inspection must never send a terminating signal'
+        assert outcome == 'gone'
+        raise ProcessLookupError(errno.ESRCH, 'synthetic PID already reaped')
+
+    monkeypatch.setattr(inspector, 'run', run)
+    monkeypatch.setattr(Path, 'read_bytes', read_bytes)
+    monkeypatch.setattr(Path, 'resolve', resolve)
+    monkeypatch.setattr(native.os, 'kill', probe)
+    if outcome in ('zombie', 'gone'):
+        assert inspector.read(123) is None
+    else:
+        with pytest.raises(PermissionError):
+            inspector.read(123)
+    assert probes == ([(123, 0)] if outcome == 'gone' else [])
+
+
+@pytest.mark.parametrize('probe_state', ['alive', 'denied', 'gone'])
+def test_linux_empty_ps_output_does_not_prove_exit(monkeypatch, probe_state):
+    inspector = native.Inspector()
+    monkeypatch.setattr(inspector, 'run', lambda _arguments: '')
+
+    def probe(pid, sig):
+        assert (pid, sig) == (123, 0)
+        if probe_state == 'denied':
+            raise PermissionError(errno.EPERM, 'synthetic uninspectable live process')
+        if probe_state == 'gone':
+            raise ProcessLookupError(errno.ESRCH, 'synthetic absent process')
+
+    monkeypatch.setattr(native.os, 'kill', probe)
+    assert inspector.linux_exited_after_error(123) is (probe_state == 'gone')
+
+
+def test_darwin_permission_error_is_not_normalized_by_linux_exit_guard(monkeypatch):
+    inspector = native.Inspector()
+    monkeypatch.setattr(native.sys, 'platform', 'darwin')
+    monkeypatch.setattr(inspector, 'run', lambda arguments: 'S' if 'stat=' in arguments else 'same-token')
+    monkeypatch.setattr(inspector, 'linux_exited_after_error', lambda _pid: pytest.fail('Linux-only guard'))
+
+    def denied(*_args, **_kwargs):
+        raise PermissionError(errno.EACCES, 'synthetic Darwin identity failure')
+
+    monkeypatch.setattr(native, 'darwin_process_args', denied)
+    with pytest.raises(PermissionError):
+        inspector.read(123)
+
+
+def test_stop_unverifiable_live_process_never_signals_or_changes_control(installation, monkeypatch):
+    service = installation['service']()
+    service.load()
+    original = installation['control'].read_bytes()
+
+    def denied(_pid):
+        raise PermissionError(errno.EACCES, 'synthetic live identity failure')
+
+    monkeypatch.setattr(service.inspector, 'read', denied)
+    monkeypatch.setattr(native.os, 'kill', lambda *_args: pytest.fail('Unverified live PID must not be signalled'))
+    previous = native.Process(123, [], Path('/synthetic-only'), {}, 'original-start-token')
+    with pytest.raises(PermissionError):
+        service.stop({'worker': previous})
+    assert installation['control'].read_bytes() == original
+
+
 class ProcargsSysctl:
     """Only synthetic bytes and errno; never read a real process environment."""
 
