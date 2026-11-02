@@ -20,6 +20,8 @@ _DIRECT=re.compile(r'竞价|涨停|跌停|复盘|午盘|午间|盘后|收盘|成
 _MARKET=re.compile(r'股市|大盘|板块|强势股|竞价|涨停|跌停|复盘|午盘|午间|盘后|收盘|指数|上证|深证|沪深|创业板|科创板|(?:今天|今日|当前|最近|最新).{0,4}市场')
 _CONCEPT=re.compile(r'是什么|什么意思|如何理解|怎么理解|概念|含义|定义|怎么算|如何计算|什么是|就一定|一定.{0,3}吗')
 _OTHER=re.compile(r'黄金(?!股|板块)|原油(?!股|板块)|期货(?!股|板块|上市公司)|加密货币|虚拟货币|数字货币(?!板块|概念股)|比特币|以太坊|狗狗币|币圈|币价|(?<!货)(?<!人民)币|显卡(?!股|板块)|钻石|海鲜|二手手机|足球|篮球|磁场|房价|住宅|楼盘|看房|买房|租房|房租|房贷|楼市|房地产|地产数据|天气|气温|降雨|旅游|旅行|酒店|机票|景点|购物|优惠券|买酒|买手机|买电脑|穿搭|菜谱|做饭|美食|食谱|健身|医疗|看病|药怎么吃|感情|恋爱|婚姻|育儿|星座|讲笑话|写诗|写作|作文|写代码|编程|写程序|爬虫|闲聊|GDP|CPI|通胀|利率|汇率|美联储|经济数据',re.I)
+# Non-equity uses of money must not borrow a dated market-flow phrase.
+_OTHER_FUNDS=re.compile(r'转账|汇款|收款|付款|支付|银行卡|银行账户|银行流水|存款|取款|账户余额|个人资金|我的资金|我的钱|家庭资金|生活费|工资|诈骗|被骗|洗钱|赃款|网赌|赌博|赌资|竞选|政治献金|政党|政府资金|财政资金|财政拨款|援助资金|赈灾|慈善|公益捐款|军费|军援|恐怖组织|恐怖融资')
 _ACTION=re.compile(r'写(?:一[个篇首段份])?.{0,6}(?:代码|程序|脚本|作文|诗)|编程|旅游攻略|旅行攻略|购物推荐|优惠券|哪个楼盘|推荐.{0,8}(?:房子|楼盘|酒店|手机|电脑)|怎么做饭|讲.{0,3}笑话')
 _REVOKE=re.compile(r'(?:不聊|不谈|别谈|不看|不要|无关|不涉及).{0,6}(?:股票|股市|A股)|(?:股票|股市|A股).{0,6}(?:放一边|先不谈|先不聊)|(?:换个话题|题外话|先不聊)|只.{0,4}(?:房价|天气|旅游|购物|住宅|看房|写代码)')
 _IMPACT=re.compile(r'影响|冲击|利好|利空|传导|受益|拖累|敏感|关联|关系')
@@ -35,6 +37,8 @@ _REVIEW_TIME=re.compile(r'\d{4}[-年]\d{1,2}[-月]\d{1,2}日?|(?:今天|今日|�
 _REVIEW_CHANGE=re.compile(r'对比|比较|相比|相较|比起|相对|对照|不同|变化|变了|转变|延续|持续|轮动|轮转|切换|分化|修复|回流|承接|表现|走势|走强|走弱|强弱|更强|更弱|怎么样|如何')
 _REVIEW_DIRECTION=re.compile(r'(?:强势|弱势|走强|走弱|领涨|领跌|强|弱).{0,4}(?:方向|题材|板块)|(?:方向|题材|板块).{0,6}(?:强势|弱势|领涨|领跌|走强|走弱)')
 _REVIEW_OBJECT=re.compile(r'行情|盘面')
+_REVIEW_FLOW=re.compile(r'(?:主力|增量|场内|短线|活跃|北向|南向)?资金(?:的)?(?:流向|轮转|轮动|进攻方向|方向)|(?:主力|增量|场内|短线|活跃|北向|南向)?资金.{0,8}(?:去了|去向|流入|流出|进攻|回流|进入|撤离|撤出|集中).{0,10}(?:哪|方向|板块|题材|情况|变化|怎么样|如何)')
+_REVIEW_TIME_FOLLOW=re.compile(r'(?:那|那么)?(?:今天|今日|昨天|昨日|前天|明天|明日|上午|下午|早盘|午盘|午间|尾盘|收盘|竞价|(?:上|前)(?:一|个)?交易日|(?:(?:上|本|这|下)(?:个)?周|星期|周)[一二三四五六日天]?)(?:的)?(?:呢|怎么样|如何|有何变化|有什么变化|有变化吗)[？?。！! ]*')
 _REVIEW_PREFIX=re.compile(r'我想了解|请您|请介绍|介绍|讲讲|讲一下|给我|能否|了解|这个|那个|那几条|这几条|那几个|这几个|有什么|有哪些|有何|有啥|是不是|是否|怎么样|怎样|这些|那些|它们|一些|一点|想请你|想知道|能不能|可不可以|请问|请你|帮我|帮忙|我们|我想|一下|一看|看看|看下|详细|具体|简单|整体|展开|分析|梳理|说明|解释|总结|说说|聊聊|评估|评价|对比|比较|相比|相较|比起|相对|对照|根据|对于|关于|那么|那|再|和|跟|与|于|的|请|我|也|先|将|把|到|更|还|仍|呢|吗')
 
 
@@ -47,7 +51,17 @@ def _neutral_review_prefix(text, position, *, whole=False):
     return not prefix.strip(' ：:、-—~～和与及，,。；;!?！？\n')
 
 
+def _market_flow_request(text, *, require_date):
+    # Dated fund rotation is an equity-market question in this stock assistant.
+    # An elliptical form may inherit only a genuine nearest market review.
+    # The neutral prefix prevents company codes or unknown subjects from
+    # authorizing a new resource simply by appending money/direction words.
+    if require_date and not _REVIEW_TIME.search(text):return False
+    return any(_neutral_review_prefix(text,match.start()) for match in _REVIEW_FLOW.finditer(text))
+
+
 def _market_review_request(text):
+    if _market_flow_request(text,require_date=True):return True
     if not (_REVIEW_TIME.search(text) and _REVIEW_CHANGE.search(text)):
         return False
     for pattern in (_REVIEW_OBJECT,_REVIEW_DIRECTION):
@@ -59,7 +73,8 @@ def _market_review_request(text):
 def _market_review_followup(text):
     # Longer, elliptical follow-ups may inherit only the nearest actual market
     # request. Outside/unknown subjects are still denied before this is consulted.
-    if _market_review_request(text):return True
+    if (_market_review_request(text) or _REVIEW_TIME_FOLLOW.fullmatch(text)
+            or _market_flow_request(text,require_date=False)):return True
     if not _REVIEW_CHANGE.search(text):return False
     if (_REVIEW_TIME.search(text) and _neutral_review_prefix(text,len(text),whole=True)):return True
     subject=re.search(r'整体|方向|题材|它们|量能|承接|情绪|主线|热点|赚钱效应|强势|弱势|更强|更弱',text)
@@ -77,7 +92,7 @@ def _classify(text,focus):
     text=_clean(text)
     if not text:return 'unknown',None
     if _REVOKE.search(text) or _ACTION.search(text):return 'outside',None
-    other=bool(_OTHER.search(text));target=bool(_TARGET.search(text))
+    other=bool(_OTHER.search(text) or _OTHER_FUNDS.search(text));target=bool(_TARGET.search(text))
     # An unrelated question cannot borrow a stock word, old anchor or a generic
     # finance label. A non-stock resource requires an explicit stock-impact task.
     if other:
@@ -166,7 +181,7 @@ def authorize_plan(request,args):
             or not all(isinstance(args.get(k),str) and 0<len(args[k])<=(2000 if k=='user_quote' else 1000) for k in args)):
         return False
     query=_clean(args['query'])
-    if _REVOKE.search(query) or _ACTION.search(query):return False
+    if _REVOKE.search(query) or _ACTION.search(query) or _OTHER_FUNDS.search(query):return False
     if _OTHER.search(query):
         # Auxiliary macro/sector data is permitted only for the user's explicit
         # stock-impact request, never a planner's invented research rationale.

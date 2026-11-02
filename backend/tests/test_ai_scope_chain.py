@@ -202,3 +202,68 @@ def test_implicit_cross_day_market_followup_cannot_reuse_older_stock_chain_after
         with core.connect() as db:
             assert all('web_policy' not in json.loads(row[0]) for row in db.execute('SELECT price_json FROM ai_request_receipt'))
     finally:runtime.shutdown()
+
+
+@pytest.mark.parametrize('question', ['今天的资金主要去了哪些方向？', '今天下午资金轮转是什么情况？',
+                                      '上周五资金方向今天怎么样？', '那今天呢？', '那上周五呢？'])
+def test_natural_flow_or_date_followup_reaches_read_from_actual_market_chat(agent_client,monkeypatch,question):
+    client=agent_client;runtime=AIRuntime(fake);calls=[];reads=[]
+    answer='已读取对应日期的合成盘面资料；缺少真实净流入时不能把成交额当作资金流向。'
+    def read(name,args,**kwargs):
+        reads.append((name,deepcopy(args)))
+        return {'ok':True,'state':'partial','tool_name':name,'date':args['date'],
+                'source':['fixture'],'summary':{'fixture':'合成盘面，非真实净流入'},
+                'evidence':[],'metrics':[],'gaps':[]}
+    monkeypatch.setattr(ai_read_tools,'execute_read_tool',read)
+    async def handler(request):
+        payload=json.loads(request.content);calls.append(payload)
+        if len(calls)==1:
+            return httpx.Response(200,content=complete([final('可以核对A股盘面。')],'可以核对A股盘面。'))
+        if len(calls)==2:
+            assert any(tool.get('name')=='read_market_data' for tool in payload['tools'])
+            return httpx.Response(200,content=complete([function('read_market_data',{'date':'2026-10-30' if '周五' in question else 'today','section':'overview'},'flow')]))
+        assert len(calls)==3
+        item=next(item for item in payload['input'] if item.get('type')=='function_call_output')
+        assert json.loads(item['output'])['tool_name']=='read_market_data'
+        return httpx.Response(200,content=complete([final(answer)],answer))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai');created=create(client,text='今天收盘行情数据有了吗？').json()
+        assert drive(runtime,created['task_id'])['state']=='completed'
+        response=client.post('/api/v1/ai/sessions/'+created['session_id']+'/messages',
+                             json={'text':question,'consent':True,'request_key':'natural-flow-date'})
+        assert response.status_code==202,response.text
+        identifier=response.json()['task_id']
+        assert drive(runtime,identifier)['state']=='completed' and len(reads)==1
+        message=client.get('/api/v1/ai/sessions/'+created['session_id']).json()['messages'][-1]
+        assert message['text']==answer and message['source_context']['scope']['purposes']==['market_review']
+        assert not message['source_context']['web']['used']
+        with core.connect() as db:
+            assert all('web_policy' not in json.loads(row[0]) for row in db.execute('SELECT price_json FROM ai_request_receipt WHERE task_id=?',(identifier,)))
+    finally:runtime.shutdown()
+
+
+@pytest.mark.parametrize('question', ['今天银行转账的资金主要去了哪些方向？', '今天诈骗资金轮转是什么情况？',
+                                      '今天政治献金资金流向如何？'])
+def test_dated_non_equity_money_cannot_read_despite_prior_market_chat(agent_client,monkeypatch,question):
+    client=agent_client;runtime=AIRuntime(fake);calls=[]
+    monkeypatch.setattr(ai_read_tools,'execute_read_tool',lambda *a,**kw:pytest.fail('non-equity money cannot read'))
+    async def handler(request):
+        payload=json.loads(request.content);calls.append(payload)
+        assert payload['tools']==[]
+        if len(calls)==1:
+            return httpx.Response(200,content=complete([function('read_market_data',{'date':'today','section':'fund_flow'},'forged-flow')]))
+        item=next(item for item in payload['input'] if item.get('type')=='function_call_output')
+        assert json.loads(item['output'])['state']=='scope_denied'
+        return httpx.Response(200,content=complete([final('我仅提供A股行情复盘和个股研究。')],'我仅提供A股行情复盘和个股研究。'))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai');created=create(client,text=question).json()
+        with core.connect() as db:
+            saved=json.loads(db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(created['task_id'],)).fetchone()[0])
+            saved['scope_input']['recent_user_texts']=['今天A股盘面复盘']
+            db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(core.dumps(saved),created['task_id']))
+        assert drive(runtime,created['task_id'])['state']=='completed' and len(calls)==2
+        with core.connect() as db:
+            assert all('web_policy' not in json.loads(row[0]) for row in db.execute('SELECT price_json FROM ai_request_receipt WHERE task_id=?',(created['task_id'],)))
+    finally:runtime.shutdown()

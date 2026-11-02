@@ -263,3 +263,67 @@ def test_explicit_equity_impact_still_can_request_its_same_auxiliary_topic(text,
 def test_stock_impact_cannot_steal_another_commodity_topic():
     text = '黄金价格变化对A股黄金股有什么影响？'
     assert not scope.authorize_plan(request(text), plan('原油期货价格', text, 'stock_impact'))
+
+
+@pytest.mark.parametrize('text', [
+    '今天的资金主要去了哪些方向？',
+    '今天下午资金轮转是什么情况？',
+    '上周五资金方向今天怎么样？',
+    '上周五资金主要去了哪些方向，今天有变化吗？',
+    '请帮我看看今天早盘竞价资金进攻了哪些方向？',
+    '今天午盘资金流向与早盘有哪些变化？',
+    '请分析今天场内资金主要流入哪些板块，午间和收盘有什么变化？',
+])
+def test_dated_equity_fund_rotation_is_a_market_review(text):
+    for recent in ([], ['今天收盘行情数据有了吗？']):
+        req = request(text, recent=recent)
+        decision = scope.scope_for(req)
+        assert decision['resources_allowed'] and decision['purposes'] == ['market_review']
+        assert scope.authorize_plan(req, plan('今日A股资金方向与板块轮动复盘', text, 'market_review'))
+
+
+@pytest.mark.parametrize('text', ['那今天呢？', '那上周五呢？', '那么上一交易日怎么样？',
+                                   '资金主要去了哪些方向？', '资金轮转是什么情况？'])
+def test_date_and_flow_ellipsis_require_nearest_actual_market_user(text):
+    assert not scope.scope_for(request(text))['resources_allowed']
+    assert not scope.scope_for(request(text, focus=FOCUS))['resources_allowed']
+    assert not scope.scope_for(request(text, recent=['研究贵州茅台股票估值'], focus=FOCUS))['resources_allowed']
+    decision = scope.scope_for(request(text, recent=['今天收盘行情数据有了吗？']))
+    assert decision['resources_allowed'] and decision['purposes'] == ['market_review']
+    assert decision['authorized_user_messages'] == [text, '今天收盘行情数据有了吗？']
+    # A chain of complete date ellipses can refer back to its actual user topic.
+    decision = scope.scope_for(request(text, recent=['今天收盘行情数据有了吗？', '那上周五呢？']))
+    assert decision['resources_allowed'] and decision['purposes'] == ['market_review']
+
+
+@pytest.mark.parametrize('text', ['那今天呢？', '那上周五呢？', '资金主要去了哪些方向？',
+                                   '今天下午资金轮转是什么情况？'])
+@pytest.mark.parametrize('latest', ['今天黄金价格如何', '原油今天行情怎么样', '北京房价跌了吗',
+                                    '今天天气怎么样', '今天旅游去哪玩', '我想聊一个未识别的新话题'])
+def test_new_date_and_flow_phrases_cannot_skip_a_new_other_topic(text, latest):
+    req = request(text, recent=['今天A股盘面复盘', latest], focus=FOCUS)
+    assert not scope.scope_for(req)['resources_allowed']
+    assert not scope.authorize_plan(req, plan('A股资金流向', text, 'market_review'))
+
+
+@pytest.mark.parametrize('text', [
+    '资金', '今天资金', '那今天资金呢？',
+    'AAPL今天资金方向怎么样？', 'NVDA今天资金流向如何？',
+    '今天个人资金主要去了哪些方向？', '今天我的钱主要流向了哪里？',
+    '今天银行转账的资金主要去了哪些方向？', '今天资金去了哪些银行账户？',
+    '今天被骗的资金流向哪些方向？', '今天诈骗资金轮转是什么情况？',
+    '今天政治献金资金流向如何？', '今天政府资金轮转是什么情况？',
+    '今天慈善资金主要去了哪些方向？',
+    '今天黄金资金流向如何？', '今天原油资金进攻哪些方向？',
+    '不聊股票，今天资金流向如何？',
+])
+def test_money_words_or_foreign_codes_never_authorize_non_equity_uses(text):
+    req = request(text, recent=['今天A股盘面复盘'], focus=FOCUS)
+    assert not scope.scope_for(req)['resources_allowed']
+    assert not scope.authorize_plan(req, plan('今日A股资金流向', text, 'market_review'))
+
+
+@pytest.mark.parametrize('query', ['今日银行转账资金流向', '今天竞选资金流向', '今天诈骗资金轮转'])
+def test_market_flow_plan_cannot_switch_to_personal_or_political_money(query):
+    text = '今天下午资金轮转是什么情况？'
+    assert not scope.authorize_plan(request(text), plan(query, text, 'market_review'))
