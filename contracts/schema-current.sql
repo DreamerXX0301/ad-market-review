@@ -35,11 +35,74 @@
 -- 032_auction_retention.sql sha256=0771b1c7729211396c8cbbc265753f9242406954e62777a4c717dc6fcdac9420
 -- 033_zodiac_pools.sql sha256=d975bba0a782eba34a0c54719789698351c5ccefdf42cdf6e5478a6d44ce54a9
 -- 034_strategy_run_read_index.sql sha256=5f3d81b290d66a80e000933b40393250ea9dfc46edd4f177a5f4cdbeb8a8c99f
+-- 035_ai_sessions.sql sha256=e1ca2aef1fc945d5a803fe9b8ba1824894f18de3e40a5bdc89802e39b2be480f
+-- 036_ai_stream_events.sql sha256=68e7eb01c7a1efe5759986c186941bdecd732c7f427097ee97df51b245817437
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
 
 CREATE TABLE _schema_migration (name TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at_ms INTEGER NOT NULL);
+
+CREATE TABLE ai_instance_limits (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1), daily_budget_nusd INTEGER NOT NULL DEFAULT 500000000,
+ daily_request_limit INTEGER NOT NULL DEFAULT 20, timeout_seconds INTEGER NOT NULL DEFAULT 45
+);
+
+CREATE TABLE ai_message (
+ message_id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES ai_session(session_id) ON DELETE CASCADE,
+ task_id TEXT REFERENCES ai_task(task_id) ON DELETE SET NULL, role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+ text TEXT NOT NULL, interpretation_json TEXT, state TEXT NOT NULL, created_at_ms INTEGER NOT NULL
+);
+
+CREATE TABLE ai_provider_config (
+ provider_id TEXT PRIMARY KEY CHECK(provider_id IN ('deepseek','openai')),
+ model TEXT NOT NULL, credential_ref TEXT, credential_revision INTEGER NOT NULL DEFAULT 0,
+ config_revision INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+ verification_json TEXT NOT NULL DEFAULT '{}', models_json TEXT NOT NULL DEFAULT '[]',
+ updated_at_ms INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE ai_request_receipt (
+ request_id TEXT PRIMARY KEY,
+ task_id TEXT NOT NULL REFERENCES ai_task(task_id) ON DELETE CASCADE,
+ ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 3),
+ day TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL,
+ state TEXT NOT NULL, reservation_nusd INTEGER NOT NULL DEFAULT 0,
+ cost_nusd INTEGER, cost_state TEXT NOT NULL DEFAULT 'not_sent',
+ usage_json TEXT NOT NULL DEFAULT '{}', price_json TEXT NOT NULL,
+ created_at_ms INTEGER NOT NULL, sent_at_ms INTEGER, finished_at_ms INTEGER, reason_code TEXT,
+ UNIQUE(task_id,ordinal)
+);
+
+CREATE TABLE ai_session (
+ session_id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('stock','market')),
+ report_id TEXT, instrument_id TEXT, as_of TEXT NOT NULL,
+ provider_id TEXT NOT NULL REFERENCES ai_provider_config(provider_id), model TEXT NOT NULL,
+ config_signature TEXT NOT NULL, context_digest TEXT NOT NULL, context_json TEXT NOT NULL,
+ protocol_json TEXT NOT NULL,
+ keep INTEGER NOT NULL DEFAULT 0 CHECK(keep IN (0,1)),
+ created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, expires_at_ms INTEGER NOT NULL
+);
+
+CREATE TABLE ai_task (
+ task_id TEXT PRIMARY KEY, operation TEXT NOT NULL CHECK(operation IN ('verify','message')),
+ session_id TEXT REFERENCES ai_session(session_id) ON DELETE SET NULL,
+ provider_id TEXT NOT NULL REFERENCES ai_provider_config(provider_id), model TEXT NOT NULL,
+ config_signature TEXT NOT NULL, credential_ref TEXT NOT NULL, request_key TEXT NOT NULL UNIQUE,
+ request_digest TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued', reason_code TEXT, result_json TEXT,
+ created_at_ms INTEGER NOT NULL, started_at_ms INTEGER, sent_at_ms INTEGER, finished_at_ms INTEGER,
+ owner TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0,
+ request_json TEXT NOT NULL, day TEXT, reservation_nusd INTEGER NOT NULL DEFAULT 0,
+ cost_nusd INTEGER, cost_state TEXT NOT NULL DEFAULT 'not_sent', usage_json TEXT NOT NULL DEFAULT '{}',
+ price_version TEXT, response_model TEXT
+);
+
+CREATE TABLE ai_task_event (
+ task_id TEXT NOT NULL REFERENCES ai_task(task_id) ON DELETE CASCADE,
+ seq INTEGER NOT NULL CHECK(seq>0), kind TEXT NOT NULL CHECK(kind IN ('status','tool','delta','done','error')),
+ data_json TEXT NOT NULL, at_ms INTEGER NOT NULL,
+ PRIMARY KEY(task_id,seq)
+);
 
 CREATE TABLE backtest_deletion (
   backtest_id TEXT PRIMARY KEY REFERENCES backtest_run(backtest_id),
@@ -953,6 +1016,24 @@ CREATE TABLE zodiac_pool_request (
  response_json TEXT NOT NULL CHECK(json_valid(response_json)),
  created_at_ms INTEGER NOT NULL
 );
+
+CREATE INDEX ai_message_history ON ai_message(session_id,created_at_ms,message_id);
+
+CREATE UNIQUE INDEX ai_only_one_running ON ai_task((1)) WHERE state='running';
+
+CREATE INDEX ai_request_receipt_budget ON ai_request_receipt(day,sent_at_ms);
+
+CREATE INDEX ai_request_receipt_task ON ai_request_receipt(task_id,ordinal);
+
+CREATE INDEX ai_session_expiry ON ai_session(keep,expires_at_ms);
+
+CREATE INDEX ai_session_scope ON ai_session(kind,updated_at_ms DESC,session_id DESC);
+
+CREATE INDEX ai_task_budget ON ai_task(day,sent_at_ms);
+
+CREATE INDEX ai_task_event_cleanup ON ai_task_event(at_ms,task_id);
+
+CREATE INDEX ai_task_queue ON ai_task(state,created_at_ms);
 
 CREATE INDEX artifact_content_references ON snapshot_artifact(sha256);
 

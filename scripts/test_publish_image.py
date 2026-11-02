@@ -158,6 +158,15 @@ def test_runtime_has_traceable_oci_labels_without_changing_legacy_data_paths():
     assert 'COPY deploy/create_secret.py /app/deploy/create_secret.py' in dockerfile
 
 
+def test_release_defaults_match_the_repository_version():
+    version=(ROOT/'VERSION').read_text().strip()
+    dockerfile=(ROOT/'deploy/Dockerfile').read_text()
+    assert re.search(r'^ARG APP_VERSION=(\S+)$',dockerfile,re.MULTILINE).group(1)==version
+    dispatch=WORKFLOW.read_text().split('\npermissions:',1)[0]
+    version_input=re.search(r'^      version:\n(.*?)(?=^      \w+:|\Z)',dispatch,re.MULTILINE|re.DOTALL).group(1)
+    assert re.search(r'^        default: (\S+)$',version_input,re.MULTILINE).group(1)==version
+
+
 def test_fresh_install_compose_is_standalone_pulls_version_and_requires_explicit_worker(tmp_path):
     path=ROOT/'deploy/docker-compose.yml';text=path.read_text()
     assert 'include:' not in text and 'extends:' not in text
@@ -181,6 +190,7 @@ def test_fresh_install_compose_is_standalone_pulls_version_and_requires_explicit
 def test_ci_test_image_includes_publication_checks():
     text=(ROOT/'deploy/Dockerfile.test').read_text()
     assert 'scripts/test_publish_image.py' in text and 'deploy/docker-compose.yml' in text
+    assert 'scripts/test_ai_restore.py' in text
     assert '.github/workflows/publish-image.yml' in text
     assert 'scripts/test_noon_archive.py' in text
     assert 'scripts/test_noon_close_archive.py' in text
