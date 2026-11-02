@@ -14,13 +14,14 @@ import {
 import { aiWrite, useAITask } from "./aiApi";
 import {
   aiReason,
-  modelChoices,
   plainText,
+  selectableModel,
   taskLabel,
   terminalTask,
   verificationPassed,
 } from "./aiState";
 import type { AIProvider } from "./aiTypes";
+import AIModelPicker from "./AIModelPicker";
 import "./AI.css";
 
 const capabilityLabels: Record<string, string> = {
@@ -62,15 +63,7 @@ function ProviderEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const active = usePageActive();
-  const choices = [...(modelChoices[provider.provider_id] || [])];
-  for (const item of [
-    ...(provider.models || []),
-    ...(provider.discovered_models || []),
-  ]) {
-    const id = typeof item === "string" ? item : item.id;
-    if (id && !choices.some((choice) => choice.id === id))
-      choices.push({ id, name: id });
-  }
+  const modelAllowed = selectableModel(provider.provider_id, model);
   useEffect(() => {
     if (!active) {
       setKey("");
@@ -78,6 +71,10 @@ function ProviderEditor({
     }
   }, [active, onClose]);
   async function save(verify: boolean) {
+    if (!modelAllowed) {
+      setError("请选择受支持的常用GPT模型");
+      return;
+    }
     setBusy(true);
     setError("");
     const changed =
@@ -147,37 +144,13 @@ function ProviderEditor({
               }
             />
           </label>
-          <label>
-            常用模型
-            <select
-              value={
-                choices.some((choice) => choice.id === model) ? model : "custom"
-              }
-              onChange={(e) =>
-                setModel(e.target.value === "custom" ? "" : e.target.value)
-              }
-            >
-              {choices.map((choice) => (
-                <option key={choice.id} value={choice.id}>
-                  {choice.name} · {choice.id}
-                </option>
-              ))}
-              <option value="custom">填写其他模型 ID</option>
-            </select>
-          </label>
-          <label>
-            实际模型 ID
-            <input
-              value={model}
-              maxLength={100}
-              spellCheck={false}
-              onChange={(e) => setModel(e.target.value)}
-              required
-              pattern="[A-Za-z0-9][A-Za-z0-9_.:\\-]{0,99}"
-            />
-          </label>
+          <AIModelPicker
+            provider={provider}
+            value={model}
+            onChange={setModel}
+          />
           <p className="muted">
-            预置名称不代表账号已有权限或效果等级。验证会主动刷新账号模型目录；未知单价模型须先核验价格。
+            预置名称不代表账号已有权限或效果等级。验证会核对账号与所选模型，切换前的会话继续保留。
           </p>
           <details className="ai-details">
             <summary>费用与限制</summary>
@@ -243,14 +216,14 @@ function ProviderEditor({
           <button
             type="submit"
             className="btn"
-            disabled={busy || !model.trim()}
+            disabled={busy || !modelAllowed}
           >
             {busy && <Spinner />}仅保存
           </button>
           <button
             type="button"
             className="btn primary"
-            disabled={busy || !model.trim()}
+            disabled={busy || !modelAllowed}
             onClick={(event) => {
               if (event.currentTarget.form?.reportValidity()) void save(true);
             }}
@@ -496,7 +469,12 @@ export default function AIProviderSettings() {
                 </button>
                 <button
                   className="btn"
-                  disabled={!!busy || task.pending || !provider.configured}
+                  disabled={
+                    !!busy ||
+                    task.pending ||
+                    !provider.configured ||
+                    !selectableModel(provider.provider_id, provider.model)
+                  }
                   onClick={() => verify(provider)}
                 >
                   <ShieldCheck size={13} />
@@ -507,7 +485,12 @@ export default function AIProviderSettings() {
                   disabled={
                     !!busy ||
                     (!provider.enabled &&
-                      (!verificationPassed(provider) || task.pending))
+                      (!verificationPassed(provider) ||
+                        !selectableModel(
+                          provider.provider_id,
+                          provider.model,
+                        ) ||
+                        task.pending))
                   }
                   onClick={() => toggle(provider)}
                 >

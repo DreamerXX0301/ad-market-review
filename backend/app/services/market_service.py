@@ -20,8 +20,10 @@ _POOL_SUPPLEMENT_FIELDS=('public_pools','annual_pools','annual_down_pools')
 _SECTOR_SUPPLEMENT_FIELDS=(*_POOL_SUPPLEMENT_FIELDS,'sector_index_history')
 
 
-def context(day=None):
-    market = get_market()
+def context(day=None, *, market=None):
+    # A fixed, already-bound read-only market can be supplied by internal
+    # consumers; HTTP callers retain the ordinary application facade.
+    market = get_market() if market is None else market
     status = market.status()
     if not status.get("ready"):
         raise HTTPException(409, "尚无已发布行情，请先在数据中心初始化")
@@ -73,7 +75,9 @@ def prior_ladder_feedback(market,reference,day,indexed):
     status=market.status()
     if day==status.get('data_end'):
         from app.services.stock_memberships import current_memberships
-        classifications=current_memberships(market,found,expected_day=day)
+        read_factory = getattr(market, 'business_read_connection', None)
+        classifications=current_memberships(market,found,expected_day=day,
+            **({'connection_factory': read_factory} if read_factory is not None else {}))
         memberships=classifications['memberships'];scope=classifications['scope'];state='current_partial'
     else:
         local,coverage=resolve_reference('sectors',day,status,reference)
@@ -128,11 +132,13 @@ def stock(row, reference=None):
     return result
 
 
-def panel(day=None, *, supplement_fields=None):
-    market, status, day = context(day)
-    # Keep every retained date: annual coverage, last events and listing dates
-    # are wider than T/T-1. Only omit capabilities the caller never consumes.
+def panel(day=None, *, supplement_fields=None, market=None, supplement_dates=None):
+    market, status, day = context(day) if market is None else context(day, market=market)
+    # Ordinary pages retain the wider dates needed by annual/event measures.
+    # Internal projections may select explicit dates when they omit those fields.
     projection={} if supplement_fields is None else {'fields':supplement_fields}
+    if supplement_dates is not None:
+        projection['dates'] = supplement_dates
     supplement,fingerprint=load_supplement_with_fingerprint(status["snapshot_id"],**projection)
     reference = {**market.reference(), "_supplement":supplement,
                  "_supplement_cache_source":(supplement,fingerprint) if fingerprint is not None else None}
@@ -162,9 +168,9 @@ def _breadth(market, rows, day):
     return {**counts, "suspended": None, "missing": max(0, len(identities) - len(rows)), "total": len(rows), "expected_current_universe": len(identities), "scope": "沪深京已留存A股样本", "rise_line": 3000, "fall_line": 500, "quality": "partial"}
 
 
-def index_overview(day=None):
+def index_overview(day=None, *, market=None):
     """Index-page facts without the stock panel or unrelated source histories."""
-    market, status, day = context(day)
+    market, status, day = context(day) if market is None else context(day, market=market)
     return json_clean({"date": day, "snapshot_id": status["snapshot_id"],
         "indices": market.index_quotes(day), "quality": status["quality"],
         "data_coverage": data_coverage("overview", status, day, market.reference(), market.calendar())})
@@ -231,7 +237,7 @@ def _sectors_from_panel(market, status, day, reference, indexed):
 
 
 @supplement_reader
-def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical', rank_state='all'):
+def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical', rank_state='all', market=None, supplement_dates=None):
     if rank_state not in ('all', 'unranked') or (rank_state != 'all' and kind != 'gainers'):
         raise HTTPException(422, '未排名范围仅支持近30日涨幅榜')
     if rank_state == 'unranked' and top_n is not None:
@@ -244,13 +250,19 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
     # Flow may read a later anchor's historical series and fall back to sectors;
     # sector views additionally need their retained seven-day index history.
     fields=None if kind=='flow' else _SECTOR_SUPPLEMENT_FIELDS if kind=='sectors' else _POOL_SUPPLEMENT_FIELDS
-    market, status, day, reference, rows = panel(None if kind == 'abnormal' and monitor_scope == 'latest' else day,supplement_fields=fields)
+    market, status, day, reference, rows = panel(None if kind == 'abnormal' and monitor_scope == 'latest' else day,
+        supplement_fields=fields, **({'market': market} if market is not None else {}),
+        **({'supplement_dates': supplement_dates} if supplement_dates is not None else {}))
     indexed = {r["instrument_id"]: r for r in rows}
     latest = day == reference.get("pool_trade_date")
     events=dated_events(reference,day)
     base = {"date": day, "snapshot_id": status["snapshot_id"], "items": [], "total": 0, "summary": {}, "warnings": [], "quality": "partial"}
     if kind == "gainers":
         base["items"], summary = cached_gainers(market,status,reference,day,rows)
+        from app.services.market_rank_distribution import ranking_distribution
+        base['items'], base['ranking_distribution'] = ranking_distribution(
+            market,status,reference,day,base['items'],
+            connection_factory=getattr(market, 'business_read_connection', None))
         ranked_total = sum(isinstance(row.get('rank'),int) and not isinstance(row.get('rank'),bool) and row['rank'] > 0 for row in base['items'])
         available_total = len(base['items'])
         if rank_state == 'unranked':

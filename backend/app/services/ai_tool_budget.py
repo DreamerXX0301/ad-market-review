@@ -52,6 +52,27 @@ def classify_tool(name, args):
                     and not re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', args['instrument_id']))):
             raise ValueError('invalid_tool_arguments')
         return 'data'
+    if name == 'read_stock_quote':
+        if (set(args) != {'date', 'instrument_id'}
+                or not isinstance(args['instrument_id'], str)
+                or len(args['instrument_id']) > 80
+                or any(ord(c)<32 for c in args['instrument_id'])):
+            raise ValueError('invalid_tool_arguments')
+        _day(args['date'])
+        return 'data'
+    if name == 'read_limit_up_data':
+        if set(args) != {'date'}:
+            raise ValueError('invalid_tool_arguments')
+        _day(args['date'])
+        return 'data'
+    if name == 'read_market_detail':
+        if (set(args) != {'date', 'section', 'query'}
+                or args['section'] not in ('indices','sectors','emotion','gainers','abnormal','broken_boards')
+                or not isinstance(args['query'], str) or len(args['query']) > 80
+                or any(ord(c)<32 for c in args['query'])):
+            raise ValueError('invalid_tool_arguments')
+        _day(args['date'])
+        return 'data'
     raise ValueError('invalid_tool_arguments')
 
 
@@ -65,7 +86,7 @@ def tool_budget(frozen):
             raise ValueError('invalid_tool_budget')
         return {'version': 'legacy-local-tool-budget-v1', 'max_reads': total,
                 'max_data_reads': None, 'max_availability_reads': None}
-    if frozen.get('version') != 'ai-agent-round-v4':
+    if frozen.get('version') not in ('ai-agent-round-v4','ai-agent-round-v5'):
         raise ValueError('invalid_tool_budget')
     limits = frozen['local_tool_budget']
     if (not isinstance(limits, dict) or set(limits) != set(LOCAL_TOOL_BUDGET)

@@ -25,8 +25,7 @@ TOOL={'ok':True,'state':'available','tool_name':'read_market_data','date':'2026-
       'metrics':[{'metric_id':'read:today:m1','value':86,'unit':'只','evidence_ids':['read:today:e1']}],
       'gaps':[],'source_bindings':{'snapshot_id':'fixture-today'}}
 
-@pytest.fixture
-def agent_client(tmp_path,monkeypatch):
+def _isolated_agent_client(tmp_path,monkeypatch):
     monkeypatch.setenv('SHIXU_DATA_DIR',str(tmp_path/'data'))
     monkeypatch.setenv('SHIXU_CREDENTIAL_DIR',str(tmp_path/'credentials'))
     master=tmp_path/'master';master.write_bytes(Fernet.generate_key());monkeypatch.setenv('SHIXU_CREDENTIAL_MASTER_KEY_FILE',str(master))
@@ -35,6 +34,40 @@ def agent_client(tmp_path,monkeypatch):
     core.ensure_ready();app=FastAPI();app.include_router(router)
     monkeypatch.setattr(ai_read_tools,'execute_read_tool',lambda *a,**kw:deepcopy(TOOL))
     return TestClient(app)
+
+
+@pytest.fixture
+def modern_agent_client(tmp_path,monkeypatch):
+    """The production v5 semantic-plan path; no protocol fixture overrides."""
+    return _isolated_agent_client(tmp_path,monkeypatch)
+
+
+@pytest.fixture
+def agent_client(tmp_path,monkeypatch):
+    """Replay explicitly frozen v4 records, not the new production default.
+
+    Existing direct-tool/SSE and scope-v3 regressions describe historical round
+    contracts. New semantic production behavior uses ``modern_agent_client`` in
+    test_ai_semantic_round.py. This fixture never changes production defaults.
+    """
+    from app.services import ai_agent_protocol as agent
+    actual_protocol=agent.protocol;actual_tools=ai_read_tools.tool_schemas
+    actual_request=service._agent_request
+    public_prompt=Path(__file__).resolve().parents[2]/'contracts/prompts/ai-agent-round-v4.md'
+    texts=[part.split('\n```',1)[0] for part in public_prompt.read_text().split('```text\n')[1:]]
+    assert len(texts)==2
+    def frozen_v4():
+        result=deepcopy(actual_protocol());result.update(version='ai-agent-round-v4',
+            system_prompt=texts[0],finalize_system_prompt=texts[1])
+        result.pop('scope_policy',None)
+        return result
+    def historical_request(*args,**kwargs):
+        result=actual_request(*args,**kwargs);result.pop('intent_plan_schema',None);return result
+    monkeypatch.setattr(agent,'protocol',frozen_v4)
+    monkeypatch.setattr(ai_read_tools,'tool_schemas',lambda:[tool for tool in actual_tools()
+        if tool['name'] in ('read_market_data','read_stock_research','check_data_availability')])
+    monkeypatch.setattr(service,'_agent_request',historical_request)
+    return _isolated_agent_client(tmp_path,monkeypatch)
 
 
 def create(client,key='agent-first',**changes):

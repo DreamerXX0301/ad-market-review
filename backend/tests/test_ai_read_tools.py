@@ -31,9 +31,9 @@ def call(section, **kwargs):
     return tools.execute_read_tool('read_market_data', {'date': 'today', 'section': section}, **kwargs)
 
 
-def test_tool_schemas_are_three_closed_responses_functions():
+def test_tool_schemas_are_closed_responses_functions():
     schemas = tools.tool_schemas()
-    assert {s['name'] for s in schemas} == {'read_market_data', 'read_stock_research', 'check_data_availability'}
+    assert {s['name'] for s in schemas} == {'read_market_data', 'read_stock_research', 'check_data_availability', 'read_stock_quote', 'read_limit_up_data', 'read_market_detail'}
     assert all(s['type'] == 'function' and s['strict'] is True for s in schemas)
     assert all(s['parameters']['additionalProperties'] is False for s in schemas)
     assert schemas[0]['parameters']['properties']['section']['enum'] == list(tools.SECTIONS)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from copy import deepcopy
+from contextlib import contextmanager
 from datetime import date, datetime, time
 import json
 import os
@@ -28,6 +29,8 @@ MAX_REPORT_BYTES = 8 * 1024 * 1024
 SECTIONS = ('availability', 'auction', 'noon', 'close', 'overview', 'fund_flow')
 PHASES = {'auction': ('09:25', '竞价结束'), 'noon': ('11:30', '午盘'), 'close': ('15:00', '收盘')}
 _BRIEF_KIND = {'auction': 'auction', 'noon': 'noon', 'close': 'noon_close'}
+DETAIL_SECTIONS = ('indices', 'sectors', 'emotion', 'gainers', 'abnormal', 'broken_boards')
+MAX_DETAIL_ROWS = 30
 
 
 def tool_schemas():
@@ -40,6 +43,15 @@ def tool_schemas():
          {'instrument_id': {'type': 'string', 'description': '完整六位代码加.SH/.SZ/.BJ；空串沿用页面个股'}}, ['instrument_id']),
         ('check_data_availability', '只检查指定日已保存资料及北京时间观察阶段，不取新数据、不把工作日猜作已核验交易日。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
+        ('read_stock_quote', '按证券名称、六位代码或完整代码，读取本地指定完成交易日的个股原始报价和成交额；名称必须经本地名录消歧，不用不存在的代码或旧日价格代替。不需要先有研究报告，不联网。',
+         {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'},
+          'instrument_id': {'type': 'string', 'description': '证券名称、六位代码或完整代码，最多80字符；空串沿用当前页面证券'}}, ['date', 'instrument_id']),
+        ('read_limit_up_data', '读取指定完成日已保存的涨停梯队、各连板高度名单、首板和最高板、反包/晋级失败/20cm及题材确认家数。复用与页面相同的日期及价格核验，来源不全时数量只给已确认下界，不能称全市场完整统计。',
+         {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
+        ('read_market_detail', '读取系统已保存的盘面页面事实：指数、板块表现、情绪及次日观察条件、近30交易日涨幅榜、历史监管监控、炸板分析。query用于名称或代码筛选，空串不筛选。返回有界名单并明确总数及截取范围；观察条件不是确定预测，板块成交额不是净流入。',
+         {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'},
+          'section': {'type': 'string', 'enum': list(DETAIL_SECTIONS)},
+          'query': {'type': 'string', 'description': '名称或代码的筛选文本，最多80字符；不筛选传空串'}}, ['date', 'section', 'query']),
     ]
     return [{'type': 'function', 'name': name, 'description': description, 'strict': True,
              'parameters': {'type': 'object', 'properties': properties, 'required': required,
@@ -66,6 +78,18 @@ def _paths():
     if not result or result[0][1] != current:
         result.append(('current_instance', current))
     return result
+
+
+@contextmanager
+def _business_read_connection():
+    """Inject into page collaborators without app.connect/migration side effects."""
+    connection = _connect(sqlite_path())
+    if connection is None:
+        raise ValueError('没有可读取业务元数据')
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def _day(value, now):
@@ -295,6 +319,356 @@ def _fund_flow(result, day):
         raise HTTPException(409, '读取期间发布代际变化，请重试')
 
 
+def _pick_fields(value, keys):
+    return {key: value[key] for key in keys if isinstance(value, dict) and key in value}
+
+
+def _denied(value):
+    return isinstance(value, dict) and (value.get('egress_allowed') is False or value.get('ai_processing_allowed') is False)
+
+
+def _source_denied(value):
+    if _denied(value): return True
+    if isinstance(value, dict): return any(_source_denied(item) for item in value.values())
+    if isinstance(value, (list, tuple)): return any(_source_denied(item) for item in value)
+    return False
+
+
+def _coverage(value):
+    """Small coverage metadata, never expand a whole historical-date catalogue."""
+    value = value if isinstance(value, dict) else {}
+    result = _pick_fields(value, ('date', 'label', 'state', 'scope', 'basis', 'reason', 'notice', 'complete',
+        'partial', 'start', 'end', 'selected_date_available', 'source_snapshot_id', 'source_snapshot_day',
+        'candidate_count', 'confirmed_count', 'unknown_count', 'source_pool_complete', 'members_complete',
+        'membership_available', 'examined_count', 'known_false_count', 'source_scope_complete',
+        'catalog_historical', 'requested_count', 'accepted_count', 'failed_count', 'observed_count'))
+    if isinstance(value.get('available_dates'), list):
+        result['available_date_count'] = len(value['available_dates'])
+    return result
+
+
+def _table(rows, *, maximum=MAX_DETAIL_ROWS, total=None, scope='已保存页面样本；名单有界返回'):
+    rows = [row for row in rows if isinstance(row, dict) and not _denied(row)]
+    return {'items': rows[:maximum], 'observed_count': len(rows) if total is None else total,
+            'returned_count': min(len(rows), maximum), 'truncated': len(rows) > maximum or total is not None and total > maximum,
+            'scope': scope}
+
+
+def _fit_detail(data):
+    """Remove whole display rows only; exact counts and coverage are never cut."""
+    def tables(value):
+        if isinstance(value, dict):
+            if isinstance(value.get('items'), list) and 'returned_count' in value:
+                yield value
+            for item in value.values(): yield from tables(item)
+        elif isinstance(value, list):
+            for item in value: yield from tables(item)
+    while len(dumps(data).encode()) > 17 * 1024:
+        choices = [value for value in tables(data) if value['items']]
+        if not choices:
+            raise ValueError('必要盘面元数据超出有界容量')
+        selected = max(choices, key=lambda value: len(dumps(value['items']).encode()))
+        selected['items'].pop(); selected['returned_count'] = len(selected['items']); selected['truncated'] = True
+    return data
+
+
+def _stock_fields(row, topic_query=''):
+    value = _pick_fields(row, ('instrument_id', 'code', 'name', 'date', 'close', 'change_pct', 'amount',
+        'rank', 'change_30d_pct', 'change_30d_reason', 'change_30d_coverage', 'turnover_rate',
+        'first_limit_time', 'last_limit_time', 'break_count', 'source_industry', 'details_source',
+        'limit_up_state', 'previous_board_count', 'previous_board_date', 'feedback', 'reason',
+        'unverified_reason', 'limit_up_ytd', 'limit_up_ytd_observed', 'limit_up_ytd_reason',
+        'topics_observed_date', 'topics_scope'))
+    height = (row.get('board_presentation') or {}).get('height', {})
+    value['board_count'] = height.get('value') if height.get('state') == 'confirmed' else None
+    value['board_count_state'] = height.get('state', 'unknown')
+    value['reported_board_count'] = row.get('board_count')
+    if height.get('state') != 'confirmed':
+        value['board_count_reason'] = height.get('reason')
+    topics = row.get('topics') if isinstance(row.get('topics'), list) else []
+    if topic_query:
+        topics = sorted(topics, key=lambda item: topic_query.casefold() not in ' '.join(
+            str(item.get(key, '')) for key in ('topic_id', 'name')).casefold() if isinstance(item, dict) else True)
+    value['topics'] = [_pick_fields(item, ('topic_id', 'name', 'kind', 'observed_date', 'source_observed_date', 'source'))
+                       for item in topics[:3] if isinstance(item, dict)]
+    value['topics_truncated'] = len(topics) > 3
+    return value
+
+
+def _sentiment_data(value):
+    """Keep the three distinct statistics, without repeating full audit trees."""
+    scalar_keys = ('label', 'state', 'state_label', 'scope', 'date', 'previous_date', 'group_id', 'id',
+        'sample_count', 'observed_count', 'unknown_count', 'coverage_pct', 'cohort_source_complete',
+        'identity_complete', 'promotion_unknown_count', 'previous_unverified_count', 'default_group_id',
+        'promotion_bounds_pct', 'promotion_bounds_reason', 'current_identity_unknown_count', 'price_basis',
+        'cohort_date', 'notice')
+    def observation(item):
+        item = item if isinstance(item, dict) else {}
+        data = _pick_fields(item, scalar_keys)
+        data['metrics'] = [_pick_fields(row, ('key', 'label', 'value', 'unit', 'formula', 'reason'))
+                           for row in item.get('metrics', []) if isinstance(row, dict)]
+        return data
+    result = _pick_fields(value, ('model', 'legacy_cohort_model', 'date', 'scope', 'atmosphere', 'notice'))
+    result['market'] = observation(value.get('market'))
+    environment = value.get('index_environment') or {}
+    result['index_environment'] = {**observation(environment), 'indices': _table([
+        {**observation(row), **_pick_fields(row, ('instrument_id', 'name'))}
+        for row in environment.get('indices', [])], maximum=8)}
+    short = value.get('short_term') or {}
+    groups = [{**observation(row), 'cohort_price_feedback': observation(row.get('cohort_price_feedback'))}
+              for row in short.get('groups', []) if isinstance(row, dict)]
+    result['short_term'] = {**observation(short), 'groups': _table(groups, maximum=8)}
+    return result
+
+
+def _bind_detail(result, day, data, heads, supplement):
+    if _denied(data):
+        _gap(result, 'source_permission', '所选盘面来源明确禁止AI处理或外发')
+        return
+    if data.get('date') != day:
+        raise ValueError('盘面返回日期与请求不符')
+    expected = heads.get('daily_raw', {}).get('market_snapshot_id')
+    if expected and data.get('snapshot_id') != expected:
+        raise HTTPException(409, '盘面返回代际与读取前发布头不符')
+    # Bind the exact page projection and immutable market generation. No private
+    # filesystem paths or provider credentials enter the model-visible body.
+    result['source'] = ['current_instance_published_market']
+    result['source_bindings']['published_detail'] = {'heads': heads, 'supplement_head': supplement,
+        'market_snapshot_id': data.get('snapshot_id'), 'projection_sha256': digest(data)}
+    if heads != _heads() or supplement != _supplement_head():
+        raise HTTPException(409, '读取期间发布代际变化，请重试')
+
+
+def _completion_gap_state(day, now, calendar):
+    # A future weekday or an unverified calendar cannot prove the session phase.
+    return ('not_due' if day == now.date().isoformat() and day in calendar
+            and now < datetime.combine(date.fromisoformat(day), time(15), CHINA) else 'unknown')
+
+
+def _completed_market(result, day, now):
+    heads, supplement = _heads(), _supplement_head()
+    market = _market(heads); status = market.status()
+    calendar = market.calendar()
+    result['summary'] = {'requested_date': day, 'latest_completed_date': status.get('data_end'),
+                         'now': now.isoformat(), 'timezone': 'Asia/Shanghai'}
+    if (not status.get('ready') or day not in calendar
+            or not isinstance(status.get('data_end'), str) or day > status['data_end']
+            or status.get('data_begin') and day < status['data_begin']):
+        phase = _completion_gap_state(day, now, calendar)
+        _gap(result, 'completed_market', '所选日没有已发布完成日行情；未到收盘时点时不把午间或竞价报价称为收盘报价', phase)
+        result['state'] = phase
+        return None
+    if _denied(status) or _denied(market.reference()):
+        _gap(result, 'source_permission', '所选行情来源明确禁止AI处理或外发')
+        return None
+    return market, status, heads, supplement
+
+
+def _stock_quote(result, identifier, day, page, now):
+    # Resolve only the local small identity catalogue before reading prices.
+    heads, supplement = _heads(), _supplement_head()
+    market = _market(heads); status = market.status()
+    term = identifier.strip() or page.get('instrument_id') or (page.get('instrument') or {}).get('instrument_id') or ''
+    if not isinstance(term, str) or not 1 <= len(term) <= 80 or any(ord(c) < 32 for c in term):
+        raise ValueError('证券名称或代码无效')
+    if _denied(status) or _denied(market.reference()):
+        _gap(result, 'source_permission', '所选行情名录明确禁止AI处理或外发'); return
+    identities = [row for row in market.instruments(query=term, limit=10000)
+                  if row.get('kind', 'stock') in ('stock', 'equity', 'a_share', 'A')
+                  and re.fullmatch(r'\d{6}\.(SH|SZ|BJ)', str(row.get('instrument_id', '')))]
+    normalized = term.upper()
+    matches = [row for row in identities if normalized in (row['instrument_id'].upper(), row['instrument_id'][:6])
+               or term == row.get('name')]
+    result['summary'] = {'requested_instrument': term, 'requested_date': day,
+        'identity_state': 'resolved' if len(matches) == 1 else 'ambiguous' if len(matches) > 1 else 'not_found',
+        'candidates': _table([_pick_fields(row, ('instrument_id', 'name', 'kind')) for row in identities], maximum=8),
+        'latest_completed_date': status.get('data_end')}
+    if len(matches) != 1:
+        _gap(result, 'instrument_identity', '本地名录没有唯一准确证券身份；不能猜代码或用近似名称的其他证券代替')
+        return
+    identity = matches[0]; symbol = identity['instrument_id']
+    result['summary']['instrument'] = _pick_fields(identity, ('instrument_id', 'name', 'kind', 'list_date', 'end_date'))
+    result['summary']['identity_name_scope'] = '名称来自当前本地证券名录；同证券历史行情不据此证明当时名称或行业归属'
+    calendar = market.calendar()
+    if (not status.get('ready') or day not in calendar
+            or not isinstance(status.get('data_end'), str) or day > status['data_end']
+            or status.get('data_begin') and day < status['data_begin']):
+        phase = _completion_gap_state(day, now, calendar)
+        _gap(result, 'dated_quote', '所选日没有已发布的完成日行情；今日未收盘时尚无收盘报价，不把旧日或午间报价称为当日收盘', phase)
+        result['state'] = phase
+        return
+    if _denied(status) or _denied(market.reference()) or _denied(identity):
+        _gap(result, 'source_permission', '所选证券行情来源明确禁止AI处理或外发')
+        return
+    pos = calendar.index(day); previous = calendar[pos-1] if pos else None
+    histories = market.history_for_instruments([symbol], start=previous or day, end=day).get(symbol, [])
+    rows = [row for row in histories if row.get('date') == day and row.get('instrument_id') == symbol]
+    if len(rows) != 1 or _denied(rows[0]):
+        _gap(result, 'dated_quote', '所选日没有唯一可外发的同股原始报价；停牌或缺数未被猜作零成交')
+        return
+    quote = rows[0]
+    if quote.get('price_basis', 'none') != 'none' or not contexts._finite(quote.get('close')) or quote['close'] <= 0:
+        _gap(result, 'dated_quote', '同日原始收盘价格或未复权口径尚未核验')
+        return
+    price = _pick_fields(quote, ('open', 'high', 'low', 'close', 'volume', 'amount', 'price_basis', 'source'))
+    for key in ('volume', 'amount'):
+        if not contexts._finite(price.get(key)) or isinstance(price.get(key), bool) or price[key] < 0:
+            price[key] = None; _gap(result, key, '同日该数值缺失或无效；未用零替代')
+    price.update(instrument_id=symbol, name=identity.get('name'), date=day, price_basis='none',
+        units={'open': 'CNY', 'high': 'CNY', 'low': 'CNY', 'close': 'CNY', 'volume': '股', 'amount': 'CNY'},
+        observation_phase='completed_daily', notice='已保存完成日原始报价；成交额不是净流入，也不是实时逐笔成交')
+    # Share the strict return/continuity proof rather than divide across missing
+    # sessions or unverified corporate actions. A close/amount needs no return.
+    from app.services.stock_summary import _daily_change
+    price['change_pct'], price['change_pct_reason'] = _daily_change(market, symbol, day, previous, calendar, histories, quote)
+    price['units']['change_pct'] = '%'
+    result['summary'].update(observation_phase='completed_daily', quote_available=True)
+    result['evidence'] = [{'evidence_id': 'stock_quote', 'kind': 'stock_quote', 'source': str(quote.get('source') or 'published_daily'),
+        'title': (identity.get('name') or symbol) + '指定日原始行情', 'dates': {'trade_date': day, 'previous_trade_date': previous}, 'data': price}]
+    result['metrics'] = [{'metric_id': 'stock_quote:' + key, 'label': label, 'value': price.get(key), 'unit': unit,
+        'as_of': day, 'price_basis': 'none', 'dates': {'trade_date': day}, 'evidence_ids': ['stock_quote']}
+        for key, label, unit in (('close', '收盘价', 'CNY'), ('amount', '当日成交额', 'CNY'), ('volume', '当日成交量', '股'), ('change_pct', '同日可比涨幅', '%'))]
+    _bind_detail(result, day, {'date': day, 'snapshot_id': status.get('snapshot_id'), 'instrument': identity, 'quote': quote}, heads, supplement)
+
+
+def _limit_up(result, day, now):
+    available = _completed_market(result, day, now)
+    if available is None: return
+    market, status, heads, supplement = available
+    from app.services.market_supplement import _load_supplement_with_fingerprint
+    from app.services.market_service import dated_events
+    from app.services.market_ladder import build_ladder
+    calendar = market.calendar(); end = calendar.index(day)
+    days = tuple(calendar[max(0, end-2):end+1])
+    pools, fp = _load_supplement_with_fingerprint(status['snapshot_id'], dates=days,
+        fields=('public_pools', 'annual_pools', 'annual_down_pools'))
+    reference = {**market.reference(), '_supplement': pools, '_supplement_cache_source': (pools, fp)}
+    relevant = [pools, *(reference.get('pool_history', {}).get(value, {}) for value in days)]
+    if reference.get('pool_trade_date') in days:
+        relevant.extend(reference.get(key) for key in ('limitup', 'limitdown', 'breakpool', 'pool_coverage'))
+    if any(_source_denied(value) for value in relevant):
+        _gap(result, 'source_permission', '指定日期事件来源明确禁止AI处理或外发；未发送名单或计数'); return
+    data = build_ladder(market, status, day, reference, market.panel(day), dated_events(reference, day), include_patterns=False)
+    data.update(date=day, snapshot_id=status['snapshot_id'])
+    if _source_denied(data):
+        _gap(result, 'source_permission', '来源明确禁止AI处理或外发'); return
+    rows = [_stock_fields(row) for row in data.get('items', []) if not _denied(row)]
+    heights = [row['board_count'] for row in rows if isinstance(row.get('board_count'), int) and not isinstance(row['board_count'], bool)]
+    unknown = len(rows)-len(heights); coverage = _coverage(data.get('main_coverage'))
+    exact = coverage.get('complete') is True and unknown == 0
+    highest = max(heights) if heights else None
+    highest_rows = [_pick_fields(row, ('instrument_id', 'name', 'board_count')) for row in rows if row.get('board_count') == highest] if highest else []
+    result['summary'].update(confirmed_limit_up_count=len(rows) if coverage.get('complete') else None,
+        confirmed_limit_up_observed_count=len(rows), first_board_count=heights.count(1) if exact else None,
+        first_board_observed_count=heights.count(1), unknown_height_count=unknown,
+        highest_board_count=highest if exact else None, highest_board_observed_count=highest,
+        highest_board_stocks=_table(highest_rows), complete=exact, main_coverage=coverage,
+        board_height_basis='同日收盘涨停及价格已核验后的来源连板数；非龙头评级；来源不全时仅为已确认样本下界')
+    groups = [{'height': height, 'count': heights.count(height) if exact else None,
+               'observed_count': heights.count(height), 'stocks': _table([_pick_fields(row, ('instrument_id', 'name', 'board_count'))
+                    for row in rows if row.get('board_count') == height])} for height in sorted(set(heights), reverse=True)]
+    projection = {'board_groups': groups, 'closing_limit_up': _table(rows),
+        'unverified': _table([_stock_fields(row) for row in data.get('unverified_items', [])], maximum=8),
+        'rebound': _table([_stock_fields(row) for row in data.get('rebound_items', [])], maximum=8),
+        'failed': _table([_stock_fields(row) for row in data.get('failed_items', [])], maximum=8),
+        'twenty_cm': _table([_stock_fields(row) for row in data.get('twenty_cm_items', [])], maximum=8),
+        'classification_coverage': {key: _coverage(value) for key, value in data.get('classification_coverage', {}).items()},
+        'theme_counts': _table([_pick_fields(row, ('topic_id', 'name', 'kind', 'limit_up_count', 'limit_up_observed_count',
+            'complete', 'member_count', 'unknown_member_count', 'membership_observed_date', 'reason')) for row in data.get('theme_counts', [])], maximum=12),
+        'theme_coverage': _coverage(data.get('theme_coverage')), 'units': {'counts': '家', 'height': '板', 'amount': 'CNY'},
+        'scope': '已保存并核验的收盘涨停样本；数量完整性与名单截取分别标注，题材归属重叠不可加总'}
+    if not exact: _gap(result, 'limit_up_coverage', coverage.get('reason') or '来源池、报价或来源高度未完整，已确认家数和高度仅描述已观察样本')
+    result['evidence'] = [{'evidence_id': 'limit_up', 'source': 'local_verified_closing_ladder', 'kind': 'limit_up_details',
+        'title': '指定日涨停梯队和分类', 'dates': {'trade_date': day}, 'data': _fit_detail(projection)}]
+    _bind_detail(result, day, data, heads, supplement)
+    result['source_bindings']['published_detail']['pool_projection_sha256'] = digest(fp) if fp else None
+
+
+def _market_detail(result, day, section, query, now):
+    available = _completed_market(result, day, now)
+    if available is None: return
+    market, _, heads, supplement = available
+    market.business_read_connection = _business_read_connection
+    from app.services import market_service
+    kind = 'broken-boards' if section == 'broken_boards' else section
+    data = (market_service.index_overview(day, market=market) if section == 'indices' else
+            market_service.market_page(kind, day, limit=1000 if section == 'sectors' else 200,
+                query='' if section == 'sectors' else query, market=market,
+                **({'top_n': 1000} if section == 'gainers' else {}),
+                **({'supplement_dates': (day,)} if section == 'sectors' else {})))
+    if _source_denied(data):
+        _gap(result, 'source_permission', '所选盘面来源明确禁止外发或AI处理'); return
+    if data.get('date') != day: raise ValueError('盘面页面日期不符')
+    if query and section == 'sectors':
+        source_rows = data.get('items', [])
+        complete = len(source_rows) == data.get('total')
+        data = {**data, 'items': [row for row in source_rows if query.casefold() in ' '.join(
+            str(row.get(key, '')) for key in ('topic_id', 'topic_code', 'name', 'source_code')).casefold()]}
+        data['query_source_count'] = len(source_rows); data['query_source_complete'] = complete
+        data['total'] = len(data['items'])
+        if not complete:
+            _gap(result, 'query_scope', '板块筛选仅覆盖页面有界返回的来源；未命中不能证明目录中不存在')
+    result['summary'].update(section=section, data_coverage=_coverage(data.get('data_coverage')),
+        source_snapshot_id=data.get('snapshot_id'), page_summary=data.get('summary', {}),
+        query=query, quality=data.get('quality'), notice='系统已保存指定日事实；规则观察条件不是预测，交易样本不能外推全部账户盈亏')
+    if section == 'sectors' and query:
+        result['summary'].update(query_source_count=data['query_source_count'], query_source_complete=data['query_source_complete'])
+    if data.get('unavailable_reason'): _gap(result, section, data['unavailable_reason'])
+    if section == 'indices':
+        rows = [_pick_fields(row, ('instrument_id', 'code', 'name', 'date', 'open', 'high', 'low', 'close', 'change_pct',
+            'amount', 'source', 'price_basis', 'quote_available', 'quote_reason', 'change_pct_reason')) for row in data.get('indices', [])]
+        if query: rows = [row for row in rows if query.casefold() in ' '.join(str(row.get(key, '')) for key in ('instrument_id', 'code', 'name')).casefold()]
+        projection = {'indices': _table(rows), 'units': {'price': '点', 'change_pct': '%', 'amount': 'CNY'},
+                      'scope': '已保存完成日指数报价；不含实时逐笔行情'}
+    elif section == 'sectors':
+        fields = ('topic_id', 'topic_code', 'name', 'kind', 'change_pct', 'amount', 'quote_date', 'quote_source', 'quote_basis',
+            'calculation', 'member_count', 'observed_count', 'members_available', 'members_complete', 'member_quote_coverage_complete',
+            'limit_up_count', 'limit_up_observed_count', 'up_count', 'down_count', 'membership_observed_date', 'catalog_historical')
+        projection = {'sectors': _table([_pick_fields(row, fields) for row in data.get('items', [])], total=data.get('total')),
+            'quote_coverage': _coverage(data.get('quote_coverage')), 'membership_coverage': _coverage(data.get('membership_coverage')),
+            'scope': '指定日已留存板块指数；缺历史成员不抹去指数行情，涨跌停及成员数缺档保持未知；成交额不是净流入'}
+    elif section == 'emotion':
+        outlook = data.get('market_outlook', {})
+        watch = outlook.get('watchlist', {})
+        projection = {'breadth': data.get('breadth'), 'emotion': data.get('emotion'), 'sentiment': _sentiment_data(data.get('sentiment') or {}),
+            'market_outlook': {**_pick_fields(outlook, ('date', 'version', 'next_session', 'stage', 'plan', 'event_counts', 'notice', 'provenance')),
+                'watchlist': {**_pick_fields(watch, ('coverage', 'empty_reason', 'topics_empty_reason')),
+                    'stocks': _table([_stock_fields(row) for row in watch.get('stocks', [])], maximum=12),
+                    'topics': _table([{**_pick_fields(row, ('id', 'name', 'kind', 'role', 'reason', 'evidence_date', 'membership_observed_date',
+                            'confirmed_limit_up_count', 'observed_limit_up_count', 'complete')),
+                        'stocks': _table([_stock_fields(stock) for stock in row.get('stocks', [])], maximum=4)} for row in watch.get('topics', [])], maximum=8)}},
+            'scope': '同页可比样本、描述性情绪与基于留存日事实的次日观察候选/条件；不是保证收益、确定预测或买入指令'}
+    elif section == 'broken_boards':
+        analysis = data.get('broken_board_analysis', {})
+        projection = {**_pick_fields(analysis, ('date', 'version', 'scope', 'classification', 'coverage', 'provenance', 'warnings'))}
+        for key in ('current', 'previous_feedback'):
+            value = analysis.get(key, {})
+            projection[key] = {**{name: item for name, item in value.items() if name not in ('items', 'concept_distribution', 'industry_distribution')},
+                               'items': _table([_stock_fields(row) for row in value.get('items', [])], maximum=20)}
+            for group in ('concept_distribution', 'industry_distribution'):
+                projection[key][group] = _table([_pick_fields(row, ('topic_id', 'name', 'kind', 'source',
+                    'classification_level', 'observed_count', 'sample_share_pct', 'cohort_count',
+                    'sample_avg_change_pct', 'sample_valid_count', 'sample_unknown_count', 'sample_date',
+                    'membership_date', 'membership_snapshot_day', 'sample_reason'))
+                    for row in value.get(group, [])], maximum=5)
+    else:
+        projection = {'stocks': _table([_stock_fields(row, query) for row in data.get('items', [])], total=data.get('total')),
+            'scope': '同页已保存的筛选结果；近30交易日涨幅保留未排名项，监管名单使用观察日存档而非最新名单回填历史'}
+        if section == 'gainers':
+            # The page computes this once before top_n/search/pagination. Never
+            # recompute category shares on this bounded visible stock subset.
+            projection['ranking_distribution'] = data.get('ranking_distribution', {})
+            projection['scope'] = '原近30交易日涨幅榜前1000名中筛选证券或题材；分类占比仍使用未筛选的原前1000样本，归属重叠不加总'
+            if projection['ranking_distribution'].get('classification_state') == 'unavailable':
+                _gap(result, 'dated_classification', '该日分类成员未核验；保留原涨幅排名，不用当前题材补出历史题材占比')
+    projection['warnings'] = data.get('warnings', [])
+    result['evidence'] = [{'evidence_id': 'market_detail:' + section, 'source': 'local_market_page', 'kind': section,
+        'title': '指定日系统盘面：' + section, 'dates': {'trade_date': day}, 'data': _fit_detail(projection)}]
+    _bind_detail(result, day, data, heads, supplement)
+    if section == 'sectors':
+        result['source_bindings']['published_detail']['supplement_dates'] = [day]
+
+
 def _research(result, instrument_id, page, fallback, now):
     instrument = instrument_id or page.get('instrument_id') or (page.get('instrument') or {}).get('instrument_id')
     if not isinstance(instrument, str) or not re.fullmatch(r'\d{6}\.(SH|SZ|BJ)', instrument):
@@ -460,7 +834,7 @@ def _bounded(result):
 
 
 def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
-    """Execute one of three allowlisted local reads; always return bounded JSON."""
+    """Execute declared local reads; always return bounded JSON, never collect."""
     result = _result(name if name in {r['name'] for r in tool_schemas()} else 'unknown')
     try:
         if not isinstance(args, dict):
@@ -472,6 +846,26 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
             if set(args) - {'instrument_id'} or not isinstance(args.get('instrument_id', ''), str):
                 raise ValueError('个股工具仅接受instrument_id')
             _research(result, args.get('instrument_id', ''), page_context or {}, fallback_context or {}, now)
+        elif name in ('read_stock_quote', 'read_limit_up_data', 'read_market_detail'):
+            permitted = ({'date', 'instrument_id'} if name == 'read_stock_quote' else
+                         {'date', 'section', 'query'} if name == 'read_market_detail' else {'date'})
+            if set(args) != permitted:
+                raise ValueError('工具参数与声明字段不符')
+            day = _day(args['date'], now); result['date'] = day
+            from app.services.supplement_access import supplement_access
+            # Pin only the local read itself. No database transaction or source
+            # lock spans model HTTP, and GC cannot unlink inputs mid-projection.
+            with supplement_access():
+                if name == 'read_stock_quote':
+                    if not isinstance(args['instrument_id'], str): raise ValueError('证券标识须为文本')
+                    _stock_quote(result, args['instrument_id'], day, page_context or {}, now)
+                elif name == 'read_limit_up_data':
+                    _limit_up(result, day, now)
+                else:
+                    section, query = args['section'], args['query']
+                    if section not in DETAIL_SECTIONS or not isinstance(query, str) or len(query) > 80 or any(ord(c) < 32 for c in query):
+                        raise ValueError('盘面分区或查询文本无效')
+                    _market_detail(result, day, section, query.strip(), now)
         elif name in ('read_market_data', 'check_data_availability'):
             permitted = {'date', 'section'} if name == 'read_market_data' else {'date'}
             if set(args) - permitted:

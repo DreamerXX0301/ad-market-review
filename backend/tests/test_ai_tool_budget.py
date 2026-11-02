@@ -66,7 +66,7 @@ def test_invalid_or_unknown_calls_never_gain_metadata_allowance(name, args):
 
 def test_new_protocol_freezes_explicit_budget_without_increasing_model_requests():
     frozen = protocol()
-    assert frozen['version'] == 'ai-agent-round-v4'
+    assert frozen['version'] == 'ai-agent-round-v5'
     assert frozen['max_model_requests'] == 3
     assert frozen['max_local_tools'] == 5
     assert frozen['local_tool_budget'] == V4['local_tool_budget']
@@ -147,7 +147,7 @@ def test_malformed_or_inconsistent_nested_budget_never_increases_authority(chang
         tool_budget(frozen)
 
 
-@pytest.mark.parametrize('version', ['ai-agent-round-v3', 'ai-agent-round-v5', None])
+@pytest.mark.parametrize('version', ['ai-agent-round-v3', 'ai-agent-round-v6', None])
 def test_nested_expansion_requires_the_explicit_new_round_protocol(version):
     frozen = deepcopy(V4)
     if version is None:

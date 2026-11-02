@@ -13,7 +13,7 @@ from app.adapters.ai_responses import BASE_URLS, ProviderError, error_code, usag
 from app.services.ai_catalog import MAX_RESPONSE_BYTES, max_output
 from app.services import ai_web, ai_scope
 from app.services.ai_tool_budget import assess_tool, classify_tool, tool_budget
-from app.services.ai_agent_protocol import FINALIZE_SYSTEM_PROMPT
+from app.services.ai_agent_protocol import FINALIZE_SYSTEM_PROMPT, planner_messages
 
 MAX_STREAM_BYTES=4*MAX_RESPONSE_BYTES
 MAX_TEXT_BYTES=64*1024
@@ -136,6 +136,20 @@ async def _run(request,key,cancel,bridge):
     scope=ai_scope.scope_for(request);scope_denied=False
     all_text='';sources=[];citations=[];traces=[];results=[];usages=[];tool_calls=[];web_request=None;query_target=None;web_source_counts={}
     timeout=request['timeout_seconds']
+    semantic=frozen.get('version')=='ai-agent-round-v5'
+    plan_accepted=not semantic
+    def answer(body):
+        return {'output':{'response_type':'agent_answer','text':all_text,'citations':citations,'sources':sources,
+            'source_context':{'page_anchor':request['page_anchor'],'request_time':request['request_time'],
+                'submitted_request_time':request.get('submitted_request_time'),'tool_results':results,'scope':scope,
+                'web':{'allowed':scope['resources_allowed'] and ai_web.supported(request['provider_id'],request['model']),
+                       'used':web_used,'search_call_count':int(web_used),'queried_at_ms':time.time_ns()//1000000,
+                       'requested_as_of':query_target,'page_as_of':request['page_anchor'].get('as_of'),
+                       'validation':'native_citations_only',**web_source_counts}},
+            'tool_traces':traces,'round_protocol':frozen,
+            'used_context':{'seed_messages':request['seed_messages'],'planner_messages':request.get('planner_messages'),
+                            'tool_schemas':request['tool_schemas'],
+                            'tool_calls':tool_calls,'web_request':web_request}},'response_model':body.get('model')}
     configured=os.environ.get('SHIXU_AI_AGENT_TIMEOUT_SECONDS')
     if configured in ('60','120'):timeout=int(configured)
     async with asyncio.timeout(timeout):
@@ -146,9 +160,12 @@ async def _run(request,key,cancel,bridge):
                 last=ordinal==frozen['max_model_requests']
                 summary_only=force_summary
                 tools=[]
-                hosted=not force_summary and web_planned and not web_used and ai_web.supported(request['provider_id'],request['model'])
-                restricted=(scope_denied and not scope['local_only']) or scope['state'] in ('outside','unknown')
-                if hosted:
+                planning=semantic and not plan_accepted
+                hosted=not planning and not force_summary and web_planned and not web_used and ai_web.supported(request['provider_id'],request['model'])
+                restricted=not planning and ((scope_denied and not scope['local_only']) or scope['state'] in ('outside','unknown'))
+                if planning:
+                    tools=[request['intent_plan_schema']]
+                elif hosted:
                     policy=frozen['web_policy']
                     tools=[{'type':'web_search','filters':{'allowed_domains':policy['allowed_domains']},
                             'search_context_size':'low','return_token_budget':'default'}]
@@ -159,14 +176,21 @@ async def _run(request,key,cancel,bridge):
                 if force_summary and not summary_prompt_added:
                     items.append({'role':'system','content':frozen.get('finalize_system_prompt') or FINALIZE_SYSTEM_PROMPT})
                     summary_prompt_added=True
-                payload=payload_for(request,items,tools)
+                outbound=items
+                if planning:
+                    # The router receives actual users and verified identity
+                    # metadata, not previous assistant prose or local reports.
+                    outbound=request.get('planner_messages') or planner_messages(request)
+                payload=payload_for(request,outbound,tools)
+                if planning:
+                    payload['tool_choice']='required';payload['parallel_tool_calls']=False
                 if restricted:payload['max_output_tokens']=min(payload['max_output_tokens'],256)
                 size=len(json.dumps(payload,ensure_ascii=False,separators=(',',':')).encode())
                 if size>frozen['max_input_bytes']:raise ProviderError('input_too_large')
                 await bridge.exchange('authorize',{'ordinal':ordinal,'input_bytes':size,'hosted_web':hosted},cancel)
                 bridge.emit('status',{'state':'running','message':'正在准备回答' if restricted else '正在查询并组织回答'})
                 try:
-                    body,text=await stream_response(client,'/v1/responses' if request['provider_id']=='openai' else '/responses',payload,cancel,bridge,emit_text=not restricted)
+                    body,text=await stream_response(client,'/v1/responses' if request['provider_id']=='openai' else '/responses',payload,cancel,bridge,emit_text=not restricted and not planning)
                 except ProviderError as error:
                     await bridge.exchange('receipt',{'ordinal':ordinal,'usage':error.usage,'reason_code':error.reason_code},cancel)
                     raise
@@ -195,18 +219,48 @@ async def _run(request,key,cancel,bridge):
                     web_accounting={'used':native['web']['used'],'search_call_count':native['web']['search_call_count'],
                                     'complete':True,'search_content_in_input':None}
                 await bridge.exchange('receipt',{'ordinal':ordinal,'usage':usage,'web_accounting':web_accounting},cancel)
-                all_text+=text
                 function_calls=[item for item in body.get('output',[]) if item.get('type')=='function_call']
+                if planning:
+                    # Reject the whole response before executing anything if
+                    # the provider bypasses or duplicates the semantic plan.
+                    if len(function_calls)!=1 or function_calls[0].get('name')!='plan_stock_task':
+                        raise ProviderError('invalid_tool_arguments')
+                    call=function_calls[0];call_id=call.get('call_id')
+                    if not isinstance(call_id,str) or not 1<=len(call_id)<=200:raise ProviderError('invalid_response')
+                    try:args=json.loads(call.get('arguments','{}'))
+                    except ValueError:raise ProviderError('invalid_tool_arguments') from None
+                    if not isinstance(args,dict):raise ProviderError('invalid_tool_arguments')
+                    result=await bridge.exchange('plan_stock',{'call_id':call_id,'args':args},cancel)
+                    if result.get('ok') is not True:raise ProviderError('invalid_tool_arguments')
+                    scope=result['scope'];plan_accepted=True
+                    request['accepted_stock_plan']=args;request['semantic_scope']=scope
+                    tool_calls.append({'name':'plan_stock_task','call_id':call_id,'args':args})
+                    for nested in result.get('tool_results',[]):
+                        name,nargs,nid,value=nested['name'],nested['args'],nested['call_id'],nested['result']
+                        classify_tool(name,nargs)
+                        if nested['executed']:local_calls.append({'name':name,'args':nargs})
+                        results.append(value);tool_calls.append({'name':name,'call_id':nid,'args':nargs})
+                        traces.append({'name':name,'call_id':nid,'state':value.get('state'),
+                                       'date':value.get('date'),'summary':value.get('summary')})
+                        if isinstance(value.get('date'),str):query_target=value['date']
+                    if result.get('web_gap'):results.append(result['web_gap'])
+                    if result.get('web_plan'):
+                        web_planned=True;web_request=result['web_plan'];request['accepted_web_plan']=web_request
+                    force_summary=bool(result.get('force_summary'))
+                    if result.get('reply'):
+                        all_text=result['reply'];bridge.emit('delta',{'text':all_text});return answer(body)
+                    # Restore normal conversation context only after domain
+                    # routing, then provide the paired data/plan output.
+                    items.extend(item for item in body.get('output',[])
+                                 if item.get('type') in ('function_call','reasoning'))
+                    items.append({'type':'function_call_output','call_id':call_id,
+                                  'output':json.dumps(result,ensure_ascii=False,separators=(',',':'))})
+                    items.append({'role':'system','content':'领域计划已经由控制层接受，当前状态：'+json.dumps(scope,ensure_ascii=False)+'。请按工具的真实结果继续回答；资料缺口不是领域拒绝。概念和招呼直接自然回答，仍不读取资料。'})
+                    continue
+                all_text+=text
                 if not function_calls:
                     if not all_text.strip():raise ProviderError('invalid_output')
-                    return {'output':{'response_type':'agent_answer','text':all_text,'citations':citations,'sources':sources,
-                        'source_context':{'page_anchor':request['page_anchor'],'request_time':request['request_time'],'submitted_request_time':request.get('submitted_request_time'),
-                            'tool_results':results,'scope':scope,'web':{'allowed':scope['resources_allowed'] and ai_web.supported(request['provider_id'],request['model']),
-                            'used':web_used,'search_call_count':int(web_used),'queried_at_ms':time.time_ns()//1000000,
-                            'requested_as_of':query_target,'page_as_of':request['page_anchor'].get('as_of'),'validation':'native_citations_only',**web_source_counts}},
-                        'tool_traces':traces,'round_protocol':frozen,
-                        'used_context':{'seed_messages':request['seed_messages'],'tool_schemas':request['tool_schemas'],
-                                        'tool_calls':tool_calls,'web_request':web_request}},'response_model':body.get('model')}
+                    return answer(body)
                 if last or summary_only:raise ProviderError('agent_tool_limit')
                 items.extend(body.get('output',[]))
                 for call in function_calls:
@@ -229,6 +283,8 @@ async def _run(request,key,cancel,bridge):
                         else:scope_denied=True
                     else:
                         try:
+                            if name not in {tool.get('name') for tool in request.get('tool_schemas',[]) if isinstance(tool,dict)}:
+                                raise ValueError('invalid_tool_arguments')
                             classify_tool(name,args)
                             expected_gap=assess_tool(frozen,local_calls,name,args)
                         except ValueError:

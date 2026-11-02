@@ -30,6 +30,7 @@ const reasons: Record<string, string> = {
   output_truncated: "模型输出被截断，本次未发布结果。",
   refusal: "供应商拒绝了本次请求。",
   unknown_price: "该模型的单价尚未核验，付费验证与生成暂不可用。",
+  unsupported_model: "请选择受支持的常用GPT模型，并验证后启用。",
   model_unavailable: "当前账号尚未确认所选模型可用，请核对模型 ID。",
   incompatible_parameters: "模型参数或结构化输出能力不兼容，请查看逐项验证。",
   unsupported_parameters: "模型参数或结构化输出能力不兼容，请查看逐项验证。",
@@ -94,7 +95,10 @@ export const taskLabel = (state?: string) =>
 export const verificationPassed = (provider?: AIProvider) =>
   provider?.verification?.state === "passed";
 export const canGenerate = (provider?: AIProvider) =>
-  !!provider?.configured && !!provider.enabled && verificationPassed(provider);
+  !!provider?.configured &&
+  !!provider.enabled &&
+  verificationPassed(provider) &&
+  selectableModel(provider.provider_id, provider.model);
 export function sessionMatches(
   session: AISession,
   provider: AIProvider | undefined,
@@ -293,7 +297,36 @@ export const modelChoices: Record<string, { id: string; name: string }[]> = {
   ],
   openai: [
     { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-    { id: "gpt-6-luna", name: "GPT-6 Luna" },
     { id: "gpt-6-astra", name: "GPT-6 Astra" },
+    { id: "gpt-6.1-terra", name: "GPT-6.1 Terra" },
+    { id: "gpt-6-sol", name: "GPT-6 Sol" },
+    { id: "gpt-6-luna", name: "GPT-6 Luna" },
+    { id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+    { id: "gpt-5.6-terra", name: "GPT-5.6 Terra" },
+    { id: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
   ],
 };
+
+export function providerModelChoices(provider: AIProvider) {
+  const choices = [...(modelChoices[provider.provider_id] || [])];
+  // Account model discovery includes unrelated products and model snapshots.
+  // OpenAI keeps the requested common models regardless of that directory.
+  if (provider.provider_id === "openai") return choices;
+  for (const item of [
+    ...(provider.models || []),
+    ...(provider.discovered_models || []),
+  ]) {
+    const id = typeof item === "string" ? item : item.id;
+    if (id && !choices.some((choice) => choice.id === id))
+      choices.push({ id, name: id });
+  }
+  return choices;
+}
+
+export function selectableModel(providerId: string, model: string) {
+  return (
+    !!model.trim() &&
+    (providerId !== "openai" ||
+      modelChoices.openai.some((choice) => choice.id === model))
+  );
+}

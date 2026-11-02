@@ -70,6 +70,7 @@ import {
 } from "./marketPresentation";
 import type { MarketSort } from "./marketPresentation";
 import AIEntry from "../ai/AIEntry";
+import GainerDistribution from "./GainerDistribution";
 import {
   RecentLimitCell,
   YearLimitCountCell,
@@ -1274,6 +1275,9 @@ export function MarketPage({
               只，可切换查看原因
             </small>
           </div>
+        )}
+        {isGainers && (
+          <GainerDistribution key={date} data={data?.ranking_distribution} />
         )}
         {isSector && (
           <>

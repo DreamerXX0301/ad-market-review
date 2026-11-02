@@ -12,11 +12,24 @@ MODELS = {
     ],
     'openai': [
         {'id': 'gpt-6.1-sol', 'name': 'GPT-6.1 Sol', 'input': '2', 'cached': '0.1', 'cache_write': '2.5', 'output': '10'},
-        {'id': 'gpt-6-luna', 'name': 'GPT-6 Luna', 'input': '0.1', 'cached': '0.01', 'cache_write': '0.125', 'output': '0.5'},
         {'id': 'gpt-6-astra', 'name': 'GPT-6 Astra', 'input': '10', 'cached': '1', 'cache_write': '12.5', 'output': '50'},
+        {'id': 'gpt-6.1-terra', 'name': 'GPT-6.1 Terra', 'input': '1', 'cached': '0.05', 'cache_write': '1.25', 'output': '5'},
+        {'id': 'gpt-6-sol', 'name': 'GPT-6 Sol', 'input': '2', 'cached': '0.2', 'cache_write': '2.5', 'output': '10'},
+        {'id': 'gpt-6-luna', 'name': 'GPT-6 Luna', 'input': '0.1', 'cached': '0.01', 'cache_write': '0.125', 'output': '0.5'},
+        {'id': 'gpt-5.6-sol', 'name': 'GPT-5.6 Sol', 'input': '4', 'cached': '0.4', 'cache_write': '5', 'output': '20'},
+        {'id': 'gpt-5.6-terra', 'name': 'GPT-5.6 Terra', 'input': '2', 'cached': '0.2', 'cache_write': '2.5', 'output': '12'},
+        {'id': 'gpt-5.6-luna', 'name': 'GPT-5.6 Luna', 'input': '0.2', 'cached': '0.02', 'cache_write': '0.25', 'output': '1.2'},
     ],
 }
 PRICE_VERSION = 'pricing-2026-11-02'
+MODEL_CATALOG_VERSION = 'openai-common-models-2026-11-02'
+OPENAI_MODEL_IDS = tuple(model['id'] for model in MODELS['openai'])
+# Public official sources for the reviewed standard text rates above. Cached
+# writes use 30-minute retention; requests do not opt into longer retention.
+OPENAI_PRICE_SOURCES = {
+    model: 'https://developers.openai.com/api/docs/models/' + model
+    for model in OPENAI_MODEL_IDS
+}
 LEGACY_INPUT_BYTES = 48 * 1024
 MAX_INPUT_BYTES = 96 * 1024
 MAX_RESPONSE_BYTES = 192 * 1024

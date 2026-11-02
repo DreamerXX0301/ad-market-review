@@ -76,10 +76,10 @@ def _bind_stock_anchor(db,session_id,result):
 class AgentRuntimeMixin:
     def _start_agent(self,task,request,key):
         import threading
-        from app.services.ai_agent_protocol import request_time
+        from app.services.ai_agent_protocol import request_time, planner_messages
         from app.services.ai_scope_focus import resolve_scope_focus
         trusted=request.get('scope_input') or {}
-        if trusted and not trusted.get('validated_stock_focus') and ai_scope.scope_for(request)['state']=='unknown':
+        if trusted and not trusted.get('validated_stock_focus') and ai_scope.scope_for(request)['state'] in ('unknown','planning'):
             focus=resolve_scope_focus(trusted.get('current_text',''))
             trusted['validated_stock_focus']=focus
             if focus:
@@ -88,6 +88,8 @@ class AgentRuntimeMixin:
         request['submitted_request_time']=request['request_time']
         request['request_time']=request_time(now_ms())
         request['seed_messages'][1]={'role':'user','content':'页面锚点与本次执行时间（仅查询上下文）：\n'+dumps({'page_anchor':request['page_anchor'],'request_time':request['request_time']})}
+        if request['round_protocol'].get('version')=='ai-agent-round-v5':
+            request['planner_messages']=planner_messages(request)
         with connect() as db:db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(request),task['task_id']))
         bridge=AgentBridge();cancel=threading.Event()
         self.agent_bridge=bridge
@@ -160,13 +162,15 @@ class AgentRuntimeMixin:
 
     def _agent_tool(self,task,data):
         name=data.get('name');args=data.get('args');call_id=data.get('call_id')
-        if name not in ('read_market_data','check_data_availability','read_stock_research') or not isinstance(args,dict):
+        if not isinstance(name,str) or not isinstance(args,dict):
             return {'_error':'invalid_tool_arguments'}
         try:classify_tool(name,args)
         except ValueError:return {'_error':'invalid_tool_arguments'}
         with connect() as db:
             raw=db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
         request=json.loads(raw['request_json']) if raw else {}
+        if name not in {tool.get('name') for tool in request.get('tool_schemas',[]) if isinstance(tool,dict)}:
+            return {'_error':'invalid_tool_arguments'}
         if request.get('scope_denied') or not ai_scope.scope_for(request)['resources_allowed']:return ai_scope.denial()
         executed=self.agent_state.setdefault('local_tool_calls',[])
         try:gap=assess_tool(request['round_protocol'],executed,name,args)
@@ -198,6 +202,66 @@ class AgentRuntimeMixin:
             db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(request),task['task_id']))
         return result
 
+    def _agent_stock_plan(self,task,data):
+        """Accept the model's domain route before any proposed data is read.
+
+        Routing shares the ordinary first planning request. It is not another
+        classifier request and it cannot change concrete tool/cost permissions.
+        """
+        from app.services import ai_scope_semantic as semantic
+        with connect() as db:
+            row=db.execute('SELECT request_json,cancel_requested FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
+            first=db.execute('SELECT state FROM ai_request_receipt WHERE task_id=? AND ordinal=1',(task['task_id'],)).fetchone()
+        if row is None or row['cancel_requested']:return {'_error':'cancelled'}
+        request=json.loads(row['request_json'])
+        if ((request.get('round_protocol') or {}).get('version')!=semantic.ROUND_VERSION
+                or request.get('accepted_stock_plan') is not None or first is None or first['state']!='completed'):
+            return {'_error':'invalid_tool_arguments'}
+        accepted=semantic.validate_plan(request,data.get('args'))
+        if accepted.get('ok') is not True:return accepted
+        call_id=data.get('call_id')
+        if not isinstance(call_id,str) or not 1<=len(call_id)<=200:return {'_error':'invalid_tool_arguments'}
+        request['accepted_stock_plan']=accepted['accepted_plan'];request['semantic_scope']=accepted['scope']
+        request['scope']=accepted['scope'];request['agent_state']=self.agent_state
+        self.agent_state['tool_calls'].append({'name':'plan_stock_task','args':accepted['accepted_plan'],'call_id':call_id})
+        with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current=db.execute('SELECT request_json,cancel_requested FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
+            if current is None or current['cancel_requested']:return {'_error':'cancelled'}
+            if json.loads(current['request_json']).get('accepted_stock_plan') is not None:return {'_error':'invalid_tool_arguments'}
+            db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(request),task['task_id']))
+        outputs=[]
+        for index,read in enumerate(accepted['reads']):
+            nested_id=call_id[:160]+':read:'+str(index+1)
+            prior=len(self.agent_state.get('local_tool_calls',[]))
+            result=self._agent_tool(task,{'name':read['name'],'args':read['arguments'],'call_id':nested_id})
+            if result.get('_error'):return result
+            outputs.append({'name':read['name'],'args':read['arguments'],'call_id':nested_id,'result':result,
+                            'executed':len(self.agent_state.get('local_tool_calls',[]))>prior})
+        web_plan=accepted['web_plan'];web_gap=None
+        if web_plan:
+            if self.agent_state.get('force_summary'):
+                web_gap={'ok':False,'state':'not_read','reason_code':'tool_budget_exhausted',
+                         'summary':'本轮未进行网络查询，请依据已取得资料回答。'}
+                web_plan=None
+            elif not ai_web.supported(task['provider_id'],task['model']):
+                web_gap={'ok':False,'state':'not_read','reason_code':'web_search_unavailable',
+                         'summary':'当前模型尚未接通原生联网查询，不能据此说本地数据不存在。'}
+                web_plan=None
+            else:
+                request['accepted_web_plan']=web_plan;self.agent_state['web_request']=web_plan
+        if web_gap:self.agent_state['tool_results'].append(web_gap)
+        # _agent_tool persists its counters/results. Re-read it so the domain
+        # plan handshake never overwrites a completed read's state or anchor.
+        with connect() as db:
+            raw=db.execute('SELECT request_json,cancel_requested FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
+            if raw is None or raw['cancel_requested']:return {'_error':'cancelled'}
+            updated=json.loads(raw['request_json']);updated['agent_state']=self.agent_state
+            if web_plan:updated['accepted_web_plan']=web_plan
+            db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(updated),task['task_id']))
+        return {'ok':True,'scope':accepted['scope'],'tool_results':outputs,'web_plan':web_plan,
+                'web_gap':web_gap,'reply':accepted['reply'],'force_summary':bool(self.agent_state.get('force_summary'))}
+
     def _drain_agent(self,task_id):
         if self.agent_bridge is None:return
         with connect() as db:
@@ -208,11 +272,12 @@ class AgentRuntimeMixin:
             try:kind,data,reply=self.agent_bridge.queue.get_nowait()
             except queue.Empty:break
             try:
-                if self.active and self.active[2].is_set() and kind in ('authorize','read_tool'):
+                if self.active and self.active[2].is_set() and kind in ('authorize','read_tool','plan_stock'):
                     result={'_error':'cancelled'}
                 elif kind=='authorize':result=self._agent_authorize(task,data)
                 elif kind=='receipt':result=self._agent_receipt(task,data)
                 elif kind=='read_tool':result=self._agent_tool(task,data)
+                elif kind=='plan_stock':result=self._agent_stock_plan(task,data)
                 elif kind=='plan_web':
                     with connect() as db:
                         raw=db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(task_id,)).fetchone()
