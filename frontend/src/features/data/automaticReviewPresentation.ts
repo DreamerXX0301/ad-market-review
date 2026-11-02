@@ -5,7 +5,7 @@ export type AutomaticAuctionPlan = {
   enabled: boolean;
   revision: number;
   mode: "off" | "daily" | "once";
-  fixed_time: "09:25:05";
+  fixed_time: "09:25:30";
   window_end: "09:30:00";
   can_enable: boolean;
   legacy_configuration: boolean;
@@ -76,7 +76,7 @@ export function automaticReviewSettings(
     typeof auction.enabled !== "boolean" ||
     !revision(auction.revision) ||
     !["off", "daily", "once"].includes(auction.mode) ||
-    auction.fixed_time !== "09:25:05" ||
+    auction.fixed_time !== "09:25:30" ||
     auction.window_end !== "09:30:00" ||
     typeof auction.can_enable !== "boolean" ||
     typeof auction.legacy_configuration !== "boolean" ||

@@ -11,6 +11,7 @@ import {
   FlaskConical,
   Layers3,
   Menu,
+  MessageSquare,
   Moon,
   Network,
   PanelLeftClose,
@@ -65,6 +66,7 @@ export const navigation = [
       { id: "watchlist", name: "我的自选", icon: Star },
       { id: "zodiac", name: "生肖跟踪", icon: CalendarDays },
       { id: "research", name: "个股研究", icon: BookOpen },
+      { id: "ai", name: "AI 助手", icon: MessageSquare },
       { id: "backtest", name: "策略回测", icon: FlaskConical },
     ],
   },
@@ -130,7 +132,7 @@ export default function AppShell({
     ? "market"
     : ["data", "sources"].includes(route)
       ? "data"
-      : route === "research"
+      : route === "research" || route === "ai"
         ? "research"
         : "strategy";
   const currentNavigation = navigation
@@ -274,6 +276,8 @@ export default function AppShell({
                 onLatest={onResetDate}
                 fixed={dateFixed}
               />
+            ) : route === "ai" ? (
+              <div className="current-business-date">股票研究 · 行情复盘</div>
             ) : (
               <div className="current-business-date">
                 <span className={`status-dot${dataDate ? " good" : ""}`} />
@@ -329,18 +333,20 @@ export default function AppShell({
             />
           )}
           {children}
-          <footer className="workspace-footer dreamer-footer">
-            <span>
-              <strong>冒险的梦想家</strong>
-              <span className="footer-product-description">
-                {" "}
-                · 本地 A股研究工作台
+          {route !== "ai" && (
+            <footer className="workspace-footer dreamer-footer">
+              <span>
+                <strong>冒险的梦想家</strong>
+                <span className="footer-product-description">
+                  {" "}
+                  · 本地 A股研究工作台
+                </span>
               </span>
-            </span>
-            <span>
-              数据来自已发布快照 · 未知数据不补零 · 研究结果不代表交易指令
-            </span>
-          </footer>
+              <span>
+                数据来自已发布快照 · 未知数据不补零 · 研究结果不代表交易指令
+              </span>
+            </footer>
+          )}
         </div>
       </main>
     </div>

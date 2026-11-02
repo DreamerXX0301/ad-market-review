@@ -1,6 +1,33 @@
 .sources-page {
   gap: 14px;
 }
+.sources-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  border-radius: var(--radius);
+  align-self: flex-start;
+}
+.sources-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  padding: 8px 16px;
+  color: var(--subtle);
+  cursor: pointer;
+  font-size: 12px;
+}
+.sources-tabs button[aria-selected="true"] {
+  color: var(--blue);
+  background: var(--surface);
+  box-shadow: 0 1px 3px #00000010;
+}
+.sources-tabs button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
 .sources-heading,
 .sources-supplement-head,
 .sources-connection-head {

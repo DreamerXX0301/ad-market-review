@@ -95,7 +95,7 @@ export default function AuctionAutomation({
       </div>
       <div className="auction-automation-facts">
         <span>
-          <Clock3 size={13} /> 北京时间09:25:05 · 当天09:30前有效
+          <Clock3 size={13} /> 北京时间09:25:30 · 当天09:30前有效
         </span>
         <span>服务运行时，浏览器可以关闭</span>
         <span>错过窗口不补跑</span>

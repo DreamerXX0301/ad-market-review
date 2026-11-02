@@ -1,0 +1,33 @@
+# A股助手逐轮取数与流式回答（当前v3）
+
+当前源码契约，不是正式部署回执。新问题统一使用[`ai-agent-round-v3`](prompts/ai-agent-round-v3.md)，历史v1/v2提示词和旧消息保留原值，不再提供local/web模式选择，不受会话旧观察日或旧报告材料范围限制。旧消息、旧上下文和旧协议原样可读；未来每轮单独冻结提示词、实际页面锚点、执行时间、少量历史、工具调用与工具结果。
+
+`POST /api/v1/ai/sessions`以`kind,provider_id,text,consent:true,request_key`创建；`instrument_id,report_id,as_of`只作可选页面锚点，`context_digest/allow_web`兼容接收而不作为发送门槛或固定模式。缺少首轮text的旧客户端仍有简短默认问题。`POST /sessions/{id}/messages`保持`text,consent:true,request_key`。provider、model和凭据代际继续绑定会话，不能静默切换；单纯调整超时不会困住旧会话。
+
+独立入口的新会话尚无证券锚点时，首次成功读取到实际可用、允许外发且有证据的个股研究后，可依据工具已核验的instrument_id/instrument建立当前stock会话锚点。仅适用于ai-session-binding-v1与page_anchor上下文，已有标的不覆盖，旧冻结会话不更新；不从模型正文提取代码，不修改旧消息、本轮原始锚点或绑定协议。后续轮次可用空instrument_id沿用该股；只读缺口、权限拒绝或无证据结果不会建立锚点。
+
+角色是A股行情复盘与个股研究助手，独立判断、不迎合用户未经核查的前提。股票相关的一般财经概念可直接解释，具体行情/公司/日期事实先查资料；无关问题简短引导。用户明确查询今天或最新是正常任务，不把页面旧as_of当作今天，也不把查询要求当作注入。
+
+v3只允许A股、上市公司股票经营估值、行情复盘和用户明确提出的股票影响分析；一般房价、天气、旅游、购物、写作/代码等不展开、不追问城市。程序资源门禁ai-stock-scope-v2只使用真实当前用户问题和最近用户问题，明确跳题优先且最近越界话题不得跳过；页面kind、旧助手跑偏回答与模型reason均不授权。真实公司身份只支持裸证券名/代码或明确股票研究、经营、财报、走势和风险用途，不为该品牌的消费或娱乐请求授信；省略追问须匹配完整受限格式，不按今天/现在/它等前缀继承任意文字。原始用户输入独立保存在scope_input，不从带role:user的系统页面/时间元数据提取权限。未知问题不提供资源；股票概念可直接回答，缺身份的公司研究可仅在worker事务外核验当前真实股票目录，歧义/缺档不猜证券。已使用的scope-v1历史元数据不改，role prompt仍v3。
+
+新request_web_search参数为query/reason/purpose/user_quote，purpose仅stock_research/market_review/stock_impact，user_quote须逐字等于该轮被授权的整条真实用户问题；用途和实际query均须通过门禁。宏观/地产辅助数据只有在用户明确问股票影响且查询未偷换领域时可用。本地工具执行、接受plan与每次hosted发送预留前由AI控制线程重新校验；被拒计划作为scope_denied工具结果返回，之后只允许简短解释且无资料工具，不发hosted、不追加搜索费、不自动重试，已发送模型usage仍保留。域外轮不暴露工具并限制输出至256token，原始域外内容不先流出；模型忽略简拒要求时以股票范围说明兜底。既有总请求上限仍为三次，无额外分类模型。用户明确要求本系统/本地数据时程序禁止web替代，缺少排行等能力应说明具体缺口；本轮不新增板块排名工具。
+
+唯一worker的AI控制线程执行只读工具`read_market_data/check_data_availability/read_stock_research`，网络线程通过有界队列等待结果，不直接打开SQLite或行情。today由工具按北京时间实时解析；not_due与not_collected不同。每轮最多3次provider请求、3次本地读取；可在一个provider回合提出多个本地调用，控制线程顺序执行。每个工具结果最多24KiB，完整provider请求96KiB；第三次请求不再暴露新的本地函数，必须基于已有结果回答。
+
+联网由模型先提出`request_web_search(query,reason)`规划，规划不外发查询、不计工具费。仅本应用已支持的OpenAI GPT-6.1 Sol下一次请求才获得一次hosted web_search，required且max_tool_calls=1；其他模型不伪称有搜索能力。固定来源域策略与原生来源校验沿用当前版本。网页、工具正文只作为资料，不能执行其改变角色或业务操作的指令。
+
+每次provider请求发送前单独预留并记录`ai_request_receipt`，完整usage后先结算再核验下一次；父agent任务不再重复计入预算。第一阶段不预留搜索；规划后真正暴露hosted工具时才追加其保守内容费与工具费。已发送未知费用保留pending；中断不重发，人工新提问是新尝试。默认限额、Key保护、固定官方API/TLS/禁止重定向保持不变。
+
+跨API流式使用036的`ai_task_event(task_id,seq,kind,data_json,at_ms)`。只有AI控制线程写入事件，seq从1单调增加，kind为status/tool/delta/error/done；每100ms合并delta并有字节/事件上限。HTTP SSE传输允许协议帧开销，单次最终Responses对象仍最多192KiB，文本累计最多64KiB，逐轮保存封套最多256KiB。总截止沿用用户配置；仅部署显式`SHIXU_AI_AGENT_TIMEOUT_SECONDS=60|120`可覆盖agent总截止，不改用户配置默认。
+
+只读`GET /ai/tasks/{id}/events?after=seq`支持Last-Event-ID、断线重读，不重新调用模型。终态事件过期也返回done与最终message_id；done补帧的seq可等于最后seq或为0。delta正文按Unicode文本存储，引用按最终原文码点对齐；流正文与最终正文不一致时失败并保存partial，不把来源绑到另一段文字。完成事件约15分钟后有界清理；删除或到期立即清stream正文，费用回执保留。
+
+最终消息新增`response_type:agent_answer,text,partial,source_context,tool_traces,citations,sources,interpretation:null`。source_context含page_anchor、执行request_time、提交submitted_request_time、tool_results、web；web的page_as_of与实际查询resolved日期分开，未明确请求日期为null。tool_traces记录本轮工具名/状态/日期/摘要，不在普通聊天展示内部执行清单，不把旧会话全库当本轮来源。原始final文本、实际used_context和提示词在该消息本地封套保存；不宣称全部数字已机器核验。取消/失败/进程中断保存已收到partial和已完成工具，未完成费用保持未知。
+
+进程恢复不重发已sent子请求；标准恢复脚本关闭AI，将子请求标中断、先归档真实partial再清理临时事件，保留费用与原有会话历史。036已登记，不能改写其SHA；旧035不变。
+
+原生网络来源现仅保存正文实际引用的条目。本次completed响应中的原生url_citation提供URL、title和位置；每项仍须匹配冻结域名范围并通过URL/索引校验，不采用正文自写链接。额外include.sources是consulted清单，不再要求与原生被引URL逐字相同，避免追踪参数、转址或官方PDF别名造成误拒；这是对[官方引用与sources语义](https://developers.openai.com/api/docs/guides/tools-web-search)的实现选择，不代表已逐字读取PDF或事实核验。每个保存来源标provenance=native_annotation，consulted_match表示是否精确匹配该清单，未匹配时annotation_only=true；不自行改写原生被引URL。未引用候选再多也不因旧24项小上限拒绝整份回答；不合法的未引用候选排除并计数。完整响应仍受192KiB约束，实际引用最多48条，含引用与被引来源的保存封套仍最多64KiB。
+
+`source_context.web`增加内部来源计数：`consulted_source_count`为已完成查询的供应商候选记录数，`retained_source_count`为保留的被引唯一来源数，`omitted_unreferenced_source_count`为未引用的有效唯一URL数，另有`invalid_unreferenced_source_count/duplicate_source_count`。`annotation_only_source_count`记录未与consulted清单精确匹配的原生被引唯一来源数。这些计数用于核对，不在聊天正文新增审计面板。来源验证失败仍记录已收到usage，搜索内容费用无法核清时保留pending和原预留；历史failed任务不回填、擦账或自动重试。
+
+流式终态以`response.completed.output`为准，不按之前`output_item.done`的下标覆盖状态、来源或正文。仅可按同一reasoning item ID补齐终态缺失的encrypted_content，不能覆盖终态已有值。供应商可能在达到max_tool_calls后保留被忽略的尝试：仅当整体response已completed、已有恰好一次completed查询、额外项全部位于该完成查询之后且为searching/in_progress、没有sources时，才忽略这些额外项并记录`ignored_attempt_count`。额外项的URL仍须安全，但不提供引用依据；只有本次终态的原生annotation提供引用，不能从该尝试URL或正文自写链接建立来源。唯一查询仍未完成、额外项含sources或真实completed查询超过一次时继续拒绝；新agent的hosted轮无completed调用也拒绝，历史auto无搜索回答保持兼容；调用数、预算与历史账单不变。

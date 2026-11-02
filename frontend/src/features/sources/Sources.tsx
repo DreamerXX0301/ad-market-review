@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Check,
   Eye,
@@ -205,7 +205,7 @@ function SourceEditor({
     </Modal>
   );
 }
-export default function Sources() {
+function MarketSources() {
   const result = useApi<Row>("/sources");
   const [editing, setEditing] = useState<Row | null>(null),
     [busy, setBusy] = useState(""),
@@ -602,6 +602,55 @@ export default function Sources() {
           onSaved={result.reload}
         />
       )}
+    </div>
+  );
+}
+
+const AIProviderSettings = lazy(() => import("../ai/AIProviderSettings"));
+export default function Sources({
+  initialTab = "market",
+}: {
+  initialTab?: "market" | "ai";
+}) {
+  const [tab, setTab] = useState(initialTab);
+  useEffect(() => setTab(initialTab), [initialTab]);
+  return (
+    <div className="page-stack">
+      <div className="sources-tabs" role="tablist" aria-label="连接配置类型">
+        <button
+          role="tab"
+          id="source-market-tab"
+          aria-controls="source-config-panel"
+          aria-selected={tab === "market"}
+          onClick={() => setTab("market")}
+        >
+          行情数据源
+        </button>
+        <button
+          role="tab"
+          id="source-ai-tab"
+          aria-controls="source-config-panel"
+          aria-selected={tab === "ai"}
+          onClick={() => setTab("ai")}
+        >
+          AI 模型
+        </button>
+      </div>
+      <div
+        role="tabpanel"
+        id="source-config-panel"
+        aria-labelledby={
+          tab === "market" ? "source-market-tab" : "source-ai-tab"
+        }
+      >
+        {tab === "market" ? (
+          <MarketSources />
+        ) : (
+          <Suspense fallback={<Loading />}>
+            <AIProviderSettings />
+          </Suspense>
+        )}
+      </div>
     </div>
   );
 }

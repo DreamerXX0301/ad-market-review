@@ -34,6 +34,57 @@ def disable_automatic_review(connection, now):
                        (json.dumps(config,ensure_ascii=False,sort_keys=True,separators=(',',':')),now,key))
     return True
 
+def disable_ai(connection, now):
+    """Restore local history, never permission to send another model request.
+
+    This archive tool deliberately does not import the application or decrypt
+    credentials. Actual usage and conservative uncertain-charge reservations
+    survive restore; neither pending nor previously sent work can be replayed.
+    """
+    tables={row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    result={'disabled':False,'interrupted_tasks':[],'cancelled_tasks':[]}
+    if 'ai_provider_config' not in tables:
+        return result
+    for row in connection.execute('SELECT provider_id,verification_json FROM ai_provider_config'):
+        try:verification=json.loads(row['verification_json'])
+        except (TypeError,ValueError) as error:raise ValueError('Invalid AI verification in backup') from error
+        if not isinstance(verification,dict):raise ValueError('Invalid AI verification in backup')
+        verification.update(state='stale',reason_code='restored_requires_verification')
+        connection.execute('UPDATE ai_provider_config SET enabled=0,config_revision=config_revision+1,verification_json=?,updated_at_ms=? WHERE provider_id=?',
+                           (json.dumps(verification,ensure_ascii=False,sort_keys=True,separators=(',',':')),now,row['provider_id']))
+    result['disabled']=True
+    if 'ai_task' not in tables:
+        return result
+    result['interrupted_tasks']=[row[0] for row in connection.execute("SELECT task_id FROM ai_task WHERE state IN ('queued','running') AND sent_at_ms IS NOT NULL")]
+    result['cancelled_tasks']=[row[0] for row in connection.execute("SELECT task_id FROM ai_task WHERE state IN ('queued','running') AND sent_at_ms IS NULL")]
+    if {'ai_task_event','ai_message'} <= tables:
+        # Archive real received text before removing ephemeral stream events.
+        # No application imports, provider calls or master-key reads occur.
+        for task in connection.execute("SELECT * FROM ai_task WHERE state IN ('queued','running') AND sent_at_ms IS NOT NULL").fetchall():
+            metadata=json.loads(task['result_json'] or '{}')
+            if not metadata.get('agent') or not task['session_id']:continue
+            if connection.execute("SELECT 1 FROM ai_message WHERE task_id=? AND role='assistant'",(task['task_id'],)).fetchone():continue
+            request=json.loads(task['request_json'] or '{}');state=request.get('agent_state') or {}
+            text=''.join(json.loads(row[0]).get('text','') for row in connection.execute("SELECT data_json FROM ai_task_event WHERE task_id=? AND kind='delta' ORDER BY seq",(task['task_id'],)))
+            envelope={'response_type':'agent_answer','text':text or '请求已中断，请核对费用后手动继续提问','partial':True,
+                      'source_context':{'page_anchor':request.get('page_anchor',{}),'request_time':request.get('request_time',{}),'tool_results':state.get('tool_results',[])},
+                      'tool_traces':state.get('tool_traces',[]),'citations':[],'sources':[],'round_protocol':request.get('round_protocol',{})}
+            message_id='ai-message_'+uuid.uuid4().hex
+            connection.execute('INSERT INTO ai_message VALUES(?,?,?,?,?,?,?,?)',(message_id,task['session_id'],task['task_id'],'assistant',envelope['text'],json.dumps(envelope,ensure_ascii=False),'interrupted_manual_retry',now))
+            metadata['message_id']=message_id
+            connection.execute('UPDATE ai_task SET result_json=? WHERE task_id=?',(json.dumps(metadata,ensure_ascii=False),task['task_id']))
+        connection.execute('DELETE FROM ai_task_event')
+    if 'ai_request_receipt' in tables:
+        connection.execute("UPDATE ai_request_receipt SET state='interrupted',finished_at_ms=?,reason_code='interrupted_manual_retry' WHERE state='sent'",(now,))
+    connection.execute("""UPDATE ai_task SET state='interrupted_manual_retry',reason_code='interrupted_manual_retry',
+        finished_at_ms=?,cancel_requested=1,owner=NULL,request_json='{}',credential_ref='',
+        cost_state=CASE WHEN cost_state='estimated' AND cost_nusd IS NOT NULL THEN 'estimated' ELSE 'pending' END
+        WHERE state IN ('queued','running') AND sent_at_ms IS NOT NULL""",(now,))
+    connection.execute("""UPDATE ai_task SET state='cancelled',reason_code='cancelled',finished_at_ms=?,
+        cancel_requested=1,owner=NULL,request_json='{}',credential_ref='',reservation_nusd=0,cost_state='not_sent'
+        WHERE state IN ('queued','running') AND sent_at_ms IS NULL""",(now,))
+    return result
+
 def verify_backup(bundle):
     bundle=Path(bundle).expanduser().resolve()
     if not bundle.is_dir() or (bundle/'backup-manifest.json').is_symlink():raise ValueError('Backup bundle is missing or invalid')
@@ -88,6 +139,7 @@ def perform_restore(bundle,target):
             c.execute("UPDATE sync_batch SET status='cancelled' WHERE status='running'")
             c.execute("DELETE FROM retention_pin WHERE owner_kind='request' OR (owner_kind='backup' AND owner_id=?)",(manifest['backup_id'],))
             automatic_review_disabled=disable_automatic_review(c,now)
+            ai=disable_ai(c,now)
             automation_disabled=False
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_automation'").fetchone():
                 c.execute("UPDATE market_auction_automation SET mode='off',trade_date=NULL,revision=revision+1,updated_at_ms=? WHERE singleton=1",(now,))
@@ -102,7 +154,7 @@ def perform_restore(bundle,target):
         except BaseException:c.rollback();raise
         finally:c.close()
         for folder in ('published','credentials','raw','work'): (stage/folder).mkdir(exist_ok=True)
-        result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts')),'auction_automation_disabled':automation_disabled,'automatic_review_disabled':automatic_review_disabled}
+        result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts')),'auction_automation_disabled':automation_disabled,'automatic_review_disabled':automatic_review_disabled,'ai_disabled':ai['disabled'],'ai_interrupted_tasks':ai['interrupted_tasks'],'ai_cancelled_tasks':ai['cancelled_tasks']}
         (stage/'restore-report.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
         os.replace(stage,target)
         return {**result,'target':str(target)}

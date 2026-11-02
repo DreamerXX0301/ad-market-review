@@ -147,6 +147,119 @@ def test_concurrent_starts_create_one_api_and_one_worker(installation):
     assert (installation['data'] / 'work/test-starts').read_text().splitlines() == ['api', 'worker']
 
 
+def test_stop_repeat_and_restart_preserve_database(installation):
+    item = installation
+    before = native.sha(item['database'])
+    item['service']().execute('start')
+    stopped = item['service']().execute('stop')
+    assert stopped['status'] == 'stopped' and stopped['stopped'] == ['api', 'worker']
+    assert item['service']().execute('status')['status'] == 'stopped'
+    assert item['service']().execute('stop')['stopped'] == []
+    assert json.loads(item['control'].read_text())['processes'] == {}
+    assert item['service']().execute('start')['status'] == 'running'
+    assert native.sha(item['database']) == before
+
+
+def test_stop_stale_dead_pids_never_sends_signals(installation, monkeypatch):
+    installation['value']['processes'] = {'api': 99999991, 'worker': 99999992}
+    installation['freeze']()
+    monkeypatch.setattr(native.os, 'kill', lambda *_: pytest.fail('不得向过期 PID 发送信号'))
+    assert installation['service']().execute('stop')['status'] == 'stopped'
+
+
+@pytest.mark.parametrize('role', ['api', 'worker'])
+def test_stop_partial_service(installation, role):
+    service = installation['service']()
+    service.execute('start')
+    other = 'worker' if role == 'api' else 'api'
+    service.children[other].terminate()
+    service.children[other].wait(timeout=4)
+    assert installation['service']().execute('stop')['stopped'] == [role]
+
+
+def test_stop_foreign_listener_preserves_worker(installation):
+    service = installation['service']()
+    service.execute('start')
+    service.children['api'].terminate()
+    service.children['api'].wait(timeout=4)
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', installation['port']))
+        listener.listen()
+        with pytest.raises(native.ServiceError, match='端口'):
+            installation['service']().execute('stop')
+        assert service.children['worker'].poll() is None
+
+
+def test_stop_foreign_lock_preserves_api(installation):
+    service = installation['service']()
+    service.execute('start')
+    service.children['worker'].terminate()
+    service.children['worker'].wait(timeout=4)
+    with (installation['data'] / 'work/worker.lock').open('a+b') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(native.ServiceError, match='锁'):
+            installation['service']().execute('stop')
+        assert service.children['api'].poll() is None
+
+
+def test_stop_reused_recorded_token_preserves_both_processes(installation):
+    service = installation['service']()
+    service.execute('start')
+    value = json.loads(installation['control'].read_text())
+    value['native_process_tokens']['worker'] = 'reused-token'
+    native.atomic_json(installation['control'], value)
+    with pytest.raises(native.ServiceError, match='启动时间'):
+        installation['service']().execute('stop')
+    assert all(child.poll() is None for child in service.children.values())
+
+
+@pytest.mark.parametrize('change', ['token', 'control'])
+def test_stop_rechecks_identity_and_control_before_signalling(installation, monkeypatch, change):
+    service = installation['service']()
+    service.execute('start')
+    service.load()
+    found = service.inspect()
+    original = service.inspector.read
+
+    def changed(pid):
+        process = original(pid)
+        if change == 'token':
+            process.token = 'reused-token'
+        else:
+            value = json.loads(installation['control'].read_text())
+            native.atomic_json(installation['control'], {**value, 'changed': True})
+        return process
+
+    monkeypatch.setattr(service.inspector, 'read', changed)
+    with pytest.raises(native.ServiceError, match='变化'):
+        service.stop(found)
+    assert all(child.poll() is None for child in service.children.values())
+
+
+def test_stop_timeout_never_kills_or_claims_stopped(installation):
+    item = installation
+    (item['backend'] / 'app/worker.py').write_text(
+        WORKER.replace('lambda *_:exit(0)', 'signal.SIG_IGN'))
+    item['freeze']()
+    service = item['service']()
+    running = service.execute('start')
+    stopping = item['service']()
+    stopping.timeout = .2
+    with pytest.raises(native.ServiceError, match='等待停止超时.*未强制终止'):
+        stopping.execute('stop')
+    assert service.children['worker'].poll() is None
+    assert json.loads(item['control'].read_text())['processes'] == running['processes']
+
+
+def test_process_identity_is_independent_of_terminal_language(monkeypatch):
+    monkeypatch.setenv('LC_ALL', 'zh_CN.UTF-8')
+    chinese = native.Inspector().read(os.getpid())
+    monkeypatch.setenv('LC_ALL', 'C')
+    english = native.Inspector().read(os.getpid())
+    assert chinese.token == english.token and chinese.argv == english.argv
+
+
 def test_stale_dead_pids_can_start_without_signalling_any_old_pid(installation):
     installation['value']['processes'] = {'api': 99999991, 'worker': 99999992}
     installation['freeze']()
@@ -285,11 +398,60 @@ def test_identity_requires_data_key_and_start_token(installation):
 
 def test_environment_discards_unrelated_provider_credentials(installation, monkeypatch):
     monkeypatch.setenv('FUYAO_API_KEY', 'synthetic-secret-not-for-child')
+    monkeypatch.setenv('OPENAI_API_KEY', 'synthetic-secret-not-for-child')
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'synthetic-secret-not-for-child')
+    monkeypatch.setenv('SHIXU_AI_READ_SQLITE_PATH', '/wrong-inherited-ai-database')
+    monkeypatch.setenv('SHIXU_AI_SYSTEM_PROXY_ENABLED', '1')
     monkeypatch.setenv('SHIXU_SQLITE_PATH', '/wrong-inherited-database')
     service = installation['service']()
     service.load()
-    assert 'FUYAO_API_KEY' not in service.environment
+    assert not {'FUYAO_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY',
+                'SHIXU_AI_READ_SQLITE_PATH', 'SHIXU_AI_SYSTEM_PROXY_ENABLED'} & service.environment.keys()
     assert service.environment['SHIXU_SQLITE_PATH'] == str(installation['database'])
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_ai_proxy_control_applies_to_child_identity(installation, monkeypatch, enabled):
+    item = installation
+    item['value']['ai_system_proxy_enabled'] = enabled
+    item['freeze']()
+    monkeypatch.setenv('SHIXU_AI_SYSTEM_PROXY_ENABLED', '0' if enabled else '1')
+    service = item['service']()
+    result = service.execute('start')
+    assert service.environment.get('SHIXU_AI_SYSTEM_PROXY_ENABLED') == ('1' if enabled else None)
+    for role, pid in result['processes'].items():
+        process = service.inspector.read(pid)
+        assert process.environment.get('SHIXU_AI_SYSTEM_PROXY_ENABLED') == ('1' if enabled else None)
+        assert service.matches(process, role)
+        process.environment['SHIXU_AI_SYSTEM_PROXY_ENABLED'] = '0' if enabled else '1'
+        assert not service.matches(process, role)
+        if enabled:
+            process.environment.pop('SHIXU_AI_SYSTEM_PROXY_ENABLED')
+            assert not service.matches(process, role)
+    assert item['service']().execute('status')['status'] == 'running'
+
+
+def test_default_ai_proxy_identity_accepts_disabled_legacy_process(installation):
+    service = installation['service']()
+    service.load()
+    environment = {key: value for key, value in service.environment.items() if key.startswith('SHIXU_') or key == 'PYTHONPATH'}
+    assert 'SHIXU_AI_SYSTEM_PROXY_ENABLED' not in environment
+    process = native.Process(55, [str(service.python), *service.arguments('worker')], service.backend, environment, 'token')
+    assert service.matches(process, 'worker')
+    process.environment = {**environment, 'SHIXU_AI_SYSTEM_PROXY_ENABLED': '0'}
+    assert service.matches(process, 'worker')
+    process.environment = {**environment, 'SHIXU_AI_SYSTEM_PROXY_ENABLED': '1'}
+    assert not service.matches(process, 'worker')
+
+
+@pytest.mark.parametrize('enabled', [None, 'true', 'false', 0, 1, [], {}])
+def test_invalid_ai_proxy_control_refused_without_starting(installation, enabled):
+    installation['value']['ai_system_proxy_enabled'] = enabled
+    installation['freeze']()
+    service = installation['service']()
+    with pytest.raises(native.ServiceError, match='AI 系统代理开关必须为布尔值'):
+        service.execute('start')
+    assert service.children == {}
 
 
 def test_reused_start_token_refused_without_stopping_existing_children(installation):

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AI证据对话自然回答正文v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["answer", "follow_up_questions"],
+  "properties": {
+    "answer": {
+      "type": "array", "minItems": 1, "maxItems": 5,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["heading", "text", "evidence_ids", "metric_refs"],
+        "properties": {
+          "heading": {"type": ["string", "null"], "maxLength": 40},
+          "text": {"type": "string", "minLength": 1, "maxLength": 900},
+          "evidence_ids": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 100}},
+          "metric_refs": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 100}}
+        }
+      }
+    },
+    "follow_up_questions": {"type": "array", "maxItems": 3, "items": {"type": "string", "minLength": 1, "maxLength": 150}}
+  }
+}

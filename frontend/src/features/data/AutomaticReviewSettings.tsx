@@ -243,7 +243,7 @@ export default function AutomaticReviewSettings({
             </label>
             <div className="automatic-review-time">
               北京时间{" "}
-              <strong className="automatic-review-fixed-time">09:25:05</strong>
+              <strong className="automatic-review-fixed-time">09:25:30</strong>
             </div>
             <div className="automatic-review-check">
               {saved?.auction.reason ? (

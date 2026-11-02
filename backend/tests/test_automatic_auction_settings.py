@@ -46,7 +46,7 @@ def test_get_is_local_and_preserves_three_default_off_settings(configured, monke
     assert view['revision'] == 0 and view['policy']['after_close_not_before'] == '17:00'
     assert view['after_close'] == {'enabled': False, 'time': '17:00'}
     assert view['auction'] == {'enabled': False, 'revision': 0, 'mode': 'off',
-        'fixed_time': '09:25:05', 'window_end': '09:30:00', 'can_enable': True, 'reason': None,
+        'fixed_time': '09:25:30', 'window_end': '09:30:00', 'can_enable': True, 'reason': None,
         'next_run_at': None, 'last_run': None, 'worker': {'alive': False, 'last_heartbeat_at_ms': None},
         'legacy_configuration': False, 'legacy_instrument_count': 0}
     assert facts() == before
@@ -157,7 +157,7 @@ def test_concurrent_revision_winner_commits_three_settings_once(configured):
 
 
 @pytest.mark.parametrize('auction_value, revision', [
-    ({'enabled': True, 'time': '09:26'}, 0), ({'enabled': True, 'fixed_time': '09:25:05'}, 0),
+    ({'enabled': True, 'time': '09:26'}, 0), ({'enabled': True, 'fixed_time': '09:25:30'}, 0),
     ({'enabled': True, 'mode': 'once'}, 0), ({'enabled': True, 'instrument_ids': []}, 0),
     ({'enabled': 1}, 0), ({'enabled': True}, None), ({'enabled': True}, True),
 ])
@@ -170,7 +170,7 @@ def test_unified_auction_rejects_extra_fields_and_invalid_revision(configured, a
     assert response.status_code == 422 and facts() == before
 
 
-@pytest.mark.parametrize('extra', [{'mode': 'once'}, {'instrument_ids': []}, {'date': DAY}, {'time': '09:25:05'}])
+@pytest.mark.parametrize('extra', [{'mode': 'once'}, {'instrument_ids': []}, {'date': DAY}, {'time': '09:25:30'}])
 def test_old_configuration_endpoint_cannot_restore_once_or_explicit_list(configured, extra):
     before = facts()
     response = configured.client.post('/api/v1/market/auction/automation', json={'mode': 'daily', 'expected_revision': 0, **extra})
@@ -209,7 +209,7 @@ def test_all_new_manual_creation_layers_reject_without_job_or_source(configured)
 
 def test_fixed_second_default_universe_and_restart_do_not_duplicate(configured):
     auction.update_config({'mode': 'daily', 'expected_revision': 0})
-    configured.clock[0] = NOW.replace(minute=25, second=4)
+    configured.clock[0] = NOW.replace(minute=25, second=29)
     assert auction.tick() is None
     assert facts()['job'] == []
     configured.clock[0] += timedelta(seconds=1)
@@ -248,7 +248,7 @@ def test_generic_and_internal_manual_resume_never_revive_original_request(config
 def test_attempt_cannot_request_source_before_fixed_second_or_after_window(configured):
     auction.update_config({'mode': 'daily', 'expected_revision': 0}); original = auction.tick()
     job = tasks.claim_next('synthetic-fixed-window')
-    configured.clock[0] = NOW.replace(minute=25, second=4)
+    configured.clock[0] = NOW.replace(minute=25, second=29, microsecond=999999)
     with pytest.raises(tasks.TaskPaused): worker.dispatch(job)
     assert configured.source.calls == [] and tasks.task_view(original['task_id'])['status'] == 'paused'
 

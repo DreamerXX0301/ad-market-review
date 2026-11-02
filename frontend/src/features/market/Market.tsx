@@ -69,6 +69,7 @@ import {
   topicMembersRequest,
 } from "./marketPresentation";
 import type { MarketSort } from "./marketPresentation";
+import AIEntry from "../ai/AIEntry";
 import {
   RecentLimitCell,
   YearLimitCountCell,
@@ -256,6 +257,7 @@ export function MarketOverview({
     );
   return (
     <div className="page-stack">
+      {!indicesOnly && <AIEntry key={date} kind="market" asOf={date} />}
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}

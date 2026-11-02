@@ -30,6 +30,7 @@ import ResearchTaskProgress from "./ResearchTaskProgress";
 import { researchTaskError, researchTaskProgress } from "./researchProgress";
 import { stockMetricDate } from "../../components/stockExtraMetrics";
 import StockLimitSummary from "../../components/StockLimitSummary";
+import AIEntry from "../ai/AIEntry";
 function ResearchSection({ section }: { section: Row }) {
   let content: any = section.content;
   if (typeof content === "string" && content.trim().startsWith("{")) {
@@ -347,6 +348,13 @@ export default function Research({
       ) : null}
       {busy && !taskSnapshot && <Loading />}
       {!report && marketPreview}
+      {!report && (
+        <AIEntry
+          key={`history:${selected?.instrument_id || "all"}`}
+          kind="stock"
+          instrumentId={selected?.instrument_id}
+        />
+      )}
       {report ? (
         <div className="research-report-shell">
           <div className="report-heading">
@@ -375,6 +383,15 @@ export default function Research({
               </Badge>
             </div>
           </div>
+          <AIEntry
+            key={report.report_id || report.job_id}
+            kind="stock"
+            reportId={report.report_id}
+            instrumentId={
+              report.instrument?.instrument_id || selected?.instrument_id
+            }
+            asOf={stockMetricDate(report.data_cutoff) || undefined}
+          />
           {report.schema_version !== 2 &&
             stockMetricDate(report.data_cutoff) &&
             (report.instrument?.instrument_id || selected?.instrument_id) && (

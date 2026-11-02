@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start an already accepted native release; never install, migrate or fetch data.
+"""Manage an already accepted native release; never install, migrate or fetch data.
 
 The private deployment control selects the release and data, rather than this
 checkout's current application code. Runtime paths and credentials stay private.
@@ -30,7 +30,7 @@ from urllib.request import ProxyHandler, build_opener
 
 
 class ServiceError(RuntimeError):
-    """A startup prerequisite failed; unrelated processes must stay untouched."""
+    """A service prerequisite failed; unrelated processes must stay untouched."""
 
 
 def require(condition, message):
@@ -78,7 +78,7 @@ def startup_lock(control, timeout=30):
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
-                require(time.monotonic() < deadline, '另一个启动或部署操作尚未结束')
+                require(time.monotonic() < deadline, '另一个服务管理或部署操作尚未结束')
                 time.sleep(.05)
         yield
 
@@ -158,7 +158,10 @@ class Inspector:
 
     @staticmethod
     def run(arguments):
-        result = subprocess.run(arguments, capture_output=True, text=True, check=False)
+        # ps lstart is otherwise localized, making the same PID look reused
+        # when Finder and a terminal have different language settings.
+        result = subprocess.run(arguments, capture_output=True, text=True, check=False,
+                                env={**os.environ, 'LC_ALL': 'C'})
         require(result.returncode in (0, 1), '无法核验本机进程，请检查 ps/lsof 工具')
         return result.stdout
 
@@ -202,7 +205,8 @@ class Inspector:
             # Discard every unrelated variable, including possible provider keys.
             allowed = {'PYTHONPATH', 'SHIXU_DATA_DIR', 'SHIXU_SQLITE_PATH', 'SHIXU_PUBLISHED_DIR',
                        'SHIXU_RAW_DIR', 'SHIXU_WORK_DIR', 'SHIXU_CREDENTIAL_DIR',
-                       'SHIXU_CREDENTIAL_MASTER_KEY_FILE', 'SHIXU_SELECTION_CPU_WORKERS'}
+                       'SHIXU_CREDENTIAL_MASTER_KEY_FILE', 'SHIXU_SELECTION_CPU_WORKERS',
+                       'SHIXU_AI_SYSTEM_PROXY_ENABLED'}
             environment = {}
             for item in pairs:
                 key, separator, value = item.partition(b'=')
@@ -297,11 +301,17 @@ class NativeService:
         self.port = parsed.port
         budget = value.get('selection_cpu_workers', 4)
         require(type(budget) is int and 0 <= budget <= 4, '选股 CPU 预算不合法')
+        ai_system_proxy_enabled = value.get('ai_system_proxy_enabled', False)
+        require(type(ai_system_proxy_enabled) is bool, 'AI 系统代理开关必须为布尔值')
         self.environment = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'SSL_CERT_FILE')
                             if key in os.environ}
         self.environment.update(PYTHONPATH=str(self.backend), PYTHONDONTWRITEBYTECODE='1', PYTHONNOUSERSITE='1',
                                 SHIXU_DATA_DIR=str(self.data), SHIXU_SQLITE_PATH=str(self.database),
                                 SHIXU_CREDENTIAL_MASTER_KEY_FILE=str(self.key), SHIXU_SELECTION_CPU_WORKERS=str(budget))
+        # Only the accepted control may opt in; never inherit an AI override.
+        # Omit the disabled flag so older, already running releases still match.
+        if ai_system_proxy_enabled:
+            self.environment['SHIXU_AI_SYSTEM_PROXY_ENABLED'] = '1'
         for name in ('published', 'raw', 'work', 'credentials'):
             self.environment['SHIXU_' + ('CREDENTIAL' if name == 'credentials' else name.upper()) + '_DIR'] = str(roots[name])
         self.worker_lock = roots['work'] / 'worker.lock'
@@ -329,9 +339,11 @@ class NativeService:
         executables = {executable, executable.parent.parent / 'Resources/Python.app/Contents/MacOS/Python'}
         return (bool(process.argv) and process.cwd == self.backend and process.argv[1:] == self.arguments(role)
                 and Path(process.argv[0]).resolve() in executables
+                and process.environment.get('SHIXU_AI_SYSTEM_PROXY_ENABLED', '0')
+                    == self.environment.get('SHIXU_AI_SYSTEM_PROXY_ENABLED', '0')
                 and all(process.environment.get(key) == value for key, value in expected.items()))
 
-    def inspect(self):
+    def inspect(self, *, stopping=False):
         found = {}
         for role in ('api', 'worker'):
             pid = self.value.get('processes', {}).get(role)
@@ -343,23 +355,23 @@ class NativeService:
                 found[role] = process
         listeners = self.inspector.listeners(self.port)
         if listeners:
-            require(len(listeners) == 1, '本机端口存在多个监听者，拒绝重复启动')
+            require(len(listeners) == 1, '本机端口存在多个监听者，拒绝操作')
             process = self.inspector.read(listeners[0])
-            require(process and self.matches(process, 'api'), '端口被其他服务占用，拒绝启动且不会终止占用者')
+            require(process and self.matches(process, 'api'), '端口被其他服务占用，拒绝操作且不会终止占用者')
             require('api' not in found or found['api'].pid == process.pid, 'API PID 与端口监听者不一致')
             found['api'] = process
         else:
-            require('api' not in found, '记录的 API 仍存活但未监听端口，请稍后查看日志')
+            require(stopping or 'api' not in found, '记录的 API 仍存活但未监听端口，请稍后查看日志')
             with socket.socket() as probe:
                 probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
                     probe.bind(('127.0.0.1', self.port))
                 except OSError:
-                    raise ServiceError('端口无法绑定，拒绝启动') from None
+                    raise ServiceError('端口无法绑定核验，拒绝操作') from None
         workers = self.inspector.workers(self.workspace)
         require(len(workers) <= 1, '工作区中存在多个 worker，拒绝操作')
         if workers:
-            require(self.matches(workers[0], 'worker'), '已有 worker 使用其他版本或数据路径，拒绝启动')
+            require(self.matches(workers[0], 'worker'), '已有 worker 使用其他版本或数据路径，拒绝操作')
             require('worker' not in found or found['worker'].pid == workers[0].pid, 'worker PID 不一致')
             found['worker'] = workers[0]
         if self.worker_lock.exists():
@@ -368,12 +380,12 @@ class NativeService:
                     fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     require('worker' in found and self.inspector.lock_holders(self.worker_lock) == [found['worker'].pid],
-                            'worker 数据锁由未知进程占用，拒绝启动')
+                            'worker 数据锁由未知进程占用，拒绝操作')
                 else:
                     fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-                    require('worker' not in found, 'worker 未持有当前数据独占锁，请稍后查看日志')
+                    require(stopping or 'worker' not in found, 'worker 未持有当前数据独占锁，请稍后查看日志')
         else:
-            require('worker' not in found, 'worker 缺少当前数据锁')
+            require(stopping or 'worker' not in found, 'worker 缺少当前数据锁')
         return found
 
     def health(self):
@@ -399,7 +411,7 @@ class NativeService:
         return child
 
     def clean_own_failed_start(self):
-        # No stop command: failure cleanup only owns children spawned by this call.
+        # Failure cleanup only owns children spawned by this call.
         for role, child in reversed(list(self.children.items())):
             if child.poll() is None:
                 process = self.inspector.read(child.pid)
@@ -410,12 +422,54 @@ class NativeService:
                     except subprocess.TimeoutExpired:
                         pass  # Never kill a process group or an unrelated/reused PID.
 
+    def stop(self, found):
+        signalled = []
+        # Request both exits before waiting. API drains requests; worker finishes
+        # its current job under the existing lock, then exits its consumer loop.
+        for role in ('api', 'worker'):
+            previous = found.get(role)
+            if previous is None:
+                continue
+            current = self.inspector.read(previous.pid)
+            if current is None:
+                continue
+            require(current.token and current.token == previous.token and self.matches(current, role),
+                    '停止前进程身份已变化，拒绝向该进程发送信号')
+            require(sha(self.control) == self.control_sha, '部署配置在停止期间变化')
+            try:
+                os.kill(current.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                continue
+            signalled.append(role)
+        deadline = time.monotonic() + self.timeout
+        while True:
+            remaining = []
+            for role, previous in found.items():
+                current = self.inspector.read(previous.pid)
+                if current is not None:
+                    require(current.token == previous.token and self.matches(current, role),
+                            '等待停止期间进程身份已变化，请核对服务状态')
+                    remaining.append(role)
+            if not remaining:
+                break
+            require(time.monotonic() < deadline,
+                    '等待停止超时（' + '、'.join(remaining) + '）；后台可能仍在完成当前任务，请稍后再次停止或查询状态，未强制终止')
+            time.sleep(.1)
+        require(not self.inspect(stopping=True), '停止后仍发现服务进程，请核对服务状态')
+        require(sha(self.control) == self.control_sha, '部署配置在停止期间变化')
+        atomic_json(self.control, {**self.value, 'processes': {}, 'native_process_tokens': {},
+                                  'native_last_stop_at': dt.datetime.now().astimezone().isoformat()})
+        return {**self.result({}, healthy=False), 'stopped': signalled}
+
     def execute(self, action):
+        require(action in ('start', 'status', 'stop'), '未知服务管理操作')
         with startup_lock(self.control):
             self.load(full=action == 'start')
-            found = self.inspect()
+            found = self.inspect(stopping=True) if action == 'stop' else self.inspect()
             if action == 'status':
                 return self.result(found, healthy='api' in found and self.health())
+            if action == 'stop':
+                return self.stop(found)
             try:
                 require('api' not in found or self.health(), '既有 API 尚未健康，不启动新的 worker，请先查看日志')
                 for role in ('api', 'worker'):
@@ -463,7 +517,7 @@ class NativeService:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('start', 'status'))
+    parser.add_argument('action', choices=('start', 'status', 'stop'))
     parser.add_argument('--control', type=Path, default=Path(__file__).resolve().parents[1] / 'data/work/runtime/local-service.json')
     args = parser.parse_args(argv)
     try:

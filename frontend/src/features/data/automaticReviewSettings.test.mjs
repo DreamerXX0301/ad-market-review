@@ -170,7 +170,7 @@ const base = {
     enabled: false,
     revision: 0,
     mode: "off",
-    fixed_time: "09:25:05",
+    fixed_time: "09:25:30",
     window_end: "09:30:00",
     can_enable: true,
     legacy_configuration: false,
@@ -242,7 +242,7 @@ assert.match(text(), /采集服务未运行，请检查初始化状态/);
 assert.match(text(), /服务未运行/);
 assert.doesNotMatch(text(), /worker|工作进程|固定时间/);
 assert.equal(
-  (text().match(/09:25:05/g) || []).length,
+  (text().match(/09:25:30/g) || []).length,
   1,
   "auction time is shown once",
 );
@@ -479,7 +479,7 @@ assert.equal(
   2,
   "auction has no editable time",
 );
-assert.match(text(), /北京时间.*09:25:05/);
+assert.match(text(), /北京时间.*09:25:30/);
 assert.doesNotMatch(text(), /固定时间|worker|工作进程/);
 assert.equal(original.includes("#data?section=automatic"), true);
 console.log(

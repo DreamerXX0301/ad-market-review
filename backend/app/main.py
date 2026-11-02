@@ -9,6 +9,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from app.core import APP_NAME,APP_ID,APP_VERSION,PROJECT_ROOT,ensure_ready
 from app.routers import platform,workspace,backtests,watchlist,chart_annotations,market_mainlines,market_sentiment_snapshots,dragon_tiger,noon,auction,automatic_tasks
 from app.routers import zodiac
+from app.routers import ai
+from app.routers import ai_events
 from app.services.supplement_access import SupplementWriteMiddleware
 from app.services.increment_access import IncrementWorkbenchMiddleware
 
@@ -28,6 +30,8 @@ app.include_router(dragon_tiger.router)
 app.include_router(noon.router)
 app.include_router(auction.router)
 app.include_router(automatic_tasks.router)
+app.include_router(ai.router)
+app.include_router(ai_events.router)
 app.include_router(platform.router)
 app.include_router(workspace.router)
 app.include_router(backtests.router)

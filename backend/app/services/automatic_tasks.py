@@ -82,7 +82,7 @@ def _validate(payload):
     if 'auction' in payload:
         auction = payload['auction']
         if not isinstance(auction, dict) or set(auction) != {'enabled'} or type(auction['enabled']) is not bool:
-            raise HTTPException(422, '竞价设置只接受enabled布尔开关，时间固定09:25:05且名单自动生成')
+            raise HTTPException(422, '竞价设置只接受enabled布尔开关，时间固定09:25:30且名单自动生成')
         revision = payload.get('expected_auction_revision')
         if type(revision) is not int or revision < 0:
             raise HTTPException(422, '保存竞价开关须提供当前expected_auction_revision')

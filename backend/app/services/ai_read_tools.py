@@ -1,0 +1,519 @@
+"""Bounded, on-demand AI reads. No SQL/path input, collection or TTL mutation.
+
+The optional deployment SQLite is used only for saved intraday observations.
+Published prices and research always belong to the current instance. Every
+returned identity describes this invocation, independent of an old chat anchor.
+"""
+from __future__ import annotations
+
+from collections import Counter
+from copy import deepcopy
+from datetime import date, datetime, time
+import json
+import os
+from pathlib import Path
+import re
+import sqlite3
+
+from fastapi import HTTPException
+
+from app.core import digest, dumps
+from app.infrastructure.config import data_dir, sqlite_path
+from app.services import ai_contexts as contexts
+from app.services import ai_market_brief as briefs
+from app.services.sync_clock import CHINA, local_now
+
+MAX_RESULT_BYTES = 24 * 1024
+MAX_REPORT_BYTES = 8 * 1024 * 1024
+SECTIONS = ('availability', 'auction', 'noon', 'close', 'overview', 'fund_flow')
+PHASES = {'auction': ('09:25', '竞价结束'), 'noon': ('11:30', '午盘'), 'close': ('15:00', '收盘')}
+_BRIEF_KIND = {'auction': 'auction', 'noon': 'noon', 'close': 'noon_close'}
+
+
+def tool_schemas():
+    """Responses function tools; names/arguments never accept filesystem/SQL."""
+    specs = [
+        ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。未到时点与已到但未采集分开；成交额不是净流入。',
+         {'date': {'type': 'string', 'description': '用户明确日期YYYY-MM-DD，或today；今天不沿用旧页面日期'},
+          'section': {'type': 'string', 'enum': list(SECTIONS)}}, ['date', 'section']),
+        ('read_stock_research', '读取当前实例已保存且未过期的个股研究，不联网、不延长缓存。instrument_id空串沿用当前页面个股；仅无当前报告时可读同股旧会话材料并明确旧日期。',
+         {'instrument_id': {'type': 'string', 'description': '完整六位代码加.SH/.SZ/.BJ；空串沿用页面个股'}}, ['instrument_id']),
+        ('check_data_availability', '只检查指定日已保存资料及北京时间观察阶段，不取新数据、不把工作日猜作已核验交易日。',
+         {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
+    ]
+    return [{'type': 'function', 'name': name, 'description': description, 'strict': True,
+             'parameters': {'type': 'object', 'properties': properties, 'required': required,
+                            'additionalProperties': False}}
+            for name, description, properties, required in specs]
+
+
+def _connect(path):
+    path = Path(path).expanduser().resolve()
+    if not path.is_file():
+        return None
+    connection = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
+    connection.row_factory = sqlite3.Row
+    for statement in ('PRAGMA foreign_keys=ON', 'PRAGMA recursive_triggers=ON',
+                      'PRAGMA busy_timeout=10000', 'PRAGMA query_only=ON'):
+        connection.execute(statement)
+    return connection
+
+
+def _paths():
+    current = sqlite_path()
+    configured = os.environ.get('SHIXU_AI_READ_SQLITE_PATH')
+    result = [('configured_read_source', Path(configured).expanduser().resolve())] if configured else []
+    if not result or result[0][1] != current:
+        result.append(('current_instance', current))
+    return result
+
+
+def _day(value, now):
+    if value == 'today':
+        return now.date().isoformat()
+    if not isinstance(value, str) or date.fromisoformat(value).isoformat() != value:
+        raise ValueError('日期须为YYYY-MM-DD或today')
+    return value
+
+
+def _result(name, day=None):
+    return {'ok': True, 'state': 'unknown', 'tool_name': name, 'date': day,
+            'source': [], 'summary': {}, 'evidence': [], 'metrics': [],
+            'gaps': [], 'source_bindings': {}}
+
+
+def _gap(result, capability, reason, state='unknown'):
+    result['gaps'].append({'capability': capability, 'date': result['date'], 'state': state, 'reason': reason})
+
+
+def _settings(path):
+    connection = _connect(path)
+    if connection is None:
+        return {}
+    try:
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='platform_setting'").fetchone():
+            return {}
+        rows = connection.execute("SELECT key,value_json FROM platform_setting WHERE key IN "
+            "('automatic-review-calendar-v1','automatic-review-config-v1') AND length(CAST(value_json AS BLOB))<=131072").fetchall()
+        result = {row['key']: json.loads(row['value_json']) for row in rows}
+        return {key: value for key, value in result.items() if isinstance(value, dict)}
+    finally:
+        connection.close()
+
+
+def _heads():
+    connection = _connect(sqlite_path())
+    if connection is None:
+        return {}
+    try:
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='published_head'").fetchone():
+            return {}
+        rows = connection.execute("SELECT h.module,h.snapshot_id,s.lineage_json FROM published_head h "
+            "JOIN dataset_snapshot s ON s.snapshot_id=h.snapshot_id WHERE h.module IN "
+            "('calendar','daily_raw','analysis_bars','corporate_actions','security_identity')").fetchall()
+        return {row['module']: {'snapshot_id': row['snapshot_id'],
+                'market_snapshot_id': json.loads(row['lineage_json']).get('market_snapshot_id')}
+                for row in rows}
+    finally:
+        connection.close()
+
+
+def _supplement_head():
+    from app.infrastructure.config import published_dir
+    path = published_dir() / 'market-supplement' / 'head.json'
+    if not path.is_file():
+        return None
+    if path.stat().st_size > 8192:
+        raise ValueError('补充发布指针超过有界范围')
+    body = json.loads(path.read_text())
+    return {key: body.get(key) for key in ('snapshot_id', 'sha256', 'version', 'published_at_ms')}
+
+
+def _market(heads=None):
+    from app.analytics.market import MarketData
+    heads = _heads() if heads is None else heads
+    snapshot = heads.get('daily_raw', {}).get('market_snapshot_id')
+    return MarketData(data_dir(), snapshot_id=snapshot or '')
+
+
+def _availability(day, now):
+    selected, settings, all_heads = {}, [], {}
+    for label, path in _paths():
+        identity = briefs.fingerprints(day, source_path=path)
+        all_heads[label] = identity
+        settings.append(_settings(path))
+        for phase, key in _BRIEF_KIND.items():
+            if phase not in selected and identity.get(key):
+                selected[phase] = {'source': label, **identity[key]}
+    calendar_state, calendar_binding = 'unknown', None
+    for saved in settings:
+        calendar = saved.get('automatic-review-calendar-v1', {})
+        days = calendar.get('days', [])
+        if (calendar.get('state') == 'ready' and re.fullmatch(r'[0-9a-f]{64}', str(calendar.get('source_sha256', '')))
+                and isinstance(days, list) and 0 < len(days) <= 4096
+                and all(isinstance(value, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) for value in days)):
+            if day in days or min(days) <= day <= max(days):
+                calendar_state = 'trading_day' if day in days else 'rest_day'
+                calendar_binding = {key: calendar.get(key) for key in ('source_id', 'source_sha256', 'fetched_at')}
+                break
+    if selected:
+        calendar_state = 'trading_day'
+    if calendar_state == 'unknown':
+        market = _market()
+        if market.status().get('ready') and day in market.calendar():
+            calendar_state = 'trading_day'
+            calendar_binding = {'market_snapshot_id': market.status().get('snapshot_id')}
+    phases = {}
+    for phase, (clock, label) in PHASES.items():
+        due = datetime.combine(date.fromisoformat(day), time.fromisoformat(clock), CHINA)
+        metadata = selected.get(phase)
+        if metadata:
+            state, reason = 'available', '已有所选日保存记录；实际内容还须通过SHA及来源权限核验'
+        elif calendar_state == 'rest_day':
+            state, reason = 'rest_day', '已保存并核验的交易日历明确为休市日'
+        elif now < due and day >= now.date().isoformat():
+            state, reason = 'not_due', label + '观察时点尚未到，不能称为漏采'
+        elif day == now.date().isoformat() or calendar_state == 'trading_day':
+            state, reason = 'not_collected', '已到' + label + '观察时点，但所选日尚无已保存记录'
+        else:
+            state, reason = 'unknown', '没有所选日记录或覆盖该日的已核验交易日历，不能猜测休市或漏采'
+        config_key = 'after_close' if phase == 'close' else phase
+        config = next((s.get('automatic-review-config-v1', {}).get(config_key) for s in settings
+                       if isinstance(s.get('automatic-review-config-v1', {}).get(config_key), dict)), {}) or {}
+        scheduled = config.get('time') if config.get('enabled') is True else None
+        if state == 'not_collected' and isinstance(scheduled, str) and re.fullmatch(r'\d{2}:\d{2}', scheduled) and now < datetime.combine(date.fromisoformat(day), time.fromisoformat(scheduled), CHINA):
+            reason += '；已配置计划采集时间尚未到'
+        phases[phase] = {'phase_state': state, 'now': now.isoformat(), 'expected_phase_at': due.isoformat(),
+            'capture_window': ({key: metadata[key] for key in ('collected_start_at', 'collected_end_at',
+                'noon_collected_start_at', 'noon_collected_end_at', 'generated_at_ms') if key in metadata} if metadata else None),
+            'source_ids': ({key: metadata[key] for key in ('snapshot_id', 'review_id', 'revision') if key in metadata} if metadata else {}),
+            'source': metadata.get('source') if metadata else None, 'scheduled_capture_at': scheduled, 'reason': reason}
+    return {'now': now.isoformat(), 'timezone': 'Asia/Shanghai', 'calendar_state': calendar_state,
+            'calendar_binding': calendar_binding, 'phases': phases}, selected, all_heads
+
+
+def _add_blocks(result, day, selected, kinds):
+    for label, path in _paths():
+        wanted = {kind for kind in kinds if selected.get(kind, {}).get('source') == label}
+        if not wanted:
+            continue
+        data = briefs.build_briefs(day, source_path=path)
+        mapping = {_BRIEF_KIND[phase]: phase for phase in wanted}
+        for block in data['blocks']:
+            key = block['evidence']['evidence_id'].split(':')[-1]
+            if key not in mapping:
+                continue
+            evidence = block['evidence']
+            identifier = evidence['evidence_id']
+            result['evidence'].append(evidence)
+            result['metrics'].extend({**metric, 'evidence_ids': [identifier]} for metric in block['metrics'])
+        for gap in data['gaps']:
+            if gap.get('capability', '').removesuffix('_brief') in mapping:
+                result['gaps'].append(gap)
+
+
+def _published_overview(result, day):
+    before = _heads()
+    supplement_before = _supplement_head()
+    market = _market(before)
+    status = market.status()
+    if not status.get('ready') or day not in market.calendar():
+        _gap(result, 'completed_market', '当前实例没有所选日完成日行情；不以旧日行情代称今天')
+        return False
+    from app.services.market_sentiment import describe_sentiment
+    from app.services.market_supplement import _load_supplement_with_fingerprint
+    calendar = market.calendar()
+    position = calendar.index(day)
+    previous = calendar[position - 1] if position else None
+    dates = tuple(value for value in (previous, day) if value)
+    pools, fingerprint = _load_supplement_with_fingerprint(status['snapshot_id'], dates=dates,
+        fields=('public_pools', 'annual_pools', 'annual_down_pools'))
+    reference = {**market.reference(), '_supplement': pools}
+    description = describe_sentiment(market, reference, market.panel(day), day)
+    context = contexts._base('market_review', '所选日已发布盘面', day)
+    contexts._dimension(context, 'market_distribution', '当日严格可比A股分布', description['market'], day)
+    for item in description['index_environment']['indices']:
+        contexts._dimension(context, 'index:' + item['instrument_id'], item['name'], item, day)
+    contexts._turnover(context, market, day, calendar)
+    short = description['short_term']
+    contexts._dimension(context, 'previous_limit_up', '前日已确认涨停队列反馈',
+        {key: value for key, value in short.items() if key != 'groups'}, day,
+        dates={'trade_date': day, 'cohort_date': previous})
+    for group in short.get('groups', []):
+        if group.get('cohort_price_feedback', {}).get('observed_count'):
+            contexts._dimension(context, 'cohort:' + group['id'], group['label'] + '价格反馈',
+                group['cohort_price_feedback'], day, dates={'trade_date': day, 'cohort_date': previous})
+    sectors, sector_fp = _load_supplement_with_fingerprint(status['snapshot_id'], dates=(day,), fields=('sector_index_history',))
+    contexts._sectors(context, sectors, day)
+    result['evidence'].extend(context['evidence'])
+    result['metrics'].extend(context['metrics'])
+    result['gaps'].extend(context['gaps'])
+    result['source'] = sorted(set(result['source']) | {'current_instance_published_market'})
+    result['source_bindings']['published_market'] = {'heads': before, 'market_snapshot_id': status['snapshot_id'],
+        'pool_sha256': digest(fingerprint) if fingerprint else None,
+        'sector_sha256': digest(sector_fp) if sector_fp else None}
+    if before != _heads() or supplement_before != _supplement_head():
+        raise HTTPException(409, '读取期间发布代际变化，请重试')
+    return True
+
+
+def _fund_flow(result, day):
+    from app.services.market_supplement import _load_supplement_with_fingerprint
+    from app.services.market_service import fund_flow_for_date
+    before = _heads()
+    supplement_before = _supplement_head()
+    market = _market(before)
+    snapshot = market.status().get('snapshot_id')
+    document, fingerprint = _load_supplement_with_fingerprint(snapshot, dates=(day,), fields=('fund_flows',))
+    data = fund_flow_for_date(document, day, market.calendar()) if fingerprint else {}
+    rows = [row for row in data.get('items', []) if row.get('date') == day
+            and row.get('egress_allowed') is not False and row.get('ai_processing_allowed') is not False]
+    if not rows:
+        _gap(result, 'net_flow', '所选日没有通过日期与来源核验的已保存净流入材料；不以成交额替代')
+        return
+    if data.get('egress_allowed') is False or data.get('ai_processing_allowed') is False:
+        _gap(result, 'net_flow', '来源明确禁止外发或AI处理')
+        return
+    rows = sorted(rows, key=lambda row: (not contexts._finite(row.get('net_inflow')), -(row.get('net_inflow') or 0)))
+    chosen = rows[:3] + [row for row in rows[-3:] if row not in rows[:3]]
+    coverage = data.get('coverage', {})
+    data = {key: data.get(key) for key in ('date', 'source', 'calculation', 'date_evidence', 'complete')}
+    data['coverage'] = {key: coverage.get(key) for key in ('requested_date', 'historical_series_anchor',
+        'directory_count', 'accepted_count', 'failed_count', 'complete', 'scope_label') if key in coverage}
+    data.update(items=chosen, observed_count=len(rows), selection_scope='已保存来源行业主力净流入最高/最低各3项；非完整历史目录，非真实机构账户流向',
+                intraday_sequence_available=False, unit='CNY')
+    identifier = 'fund_flow'
+    result['evidence'].append({'evidence_id': identifier, 'source': 'published_fund_flow', 'kind': identifier,
+        'title': '指定日来源行业主力净流入', 'dates': {'trade_date': day}, 'data': data})
+    result['source'] = sorted(set(result['source']) | {'current_instance_published_fund_flow'})
+    for index, row in enumerate(chosen):
+        result['metrics'].append({'metric_id': 'fund_flow:' + str(index), 'label': str(row.get('name') or row.get('topic_code')) + '来源主力净流入',
+            'value': row.get('net_inflow'), 'unit': 'CNY', 'as_of': day, 'evidence_ids': [identifier],
+            'scope': data['selection_scope'], 'dates': {'trade_date': day}})
+    result['source_bindings']['fund_flow'] = {'projection_sha256': digest(fingerprint), 'heads': before}
+    if before != _heads() or supplement_before != _supplement_head():
+        raise HTTPException(409, '读取期间发布代际变化，请重试')
+
+
+def _research(result, instrument_id, page, fallback, now):
+    instrument = instrument_id or page.get('instrument_id') or (page.get('instrument') or {}).get('instrument_id')
+    if not isinstance(instrument, str) or not re.fullmatch(r'\d{6}\.(SH|SZ|BJ)', instrument):
+        raise ValueError('须提供完整个股代码，或从个股页面进入')
+    connection = _connect(sqlite_path())
+    row = None
+    if connection is not None:
+        try:
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_report'").fetchone():
+                preferred = page.get('source_report_id') or page.get('report_id') or ''
+                row = connection.execute('SELECT report_id,report_json,data_cutoff,expires_at_ms FROM research_report '
+                    'WHERE instrument_id=? AND expires_at_ms>? AND length(CAST(report_json AS BLOB))<=? '
+                    'ORDER BY CASE WHEN report_id=? THEN 0 ELSE 1 END,created_at_ms DESC LIMIT 1',
+                    (instrument, int(now.timestamp()*1000), MAX_REPORT_BYTES, preferred)).fetchone()
+        finally:
+            connection.close()
+    if row is None:
+        if fallback.get('instrument_id') == instrument and fallback.get('kind') == 'stock_research':
+            projected = contexts.model_input(fallback)
+            result.update(date=fallback['as_of'], state='partial', evidence=projected['evidence'], metrics=projected['metrics'])
+            result['source'] = ['saved_session_fallback']
+            result['summary'] = {'instrument_id': instrument, 'as_of': fallback['as_of'], 'material_scope': projected.get('material_scope'),
+                                 'metric_defaults': projected.get('metric_defaults', {}),
+                                 'notice': '当前实例没有未过期研究；仅使用该会话原已保存旧材料，不代表今天或最新资料'}
+            result['gaps'].extend(projected['gaps'])
+            _gap(result, 'current_research', '没有当前可用研究；旧会话回退材料日期明确，未延长TTL')
+            result['source_bindings']['fallback'] = {'context_sha256': fallback.get('context_sha256'), 'source_report_id': fallback.get('source_report_id')}
+            return
+        _gap(result, 'current_research', '当前实例没有该个股未过期的已保存v2研究，不联网补抓或跨股借用材料')
+        return
+    report = json.loads(row['report_json'])
+    if (report.get('schema_version') != 2 or report.get('instrument', {}).get('instrument_id') != instrument
+            or report.get('data_cutoff') != row['data_cutoff']):
+        _gap(result, 'research_integrity', '已存研究版本、证券或截止日期不一致，保留未知')
+        return
+    result['date'] = report['data_cutoff']
+    result['source'] = ['current_instance_saved_research']
+    result['source_bindings']['research'] = {'report_id': row['report_id'], 'report_sha256': digest(report), 'expires_at_ms': row['expires_at_ms']}
+    result['summary'] = {'instrument_id': instrument, 'instrument': report['instrument'], 'as_of': result['date'],
+                         'material_window': report.get('material_window'), 'notice': '仅当前已保存研究材料，不证明历史时点可知，不代表今天已重采集'}
+    result['gaps'].extend(contexts._clean(report.get('gaps', [])))
+    if report.get('egress_allowed') is False or report.get('ai_processing_allowed') is False:
+        _gap(result, 'research_permission', '父报告明确禁止外发或AI处理')
+        return
+    coverage = report.get('source_coverage', [])
+    blocked = {r.get('source_id') for r in coverage if isinstance(r, dict) and (r.get('state') in ('requires_license', 'external_only')
+        or r.get('egress_allowed') is False or r.get('ai_processing_allowed') is False)}
+    aliases = {'valuation_snapshot': 'valuation', 'announcement': 'announcements', 'business_composition': 'company_profile'}
+    seen = Counter(r.get('evidence_id') for r in report.get('evidence', []) if isinstance(r, dict))
+    counts, excluded = Counter(), Counter()
+    for raw in report.get('evidence', []):
+        if not isinstance(raw, dict):
+            continue
+        kind, source, identifier = raw.get('kind'), raw.get('source'), raw.get('evidence_id')
+        if (not isinstance(identifier, str) or seen[identifier] != 1 or raw.get('instrument_id') != instrument
+                or source not in contexts._RESEARCH_SOURCES or kind not in contexts._RESEARCH_KINDS
+                or raw.get('content_hash') != digest(raw.get('data')) or counts[kind] >= contexts._RESEARCH_CAPS[kind]
+                or source in blocked or kind in blocked or aliases.get(kind) in blocked
+                or (str(kind).startswith('financial_') and 'financial' in blocked)
+                or raw.get('state') in ('requires_license', 'external_only')
+                or raw.get('egress_allowed') is False or raw.get('ai_processing_allowed') is False):
+            excluded[str(source)] += 1
+            continue
+        evidence = {key: deepcopy(raw[key]) for key in ('evidence_id', 'source', 'kind', 'title', 'data') if key in raw}
+        evidence['dates'] = {key: raw.get(key) for key in ('published_at_ms', 'fetched_at_ms', 'report_period')}
+        evidence['dates']['market_data_cutoff'] = result['date']
+        result['evidence'].append(evidence)
+        result['metrics'].extend({**metric, 'evidence_ids': [identifier]} for metric in contexts._research_metrics(evidence, result['date']))
+        counts[kind] += 1
+    technical = report.get('technical_assessment', {})
+    for period in technical.get('periods', []):
+        if not isinstance(period, dict) or period.get('period') not in ('D', 'W', 'M'):
+            continue
+        identifier = 'technical:' + period['period']
+        result['evidence'].append({'evidence_id': identifier, 'source': 'local_research_technical', 'kind': 'technical_observation',
+            'title': period['period'] + '已存技术观察', 'dates': {'market_data_cutoff': result['date']},
+            'data': {**{k: v for k, v in period.items() if k != 'current_period'}, 'analysis_contract': technical.get('analysis_contract')}})
+    result['summary'].update(source_coverage=contexts._model_data(coverage), excluded_by_source=dict(excluded))
+
+
+def _bounded(result):
+    for rows, field in ((result['evidence'], 'evidence_id'), (result['metrics'], 'metric_id')):
+        identifiers = [row[field] for row in rows]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError('来源标识重复，不能混合引用')
+    bindings = result['source_bindings']
+    result = contexts._model_data(result)
+    result['source_bindings'] = bindings
+    defaults = result['summary'].setdefault('metric_defaults', {})
+    metrics = result['metrics']
+    for key in ('as_of', 'price_basis'):
+        values = [row.get(key, defaults.get(key)) for row in metrics]
+        if values and values[0] is not None and all(value == values[0] for value in values):
+            defaults[key] = values[0]
+            for row in metrics:
+                row.pop(key, None)
+    date_rows = [row.get('dates', defaults.get('dates', {})) for row in metrics]
+    common_dates = {key: value for key, value in (date_rows[0].items() if date_rows else [])
+                    if all(row.get(key) == value for row in date_rows)}
+    if common_dates:
+        defaults['dates'] = {**defaults.get('dates', {}), **common_dates}
+        for row in metrics:
+            row['dates'] = {key: value for key, value in row.get('dates', {}).items() if key not in common_dates}
+            if not row['dates']:
+                row.pop('dates')
+    if not defaults:
+        result['summary'].pop('metric_defaults')
+    for evidence in result['evidence']:
+        # Dates/identities already occur in the explicit, small source binding.
+        # Preserve facts and remove only duplicated audit wrappers.
+        evidence.pop('source_binding', None)
+        if isinstance(evidence.get('data'), dict):
+            evidence['data'].pop('binding', None)
+        related = [row for row in result['metrics'] if row.get('evidence_ids') == [evidence['evidence_id']]]
+        related_dates = [row.get('dates') for row in related]
+        if related_dates and related_dates[0] and all(value == related_dates[0] for value in related_dates):
+            evidence['metric_dates'] = related_dates[0]
+            for row in related:
+                row.pop('dates', None)
+        scopes = {row.get('scope') for row in related}
+        if len(scopes) == 1 and next(iter(scopes), None):
+            evidence['metric_scope'] = next(iter(scopes))
+            for row in related:
+                row.pop('scope', None)
+    technical = [row['data'] for row in result['evidence'] if row.get('kind') == 'technical_observation'
+                 and isinstance(row.get('data'), dict) and row['data'].get('analysis_contract')]
+    if len(technical) > 1 and all(row['analysis_contract'] == technical[0]['analysis_contract'] for row in technical):
+        result['summary']['technical_analysis_contract'] = technical[0]['analysis_contract']
+        result['summary']['technical_contract_periods'] = [row.get('period') for row in technical]
+        for row in technical:
+            row.pop('analysis_contract')
+    if result['metrics']:
+        result['summary']['metric_semantics'] = '指标继承summary.metric_defaults，以及其evidence_ids所指证据的metric_dates/metric_scope；各指标自己的字段优先。单位逐项保留。'
+    namespace = 'read:' + str(result['date']) + ':' + digest(result['source_bindings'])[:8] + ':'
+    ids = {row['evidence_id']: namespace + row['evidence_id'] for row in result['evidence']}
+    for row in result['evidence']:
+        row['evidence_id'] = ids[row['evidence_id']]
+    for row in result['metrics']:
+        row['metric_id'] = namespace + row['metric_id']
+        row['evidence_ids'] = [ids[value] for value in row.get('evidence_ids', []) if value in ids]
+    excluded = Counter()
+    while len(dumps(result).encode()) > MAX_RESULT_BYTES and result['evidence']:
+        # Keep useful summary/phase metadata and whole factual observations.
+        optional = [r for r in result['evidence'] if str(r.get('kind', '')).startswith('sector:')]
+        optional = optional or [r for r in result['evidence'] if r.get('kind') == 'announcement']
+        optional = optional or [r for r in result['evidence'] if str(r.get('kind', '')).startswith('cohort:')]
+        removed = (optional or result['evidence'])[-1]
+        identifier = removed['evidence_id']
+        result['evidence'].remove(removed)
+        result['metrics'] = [r for r in result['metrics'] if identifier not in r.get('evidence_ids', [])]
+        excluded[str(removed.get('source'))] += 1
+        result['summary']['bounded_exclusions'] = dict(excluded)
+        result['summary']['bounded_notice'] = '容量内仅保留实际返回证据；其他材料整条排除，不能称已读取全部资料'
+    if len(dumps(result).encode()) > MAX_RESULT_BYTES:
+        result = _result(result['tool_name'], result['date'])
+        result.update(ok=False, state='error')
+        _gap(result, 'result_capacity', '必要来源、日期、单位与缺口超过24KiB，未截断或发送不完整材料')
+    if len(dumps(result).encode()) > MAX_RESULT_BYTES:
+        raise ValueError('必要元数据超出只读工具容量')
+    if result['evidence'] and result['state'] == 'unknown':
+        result['state'] = 'partial' if result['gaps'] else 'available'
+    return result
+
+
+def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
+    """Execute one of three allowlisted local reads; always return bounded JSON."""
+    result = _result(name if name in {r['name'] for r in tool_schemas()} else 'unknown')
+    try:
+        if not isinstance(args, dict):
+            raise ValueError('工具参数须为对象')
+        if page_context is not None and not isinstance(page_context, dict) or fallback_context is not None and not isinstance(fallback_context, dict):
+            raise ValueError('页面或回退资料格式无效')
+        now = local_now()
+        if name == 'read_stock_research':
+            if set(args) - {'instrument_id'} or not isinstance(args.get('instrument_id', ''), str):
+                raise ValueError('个股工具仅接受instrument_id')
+            _research(result, args.get('instrument_id', ''), page_context or {}, fallback_context or {}, now)
+        elif name in ('read_market_data', 'check_data_availability'):
+            permitted = {'date', 'section'} if name == 'read_market_data' else {'date'}
+            if set(args) - permitted:
+                raise ValueError('工具不接受额外参数或路径')
+            day = _day(args.get('date', 'today'), now)
+            section = args.get('section', 'availability')
+            if section not in SECTIONS:
+                raise ValueError('盘面分区无效')
+            result['date'] = day
+            availability, selected, before = _availability(day, now)
+            result['summary'] = availability
+            result['source_bindings']['intraday'] = before
+            if availability.get('calendar_binding'):
+                result['source_bindings']['calendar'] = availability['calendar_binding']
+            result['source'] = sorted({row['source'] for row in selected.values()})
+            if name == 'check_data_availability' or section == 'availability':
+                result['state'] = 'available'
+            else:
+                kinds = tuple(PHASES) if section == 'overview' else (section,) if section in PHASES else ()
+                if section != 'overview':
+                    _add_blocks(result, day, selected, kinds)
+                for phase in kinds:
+                    if availability['phases'][phase]['phase_state'] != 'available':
+                        _gap(result, phase, availability['phases'][phase]['reason'], availability['phases'][phase]['phase_state'])
+                if section in PHASES:
+                    result['state'] = availability['phases'][section]['phase_state']
+                    if result['state'] == 'available' and not result['evidence']:
+                        result['state'] = 'unknown'
+                if section == 'overview':
+                    if not _published_overview(result, day):
+                        latest = next((phase for phase in reversed(PHASES) if phase in selected), None)
+                        if latest:
+                            _add_blocks(result, day, selected, (latest,))
+                elif section == 'fund_flow':
+                    _fund_flow(result, day)
+            if before != {label: briefs.fingerprints(day, source_path=path) for label, path in _paths()}:
+                raise HTTPException(409, '读取期间时点来源变化，请重试')
+        else:
+            raise ValueError('工具名称不在允许范围')
+        return _bounded(result)
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error, HTTPException):
+        error = _result(result['tool_name'], result['date'])
+        error.update(ok=False, state='error')
+        _gap(error, 'read_error', '参数无效、来源发生变化或已保存资料未通过只读核验；未取新数据，也未写入或发送私有路径')
+        return error

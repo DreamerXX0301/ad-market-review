@@ -261,7 +261,7 @@ worker在业务事务内重新核对冻结范围、自选保护和任务租约�
 
 普通周/月信号日期与入池日分开。入池始终用业务日 T 的真实日收盘，不能拿最近周/月价冒充。运行与核对有任务租约、真实进度和取消；同步 API 用例不支持后台任务式暂停/重试。
 
-数据中心自动计划使用`GET/PUT /settings/automatic-tasks`，与盘面观察日无关，详细窗口与调度规则见[自动计划契约](automatic-review-tasks.md)。GET在同一业务SQLite读事务返回原`timezone/revision/noon/after_close/last_checks/policy`及`auction`投影；竞价含`enabled/revision/mode/fixed_time/window_end/can_enable/reason/next_run_at/last_run/worker/legacy_configuration/legacy_instrument_count`，其中时间固定09:25:05至09:30:00，旧`once`仅作兼容只读状态。午评默认12:05、盘后默认17:00，最早盘后时间17:00；已保存的自定义时间不强制覆盖。新安装三个开关均关闭。
+数据中心自动计划使用`GET/PUT /settings/automatic-tasks`，与盘面观察日无关，详细窗口与调度规则见[自动计划契约](automatic-review-tasks.md)。GET在同一业务SQLite读事务返回原`timezone/revision/noon/after_close/last_checks/policy`及`auction`投影；竞价含`enabled/revision/mode/fixed_time/window_end/can_enable/reason/next_run_at/last_run/worker/legacy_configuration/legacy_instrument_count`，其中时间固定09:25:30至09:30:00，旧`once`仅作兼容只读状态。午评默认12:05、盘后默认17:00，最早盘后时间17:00；已保存的自定义时间不强制覆盖。新安装三个开关均关闭。
 
 PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；新增可选`auction={enabled}`，提供竞价开关时必须同时提供非负整数`expected_auction_revision`，不接受竞价时间、日期、模式或名单。两个版本在同一短事务内核验，冲突409时全部不写；未带auction的旧客户端不改变竞价配置，完全相同的规范配置不增加修订号。旧单次、日期或手工名单经显式保存规范为off/daily及空名单时，即使有效enabled仍为false也可能增加竞价修订号。仅启用状态实际改变时重新核验竞价可启用权限，临时来源不可用不阻断已有daily开关的noop。保存不创建任务、不启用初始化、不绕过整链运行锁；兼容`POST /market/auction/automation`也仅接受off/daily和当前修订号，拒绝once、日期、名单及时间。
 

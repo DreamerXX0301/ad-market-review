@@ -1,6 +1,7 @@
 """One analytics writer; consumes only explicitly authorized durable tasks."""
 from __future__ import annotations
 import argparse
+from contextlib import ExitStack
 from datetime import date
 import fcntl
 import logging
@@ -437,13 +438,24 @@ def dispatch(job):
 def run(once=False):
     ensure_ready(); stop=threading.Event();owner='worker-'+str(os.getpid())
     lock_path=work_dir()/'worker.lock'
-    with lock_path.open('a+b') as lock:
+    with lock_path.open('a+b') as lock, ExitStack() as cleanup:
         try:fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise SystemExit('已有工作进程运行，拒绝第二个分析写入者')
         from app.services.sync_progress import worker_released
         # Holding this existing EX worker lock proves an earlier execution
         # cannot still write, including a process that died before finally.
         worker_released(recovered=True)
+        if not once:
+            # This is a control thread in this same exclusively locked worker,
+            # not a second task-consuming process. Main market jobs retain
+            # their existing single-running admission and dispatch behavior.
+            try:
+                from app.services.worker_ai_control import WorkerAIControl
+                ai_control = WorkerAIControl(owner)
+                cleanup.callback(ai_control.close)
+                ai_control.start()
+            except Exception as error:
+                logger.warning('AI任务控制尚未启动：%s', type(error).__name__)
         for signum in (signal.SIGTERM,signal.SIGINT):
             signal.signal(signum,lambda *_:stop.set())
         next_research_cleanup=0

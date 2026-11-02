@@ -17,7 +17,10 @@ from app.services import task_service as tasks
 from app.services.auction_collection import CHINA, VERSION as SOURCE_VERSION
 
 VERSION = 'auction-automation-v1'
-START = time(9, 25, 5)
+# Operational delay after the 09:25 auction close; independent of source-time
+# validation and historical snapshot evidence. Existing daily switches use it
+# directly, without rewriting configuration revisions or frozen jobs.
+START = time(9, 25, 30)
 END = time(9, 30)
 MAX_ATTEMPTS = 3
 _worker_creation = ContextVar('auction_worker_creation', default=None)
@@ -73,7 +76,7 @@ def worker_creation_scope(authorization):
 
 def require_worker_creation(authorization):
     if not isinstance(authorization, dict) or _worker_creation.get() is not authorization:
-        raise HTTPException(403, '竞价仅由唯一worker按每天09:25:05自动计划创建，不支持手动采集')
+        raise HTTPException(403, '竞价仅由唯一worker按每天09:25:30自动计划创建，不支持手动采集')
 
 
 def _eligibility(connection):
@@ -152,7 +155,7 @@ def _view(connection, current):
     return {'version': VERSION, 'revision': config['revision'], 'mode': config['mode'],
             'date': config['trade_date'], 'instrument_ids': json.loads(config['instrument_ids_json']),
             'today': today, 'now': current.isoformat(), 'timezone': 'Asia/Shanghai',
-            'start_time': '09:25:05', 'end_time': '09:30:00', 'enabled': enabled,
+            'start_time': START.isoformat(), 'end_time': END.isoformat(), 'enabled': enabled,
             'next_run_at': next_at, 'can_enable': can_enable, 'reason': reason,
             'last_run': last, 'worker': worker, 'legacy_configuration': legacy}
 
@@ -168,7 +171,7 @@ def settings_view(connection):
     view = _view(connection, now_china())
     return {key: view[key] for key in ('enabled', 'revision', 'mode', 'can_enable', 'reason',
                                       'next_run_at', 'last_run', 'worker', 'legacy_configuration')} | {
-        'fixed_time': '09:25:05', 'window_end': '09:30:00', 'legacy_instrument_count': len(view['instrument_ids'])}
+        'fixed_time': START.isoformat(), 'window_end': END.isoformat(), 'legacy_instrument_count': len(view['instrument_ids'])}
 
 
 def update_config(payload):
@@ -274,7 +277,7 @@ def tick():
             _receipt(connection, day, config['revision'], 'skipped', '周末不请求竞价；其他节假日由来源交易日历核实')
             return None
         if day < today or current.time().replace(tzinfo=None) >= END:
-            _receipt(connection, day, config['revision'], 'expired', '服务未在本日09:25:05至09:30前开始采集，已跳过，不补采')
+            _receipt(connection, day, config['revision'], 'expired', '服务未在本日09:25:30至09:30前开始采集，已跳过，不补采')
             return None
         if current.time().replace(tzinfo=None) < START:
             if config['mode'] == 'daily':

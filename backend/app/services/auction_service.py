@@ -51,11 +51,11 @@ def capture_window(day, at=None):
     elif target.weekday() >= 5:
         reason = '周末不创建竞价；节假日由工作进程核验来源交易日历'
     elif not allowed:
-        reason = '自动竞价仅在本交易日北京时间09:25:05至09:30前执行，错过不补采'
+        reason = '自动竞价仅在本交易日北京时间09:25:30至09:30前执行，错过不补采'
     from .auction_automation import START
     allowed = allowed and now.time().replace(tzinfo=None) >= START
     if not allowed and reason is None:
-        reason = '自动竞价固定从北京时间09:25:05开始执行'
+        reason = '自动竞价固定从北京时间09:25:30开始执行'
     return {'allowed': allowed, 'reason': reason,
             'start_at': datetime.combine(target, START, CHINA).isoformat(),
             'end_at': datetime.combine(target, CAPTURE_END, CHINA).isoformat(),
@@ -168,7 +168,7 @@ def read_view(day=None):
     elif not configured:
         reason = '请先配置并启用扶摇数据源'
     elif window['allowed']:
-        reason = '新竞价仅由已开启的每天自动计划在09:25:05至09:30前登记，不提供手动采集'
+        reason = '新竞价仅由已开启的每天自动计划在09:25:30至09:30前登记，不提供手动采集'
     window['calendar_verified'] = retained is not None
     snapshot = _snapshot_view(retained)
     # Classification is a read projection, never part of the immutable quote body.
@@ -267,7 +267,7 @@ def _guard_job(job, *, require_window=False):
     if row['status'] != 'running' or row['lease_owner'] != job.get('lease_owner'):
         raise tasks.TaskCancelled()
     if require_window and not capture_window(job['target_date'])['allowed']:
-        raise WindowExpired('竞价来源请求仅可在当天北京时间09:25:05至09:30前执行')
+        raise WindowExpired('竞价来源请求仅可在当天北京时间09:25:30至09:30前执行')
 
 
 def _previous_context(market, day, previous, known_at):

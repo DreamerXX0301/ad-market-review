@@ -55,6 +55,8 @@ const Backtests = lazyView(() => import("./features/backtests/Backtests"));
 const DataCenter = lazyView(() => import("./features/data/DataCenter"));
 const Sources = lazyView(() => import("./features/sources/Sources"));
 const Research = lazyView(() => import("./features/research/Research"));
+const AIHub = lazyView(() => import("./features/ai/AIHub"));
+import { upgradeChatLocation } from "./features/ai/aiNavigation";
 import ReadonlyPreviewBanner from "./components/ReadonlyPreviewBanner";
 const SectorChartDialog = lazyView(
   () => import("./features/market/SectorChartDialog"),
@@ -79,6 +81,9 @@ type SectorSelection = NonNullable<ReturnType<typeof globalSectorSelection>> & {
 // Opening a stock drawer keeps the active market list's inputs unchanged.
 const MemoMarketPage = memo(MarketPage);
 const currentRoute = () => {
+  const upgraded = upgradeChatLocation(location.hash);
+  if (upgraded !== location.hash)
+    window.history.replaceState(window.history.state, "", upgraded);
   const hash = location.hash.slice(1).split("?")[0];
   if (hash === "flow") return "sectors";
   return routeTitles[hash] ? hash : "market";
@@ -190,6 +195,8 @@ export default function App() {
   );
   const navigate = useCallback((next: string, ctx?: Row) => {
     if (next === "flow") next = "sectors";
+    if (next === "ai" && currentRoute() === "ai" && !ctx) return;
+    window.dispatchEvent(new Event("workbench-before-route"));
     if (ctx) setContext((v) => ({ ...v, [next]: ctx }));
     location.hash = next;
     setRoute(next);
@@ -202,6 +209,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     const f = () => {
+      window.dispatchEvent(new Event("workbench-before-route"));
       const next = currentRoute();
       const day =
         auctionInitialDate(location.hash) || noonInitialDate(location.hash);
@@ -492,7 +500,13 @@ export default function App() {
           />
         );
       case "sources":
-        return <Sources />;
+        return (
+          <Sources
+            initialTab={context.sources?.tab === "ai" ? "ai" : "market"}
+          />
+        );
+      case "ai":
+        return <AIHub onConfigure={() => navigate("sources", { tab: "ai" })} />;
       case "research":
         return (
           <Research
@@ -546,6 +560,12 @@ export default function App() {
           <ReadonlyPreviewBanner
             enabled={import.meta.env.VITE_READONLY_PREVIEW === "1"}
           />
+          {bootstrap.data?.instance_label && (
+            <div className="readonly-preview-banner" role="status">
+              <strong>{bootstrap.data.instance_label}</strong>
+              <span>此环境可验证 AI 配置与会话，使用独立业务库。</span>
+            </div>
+          )}
           {bootstrap.error && (
             <ErrorBox
               message={"本机 API 暂未就绪：" + bootstrap.error}

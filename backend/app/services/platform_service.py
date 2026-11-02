@@ -1,5 +1,6 @@
 """Small read models for application bootstrap and published data coverage."""
 import json
+import os
 from app.core import APP_NAME,APP_VERSION, business_date, connect, get_market, published_dir
 
 MODULES = {
@@ -25,7 +26,7 @@ def bootstrap():
     from .source_service import list_sources
     market=get_market(); status=market.status()
     quotes=(market.index_quotes() if hasattr(market,'index_quotes') else market.indices()) if status.get('ready') else []
-    return {'app_name':APP_NAME,'version':APP_VERSION,'data_date':business_date(),'market_snapshot_id':status.get('snapshot_id'),'market_dates':market.calendar(),'data_summary':summary(market),'indices':quotes,'sources':list_sources(include_supplement=False)['items']}
+    return {'app_name':APP_NAME,'version':APP_VERSION,'instance_label':os.environ.get('SHIXU_INSTANCE_LABEL','')[:120],'data_date':business_date(),'market_snapshot_id':status.get('snapshot_id'),'market_dates':market.calendar(),'data_summary':summary(market),'indices':quotes,'sources':list_sources(include_supplement=False)['items']}
 
 
 def data_status():

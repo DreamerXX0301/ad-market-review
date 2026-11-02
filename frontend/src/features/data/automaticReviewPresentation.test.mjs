@@ -24,7 +24,7 @@ const base = {
     enabled: false,
     revision: 0,
     mode: "off",
-    fixed_time: "09:25:05",
+    fixed_time: "09:25:30",
     window_end: "09:30:00",
     can_enable: true,
     legacy_configuration: false,

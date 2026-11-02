@@ -1,0 +1,97 @@
+"""Mock actual streamed function calls: denied scope never reaches a resource."""
+from copy import deepcopy
+import json
+import httpx
+import pytest
+from app import core
+from app.services import ai_service as service,ai_read_tools
+from app.services.ai_runtime import AIRuntime
+from test_ai_agent_round import agent_client,create,complete,function,final,mock_network
+from test_ai_service import enable,fake,drive
+
+@pytest.mark.parametrize('question',['最近房价跌了吗','北京天气怎么样','旅游攻略','购物买手机推荐','帮我写代码',
+                                    '聊聊人生闲聊','先看茅台股票，然后聊北京天气对生活的影响','股票先放一边，聊北京房价',
+                                    '贵州茅台好喝吗','贵州茅台哪里可以买','600519.SH请写首生日歌','今天有什么电影推荐','现在帮我改简历'])
+def test_forged_plan_without_exposed_tools_has_no_web_fee_or_local_reads(agent_client,monkeypatch,question):
+    client=agent_client;runtime=AIRuntime(fake);calls=[]
+    monkeypatch.setattr('app.services.ai_scope_focus.resolve_scope_focus',lambda text:{'instrument_id':'600519.SH','name':'贵州茅台'})
+    monkeypatch.setattr(ai_read_tools,'execute_read_tool',lambda *a,**kw:pytest.fail('outside scope must not read data'))
+    async def handler(request):
+        payload=json.loads(request.content);calls.append(payload)
+        assert payload['tools']==[] and payload['max_output_tokens']<=256
+        if len(calls)==1:
+            output=[function('request_web_search',{'query':'北京房价','reason':'财经股票研究','purpose':'stock_research','user_quote':question})]
+        else:
+            result=next(item for item in payload['input'] if item.get('type')=='function_call_output')
+            assert json.loads(result['output'])['state']=='scope_denied'
+            # The output guard must also withhold a provider's off-topic facts.
+            output=[final('北京房价最近跌了，你想查哪个城市？')]
+        return httpx.Response(200,content=complete(output,'北京房价最近跌了，你想查哪个城市？' if len(calls)>1 else None))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai');created=create(client,text=question,kind='stock',instrument_id='600519.SH').json()
+        with core.connect() as db:
+            row=db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(created['task_id'],)).fetchone()
+            stored=json.loads(row[0]);stored['scope_input']['recent_user_texts']=['研究贵州茅台股票']
+            db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(core.dumps(stored),created['task_id']))
+        assert drive(runtime,created['task_id'])['state']=='completed' and len(calls)==2
+        message=client.get('/api/v1/ai/sessions/'+created['session_id']).json()['messages'][-1]
+        assert '只能' in message['text'] and '北京' not in message['text'] and not message['source_context']['web']['used']
+        with core.connect() as db:
+            receipts=db.execute('SELECT price_json,usage_json,cost_state FROM ai_request_receipt WHERE task_id=?',(created['task_id'],)).fetchall()
+            assert len(receipts)==2 and all('web_policy' not in json.loads(row['price_json']) for row in receipts)
+            assert all(json.loads(row['usage_json'])['input_tokens']==100 and row['cost_state']=='estimated' for row in receipts)
+            deltas=''.join(json.loads(row[0]).get('text','') for row in db.execute("SELECT data_json FROM ai_task_event WHERE task_id=? AND kind='delta'",(created['task_id'],)))
+            assert '北京房价' not in deltas
+    finally:runtime.shutdown()
+
+def test_beijing_followup_cannot_borrow_old_assistant_drift_or_stock_anchor(agent_client,monkeypatch):
+    client=agent_client;runtime=AIRuntime(fake);calls=[]
+    async def handler(request):
+        payload=json.loads(request.content);calls.append(payload)
+        assert payload['tools']==[]
+        if len(calls)==1:return httpx.Response(200,content=complete([final('只能讨论股票研究。')],'只能讨论股票研究。'))
+        if len(calls)==2:return httpx.Response(200,content=complete([function('request_web_search',{'query':'北京房价','reason':'此前已聊财经','purpose':'stock_impact','user_quote':'北京的'})]))
+        return httpx.Response(200,content=complete([final('我只能讨论股票研究。')],'我只能讨论股票研究。'))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai');created=create(client,text='最近房价跌了吗',kind='stock',instrument_id='600519.SH').json()
+        assert drive(runtime,created['task_id'])['state']=='completed'
+        with core.connect() as db:
+            db.execute("UPDATE ai_message SET text='最近房价下跌，请问哪个城市？' WHERE session_id=? AND role='assistant'",(created['session_id'],))
+        response=client.post('/api/v1/ai/sessions/'+created['session_id']+'/messages',json={'text':'北京的','consent':True,'request_key':'beijing-after-drift'})
+        assert drive(runtime,response.json()['task_id'])['state']=='completed' and len(calls)==3
+        with core.connect() as db:
+            assert all('web_policy' not in json.loads(row[0]) for row in db.execute('SELECT price_json FROM ai_request_receipt'))
+    finally:runtime.shutdown()
+
+def test_explicit_property_data_impact_on_stocks_can_use_hosted_search(agent_client,monkeypatch):
+    client=agent_client;runtime=AIRuntime(fake);calls=[];question='地产数据对地产股有什么影响'
+    answer='地产股需要结合销售与盈利变化评估，不能把住宅价格直接当成股票价值。';url='https://www.sse.com.cn/fixture.pdf'
+    async def handler(request):
+        payload=json.loads(request.content);calls.append(payload)
+        if len(calls)==1:
+            return httpx.Response(200,content=complete([function('request_web_search',{'query':'房地产销售数据','reason':'用于评估地产股影响','purpose':'stock_impact','user_quote':question})]))
+        assert payload['tools'][0]['type']=='web_search'
+        message=final(answer);message['content'][0]['annotations']=[{'type':'url_citation','start_index':0,'end_index':len(answer),'url':url}]
+        output=[{'type':'web_search_call','status':'completed','action':{'type':'search','sources':[{'url':url}]}},message]
+        return httpx.Response(200,content=complete(output,answer))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai');created=create(client,text=question).json()
+        assert drive(runtime,created['task_id'])['state']=='completed' and len(calls)==2
+        with core.connect() as db:
+            receipts=[json.loads(row[0]) for row in db.execute('SELECT price_json FROM ai_request_receipt WHERE task_id=?',(created['task_id'],))]
+            assert sum('web_policy' in row for row in receipts)==1
+    finally:runtime.shutdown()
+
+def test_control_thread_rechecks_hosted_and_local_before_any_resource_or_receipt(agent_client,monkeypatch):
+    client=agent_client;runtime=AIRuntime(fake)
+    monkeypatch.setattr(ai_read_tools,'execute_read_tool',lambda *a,**kw:pytest.fail('read must be denied'))
+    try:
+        enable(client,runtime,'openai');created=create(client,text='北京的房价如何').json()
+        with core.connect() as db:task=dict(db.execute('SELECT * FROM ai_task WHERE task_id=?',(created['task_id'],)).fetchone())
+        assert runtime._agent_authorize(task,{'ordinal':1,'input_bytes':100,'hosted_web':True})['_error']=='stock_scope_required'
+        assert runtime._agent_tool(task,{'name':'read_market_data','args':{'date':'today','section':'overview'},'call_id':'forged'})['state']=='scope_denied'
+        with core.connect() as db:assert db.execute('SELECT count(*) FROM ai_request_receipt WHERE task_id=?',(created['task_id'],)).fetchone()[0]==0
+    finally:runtime.shutdown()

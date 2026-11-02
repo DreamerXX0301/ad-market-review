@@ -10,7 +10,7 @@
 
 - `GET /api/v1/settings/automatic-tasks`：在同一SQLite读事务中返回午评、盘后小设置及关联job状态，另含`auction`竞价设置投影；不读行情文件、不联网、不创建任务。
 - `PUT /api/v1/settings/automatic-tasks`：完整提交`noon`、`after_close`两项；可携带`expected_revision`。这两项仅接受严格布尔`enabled`及北京时间`HH:mm`形式的`time`。午评时间为11:31≤time<13:00，盘后为17:00≤time≤23:59。
-- 同一PUT可附`auction:{enabled:boolean}`及必需的`expected_auction_revision`。竞价不接受时间、日期、单次模式或手填代码；固定北京时间09:25:05至09:30前，范围由worker自动冻结。旧客户端只交午评、盘后时保持兼容，不修改竞价设置；孤立提供竞价修订号返回422。
+- 同一PUT可附`auction:{enabled:boolean}`及必需的`expected_auction_revision`。竞价不接受时间、日期、单次模式或手填代码；固定北京时间09:25:30至09:30前，范围由worker自动冻结。旧客户端只交午评、盘后时保持兼容，不修改竞价设置；孤立提供竞价修订号返回422。
 - 午评/盘后共用顶层`revision`，竞价使用独立`auction.revision`。携带竞价时，两个版本检查及三项保存位于同一SQLite短写事务；任一版本冲突或校验失败，全部回滚。顶层`expected_revision`保持旧请求的可选兼容；当前页面同时提交读取到的两个修订号。
 - 各自配置实际变化才递增对应revision；相同设置保存保持版本。不匹配版本返回409，非法字段或时间返回422。设置请求沿用增量期间全站锁，不提供绕过。
 
@@ -30,7 +30,7 @@
     "mode": "off",
     "can_enable": false,
     "reason": "请先完成行情初始化，再开启自动竞价",
-    "fixed_time": "09:25:05",
+    "fixed_time": "09:25:30",
     "window_end": "09:30:00",
     "next_run_at": null,
     "last_run": null,

@@ -52,7 +52,7 @@ const initial = {
   date: null,
   instrument_ids: [],
   today: "2026-10-29",
-  start_time: "09:25:05",
+  start_time: "09:25:30",
   enabled: false,
   next_run_at: null,
   worker: { alive: false },
@@ -100,8 +100,8 @@ html = render({
   worker: { alive: true },
 });
 assert.match(html, /服务自动竞价：已开启/);
-assert.match(html, /北京时间09:25:05/);
-assert.equal((html.match(/09:25:05/g) || []).length, 1);
+assert.match(html, /北京时间09:25:30/);
+assert.equal((html.match(/09:25:30/g) || []).length, 1);
 assert.doesNotMatch(html, /固定时间|worker|工作进程/);
 html = render({
   ...initial,

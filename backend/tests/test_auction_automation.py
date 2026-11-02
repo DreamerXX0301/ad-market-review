@@ -62,7 +62,7 @@ def test_get_configuration_and_post_are_local_only_default_off(auto, monkeypatch
     enabled = enable(auto)
     assert enabled['revision'] == 1 and enabled['mode'] == 'daily'
     assert enabled['instrument_ids'] == [] and enabled['last_run'] is None
-    assert enabled['start_time'] == '09:25:05' and enabled['end_time'] == '09:30:00'
+    assert enabled['start_time'] == '09:25:30' and enabled['end_time'] == '09:30:00'
 
 
 @pytest.mark.parametrize('payload', [{'mode': 'daily'}, {'mode': 'daily', 'expected_revision': True},
@@ -242,13 +242,20 @@ def test_source_revision_change_before_execution_is_not_implicitly_authorized(au
     assert auto.source.calls == [] and row()['state'] == 'paused'
 
 
-def test_daily_start92505_boundary_does_not_register_before_window(auto):
-    enable(auto)
-    auto.clock[0] = NOW.replace(minute=25, second=4)
+def test_enabled_daily_plan_waits_until92530_without_revision_or_daily_job_before_boundary(auto):
+    auto.clock[0] = NOW.replace(hour=8, minute=0)
+    enabled = enable(auto)
+    auto.clock[0] = NOW.replace(minute=25, second=29, microsecond=999999)
+    assert not automation.in_window(DAY, auto.clock[0])
+    window = service.capture_window(DAY)
+    assert not window['allowed'] and window['start_at'] == DAY + 'T09:25:30+08:00'
     automation.tick(); assert row() is None
-    auto.clock[0] = NOW.replace(minute=25, second=5)
+    assert tasks.claim_next('before-92530') is None and auto.source.calls == []
+    auto.clock[0] = NOW.replace(minute=25, second=30)
+    assert automation.in_window(DAY, auto.clock[0]) and service.capture_window(DAY)['allowed']
     automation.tick(); assert row()['state'] == 'queued'
-    assert row()['attempts'] == 0
+    assert row()['attempts'] == 0 and auto.source.calls == []
+    assert automation.read_view()['revision'] == enabled['revision']
 
 
 def test_legacy_once_configuration_is_readable_but_not_run_the_following_day(auto):
@@ -312,7 +319,7 @@ def test_once_cannot_authorize_an_expired_or_weekend_window(auto, at):
 def test_daily_first_enabled_after_cutoff_starts_next_window_without_false_missed_receipt(auto):
     auto.clock[0] = NOW.replace(hour=18,minute=0)
     value = enable(auto)
-    assert value['next_run_at'] == '2026-10-30T09:25:05+08:00'
+    assert value['next_run_at'] == '2026-10-30T09:25:30+08:00'
     automation.tick()
     assert row() is None and auto.source.calls == []
     auto.clock[0] = (NOW + timedelta(days=1)).replace(hour=8,minute=0)

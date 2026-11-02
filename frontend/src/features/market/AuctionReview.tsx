@@ -247,7 +247,7 @@ export default function AuctionReview({
   useEffect(() => {
     if (!active || view?.today !== selected || view?.state !== "not_collected")
       return;
-    // This checks only saved local state, allowing a page opened before 09:25 to unlock.
+    // Poll saved local state so a page opened before 09:25:30 can observe the automatic result.
     const timer = window.setInterval(result.reload, 20000);
     return () => window.clearInterval(timer);
   }, [active, view?.today, view?.state, selected, result.reload]);
@@ -455,7 +455,7 @@ export default function AuctionReview({
             {auctionStates[state] || state}
           </Badge>
           <span>
-            <Clock3 size={13} /> 北京时间09:25:05自动采集 · 09:30前截止
+            <Clock3 size={13} /> 北京时间09:25:30自动采集 · 09:30前截止
           </span>
           {payload && <span>前一交易日 {payload.previous_date || "未知"}</span>}
         </div>
@@ -488,7 +488,7 @@ export default function AuctionReview({
           </div>
           <div>
             <span>02</span>
-            <strong>09:25:05自动核对</strong>
+            <strong>09:25:30自动核对</strong>
             <p>开启计划后由服务自动留存终态，比较高低开、竞价额与来源量比。</p>
           </div>
           <div>
@@ -550,7 +550,7 @@ export default function AuctionReview({
                               已留存关注，暂无逐股判断原文。
                             </p>
                           )}
-                          <small>竞价尚未采集，等09:25后再逐项对照。</small>
+                          <small>竞价尚未采集，09:25:30后留存结果再逐项对照。</small>
                         </article>
                       ))}
                     </div>
@@ -623,8 +623,8 @@ export default function AuctionReview({
                   ? "该日竞价正文及内嵌原件已到期清理，只保留日任务台账和清理回执；不重新采集或补造历史竞价。"
                   : state === "not_collected"
                     ? automaticToday
-                      ? "服务运行时，约09:25:05起在09:30前自动采集。浏览器可以关闭，结果就绪后回来查看；错过窗口不补造。"
-                      : "在数据中心开启自动竞价后，服务仅在交易日09:25:05起采集系统名单。没有留存的历史竞价保持空白。"
+                      ? "服务运行时，约09:25:30起在09:30前自动采集。浏览器可以关闭，结果就绪后回来查看；错过窗口不补造。"
+                      : "在数据中心开启自动竞价后，服务仅在交易日09:25:30起采集系统名单。没有留存的历史竞价保持空白。"
                     : "当前没有可用的竞价正文。仅来源暂未就绪时允许窗口内有限自动重试；显式暂停、取消或最终失败不自动继续。"
               }
             />
