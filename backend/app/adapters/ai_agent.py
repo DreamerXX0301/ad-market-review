@@ -139,6 +139,9 @@ async def _run(request,key,cancel,bridge):
     timeout=request['timeout_seconds']
     semantic=frozen.get('version')=='ai-agent-round-v5'
     plan_accepted=not semantic
+    async def plan_error(code,path,reason='invalid_tool_arguments'):
+        await bridge.exchange('plan_diagnostic',{'stage':'provider_plan','code':code,'path':path},cancel)
+        raise ProviderError(reason)
     def answer(body):
         return {'output':{'response_type':'agent_answer','text':all_text,'citations':citations,'sources':sources,
             'source_context':{'page_anchor':request['page_anchor'],'request_time':request['request_time'],
@@ -224,15 +227,19 @@ async def _run(request,key,cancel,bridge):
                 if planning:
                     # Reject the whole response before executing anything if
                     # the provider bypasses or duplicates the semantic plan.
-                    if len(function_calls)!=1 or function_calls[0].get('name')!='plan_stock_task':
-                        raise ProviderError('invalid_tool_arguments')
+                    if len(function_calls)!=1:await plan_error('first_call_count','response.output')
+                    if function_calls[0].get('name')!='plan_stock_task':
+                        await plan_error('first_call_name','response.output[].name')
                     call=function_calls[0];call_id=call.get('call_id')
-                    if not isinstance(call_id,str) or not 1<=len(call_id)<=200:raise ProviderError('invalid_response')
+                    if not isinstance(call_id,str) or not 1<=len(call_id)<=200:
+                        await plan_error('call_id','response.function_call.call_id','invalid_response')
                     try:args=json.loads(call.get('arguments','{}'))
-                    except ValueError:raise ProviderError('invalid_tool_arguments') from None
-                    if not isinstance(args,dict):raise ProviderError('invalid_tool_arguments')
+                    except (ValueError,TypeError):
+                        await plan_error('arguments_json','response.function_call.arguments')
+                    if not isinstance(args,dict):await plan_error('arguments_object','response.function_call.arguments')
                     result=await bridge.exchange('plan_stock',{'call_id':call_id,'args':args},cancel)
-                    if result.get('ok') is not True:raise ProviderError('invalid_tool_arguments')
+                    if result.get('ok') is not True:
+                        await plan_error('runtime_plan_rejected','ipc.plan_stock')
                     scope=result['scope'];plan_accepted=True
                     request['accepted_stock_plan']=args;request['semantic_scope']=scope
                     tool_calls.append({'name':'plan_stock_task','call_id':call_id,'args':args})

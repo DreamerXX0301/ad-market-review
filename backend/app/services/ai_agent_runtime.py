@@ -7,7 +7,7 @@ from app.adapters.ai_agent import AgentBridge, perform_agent
 from app.services import ai_service as service, ai_web, ai_scope
 from app.services.ai_catalog import estimated_nusd, max_output
 from app.services.ai_tool_budget import assess_tool, tool_budget
-from app.services.ai_scope_semantic import classify_frozen_read
+from app.services.ai_scope_semantic import classify_frozen_read, safe_diagnostic
 
 EVENT_TTL=15*60*1000
 MAX_EVENTS=2048
@@ -75,6 +75,18 @@ def _bind_stock_anchor(db,session_id,result):
 
 
 class AgentRuntimeMixin:
+    def _agent_diagnostic(self,task,data):
+        """Keep a bounded code/path in private task audit, never model values."""
+        record=safe_diagnostic(data)
+        if record is None:return {'ok':False}
+        with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT result_json FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
+            if row is None:return {'ok':False}
+            metadata=json.loads(row['result_json']);metadata['agent_diagnostic']=record
+            db.execute('UPDATE ai_task SET result_json=? WHERE task_id=?',(dumps(metadata),task['task_id']))
+        return {'ok':True}
+
     def _start_agent(self,task,request,key):
         import threading
         from app.services.ai_agent_protocol import request_time, planner_messages
@@ -168,8 +180,12 @@ class AgentRuntimeMixin:
         with connect() as db:
             raw=db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
         request=json.loads(raw['request_json']) if raw else {}
-        try:classify_frozen_read(request,name,args)
-        except ValueError:return {'_error':'invalid_tool_arguments'}
+        diagnostic={}
+        try:classify_frozen_read(request,name,args,diagnostic=diagnostic)
+        except ValueError:
+            self._agent_diagnostic(task,{'stage':'tool_validation','code':diagnostic.get('code','read_executor_arguments'),
+                'path':'tool.'+diagnostic.get('path','arguments')})
+            return {'_error':'invalid_tool_arguments'}
         if request.get('scope_denied') or not ai_scope.scope_for(request)['resources_allowed']:return ai_scope.denial()
         executed=self.agent_state.setdefault('local_tool_calls',[])
         try:gap=assess_tool(request['round_protocol'],executed,name,args)
@@ -213,13 +229,23 @@ class AgentRuntimeMixin:
             first=db.execute('SELECT state FROM ai_request_receipt WHERE task_id=? AND ordinal=1',(task['task_id'],)).fetchone()
         if row is None or row['cancel_requested']:return {'_error':'cancelled'}
         request=json.loads(row['request_json'])
-        if ((request.get('round_protocol') or {}).get('version')!=semantic.ROUND_VERSION
-                or request.get('accepted_stock_plan') is not None or first is None or first['state']!='completed'):
+        if (request.get('round_protocol') or {}).get('version')!=semantic.ROUND_VERSION:
+            self._agent_diagnostic(task,{'stage':'runtime_plan','code':'protocol','path':'round_protocol'})
             return {'_error':'invalid_tool_arguments'}
-        accepted=semantic.validate_plan(request,data.get('args'))
-        if accepted.get('ok') is not True:return accepted
+        if request.get('accepted_stock_plan') is not None:
+            self._agent_diagnostic(task,{'stage':'runtime_plan','code':'plan_already_accepted','path':'request.accepted_stock_plan'})
+            return {'_error':'invalid_tool_arguments'}
+        if first is None or first['state']!='completed':
+            self._agent_diagnostic(task,{'stage':'runtime_plan','code':'receipt_not_completed','path':'request.receipt'})
+            return {'_error':'invalid_tool_arguments'}
+        diagnostic={};accepted=semantic.validate_plan(request,data.get('args'),diagnostic=diagnostic)
+        if accepted.get('ok') is not True:
+            self._agent_diagnostic(task,diagnostic)
+            return accepted
         call_id=data.get('call_id')
-        if not isinstance(call_id,str) or not 1<=len(call_id)<=200:return {'_error':'invalid_tool_arguments'}
+        if not isinstance(call_id,str) or not 1<=len(call_id)<=200:
+            self._agent_diagnostic(task,{'stage':'runtime_plan','code':'call_id','path':'response.function_call.call_id'})
+            return {'_error':'invalid_tool_arguments'}
         request['accepted_stock_plan']=accepted['accepted_plan'];request['semantic_scope']=accepted['scope']
         request['scope']=accepted['scope'];request['agent_state']=self.agent_state
         self.agent_state['tool_calls'].append({'name':'plan_stock_task','args':accepted['accepted_plan'],'call_id':call_id})
@@ -277,6 +303,7 @@ class AgentRuntimeMixin:
                 elif kind=='receipt':result=self._agent_receipt(task,data)
                 elif kind=='read_tool':result=self._agent_tool(task,data)
                 elif kind=='plan_stock':result=self._agent_stock_plan(task,data)
+                elif kind=='plan_diagnostic':result=self._agent_diagnostic(task,data)
                 elif kind=='plan_web':
                     with connect() as db:
                         raw=db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(task_id,)).fetchone()
@@ -312,6 +339,8 @@ class AgentRuntimeMixin:
                     result={'ok':True}
                 else:result={'_error':'internal_error'}
             except Exception as error:
+                if kind=='plan_stock':
+                    self._agent_diagnostic(task,{'stage':'ipc','code':'ipc_rejected','path':'ipc.plan_stock'})
                 code=str(error) if str(error) in service.MESSAGES else 'internal_error'
                 result={'_error':code}
                 with connect() as db:db.execute('UPDATE ai_task SET cancel_requested=1,reason_code=? WHERE task_id=?',(code,task_id))

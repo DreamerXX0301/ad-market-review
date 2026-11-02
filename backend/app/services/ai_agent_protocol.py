@@ -1,5 +1,5 @@
 """Per-round role, capabilities and a small page anchor; never a frozen refusal."""
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 import json
 from app.services import ai_web
 from app.services.ai_catalog import MAX_INPUT_BYTES
@@ -64,9 +64,16 @@ def seed_messages(anchor, clock, history, text, frozen):
 
 def planner_messages(request):
     """The semantic router sees actual users, not assistant/source prose."""
+    context={'scope_input':request['scope_input'],'request_time':request['request_time']}
+    # A selected day is query context, never evidence of a stock-domain intent.
+    # Keep other page/assistant prose out of the semantic planning request.
+    observed=(request.get('page_anchor') or {}).get('as_of')
+    if isinstance(observed,str):
+        try:
+            if date.fromisoformat(observed).isoformat()==observed:context['observation_date']=observed
+        except ValueError:pass
     return [{'role':'system','content':request['round_protocol']['system_prompt']},
-            {'role':'user','content':json.dumps({'scope_input':request['scope_input'],
-                'request_time':request['request_time']},ensure_ascii=False)}]
+            {'role':'user','content':json.dumps(context,ensure_ascii=False)}]
 
 
 def web_plan_schema():

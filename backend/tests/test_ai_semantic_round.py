@@ -276,6 +276,99 @@ def test_invalid_initial_response_cannot_execute_even_the_valid_prefix_before_wh
         with core.connect() as db:
             receipt = db.execute('SELECT price_json FROM ai_request_receipt WHERE task_id=?', (created['task_id'],)).fetchall()
             assert len(receipt) == 1 and all('web_policy' not in json.loads(row[0]) for row in receipt)
+            metadata = json.loads(db.execute('SELECT result_json FROM ai_task WHERE task_id=?',
+                                             (created['task_id'],)).fetchone()[0])
+            codes = {'resource_only': 'first_call_name', 'plan_plus_resource': 'first_call_count',
+                     'multiple_plans': 'first_call_count', 'wrong_quote': 'current_quote',
+                     'old_context': 'context_quote', 'outside_with_read': 'nonresource_reads',
+                     'late_invalid_read': 'read_shape', 'malformed_json': 'arguments_json',
+                     'plain_answer': 'first_call_count'}
+            audit = metadata['agent_diagnostic']
+            assert audit['code'] == codes[fault] and audit['version'] == semantic.DIAGNOSTIC_VERSION
+            assert set(audit) == {'version', 'stage', 'code', 'path'}
+            assert hidden not in json.dumps(audit, ensure_ascii=False)
+        # Private codes stay in local audit, not the visible chat or public API.
+        assert 'agent_diagnostic' not in client.get('/api/v1/ai/tasks/' + created['task_id']).text
+        assert 'agent_diagnostic' not in client.get('/api/v1/ai/sessions/' + created['session_id']).text
+    finally:
+        runtime.shutdown()
+
+
+@pytest.mark.parametrize('failure', ['tomorrow', 'unpaired_web'])
+def test_private_plan_diagnostic_identifies_known_argument_path_without_saving_values(
+        agent_client, monkeypatch, failure):
+    client = agent_client; runtime = AIRuntime(fake); calls = []
+    question = '明天应该关注什么方向？'
+    monkeypatch.setattr(ai_read_tools, 'execute_read_tool',
+                        lambda *a, **k: pytest.fail('invalid plan must not execute a data read'))
+    async def handler(request):
+        payload = json.loads(request.content); calls.append(payload)
+        assert_initial_plan_only(payload)
+        fields = payload['tools'][0]['parameters']['properties']
+        assert fields['current_user_quote']['enum'] == [question]
+        assert fields['context_user_quote']['enum'] == ['']
+        args = planned(question, reads=[market_read(date='tomorrow')]) if failure == 'tomorrow' else planned(
+            question, reason='无需联网')
+        return httpx.Response(200, content=complete([function('plan_stock_task', args, 'bad-fields')]))
+    mock_network(monkeypatch, handler)
+    try:
+        enable(client, runtime, 'openai'); created = create(client, text=question).json()
+        task = drive(runtime, created['task_id'])
+        assert task['state'] == 'failed' and task['reason_code'] == 'invalid_tool_arguments'
+        assert len(calls) == 1 and deltas(created['task_id']) == ''
+        with core.connect() as db:
+            row = db.execute('SELECT result_json,request_json FROM ai_task WHERE task_id=?',
+                             (created['task_id'],)).fetchone()
+            audit = json.loads(row['result_json'])['agent_diagnostic']
+            assert row['request_json'] == '{}'
+            assert audit == {'version': semantic.DIAGNOSTIC_VERSION, 'stage': 'plan_validation',
+                             'code': 'read_date' if failure == 'tomorrow' else 'web_pair',
+                             'path': 'args.reads[0].arguments.date' if failure == 'tomorrow' else 'args.web_query'}
+    finally:
+        runtime.shutdown()
+
+
+def test_runtime_plan_receipt_diagnostic_is_private_without_sending_a_model_request(agent_client, monkeypatch):
+    client = agent_client; runtime = AIRuntime(fake)
+    question = '分析A股盘面。'
+    monkeypatch.setattr(ai_read_tools, 'execute_read_tool', lambda *a, **k: pytest.fail('no receipt, no local IO'))
+    try:
+        enable(client, runtime, 'openai'); created = create(client, text=question).json()
+        result = runtime._agent_stock_plan({'task_id': created['task_id']},
+                                          {'call_id': 'no-receipt', 'args': planned(question)})
+        assert result == {'_error': 'invalid_tool_arguments'}
+        with core.connect() as db:
+            metadata = json.loads(db.execute('SELECT result_json FROM ai_task WHERE task_id=?',
+                                             (created['task_id'],)).fetchone()[0])
+            assert metadata['agent_diagnostic'] == {
+                'version': semantic.DIAGNOSTIC_VERSION, 'stage': 'runtime_plan',
+                'code': 'receipt_not_completed', 'path': 'request.receipt'}
+            assert not db.execute('SELECT 1 FROM ai_request_receipt WHERE task_id=?', (created['task_id'],)).fetchone()
+        assert not runtime._agent_diagnostic({'task_id': created['task_id']}, {
+            'stage': 'provider_plan', 'code': 'first_call_count', 'path': 'response.output',
+            'raw_arguments': 'do-not-preserve-secret'})['ok']
+    finally:
+        runtime.shutdown()
+
+
+def test_plan_ipc_exception_records_only_a_program_code_without_exception_text(agent_client, monkeypatch):
+    from concurrent.futures import Future
+    from app.adapters.ai_agent import AgentBridge
+    client = agent_client; runtime = AIRuntime(fake); private = 'UNTRUSTED_EXCEPTION_PRIVATE_TEXT'
+    def fail_handshake(*args):raise RuntimeError(private)
+    monkeypatch.setattr(runtime, '_agent_stock_plan', fail_handshake)
+    try:
+        enable(client, runtime, 'openai'); created = create(client, text='分析A股盘面。').json()
+        runtime.agent_bridge = AgentBridge(); reply = Future()
+        runtime.agent_bridge.queue.put_nowait(('plan_stock', {}, reply))
+        runtime._drain_agent(created['task_id'])
+        assert reply.result() == {'_error': 'internal_error'}
+        with core.connect() as db:
+            row = db.execute('SELECT result_json FROM ai_task WHERE task_id=?', (created['task_id'],)).fetchone()
+            audit = json.loads(row[0])['agent_diagnostic']
+            assert audit == {'version': semantic.DIAGNOSTIC_VERSION, 'stage': 'ipc',
+                             'code': 'ipc_rejected', 'path': 'ipc.plan_stock'}
+            assert private not in row[0]
     finally:
         runtime.shutdown()
 

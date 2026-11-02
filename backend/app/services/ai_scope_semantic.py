@@ -18,6 +18,7 @@ from app.services.ai_tool_budget import classify_tool
 VERSION = 'ai-stock-scope-v4'
 PLAN_VERSION = 'ai-stock-task-plan-v1'
 ROUND_VERSION = 'ai-agent-round-v5'
+DIAGNOSTIC_VERSION = 'ai-stock-plan-diagnostic-v1'
 RESOURCE_PURPOSES = ('stock_research', 'market_review', 'stock_impact')
 PURPOSES = (*RESOURCE_PURPOSES, 'concept', 'greeting', 'outside', 'clarify')
 MAX_PLANNED_READS = 8
@@ -29,6 +30,33 @@ OUTSIDE_REPLY = '我专注A股行情复盘和上市公司研究，可以分析�
 CLARIFY_REPLY = '你想了解A股的板块方向，还是某只股票？补充一下分析对象，我再继续。'
 _LOCAL_ONLY = re.compile(r'本系统|本地(?:资料|数据)|系统数据|内部数据')
 _NON_PORTABLE_SCHEMA_KEYS = frozenset(('minLength', 'maxLength', 'minItems', 'maxItems'))
+_DIAGNOSTIC_STAGES = frozenset(('provider_plan', 'plan_validation', 'runtime_plan', 'tool_validation', 'ipc'))
+_DIAGNOSTIC_CODES = frozenset((
+    'first_call_count', 'first_call_name', 'call_id', 'arguments_json', 'arguments_object',
+    'trusted_input', 'protocol', 'frozen_schema', 'plan_fields', 'purpose',
+    'argument_type', 'argument_length', 'argument_fields', 'argument_enum',
+    'current_quote', 'context_quote', 'reads_shape', 'read_shape', 'tool_not_frozen',
+    'read_date', 'read_executor_arguments', 'web_pair', 'web_whitespace',
+    'nonresource_reads', 'nonresource_web', 'goal_empty', 'receipt_not_completed',
+    'plan_already_accepted', 'runtime_plan_rejected', 'ipc_rejected',
+))
+_DIAGNOSTIC_PATH = re.compile(
+    r'(?:response\.output|response\.output\[\]\.name|response\.function_call\.(?:call_id|arguments)'
+    r'|scope_input|round_protocol|tool_schemas|request\.(?:receipt|accepted_stock_plan)|ipc\.plan_stock'
+    r'|args(?:\.(?:purpose|current_user_quote|context_user_quote|goal|web_query|web_reason|reads))?'
+    r'|args\.reads\[[0-7]\](?:\.(?:name|arguments)(?:\.(?:date|section|instrument_id|query))?)?'
+    r'|tool(?:\.(?:name|arguments)(?:\.(?:date|section|instrument_id|query))?)?)'
+)
+
+
+def safe_diagnostic(value):
+    """Private audit codes only: never preserve provider text, keys or values."""
+    if (not isinstance(value, dict) or set(value) != {'stage', 'code', 'path'}
+            or not isinstance(value['stage'], str) or value['stage'] not in _DIAGNOSTIC_STAGES
+            or not isinstance(value['code'], str) or value['code'] not in _DIAGNOSTIC_CODES
+            or not isinstance(value['path'], str) or not _DIAGNOSTIC_PATH.fullmatch(value['path'])):
+        return None
+    return {'version': DIAGNOSTIC_VERSION, **value}
 
 
 def portable_schema(value):
@@ -89,7 +117,7 @@ def pending_scope(request):
             'intent_plan_version': PLAN_VERSION}
 
 
-def schema():
+def schema(request=None):
     """One semantic plan can propose the ordinary strict read-tool arguments."""
     read_branches = []
     for tool in tool_schemas():
@@ -100,7 +128,7 @@ def schema():
                            'arguments': portable_schema(tool['parameters'])},
             'required': ['name', 'arguments'],
         })
-    return {
+    result = {
         'type': 'function', 'name': 'plan_stock_task', 'strict': True,
         'description': (
             '结合当前真实用户问题及最近真实用户上下文，判断是否为A股盘面、上市公司研究或对股票的影响，'
@@ -128,6 +156,15 @@ def schema():
             'required': sorted(ARGUMENT_KEYS),
         },
     }
+    # Bind only when creating a new request. Saved rounds keep their original
+    # schema; execution never rewrites a frozen quote contract.
+    trusted = _trusted_input(request)
+    if trusted is not None:
+        properties = result['parameters']['properties']
+        properties['current_user_quote']['enum'] = [trusted['current_text']]
+        history = trusted['recent_user_texts']
+        properties['context_user_quote']['enum'] = ['', *([history[-1]] if history else [])]
+    return result
 
 
 def _invalid():
@@ -174,7 +211,7 @@ def _matches_frozen_arguments(args, parameters):
     return True
 
 
-def classify_frozen_read(request, name, args):
+def classify_frozen_read(request, name, args, *, diagnostic=None):
     """Validate every execution against its saved capability, including v4.
 
     A later model request is not covered by the initial plan's argument check.
@@ -182,59 +219,85 @@ def classify_frozen_read(request, name, args):
     neither the catalog nor a changed enum can widen a saved round.
     """
     declared = _frozen_tools(request) if isinstance(request, dict) else None
-    if (declared is None or not isinstance(name, str) or name not in declared
-            or not isinstance(args, dict)
-            or not _matches_frozen_arguments(args, declared[name])):
+    def invalid(code, path):
+        if isinstance(diagnostic, dict):diagnostic.update(code=code, path=path)
         raise ValueError('invalid_tool_arguments')
-    return classify_tool(name, args)
+    if declared is None:invalid('frozen_schema', 'arguments')
+    if not isinstance(name, str) or name not in declared:invalid('tool_not_frozen', 'name')
+    if not isinstance(args, dict) or set(args) != set(declared[name]['required']):
+        invalid('argument_fields', 'arguments')
+    for key, rule in declared[name]['properties'].items():
+        value = args[key]
+        path = 'arguments.' + key if key in ('date', 'section', 'instrument_id', 'query') else 'arguments'
+        if not isinstance(value, str):invalid('argument_type', path)
+        if 'enum' in rule and value not in rule['enum']:invalid('argument_enum', path)
+        if ('minLength' in rule and len(value) < rule['minLength']
+                or 'maxLength' in rule and len(value) > rule['maxLength']):
+            invalid('argument_length', path)
+    try:return classify_tool(name, args)
+    except (ValueError, TypeError):
+        if 'date' in args:
+            try:classify_tool('check_data_availability', {'date': args['date']})
+            except (ValueError, TypeError):invalid('read_date', 'arguments.date')
+        invalid('read_executor_arguments', 'arguments')
 
 
-def validate_plan(request, args):
+def validate_plan(request, args, *, diagnostic=None):
     """Validate route provenance and proposed capabilities, without doing IO."""
+    if isinstance(diagnostic, dict):diagnostic.clear()
+    def invalid(code, path):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(stage='plan_validation', code=code, path=path)
+        return _invalid()
     trusted = _trusted_input(request)
     protocol = request.get('round_protocol') if isinstance(request, dict) else None
     declared = _frozen_tools(request) if isinstance(request, dict) else None
-    if (trusted is None or not isinstance(protocol, dict) or protocol.get('version') != ROUND_VERSION
-            or declared is None or not isinstance(args, dict) or set(args) != ARGUMENT_KEYS):
-        return _invalid()
+    if trusted is None:return invalid('trusted_input', 'scope_input')
+    if not isinstance(protocol, dict) or protocol.get('version') != ROUND_VERSION:
+        return invalid('protocol', 'round_protocol')
+    if declared is None:return invalid('frozen_schema', 'tool_schemas')
+    if not isinstance(args, dict) or set(args) != ARGUMENT_KEYS:return invalid('plan_fields', 'args')
     purpose = args['purpose']
     if not isinstance(purpose, str) or purpose not in PURPOSES:
-        return _invalid()
+        return invalid('purpose', 'args.purpose')
     limits = {'current_user_quote': 2000, 'context_user_quote': 2000,
               'goal': 1000, 'web_query': 1000, 'web_reason': 1000}
-    if any(not isinstance(args[key], str) or len(args[key]) > maximum
-           for key, maximum in limits.items()):
-        return _invalid()
+    for key, maximum in limits.items():
+        if not isinstance(args[key], str):return invalid('argument_type', 'args.' + key)
+        if len(args[key]) > maximum:return invalid('argument_length', 'args.' + key)
     current, previous = args['current_user_quote'], args['context_user_quote']
     if current != trusted['current_text']:
-        return _invalid()
+        return invalid('current_quote', 'args.current_user_quote')
     history = trusted['recent_user_texts']
     if previous and (not history or previous != history[-1]):
-        return _invalid()
+        return invalid('context_quote', 'args.context_user_quote')
     reads = args['reads']
     if not isinstance(reads, list) or len(reads) > MAX_PLANNED_READS:
-        return _invalid()
+        return invalid('reads_shape', 'args.reads')
     checked_reads = []
-    for read in reads:
+    for index, read in enumerate(reads):
+        path = 'args.reads[' + str(index) + ']'
         if (not isinstance(read, dict) or set(read) != {'name', 'arguments'}
                 or not isinstance(read['name'], str) or read['name'] not in declared
                 or not isinstance(read['arguments'], dict)):
-            return _invalid()
+            return invalid('read_shape', path)
+        read_diagnostic = {}
         try:
-            classify_frozen_read(request, read['name'], read['arguments'])
+            classify_frozen_read(request, read['name'], read['arguments'], diagnostic=read_diagnostic)
         except (ValueError, TypeError):
-            return _invalid()
+            return invalid(read_diagnostic.get('code', 'read_executor_arguments'),
+                           path + '.' + read_diagnostic.get('path', 'arguments'))
         checked_reads.append(deepcopy(read))
     query, reason = args['web_query'], args['web_reason']
     if bool(query.strip()) != bool(reason.strip()):
-        return _invalid()
+        return invalid('web_pair', 'args.web_reason' if query.strip() else 'args.web_query')
     if (query and not query.strip()) or (reason and not reason.strip()):
-        return _invalid()
+        return invalid('web_whitespace', 'args.web_query' if query and not query.strip() else 'args.web_reason')
     is_resource_task = purpose in RESOURCE_PURPOSES
-    if not is_resource_task and (reads or query or reason):
-        return _invalid()
+    if not is_resource_task and reads:return invalid('nonresource_reads', 'args.reads')
+    if not is_resource_task and (query or reason):return invalid('nonresource_web', 'args.web_query')
     if is_resource_task and not args['goal'].strip():
-        return _invalid()
+        return invalid('goal_empty', 'args.goal')
     basis = [current, *([previous] if previous else [])]
     local_only = any(_LOCAL_ONLY.search(text) for text in basis)
     scope = {

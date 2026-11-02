@@ -559,7 +559,7 @@ def _agent_request(row,session,context,text,history):
             'tool_schemas':tool_schemas(),'web_plan_schema':agent.web_plan_schema(),
             'fallback_context':context,'max_input_bytes':frozen['max_input_bytes']}
     from app.services.ai_scope_semantic import schema
-    request['intent_plan_schema']=schema()
+    request['intent_plan_schema']=schema(request)
     ai_scope.apply_to_request(request)
     return request
 
