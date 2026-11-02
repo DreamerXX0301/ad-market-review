@@ -1,6 +1,7 @@
 """Mock actual streamed function calls: denied scope never reaches a resource."""
 from copy import deepcopy
 import json
+import socket
 import httpx
 import pytest
 from app import core
@@ -8,6 +9,23 @@ from app.services import ai_service as service,ai_read_tools
 from app.services.ai_runtime import AIRuntime
 from test_ai_agent_round import agent_client,create,complete,function,final,mock_network
 from test_ai_service import enable,fake,drive
+
+
+@pytest.fixture(autouse=True)
+def block_scope_test_ip_network(monkeypatch):
+    connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
+    def guarded(sock, address):
+        if sock.family in (socket.AF_INET, socket.AF_INET6):
+            raise AssertionError('Scope regression must not reach an IP network')
+        return connect(sock, address)
+    def guarded_ex(sock, address):
+        if sock.family in (socket.AF_INET, socket.AF_INET6):
+            raise AssertionError('Scope regression must not reach an IP network')
+        return connect_ex(sock, address)
+    monkeypatch.setattr(socket.socket, 'connect', guarded)
+    monkeypatch.setattr(socket.socket, 'connect_ex', guarded_ex)
+    monkeypatch.delenv('SHIXU_AI_SYSTEM_PROXY_ENABLED', raising=False)
+    monkeypatch.delenv('SHIXU_AI_READ_SQLITE_PATH', raising=False)
 
 @pytest.mark.parametrize('question',['最近房价跌了吗','北京天气怎么样','旅游攻略','购物买手机推荐','帮我写代码',
                                     '聊聊人生闲聊','先看茅台股票，然后聊北京天气对生活的影响','股票先放一边，聊北京房价',
@@ -94,4 +112,93 @@ def test_control_thread_rechecks_hosted_and_local_before_any_resource_or_receipt
         assert runtime._agent_authorize(task,{'ordinal':1,'input_bytes':100,'hosted_web':True})['_error']=='stock_scope_required'
         assert runtime._agent_tool(task,{'name':'read_market_data','args':{'date':'today','section':'overview'},'call_id':'forged'})['state']=='scope_denied'
         with core.connect() as db:assert db.execute('SELECT count(*) FROM ai_request_receipt WHERE task_id=?',(created['task_id'],)).fetchone()[0]==0
+    finally:runtime.shutdown()
+
+
+def test_natural_cross_day_followup_reaches_local_tools_from_actual_user_history(agent_client,monkeypatch):
+    client=agent_client;runtime=AIRuntime(fake);calls=[];reads=[]
+    first_question='今天收盘行情数据有了吗？'
+    question='那对比周五的行情，今天的变化是什么？上周五强的方向今天表现怎么样？'
+    first_answer='可以核对当前已保存的时点记录，尚未取得的收盘资料应保留未知。'
+    answer='已分别核对周五和今天的合成盘面资料；方向变化按各自日期比较，指数涨幅不能替代板块涨停家数。'
+    def read(name,args,**kwargs):
+        reads.append((name,deepcopy(args)))
+        day='2026-11-02' if args['date']=='today' else args['date']
+        return {'ok':True,'state':'available','tool_name':name,'date':day,'source':['fixture'],
+                'summary':{'fixture':'合成盘面资料，非全市场涨停家数榜'},
+                'evidence':[] if name=='check_data_availability' else [{'evidence_id':'fixture:'+day,'data':{'change_pct':1.2}}],
+                'metrics':[],'gaps':[],'source_bindings':{'snapshot_id':'fixture-'+day}}
+    monkeypatch.setattr(ai_read_tools,'execute_read_tool',read)
+    async def handler(request):
+        payload=json.loads(request.content);calls.append(payload)
+        assert any(tool.get('name')=='read_market_data' for tool in payload['tools']) or len(calls)%2==0
+        if len(calls)==1:
+            output=[function('check_data_availability',{'date':'today'},'first_availability')];text=None
+        elif len(calls)==2:output=[final(first_answer)];text=first_answer
+        elif len(calls)==3:
+            output=[function('read_market_data',{'date':'2026-10-30','section':'overview'},'friday'),
+                    function('read_market_data',{'date':'today','section':'noon'},'today')];text=None
+        else:
+            results={item['call_id']:json.loads(item['output']) for item in payload['input'] if item.get('type')=='function_call_output'}
+            assert results['friday']['date']=='2026-10-30' and results['today']['date']=='2026-11-02'
+            output=[final(answer)];text=answer
+        return httpx.Response(200,content=complete(output,text))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai');created=create(client,text=first_question).json()
+        assert drive(runtime,created['task_id'])['state']=='completed'
+        response=client.post('/api/v1/ai/sessions/'+created['session_id']+'/messages',
+                             json={'text':question,'consent':True,'request_key':'natural-market-compare'})
+        assert response.status_code==202,response.text
+        identifier=response.json()['task_id']
+        with core.connect() as db:
+            request=json.loads(db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(identifier,)).fetchone()[0])
+            assert request['scope_input']['recent_user_texts']==[first_question]
+            assert request['scope']['version']=='ai-stock-scope-v3' and request['scope']['resources_allowed']
+        assert drive(runtime,identifier)['state']=='completed'
+        message=client.get('/api/v1/ai/sessions/'+created['session_id']).json()['messages'][-1]
+        assert message['text']==answer and message['source_context']['web']['used'] is False
+        assert len(calls)==4 and len(reads)==3
+        with core.connect() as db:
+            receipts=db.execute('SELECT price_json,cost_state FROM ai_request_receipt WHERE task_id=?',(identifier,)).fetchall()
+            assert len(receipts)==2 and all('web_policy' not in json.loads(row['price_json']) for row in receipts)
+            assert all(row['cost_state']=='estimated' for row in receipts)
+    finally:runtime.shutdown()
+
+
+@pytest.mark.parametrize('other_question',['黄金周五行情怎么样','北京房价今天如何'])
+def test_implicit_cross_day_market_followup_cannot_reuse_older_stock_chain_after_topic_change(agent_client,monkeypatch,other_question):
+    client=agent_client;runtime=AIRuntime(fake);calls=[]
+    question='那对比周五的行情，今天的变化是什么？上周五强的方向今天表现怎么样？'
+    monkeypatch.setattr(ai_read_tools,'execute_read_tool',lambda *a,**kw:pytest.fail('changed topic must not read equity data'))
+    async def handler(request):
+        payload=json.loads(request.content);calls.append(payload)
+        if len(calls)==1:
+            output=[final('可以讨论A股盘面。')];text='可以讨论A股盘面。'
+        elif len(calls)==2:
+            assert payload['tools']==[];output=[final('我仅提供A股行情复盘与个股研究。')];text='我仅提供A股行情复盘与个股研究。'
+        elif len(calls)==3:
+            assert payload['tools']==[]
+            output=[function('read_market_data',{'date':'today','section':'overview'},'forged_equity_read')];text=None
+        else:
+            assert payload['tools']==[]
+            result=next(item for item in payload['input'] if item.get('type')=='function_call_output')
+            assert json.loads(result['output'])['state']=='scope_denied'
+            output=[final('我仅提供A股行情复盘与个股研究。')];text='我仅提供A股行情复盘与个股研究。'
+        return httpx.Response(200,content=complete(output,text))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai');created=create(client,text='今天收盘行情数据有了吗？').json()
+        assert drive(runtime,created['task_id'])['state']=='completed'
+        switched=client.post('/api/v1/ai/sessions/'+created['session_id']+'/messages',
+                             json={'text':other_question,'consent':True,'request_key':'other-domain-switch'})
+        assert drive(runtime,switched.json()['task_id'])['state']=='completed'
+        with core.connect() as db:
+            db.execute("UPDATE ai_message SET text='接下来可以对比周五与今天的盘面。' WHERE session_id=? AND role='assistant'",(created['session_id'],))
+        response=client.post('/api/v1/ai/sessions/'+created['session_id']+'/messages',
+                             json={'text':question,'consent':True,'request_key':'implicit-after-other-domain'})
+        assert drive(runtime,response.json()['task_id'])['state']=='completed'
+        assert len(calls)==4
+        with core.connect() as db:
+            assert all('web_policy' not in json.loads(row[0]) for row in db.execute('SELECT price_json FROM ai_request_receipt'))
     finally:runtime.shutdown()

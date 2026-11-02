@@ -167,3 +167,99 @@ def test_bare_market_questions_are_valid_stock_assistant_requests(text):
 @pytest.mark.parametrize('text', ['最近海鲜行情怎么样', '今天二手手机行情如何', '最近房价行情怎么样'])
 def test_non_stock_subject_cannot_borrow_bare_market_phrase(text):
     assert not scope.scope_for(request(text))['resources_allowed']
+
+
+MARKET_COMPARISON = '那对比周五的行情，今天的变化是什么？上周五强的方向今天表现怎么样？'
+
+
+@pytest.mark.parametrize('recent', [[], ['今天收盘行情数据有了吗？']])
+@pytest.mark.parametrize('text', [
+    MARKET_COMPARISON,
+    '上周五强的方向今天表现怎么样？',
+    '请帮我详细比较一下周五和今天的行情，主要变化、延续和分化在哪里？',
+    '比较一下上个交易日领涨的题材，这两天还有延续吗？',
+    '现在回头看上周五，强势方向到了今天有没有延续？',
+    '周五与今天的盘面有何不同，量能和领涨方向有哪些变化？',
+    '把昨天到今天的行情变化展开分析一下，哪些方向延续而哪些出现分化？',
+    '对比2026-10-30和今天的行情，分析整体强弱以及方向切换。',
+    '上周五比较强的那些方向，今天主要有哪些变化和风险？',
+])
+def test_natural_cross_day_market_review_does_not_need_repeated_stock_prefix(text, recent):
+    decision = scope.scope_for(request(text, recent=recent))
+    assert decision['version'] == 'ai-stock-scope-v3'
+    assert decision['state'] == 'allowed' and decision['purposes'] == ['market_review']
+    assert text in decision['authorized_user_messages']
+    assert scope.authorize_plan(request(text, recent=recent), plan('A股周五与今日盘面复盘对比', text, 'market_review'))
+
+
+@pytest.mark.parametrize('text', [
+    '那和之前相比有什么变化呢，整体是不是更强一些？',
+    '相比之前，这些方向有没有延续，承接是否出现分化？',
+    '那整体和之前比是不是更强了，情绪有何变化？',
+    '那几条主线今天和上周五比较，是否延续？',
+])
+def test_long_ellipsis_inherits_only_a_real_nearest_market_review(text):
+    assert not scope.scope_for(request(text))['resources_allowed']
+    decision = scope.scope_for(request(text, recent=['今天收盘行情数据有了吗？']))
+    assert decision['state'] == 'allowed' and decision['purposes'] == ['market_review']
+    assert decision['authorized_user_messages'] == [text, '今天收盘行情数据有了吗？']
+    assert not scope.scope_for(request(text, recent=['贵州茅台股票估值如何？'], focus=FOCUS))['resources_allowed']
+
+
+@pytest.mark.parametrize('subject', ['黄金', '原油', '期货', '币', '比特币', '显卡', '房价', '天气', '旅游', '海鲜', '钻石'])
+@pytest.mark.parametrize('template', [
+    '对比{}上周五的行情，今天收盘有什么变化？',
+    '上周五{}强的方向今天表现怎么样？',
+])
+def test_other_domain_wins_over_dates_comparison_and_market_words(subject, template):
+    text = template.format(subject)
+    decision = scope.scope_for(request(text, recent=['今天A股盘面复盘'], focus=FOCUS))
+    assert not decision['resources_allowed']
+    assert not scope.authorize_plan(request(text, recent=['今天A股盘面复盘'], focus=FOCUS),
+                                    plan('A股周五与今天行情对比', text, 'market_review'))
+
+
+@pytest.mark.parametrize('latest', ['黄金周五行情怎么样', '原油行情最近如何', '北京最近房价怎么样',
+                                    '今天旅游去哪玩', '我想聊未识别的新话题', '钻石成交价周五涨了吗'])
+@pytest.mark.parametrize('text', [MARKET_COMPARISON, '上周五强的方向今天表现怎么样？',
+                                  '那和之前相比有什么变化呢，整体是不是更强一些？'])
+def test_implicit_market_language_cannot_jump_back_over_latest_other_topic(latest, text):
+    decision = scope.scope_for(request(text, recent=['今天A股盘面复盘', latest], focus=FOCUS))
+    assert not decision['resources_allowed'] and decision['authorized_user_messages'] == []
+
+
+def test_explicit_new_equity_request_can_return_from_an_unrelated_topic():
+    text = '请比较A股周五与今天的盘面，看看领涨板块的变化'
+    assert scope.scope_for(request(text, recent=['北京房价如何']))['resources_allowed']
+
+
+@pytest.mark.parametrize('text', ['周五变化怎么样', '对比一下上周五', '上周五和今天怎么比较',
+                                   '钻石周五行情相比今天有哪些变化'])
+def test_time_or_comparison_alone_does_not_authorize_resources(text):
+    assert not scope.scope_for(request(text))['resources_allowed']
+
+
+def test_market_followup_cannot_borrow_assistant_or_page_context():
+    text = '那和之前相比有什么变化呢，整体是不是更强一些？'
+    synthetic = {'seed_messages': [{'role': 'user', 'content': '页面锚点：A股复盘'},
+                                    {'role': 'assistant', 'content': '接下来可以比较周五与今天的盘面。'}],
+                 'page_anchor': {'kind': 'market', 'as_of': '2026-10-30'}, 'kind': 'market'}
+    assert not scope.scope_for(request(text, **synthetic))['resources_allowed']
+
+
+@pytest.mark.parametrize('text,query', [
+    ('黄金价格变化对A股黄金股有什么影响？', '黄金价格变化'),
+    ('原油价格上涨对A股上市公司有什么影响？', '原油价格走势'),
+    ('期货价格波动对A股上市公司经营有什么影响？', '期货价格波动'),
+    ('比特币价格变化对A股矿机公司有什么影响？', '比特币价格变化'),
+    ('显卡供需变化对A股半导体公司有什么影响？', '显卡价格和供需'),
+])
+def test_explicit_equity_impact_still_can_request_its_same_auxiliary_topic(text, query):
+    req = request(text)
+    assert scope.scope_for(req)['purposes'] == ['stock_impact']
+    assert scope.authorize_plan(req, plan(query, text, 'stock_impact'))
+
+
+def test_stock_impact_cannot_steal_another_commodity_topic():
+    text = '黄金价格变化对A股黄金股有什么影响？'
+    assert not scope.authorize_plan(request(text), plan('原油期货价格', text, 'stock_impact'))

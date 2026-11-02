@@ -12,6 +12,8 @@ import httpx
 from app.adapters.ai_responses import BASE_URLS, ProviderError, error_code, usage_of
 from app.services.ai_catalog import MAX_RESPONSE_BYTES, max_output
 from app.services import ai_web, ai_scope
+from app.services.ai_tool_budget import assess_tool, classify_tool, tool_budget
+from app.services.ai_agent_protocol import FINALIZE_SYSTEM_PROMPT
 
 MAX_STREAM_BYTES=4*MAX_RESPONSE_BYTES
 MAX_TEXT_BYTES=64*1024
@@ -129,7 +131,8 @@ async def stream_response(client,path,payload,cancel,bridge,*,emit_text=True):
 
 
 async def _run(request,key,cancel,bridge):
-    frozen=request['round_protocol'];items=list(request['seed_messages']);local_used=0;web_planned=False;web_used=False
+    frozen=request['round_protocol'];items=list(request['seed_messages']);local_calls=[];web_planned=False;web_used=False
+    local_limits=tool_budget(frozen);force_summary=False;summary_prompt_added=False
     scope=ai_scope.scope_for(request);scope_denied=False
     all_text='';sources=[];citations=[];traces=[];results=[];usages=[];tool_calls=[];web_request=None;query_target=None;web_source_counts={}
     timeout=request['timeout_seconds']
@@ -141,17 +144,21 @@ async def _run(request,key,cancel,bridge):
             for ordinal in range(1,frozen['max_model_requests']+1):
                 if cancel.is_set():raise ProviderError('cancelled')
                 last=ordinal==frozen['max_model_requests']
+                summary_only=force_summary
                 tools=[]
-                hosted=web_planned and not web_used and ai_web.supported(request['provider_id'],request['model'])
+                hosted=not force_summary and web_planned and not web_used and ai_web.supported(request['provider_id'],request['model'])
                 restricted=(scope_denied and not scope['local_only']) or scope['state'] in ('outside','unknown')
                 if hosted:
                     policy=frozen['web_policy']
                     tools=[{'type':'web_search','filters':{'allowed_domains':policy['allowed_domains']},
                             'search_context_size':'low','return_token_budget':'default'}]
-                elif not last and scope['resources_allowed'] and not scope_denied:
-                    if local_used<frozen['max_local_tools']:tools=list(request['tool_schemas'])
+                elif not force_summary and not last and scope['resources_allowed'] and not scope_denied:
+                    if len(local_calls)<local_limits['max_reads']:tools=list(request['tool_schemas'])
                     if ai_web.supported(request['provider_id'],request['model']) and not web_planned:
                         tools.append(request['web_plan_schema'])
+                if force_summary and not summary_prompt_added:
+                    items.append({'role':'system','content':frozen.get('finalize_system_prompt') or FINALIZE_SYSTEM_PROMPT})
+                    summary_prompt_added=True
                 payload=payload_for(request,items,tools)
                 if restricted:payload['max_output_tokens']=min(payload['max_output_tokens'],256)
                 size=len(json.dumps(payload,ensure_ascii=False,separators=(',',':')).encode())
@@ -200,7 +207,7 @@ async def _run(request,key,cancel,bridge):
                         'tool_traces':traces,'round_protocol':frozen,
                         'used_context':{'seed_messages':request['seed_messages'],'tool_schemas':request['tool_schemas'],
                                         'tool_calls':tool_calls,'web_request':web_request}},'response_model':body.get('model')}
-                if last:raise ProviderError('agent_tool_limit')
+                if last or summary_only:raise ProviderError('agent_tool_limit')
                 items.extend(body.get('output',[]))
                 for call in function_calls:
                     name=call.get('name');call_id=call.get('call_id')
@@ -213,14 +220,32 @@ async def _run(request,key,cancel,bridge):
                         if web_planned or not ai_web.supported(request['provider_id'],request['model']):raise ProviderError('agent_tool_limit')
                         result=await bridge.exchange('plan_web',{'call_id':call_id,**args},cancel)
                         if result.get('ok') is True:
+                            if force_summary:raise ProviderError('invalid_response')
                             web_planned=True;web_request=args
                             bridge.emit('tool',{'name':name,'call_id':call_id,'state':'completed','label':'准备查询网络资料'})
+                        elif result.get('state')=='not_read' and result.get('reason_code')=='tool_budget_exhausted':
+                            force_summary=True
+                            results.append(result)
                         else:scope_denied=True
                     else:
-                        local_used+=1
-                        if local_used>frozen['max_local_tools']:raise ProviderError('agent_tool_limit')
+                        try:
+                            classify_tool(name,args)
+                            expected_gap=assess_tool(frozen,local_calls,name,args)
+                        except ValueError:
+                            raise ProviderError('invalid_tool_arguments') from None
                         result=await bridge.exchange('read_tool',{'name':name,'args':args,'call_id':call_id},cancel)
                         if result.get('state')=='scope_denied':scope_denied=True
+                        elif result.get('state')=='not_read' and result.get('reason_code')=='tool_budget_exhausted':
+                            # Finish every call in this response, then request only
+                            # the answer. A skipped read is not missing source data.
+                            force_summary=True
+                        elif expected_gap is not None:
+                            # Both lanes must use the same execution budget. A
+                            # mismatched control response is not publishable data.
+                            raise ProviderError('invalid_response')
+                        else:
+                            local_calls.append({'name':name,'args':args})
+                            if len(local_calls)>=local_limits['max_reads']:force_summary=True
                         results.append(result)
                         if name in ('read_market_data','check_data_availability') and isinstance(result.get('date'),str):query_target=result['date']
                     trace={'name':name,'call_id':call_id,'state':result.get('state'),'date':result.get('date'),'summary':result.get('summary')}

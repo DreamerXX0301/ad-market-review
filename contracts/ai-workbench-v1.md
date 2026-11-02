@@ -67,7 +67,7 @@ SessionSummary含`session_id,kind,report_id,instrument_id,as_of,provider_id,mode
 
 当前角色是A股盘面与个股研究助手，回答应自然、直接、独立判断。明显无关话题简短说明范围；普通招呼可简短回应。通用金融概念不要求为了形式调用行情工具。涉及实际行情、公司或资金事实时，应先查适合的本地工具，不能仅凭旧消息或旧证据声称没有资料。
 
-首问和旧会话续问都生成当前轮协议`ai-agent-round-v3`、页面锚点、本次北京时间及有界近期历史。执行前刷新时钟，并与提交时刻分开留证，避免排队跨日后沿用昨日“现在”。旧消息和旧context保留原文；旧context仅可作为明确旧日期的个股资料回退，不限制新问题查今天或其他明确日期，也不代表每轮都发送整套原证据。
+首问和旧会话续问都生成当前轮协议`ai-agent-round-v4`、页面锚点、本次北京时间及有界近期历史。执行前刷新时钟，并与提交时刻分开留证，避免排队跨日后沿用昨日“现在”。旧消息和旧context保留原文；旧context仅可作为明确旧日期的个股资料回退，不限制新问题查今天或其他明确日期，也不代表每轮都发送整套原证据。
 
 用户说“今天/现在/最新”时，数据工具使用`today`并由服务器实际`Asia/Shanghai`时钟解析。页面as_of不是今天的替代值。工具结果的日期、实际采集窗口、报告期、获取/披露时间分别保存；现在取得的资料不倒填为历史当时可知。
 
@@ -78,6 +78,8 @@ SessionSummary含`session_id,kind,report_id,instrument_id,as_of,provider_id,mode
 | `read_market_data` | `date:'today'|ISO,section` | section为availability/auction/noon/close/overview/fund_flow |
 | `check_data_availability` | `date:'today'|ISO` | 检查资料与阶段，不采集 |
 | `read_stock_research` | `instrument_id`，空串沿用页面证券 | 当前实例已存未过期v2报告，不延长TTL；不存在时仅可回退同股会话旧材料并说明旧日期 |
+
+新轮冻结`local_tool_budget`版本`ai-local-tool-budget-v2`：实质资料读取最多3次，可用性检查最多2次，总读取最多5次；`max_local_tools=5`仍表示总额。两种availability入口共用同一元数据额度。旧v3及更早缺少新预算的请求仍按其原`max_local_tools`总额（最多3）执行，不扩大冻结范围。预算耗尽返回`state:not_read,reason_code:tool_budget_exhausted`普通缺口，不代表资料不存在；处理完同批合法调用的call_id配对后，下一次仅总结且不新增联网。模型请求仍最多3次，日预算、次数、权限和取消仍独立硬校验。
 
 Responses function schemas均strict，additionalProperties=false，不接受模型提供的路径或SQL。每次工具JSON最多24KiB，固定返回`{ok,state,tool_name,date,source,summary,evidence,metrics,gaps,source_bindings}`。身份由日期和来源指纹命名空间区分；原始数值与单位保留，重复日期/口径可通过`summary.metric_defaults`和对应证据的`metric_dates/metric_scope`继承，工具结果附语义说明。只有整条材料可以为容量排除，须披露范围；返回这些字段不等于每个自然语言数字都经过机器验真。
 
@@ -160,4 +162,4 @@ schema35保存配置、会话和任务；schema36新增`ai_task_event/ai_request
 
 流式阅读：默认跟随实际消息高度增长，用户上翻、触摸或键盘阅读暂停，回到底部或“回到最新”恢复；ResizeObserver回调使用rAF，不积压smooth滚动。最终Markdown/来源重排也遵守跟随状态，切页前同步保存阅读位置。生成中复用安全Markdown渲染，尚未完成的来源不变成链接。
 
-股票资源授权见`ai-stock-scope-v2`及逐轮agent契约。授权只采用原用户消息、受核验证券身份，不接受助手文本、默认会话类型或模型reason授信。request_web_search增加purpose、user_quote，保存的accepted plan须在实际hosted出站前重核；拒绝不产生搜索请求或搜索预留，已发模型usage仍保留。明确要求本系统/本地数据时禁止用网页另一口径补成内部结果。新增范围/身份/实际HTTP模拟回归纳入326项AI检查，不构成新真实付费业务验收。
+股票资源授权见`ai-stock-scope-v3`及逐轮agent契约。授权只采用原用户消息、受核验证券身份，不接受助手文本、默认会话类型或模型reason授信。request_web_search增加purpose、user_quote，保存的accepted plan须在实际hosted出站前重核；拒绝不产生搜索请求或搜索预留，已发模型usage仍保留。明确要求本系统/本地数据时禁止用网页另一口径补成内部结果。新增范围/身份/实际HTTP模拟回归纳入326项AI检查，不构成新真实付费业务验收。

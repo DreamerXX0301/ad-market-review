@@ -6,6 +6,7 @@ from app.core import connect, now_ms, new_id, dumps, digest
 from app.adapters.ai_agent import AgentBridge, perform_agent
 from app.services import ai_service as service, ai_web, ai_scope
 from app.services.ai_catalog import estimated_nusd, max_output
+from app.services.ai_tool_budget import assess_tool, classify_tool, tool_budget
 
 EVENT_TTL=15*60*1000
 MAX_EVENTS=2048
@@ -92,7 +93,8 @@ class AgentRuntimeMixin:
         self.agent_bridge=bridge
         self.agent_state={'text':'','tool_results':[],'tool_traces':[],'page_anchor':request['page_anchor'],
                           'request_time':request['request_time'],'round_protocol':request['round_protocol'],
-                          'seed_messages':request['seed_messages'],'tool_schemas':request['tool_schemas'],'tool_calls':[]}
+                          'seed_messages':request['seed_messages'],'tool_schemas':request['tool_schemas'],'tool_calls':[],
+                          'local_tool_calls':[]}
         with connect() as db:append_event(db,task,'status',{'state':'running','message':'正在读取问题并准备查询资料'})
         future=self.executor.submit(self.agent_transport,request,key,cancel,bridge)
         self.active=task['task_id'],future,cancel
@@ -111,6 +113,8 @@ class AgentRuntimeMixin:
                 return {'_error':'agent_tool_limit'}
             metadata=json.loads(current['result_json']);rates=metadata['price_rates']
             trusted=json.loads(current['request_json'])
+            if hosted and (trusted.get('agent_state') or {}).get('force_summary'):
+                return {'_error':'agent_tool_limit'}
             if hosted and (trusted.get('scope_denied') or not ai_scope.authorize_plan(trusted,trusted.get('accepted_web_plan'))):
                 return {'_error':'stock_scope_required'}
             reservation=estimated_nusd(current['provider_id'],current['model'],size,max_output(current['provider_id']),rates=rates)
@@ -158,19 +162,30 @@ class AgentRuntimeMixin:
         name=data.get('name');args=data.get('args');call_id=data.get('call_id')
         if name not in ('read_market_data','check_data_availability','read_stock_research') or not isinstance(args,dict):
             return {'_error':'invalid_tool_arguments'}
+        try:classify_tool(name,args)
+        except ValueError:return {'_error':'invalid_tool_arguments'}
         with connect() as db:
             raw=db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
         request=json.loads(raw['request_json']) if raw else {}
         if request.get('scope_denied') or not ai_scope.scope_for(request)['resources_allowed']:return ai_scope.denial()
-        if len(self.agent_state['tool_results'])>=3:return {'_error':'agent_tool_limit'}
+        executed=self.agent_state.setdefault('local_tool_calls',[])
+        try:gap=assess_tool(request['round_protocol'],executed,name,args)
+        except ValueError:return {'_error':'invalid_tool_arguments'}
         self.agent_state['tool_calls'].append({'name':name,'args':args,'call_id':call_id})
-        with connect() as db:append_event(db,task,'tool',{'name':name,'call_id':call_id,'state':'running','label':'正在查询本地资料'})
-        from app.services.ai_read_tools import execute_read_tool
-        result=execute_read_tool(name,args,page_context=request['page_anchor'],fallback_context=request.get('fallback_context'))
+        if gap is not None:
+            result=gap
+            self.agent_state['force_summary']=True
+        else:
+            with connect() as db:append_event(db,task,'tool',{'name':name,'call_id':call_id,'state':'running','label':'正在查询本地资料'})
+            from app.services.ai_read_tools import execute_read_tool
+            result=execute_read_tool(name,args,page_context=request['page_anchor'],fallback_context=request.get('fallback_context'))
+            executed.append({'name':name,'args':args})
+            if len(executed)>=tool_budget(request['round_protocol'])['max_reads']:
+                self.agent_state['force_summary']=True
         if len(dumps(result).encode())>24576:return {'_error':'stream_limit'}
         self.agent_state['tool_results'].append(result)
         state=result.get('state','unknown');date=result.get('date')
-        label='已读取本地资料' if result.get('ok') else '本地查询已返回缺口'
+        label='本轮该项未读取，正在整理已取得资料' if gap is not None else '已读取本地资料' if result.get('ok') else '本地查询已返回缺口'
         trace={'name':name,'call_id':call_id,'state':state,'date':date,'summary':label}
         self.agent_state['tool_traces'].append(trace)
         with connect() as db:
@@ -202,13 +217,29 @@ class AgentRuntimeMixin:
                     with connect() as db:
                         raw=db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(task_id,)).fetchone()
                         request=json.loads(raw['request_json']);plan={key:data.get(key) for key in ('query','reason','purpose','user_quote')}
-                        accepted=not request.get('scope_denied') and ai_scope.authorize_plan(request,plan)
-                        if accepted:request['accepted_web_plan']=plan;self.agent_state['web_request']=plan
-                        else:request['scope_denied']=True
+                        permitted=not request.get('scope_denied') and ai_scope.authorize_plan(request,plan)
+                        accepted=permitted and not self.agent_state.get('force_summary')
+                        if accepted:
+                            request['accepted_web_plan']=plan;self.agent_state['web_request']=plan
+                            result={'ok':True,'state':'planned'}
+                        elif not permitted:
+                            request['scope_denied']=True
+                            result=ai_scope.denial(local_only=ai_scope.scope_for(request)['local_only'])
+                        else:
+                            summary='本轮未进行网络查询。请依据已经取得的资料直接回答，并说明仍未取得的具体资料；不要再申请查询。'
+                            label='本轮未进行网络查询，正在整理已取得资料'
+                            result={'ok':False,'state':'not_read','reason_code':'tool_budget_exhausted',
+                                    'tool_name':'request_web_search','date':None,'summary':summary,
+                                    'source':[],'evidence':[],'metrics':[],
+                                    'gaps':[{'capability':'web_search','state':'not_read','reason':summary}]}
+                            trace={'name':'request_web_search','call_id':data.get('call_id'),
+                                   'state':'not_read','date':None,'summary':label}
+                            self.agent_state['tool_results'].append(result)
+                            self.agent_state['tool_traces'].append(trace)
+                            append_event(db,task,'tool',{**trace,'label':label})
                         self.agent_state['tool_calls'].append({'name':'request_web_search','call_id':data.get('call_id'),'args':plan,'accepted':accepted})
                         request['agent_state']=self.agent_state
                         db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(request),task_id))
-                    result={'ok':True,'state':'planned'} if accepted else ai_scope.denial(local_only=ai_scope.scope_for(request)['local_only'])
                 elif kind in ('delta','status','tool'):
                     if kind=='delta':
                         self.agent_state['text']+=data.get('text','')
