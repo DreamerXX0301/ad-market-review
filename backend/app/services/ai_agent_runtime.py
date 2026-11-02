@@ -6,7 +6,8 @@ from app.core import connect, now_ms, new_id, dumps, digest
 from app.adapters.ai_agent import AgentBridge, perform_agent
 from app.services import ai_service as service, ai_web, ai_scope
 from app.services.ai_catalog import estimated_nusd, max_output
-from app.services.ai_tool_budget import assess_tool, classify_tool, tool_budget
+from app.services.ai_tool_budget import assess_tool, tool_budget
+from app.services.ai_scope_semantic import classify_frozen_read
 
 EVENT_TTL=15*60*1000
 MAX_EVENTS=2048
@@ -164,13 +165,11 @@ class AgentRuntimeMixin:
         name=data.get('name');args=data.get('args');call_id=data.get('call_id')
         if not isinstance(name,str) or not isinstance(args,dict):
             return {'_error':'invalid_tool_arguments'}
-        try:classify_tool(name,args)
-        except ValueError:return {'_error':'invalid_tool_arguments'}
         with connect() as db:
             raw=db.execute('SELECT request_json FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
         request=json.loads(raw['request_json']) if raw else {}
-        if name not in {tool.get('name') for tool in request.get('tool_schemas',[]) if isinstance(tool,dict)}:
-            return {'_error':'invalid_tool_arguments'}
+        try:classify_frozen_read(request,name,args)
+        except ValueError:return {'_error':'invalid_tool_arguments'}
         if request.get('scope_denied') or not ai_scope.scope_for(request)['resources_allowed']:return ai_scope.denial()
         executed=self.agent_state.setdefault('local_tool_calls',[])
         try:gap=assess_tool(request['round_protocol'],executed,name,args)

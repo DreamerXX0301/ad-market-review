@@ -174,6 +174,21 @@ def _matches_frozen_arguments(args, parameters):
     return True
 
 
+def classify_frozen_read(request, name, args):
+    """Validate every execution against its saved capability, including v4.
+
+    A later model request is not covered by the initial plan's argument check.
+    Check both the frozen schema and today's concrete executor before IO;
+    neither the catalog nor a changed enum can widen a saved round.
+    """
+    declared = _frozen_tools(request) if isinstance(request, dict) else None
+    if (declared is None or not isinstance(name, str) or name not in declared
+            or not isinstance(args, dict)
+            or not _matches_frozen_arguments(args, declared[name])):
+        raise ValueError('invalid_tool_arguments')
+    return classify_tool(name, args)
+
+
 def validate_plan(request, args):
     """Validate route provenance and proposed capabilities, without doing IO."""
     trusted = _trusted_input(request)
@@ -205,10 +220,8 @@ def validate_plan(request, args):
                 or not isinstance(read['name'], str) or read['name'] not in declared
                 or not isinstance(read['arguments'], dict)):
             return _invalid()
-        if not _matches_frozen_arguments(read['arguments'], declared[read['name']]):
-            return _invalid()
         try:
-            classify_tool(read['name'], read['arguments'])
+            classify_frozen_read(request, read['name'], read['arguments'])
         except (ValueError, TypeError):
             return _invalid()
         checked_reads.append(deepcopy(read))

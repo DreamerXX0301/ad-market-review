@@ -372,6 +372,56 @@ def test_initial_planner_message_is_not_reused_as_answer_context_after_data_auth
         runtime.shutdown()
 
 
+@pytest.mark.parametrize('guard', ['adapter', 'control'])
+def test_second_request_cannot_expand_frozen_argument_enum_even_if_adapter_is_bypassed(
+        agent_client, monkeypatch, guard):
+    from app.adapters import ai_agent
+    client = agent_client; runtime = AIRuntime(fake); calls = []; control_calls = []
+    question = '分析A股盘面，按本轮允许的已保存资料回答。'
+    monkeypatch.setattr(ai_read_tools, 'execute_read_tool',
+                        lambda *a, **k: pytest.fail('frozen argument rejection must precede local IO'))
+    actual_control = runtime._agent_tool
+    def control(task, data):
+        control_calls.append(data)
+        return actual_control(task, data)
+    monkeypatch.setattr(runtime, '_agent_tool', control)
+    if guard == 'control':
+        # The control thread must enforce the saved contract independently of
+        # the IO thread's early rejection, including a compromised handshake.
+        monkeypatch.setattr(ai_agent, 'classify_frozen_read', lambda *a: 'data')
+    async def handler(request):
+        payload = json.loads(request.content); calls.append(payload)
+        if len(calls) == 1:
+            assert_initial_plan_only(payload)
+            return httpx.Response(200, content=complete([
+                function('plan_stock_task', planned(question), 'narrow-plan')]))
+        assert len(calls) == 2
+        frozen = next(tool for tool in payload['tools'] if tool.get('name') == 'read_market_data')
+        assert frozen['parameters']['properties']['section']['enum'] == ['overview']
+        return httpx.Response(200, content=complete([
+            function('read_market_data', {'date': 'today', 'section': 'close'}, 'beyond-frozen')]))
+    mock_network(monkeypatch, handler)
+    try:
+        enable(client, runtime, 'openai'); created = create(client, text=question).json()
+        with core.connect() as db:
+            saved = json.loads(db.execute('SELECT request_json FROM ai_task WHERE task_id=?',
+                                         (created['task_id'],)).fetchone()[0])
+            frozen = next(tool for tool in saved['tool_schemas'] if tool['name'] == 'read_market_data')
+            frozen['parameters']['properties']['section']['enum'] = ['overview']
+            db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',
+                       (core.dumps(saved), created['task_id']))
+        task = drive(runtime, created['task_id'])
+        assert task['state'] == 'failed' and task['reason_code'] == 'invalid_tool_arguments', task
+        assert len(calls) == 2 and deltas(created['task_id']) == ''
+        assert len(control_calls) == int(guard == 'control')
+        with core.connect() as db:
+            receipts = db.execute('SELECT state FROM ai_request_receipt WHERE task_id=? ORDER BY ordinal',
+                                  (created['task_id'],)).fetchall()
+            assert len(receipts) == 2 and all(row[0] == 'completed' for row in receipts)
+    finally:
+        runtime.shutdown()
+
+
 def test_pre_v5_frozen_request_keeps_its_original_scope_gate(agent_client, monkeypatch):
     client = agent_client; runtime = AIRuntime(fake); calls = []; question = '明天应该关注什么方向？'
     monkeypatch.setattr(ai_read_tools, 'execute_read_tool', lambda *a, **k: pytest.fail('old unknown scope must not gain new authority'))

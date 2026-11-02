@@ -14,6 +14,7 @@ from app.services.ai_catalog import MAX_RESPONSE_BYTES, max_output
 from app.services import ai_web, ai_scope
 from app.services.ai_tool_budget import assess_tool, classify_tool, tool_budget
 from app.services.ai_agent_protocol import FINALIZE_SYSTEM_PROMPT, planner_messages
+from app.services.ai_scope_semantic import classify_frozen_read
 
 MAX_STREAM_BYTES=4*MAX_RESPONSE_BYTES
 MAX_TEXT_BYTES=64*1024
@@ -283,9 +284,7 @@ async def _run(request,key,cancel,bridge):
                         else:scope_denied=True
                     else:
                         try:
-                            if name not in {tool.get('name') for tool in request.get('tool_schemas',[]) if isinstance(tool,dict)}:
-                                raise ValueError('invalid_tool_arguments')
-                            classify_tool(name,args)
+                            classify_frozen_read(request,name,args)
                             expected_gap=assess_tool(frozen,local_calls,name,args)
                         except ValueError:
                             raise ProviderError('invalid_tool_arguments') from None

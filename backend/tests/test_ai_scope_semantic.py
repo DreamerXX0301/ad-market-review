@@ -269,6 +269,26 @@ def test_frozen_section_enum_cannot_be_widened_by_current_classifier():
     assert semantic.validate_plan(req, plan(req, reads=[read()]))['ok']
 
 
+@pytest.mark.parametrize('version', ['ai-agent-round-v4', semantic.ROUND_VERSION])
+def test_every_read_keeps_its_saved_argument_enum_without_semantic_reclassification(version):
+    req = request(); req['round_protocol']['version'] = version
+    target = next(tool for tool in req['tool_schemas'] if tool['name'] == 'read_market_data')
+    target['parameters']['properties']['section']['enum'] = ['overview']
+    assert semantic.classify_frozen_read(req, 'read_market_data', read()['arguments']) == 'data'
+    with pytest.raises(ValueError, match='invalid_tool_arguments'):
+        semantic.classify_frozen_read(req, 'read_market_data', read(section='close')['arguments'])
+
+
+@pytest.mark.parametrize('rule,value', [({'maxLength': 6}, '600036.SH'), ({'minLength': 2}, ''),
+                                      ({'enum': ['600519.SH']}, '600036.SH')])
+def test_every_read_preserves_frozen_argument_bounds(rule, value):
+    req = request()
+    target = next(tool for tool in req['tool_schemas'] if tool['name'] == 'read_stock_research')
+    target['parameters']['properties']['instrument_id'].update(rule)
+    with pytest.raises(ValueError, match='invalid_tool_arguments'):
+        semantic.classify_frozen_read(req, 'read_stock_research', {'instrument_id': value})
+
+
 def test_control_accepted_scope_revokes_when_its_frozen_capabilities_change():
     req, _ = accept(request(), plan(request(), reads=[read()]))
     target = next(tool for tool in req['tool_schemas'] if tool['name'] == 'read_market_data')
