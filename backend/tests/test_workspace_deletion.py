@@ -339,6 +339,14 @@ def test_standard_backup_restore_preserves_tombstones_and_old_evidence(creation_
     task_service.change_task(created['job_id'], 'cancel')
     deletion.delete_strategy(payload['strategy_id'])
     with core.connect() as connection:
+        # Exercise revocation for both a verified enabled provider and an
+        # already-disabled provider, without any credential or network call.
+        for provider,enabled,revision in (('deepseek',1,7),('openai',0,11)):
+            verification={'state':'passed','checked_at_ms':123,'config_signature':'fixture-'+provider,
+                          'items':[{'capability':'structured_output','state':'passed'}]}
+            connection.execute('UPDATE ai_provider_config SET enabled=?,config_revision=?,credential_revision=3,'
+                               'verification_json=?,models_json=?,updated_at_ms=123 WHERE provider_id=?',
+                               (enabled,revision,json.dumps(verification),json.dumps(['fixture-discovered-model']),provider))
         tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
         evidence = {table: [tuple(row) for row in connection.execute('SELECT * FROM '+table+' ORDER BY rowid')] for table in tables}
         triggers = [tuple(row) for row in connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name")]
@@ -356,6 +364,22 @@ def test_standard_backup_restore_preserves_tombstones_and_old_evidence(creation_
         expected = {**prior, 'revision': prior['revision']+1, 'updated_at_ms': restored['restored_at_ms']}
         evidence['market_auction_automation'] = [tuple(expected[column] for column in columns)]
         assert restored['auction_automation_disabled'] is True
+        columns = [row[1] for row in connection.execute('PRAGMA table_info(ai_provider_config)')]
+        expected_providers=[]
+        for original in evidence['ai_provider_config']:
+            prior=dict(zip(columns,original))
+            assert (prior['enabled'],prior['config_revision'])=={'deepseek':(1,7),'openai':(0,11)}[prior['provider_id']]
+            verification={**json.loads(prior['verification_json']),
+                          'state':'stale','reason_code':'restored_requires_verification'}
+            expected={**prior,'enabled':0,'config_revision':prior['config_revision']+1,
+                      'verification_json':json.dumps(verification,ensure_ascii=False,sort_keys=True,separators=(',',':')),
+                      'updated_at_ms':restored['restored_at_ms']}
+            expected_providers.append(tuple(expected[column] for column in columns))
+        evidence['ai_provider_config']=expected_providers
+        assert restored['ai_disabled'] is True
+        # Only the explicitly checked permission/version/time fields above
+        # change; all tables (including AI history), tombstones and triggers
+        # still participate in the original full restoration comparison.
         assert {table: connection.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall() for table in tables} == evidence
         assert connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall() == triggers
         assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
