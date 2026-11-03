@@ -39,7 +39,7 @@ def tool_schemas():
         ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。未到时点与已到但未采集分开；成交额不是净流入。',
          {'date': {'type': 'string', 'description': '用户明确日期YYYY-MM-DD，或today；今天不沿用旧页面日期'},
           'section': {'type': 'string', 'enum': list(SECTIONS)}}, ['date', 'section']),
-        ('read_stock_research', '读取当前实例已保存且未过期的个股研究，不联网、不延长缓存。instrument_id空串沿用当前页面个股；仅无当前报告时可读同股旧会话材料并明确旧日期。',
+        ('read_stock_research', '读取当前实例已保存且未过期的公司研究，包括已核验的主营、财报与现金流、估值市值、股东户数和公告线索。不联网、不延长缓存。instrument_id空串沿用当前页面个股；仅无当前报告时可读同股旧会话材料并明确旧日期。',
          {'instrument_id': {'type': 'string', 'description': '完整六位代码加.SH/.SZ/.BJ；空串沿用页面个股'}}, ['instrument_id']),
         ('check_data_availability', '只检查指定日已保存资料及北京时间观察阶段，不取新数据、不把工作日猜作已核验交易日。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
@@ -754,7 +754,7 @@ def _research(result, instrument_id, page, fallback, now):
             continue
         kind, source, identifier = raw.get('kind'), raw.get('source'), raw.get('evidence_id')
         if (not isinstance(identifier, str) or seen[identifier] != 1 or raw.get('instrument_id') != instrument
-                or source not in contexts._RESEARCH_SOURCES or kind not in contexts._RESEARCH_KINDS
+                or not contexts._research_source_allowed(source, kind) or kind not in contexts._RESEARCH_KINDS
                 or raw.get('content_hash') != digest(raw.get('data')) or counts[kind] >= contexts._RESEARCH_CAPS[kind]
                 or source in blocked or kind in blocked or aliases.get(kind) in blocked
                 or (str(kind).startswith('financial_') and 'financial' in blocked)
@@ -845,9 +845,21 @@ def _bounded(result):
         optional = [r for r in result['evidence'] if str(r.get('kind', '')).startswith('sector:')]
         optional = optional or [r for r in result['evidence'] if r.get('kind') == 'announcement']
         optional = optional or [r for r in result['evidence'] if str(r.get('kind', '')).startswith('cohort:')]
+        if not optional and result['tool_name'] == 'read_stock_research':
+            optional = [r for r in result['evidence'] if r.get('kind') == 'technical_observation']
+            if not optional:
+                counts = Counter(r['kind'] for r in result['evidence'])
+                optional = [r for r in result['evidence'] if counts[r['kind']] > 1]
+
         removed = (optional or result['evidence'])[-1]
         identifier = removed['evidence_id']
         result['evidence'].remove(removed)
+        if removed.get('kind') == 'technical_observation' and 'technical_contract_periods' in result['summary']:
+            periods = result['summary']['technical_contract_periods']
+            periods.remove(removed['data']['period'])
+            if not periods:
+                result['summary'].pop('technical_contract_periods')
+                result['summary'].pop('technical_analysis_contract')
         result['metrics'] = [r for r in result['metrics'] if identifier not in r.get('evidence_ids', [])]
         excluded[str(removed.get('source'))] += 1
         result['summary']['bounded_exclusions'] = dict(excluded)

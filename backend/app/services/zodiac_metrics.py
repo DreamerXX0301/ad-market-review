@@ -148,13 +148,17 @@ def enrich(saved, market, head):
                     current_topics=tags, current_industries=[t for t in tags if t['kind'] == 'industry'], current_topics_observed_date=memberships['business_date'], current_topics_scope=memberships['scope'])
                 value.update(turnover_for(symbol, cutoff, quote, turnover))
                 value['is_st'] = identity_flags(master.get(symbol, {}), cutoff).get('is_st')
-                own_quotes = {r['date']: r for r in cleaned[symbol] if r['date'] in cutoff_calendar[-2:]}
+                own_quotes = {r['date']: r for r in cleaned[symbol] if r['date'] in cutoff_calendar[-3:]}
+                prior, before = (cutoff_calendar[-2] if len(cutoff_calendar) >= 2 else None,
+                                 cutoff_calendar[-3] if len(cutoff_calendar) >= 3 else None)
                 up = board_proof._state(symbol, cutoff, quote)
                 down = down_state(board_proof, symbol, cutoff, quote, up)
                 shapes = pattern_fields(symbol, master.get(symbol, {}), cutoff, snapshot, calendar, own_quotes, value, up, down)
                 board_view = build_board_presentation(value, symbol=symbol, day=cutoff, snapshot_id=snapshot, calendar=calendar,
                     quotes=own_quotes, events=events.get('limitup', []), break_events=events.get('breakpool', []),
-                    up=up, down=down, patterns=shapes, board_text_events=source_board_events(board_proof,symbol,cutoff))
+                    up=up, previous_up=board_proof._state(symbol, prior, own_quotes.get(prior)),
+                    before_previous_up=board_proof._state(symbol, before, own_quotes.get(before)),
+                    down=down, patterns=shapes, board_text_events=source_board_events(board_proof,symbol,cutoff))
                 value.update(board_presentation=board_view, today_limit_down=down.get('state'),
                     board_height=board_view['height']['value'], board_height_reason=board_view['height']['reason'],
                     board_types=' / '.join(t['label'] for t in board_view['types']) or None,

@@ -27,4 +27,14 @@ assert.ok(html.includes("3板"), "yesterday's actual closing height is retained"
 assert.ok(html.includes("0.00%"), "known flat feedback is not hidden");
 assert.ok(html.includes('class="noon-details" open=""'), "attached transfer rows open by default");
 assert.ok(html.includes("附加名单可能重叠，不计入原五组家数或温度"));
+const eventRows = ["limit_up", "limit_break", "limit_down", "conflict", "not_listed"].map(
+  (state, index) => ({
+    instrument_id: `60000${index}.SH`, name: state, latest_price: 11,
+    change_pct: 9.99, current_state: state,
+  }),
+);
+const eventHtml = render({ groups: [{ key: "new_limit_up", source_count: 5, items: eventRows }] });
+assert.equal((eventHtml.match(/本次午间来源池已核验/g) || []).length, 3);
+for (const event of ["涨停", "跌停", "炸板"])
+  assert.ok(eventHtml.includes(`本次午间来源池已核验${event}，收盘状态另行核验`));
 console.log("Next-session closing feedback: no empty panel, frozen prior heights/classifications, zero return, default-open rows and independent totals passed");

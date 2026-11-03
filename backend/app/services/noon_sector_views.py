@@ -68,12 +68,13 @@ def _members(payload, sector, quotes):
         saved = payload['sector_memberships']
         saved_items = saved.get('items') if isinstance(saved, dict) else None
         entry = saved_items.get(code) if isinstance(saved_items, dict) else None
-        if not isinstance(saved, dict) or saved.get('version') != VERSION or not isinstance(entry, dict):
+        if (not isinstance(saved, dict) or saved.get('version') != VERSION
+                or saved.get('source_snapshot_id') != membership._source_id(payload) or not isinstance(entry, dict)):
             return None, None, '本份午评未冻结该板块名单或已超出容量；不读取当前成员补齐'
         unsigned = {key: value for key, value in entry.items() if key != 'sha256'}
         if sha256(canonical(unsigned)).hexdigest() != entry.get('sha256'):
             return None, None, '冻结成员SHA未通过核验'
-        topic = {'topic_code': code, 'kind': entry.get('kind'), 'source': entry.get('source'),
+        topic = {'topic_code': code, 'name': sector.get('name'), 'kind': entry.get('kind'), 'source': entry.get('source'),
                  'observed_date': entry.get('members_observed_date'),
                  'members_complete': entry.get('members_complete'), 'instrument_ids': entry.get('instrument_ids')}
         candidates = {code: [topic]}
@@ -93,6 +94,29 @@ def _members(payload, sector, quotes):
             return None, None, '原采集代际名单未留存或SHA核验失败，不使用当前名单'
     proof, error = membership._verified_members(sector, candidates, quotes, payload['date'])
     return proof, source_sha, error
+
+
+def close_classifications(payload, symbols):
+    """Project additional closing targets from the original frozen noon member lists."""
+    symbols = set(sorted(set(symbols))[:membership.MAX_CLASSIFIED_STOCKS])
+    saved = payload.get('sector_memberships')
+    if not symbols or not isinstance(saved, dict) or not isinstance(saved.get('items'), dict):
+        return {}
+    sectors = [row for row in (payload.get('sectors') or []) if isinstance(row, dict)]
+    identities = Counter(membership._code(row) for row in sectors)
+    quotes = membership._quotes(payload)
+    proofs = {}
+    for sector in sectors:
+        code = membership._code(sector)
+        entry = saved['items'].get(code)
+        members = entry.get('instrument_ids') if isinstance(entry, dict) else None
+        if (code is None or identities[code] != 1 or not isinstance(members, list)
+                or symbols.isdisjoint(row for row in members if isinstance(row, str))):
+            continue
+        proof, _, error = _members(payload, sector, quotes)
+        proofs[code] = (proof, error)
+    return membership._classifications_from_proofs(
+        payload, proofs, membership._source_id(payload), None, target=sorted(symbols))
 
 
 def build_sector_view(payload, topic_code, *, snapshot_id, content_sha256, board='all', query='',

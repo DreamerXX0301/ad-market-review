@@ -17,6 +17,7 @@ import {
 import { num, percent, tone } from "../../lib/format";
 import MarketDataCoverage from "./MarketDataCoverage";
 import WatchlistButton from "../watchlist/WatchlistButton";
+import { StockEventBadges } from "./BoardTags";
 import MemberDailyLimitBadge from "./MemberDailyLimitBadge";
 import "../sector/MemberDialog.css";
 import "./TopicMembersContent.css";
@@ -102,6 +103,15 @@ export function TopicMembersContent({
             {percent(value)}
           </span>
           <MemberDailyLimitBadge row={row} date={quoteDate || date} />
+          {quoteDate &&
+            row.quote_available === true &&
+            row.quote_date === quoteDate && (
+              <StockEventBadges
+                row={row}
+                date={quoteDate}
+                snapshotId={data?.snapshot_id}
+              />
+            )}
         </div>
       ),
     },

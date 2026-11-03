@@ -1,3 +1,4 @@
+import NoonStockChange from "./NoonStockChange";
 import { useState } from "react";
 import CopyStockCode from "../../components/CopyStockCode";
 import type { Row } from "../../lib/api";
@@ -134,8 +135,11 @@ export default function NoonCloseFocusTable({
                     <CopyStockCode instrumentId={row.instrument_id} />
                   </div>
                 </td>
-                <td className={tone(closeNumber(row.noon_change_pct))}>
-                  {percent(closeNumber(row.noon_change_pct))}
+                <td>
+                  <NoonStockChange
+                    value={row.noon_change_pct}
+                    state={row.noon_state}
+                  />
                 </td>
                 <td
                   className={

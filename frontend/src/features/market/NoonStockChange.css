@@ -1,0 +1,12 @@
+.noon-stock-change {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 6px;
+}
+
+.noon-stock-change .badge {
+  padding: 1px 5px;
+  font-size: 10px;
+}

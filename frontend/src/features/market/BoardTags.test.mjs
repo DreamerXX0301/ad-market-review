@@ -12,7 +12,7 @@ const ladder = encode(await compile("./ladderPresentation.ts"));
 const helperUrl = encode((await compile("./boardPresentation.ts")).replaceAll('from "./ladderPresentation"', "from " + JSON.stringify(ladder)));
 const { boardTags, previousBoardHeight } = await import(helperUrl);
 const component = encode((await compile("./BoardTags.tsx")).replaceAll('from "react/jsx-runtime"', "from " + JSON.stringify(import.meta.resolve("react/jsx-runtime"))).replaceAll('from "./boardPresentation"', "from " + JSON.stringify(helperUrl)).replace(/^import ["'][^"']+\.css["'];?$/gm, ""));
-const { default: BoardTags } = await import(component);
+const { default: BoardTags, StockEventBadges } = await import(component);
 const day = "2026-01-05", previous = "2026-01-02", snapshot = "synthetic-generation";
 const row = {
   instrument_id: "600001.SH", date: day, snapshot_id: snapshot,
@@ -102,7 +102,9 @@ for (const [code, label, expectedTone] of [
   ["limit_down", "跌停", "down"],
   ["open_count", "开板2次", "neutral"],
   ["repeated_break", "反复开板", "neutral"],
-  ["broken_pool_source", "炸板来源样本", "neutral"],
+  ["broken_pool_source", "炸板来源样本", "event"],
+  ["broken_board", "炸板", "event"],
+  ["rebound_board", "反包板候选", "up"],
   ["pullback_reclaim", "回踩收回", "neutral"],
 ]) {
   const sample = structuredClone(row);
@@ -158,3 +160,16 @@ assert.ok(primary.includes("炸板来源样本") && primary.includes("缩量") &
 assert.equal(renderToStaticMarkup(createElement(BoardTags, { row, date: previous, snapshotId: snapshot })), "");
 assert.deepEqual(row, before);
 console.log("shared board tags: independent height/type/volume/feedback, dated generation guards, unknown evidence and no inferred turnover/support passed");
+
+const compactRow = structuredClone(row);
+compactRow.board_presentation.types.push(
+  { code: "rebound_board", label: "反包板候选", state: "confirmed", source_date: day },
+  { code: "broken_board", label: "炸板", state: "confirmed", source_date: day },
+  { code: "open_count", label: "开板2次", state: "confirmed", source_date: day },
+);
+const renderCompact = (date, snapshotId) =>
+  renderToStaticMarkup(createElement(StockEventBadges, { row: compactRow, date, snapshotId }));
+assert.match(renderCompact(day, snapshot), />地天板<.*>反包板候选<.*>炸板</);
+assert.doesNotMatch(renderCompact(day, snapshot), /开板2次|首板|缩量/);
+assert.equal(renderCompact(previous, snapshot), "");
+assert.equal(renderCompact(day, "other"), "");

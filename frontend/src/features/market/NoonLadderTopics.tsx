@@ -1,3 +1,4 @@
+import NoonStockChange from "./NoonStockChange";
 import type { Row } from "../../lib/api";
 import CopyStockCode from "../../components/CopyStockCode";
 import { NoonBoardTag } from "./NoonBoardFilter";
@@ -98,9 +99,10 @@ function TopicChip({
                       : ""}
                   </b>
                   {noonNumber(item.change_pct) != null && (
-                    <span className={tone(noonNumber(item.change_pct))}>
-                      {percent(noonNumber(item.change_pct))}
-                    </span>
+                    <NoonStockChange
+                      value={item.change_pct}
+                      state={item.current_state}
+                    />
                   )}
                 </li>
               );

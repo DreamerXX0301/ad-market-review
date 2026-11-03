@@ -309,8 +309,8 @@ def _member_proofs(payload, topics, quotes):
             for row in sectors if _code(row) is not None}
 
 
-def _classifications_from_proofs(payload, proofs, generation, source_sha):
-    symbols, target_truncated = _target_symbols(payload)
+def _classifications_from_proofs(payload, proofs, generation, source_sha, *, target=None):
+    symbols, target_truncated = _target_symbols(payload) if target is None else (target, False)
     output = {symbol: _classification('原采集代际没有通过汇总对账的成员归属；不等于没有行业或题材', generation, source_sha)
               for symbol in symbols}
     total, truncated = 0, set()

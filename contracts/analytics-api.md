@@ -141,10 +141,10 @@
 
 ### 连板高度、板型与反馈展示
 
-总览炸板前五及封单收盘快照、梯队股票行、市场情绪的连板反馈及候选、盘面总览的连板反馈概览增加 `board_presentation`，版本 `dated-stock-board-presentation-v1`。对象绑定 `instrument_id/date/snapshot_id`；不得跨证券、日期或行情代际复用。原始字段及旧 `pattern_*` 保持原义。
+总览个股榜与收盘快照、近30日榜分页行、行业概念成分股、个股概要、梯队股票行、市场情绪与连板反馈提供 `board_presentation`，版本 `dated-stock-board-presentation-v1`。对象绑定 `instrument_id/date/snapshot_id`；不得跨证券、日期或行情代际复用。原始字段及旧 `pattern_*` 保持原义。
 
 - `height/previous_height={value,label,state,source_date,reason}`：当日/严格前一交易日确认涨停与同日来源正整数连板高度。未知不补首板；前日高度必须明确标为“昨”。
-- `types[]={code,label,state,source_date,reason}`：独立核验的 `earth_to_sky/one_price_limit_up/one_price_limit_down/limit_down/non_one_price_limit_up/open_count/repeated_break/pullback_reclaim/broken_pool_source`。涨跌停使用原始收盘、正成交量与同日来源；炸板来源样本另核验身份、日期和价格。开板次数缺失不补0，反复开板为来源次数≥3的项目展示阈值，不是标准烂板评级。非一字成交价差不证明充分换手；回踩收回仅指日线最低价低于前收且收盘不低于前收。
+- `types[]={code,label,state,source_date,reason}`：独立核验的 `earth_to_sky/one_price_limit_up/one_price_limit_down/limit_down/non_one_price_limit_up/open_count/repeated_break/pullback_reclaim/broken_pool_source/broken_board/rebound_board`。涨跌停使用原始收盘、正成交量与同日来源；炸板来源样本另核验身份、日期和价格。有同日来源炸板池且确认收盘未涨停时标记炸板；仅核实来源匹配时标记炸板来源样本。反包板候选按严格相邻三交易日核验涨停、未涨停、涨停，不代表K线实体完全包住。开板次数缺失不补0，反复开板为来源次数≥3的项目展示阈值，不是标准烂板评级。非一字成交价差不证明充分换手；回踩收回仅指日线最低价低于前收且收盘不低于前收。
 - `volume={state,label,ratio,previous_date,reason}`：严格相邻交易日正成交量比较，`expanded/contracted/flat/unknown` 分别为放量/缩量/平量/未知。原始OHLCV须与当前代际panel相符且公司行动、价格连续性可比，比例不使用成交额替代。
 - `feedback={code,label,state,source_date,cohort_date,reason}`：前日确认涨停样本的当日观察，优先跌停、晋级，然后可比收盘收益≤−5%的大幅回落、回落、正反馈或平盘。未知不当作晋级失败；正反馈不等于资金承接或可成交收益。`limitations[]` 保留各维度的证据限制。
 

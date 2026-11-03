@@ -55,3 +55,11 @@
   gap: 4px;
   padding-top: 5px;
 }
+
+.stock-event-change {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}

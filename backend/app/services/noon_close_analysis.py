@@ -666,6 +666,14 @@ def build_close_review(noon_payload, close_inputs):
     prior, heights = _previous(payload)
     observations = _watched(payload)
     sections, leaders = _focus(payload, noon_pools, close_pools, prior, observations)
+    # Stocks newly sealed after noon may be absent from the noon watch list.
+    # Their classifications can still be proven by the same noon sector lists.
+    from app.services.noon_sector_views import close_classifications
+    classifications = _object(payload.get('stock_classifications'))
+    missing = [symbol for symbol in sections if not _classifications(payload, symbol)['classification_keys']]
+    additional = close_classifications(payload, missing)
+    if additional:
+        payload = {**payload, 'stock_classifications': {**classifications, **additional}}
     # Include frozen observation rows even if they were not in a named event.
     all_rows = [_line(symbol, payload, close_inputs, noon_quotes, close_quotes, noon_pools, close_pools,
                       prior, heights, memberships) for symbol, memberships in sorted(sections.items())]
@@ -692,7 +700,7 @@ def build_close_review(noon_payload, close_inputs):
                 source_rank = None
             leader_rows[key].append({**{field: item.get(field) for field in (
                 'instrument_id', 'name', 'noon_price', 'close_price', 'noon_change_pct', 'close_change_pct',
-                'afternoon_change_pct', 'close_state', 'transition')},
+                'afternoon_change_pct', 'noon_state', 'close_state', 'transition')},
                 'relay_state': item['relay_state'], 'final_board_count': item['final_board_count'],
                 'previous_board_count': item['previous_board_count'],
                 'rank': source_rank if key == 'hot' else position, 'source_rank': source_rank,

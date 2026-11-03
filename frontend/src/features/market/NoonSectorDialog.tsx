@@ -1,3 +1,4 @@
+import NoonStockChange from "./NoonStockChange";
 import { useEffect, useState } from "react";
 import type { Row } from "../../lib/api";
 import { useApi } from "../../lib/api";
@@ -330,8 +331,15 @@ export default function NoonSectorDialog({
                       {
                         key: "change_pct",
                         title: "午间涨幅",
-                        render: (value) => (
-                          <span className={tone(value)}>{percent(value)}</span>
+                        render: (value, row) => (
+                          <NoonStockChange
+                            value={value}
+                            state={
+                              row.current_events?.length === 1
+                                ? row.current_events[0]
+                                : null
+                            }
+                          />
                         ),
                       },
                       {

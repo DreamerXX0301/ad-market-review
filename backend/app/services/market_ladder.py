@@ -237,7 +237,8 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
             row, symbol=symbol, day=day, snapshot_id=presentation_snapshot, calendar=calendar,
             quotes=own, events=[event] if event else [],
             previous_events=[event_days[previous][symbol]] if symbol in event_days.get(previous, {}) else [],
-            up=state(symbol, day), previous_up=state(symbol, previous),
+            break_events=current_events.get('breakpool', []), up=state(symbol, day),
+            previous_up=state(symbol, previous), before_previous_up=state(symbol, before),
             down=downs[symbol], patterns=presentation_patterns, board_text_events=source_board_events(proof,symbol,day))
         return row
 

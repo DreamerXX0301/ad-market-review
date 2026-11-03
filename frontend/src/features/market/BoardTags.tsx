@@ -21,6 +21,8 @@ export default function BoardTags({
       <span className="board-tags-empty">{emptyLabel}</span>
     ) : null;
   const priority = [
+    "broken_board",
+    "rebound_board",
     "one_price_limit_up",
     "one_price_limit_down",
     "earth_to_sky",
@@ -66,5 +68,33 @@ export default function BoardTags({
         </details>
       )}
     </div>
+  );
+}
+
+/** Compact dated markers for list rows with an existing quote cell. */
+export function StockEventBadges({
+  row,
+  date,
+  snapshotId,
+}: {
+  row: Row;
+  date: string;
+  snapshotId: unknown;
+}) {
+  return (
+    <BoardTags
+      row={row}
+      date={date}
+      snapshotId={snapshotId}
+      height={false}
+      boardText={false}
+      volume={false}
+      typeCodes={[
+        "broken_board",
+        "broken_pool_source",
+        "rebound_board",
+        "earth_to_sky",
+      ]}
+    />
   );
 }

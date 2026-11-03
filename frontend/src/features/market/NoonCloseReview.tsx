@@ -1,3 +1,4 @@
+import NoonStockChange from "./NoonStockChange";
 import { useEffect, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import { ChevronDown, ChevronUp, Copy, RefreshCw } from "lucide-react";
@@ -322,8 +323,11 @@ export function CloseRowsTable({
                     </details>
                   )}
                 </td>
-                <td className={tone(closeNumber(row.noon_change_pct))}>
-                  {percent(closeNumber(row.noon_change_pct))}
+                <td>
+                  <NoonStockChange
+                    value={row.noon_change_pct}
+                    state={row.noon_state}
+                  />
                 </td>
                 <td
                   className={

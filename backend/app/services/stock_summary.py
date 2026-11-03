@@ -120,8 +120,9 @@ def summary_for(market, identifier, as_of=None):
     master = _master(market); symbol = _symbol(identifier, master)
     calendar = market.calendar(); position = calendar.index(day)
     previous_day = calendar[position-1] if position > 0 else None
+    before = calendar[position-2] if position >= 2 else None
     method = getattr(market, 'history_for_instruments', None)
-    selected = method([symbol], start=previous_day or day, end=day).get(symbol, []) if callable(method) else []
+    selected = method([symbol], start=before or previous_day or day, end=day).get(symbol, []) if callable(method) else []
     exact = [row for row in selected if row.get('date') == day]
     quote = exact[0] if len(exact) == 1 and topic_member_metrics._number(exact[0].get('close')) is not None and exact[0]['close'] > 0 else None
     quotes = {symbol: quote} if quote is not None else {}
@@ -139,7 +140,8 @@ def summary_for(market, identifier, as_of=None):
         cached = _CACHE.get(key) if key is not None else None
         if cached is not None: _CACHE.move_to_end(key)
     if cached is not None: return deepcopy(cached)
-    change, change_reason = _daily_change(market, symbol, day, previous_day, calendar, selected, quote)
+    change, change_reason = _daily_change(market, symbol, day, previous_day, calendar,
+        [row for row in selected if row.get('date') in (previous_day, day)], quote)
     statistics = topic_member_metrics.member_metrics(market, day, [symbol], master, quotes, supplement,
         supplement_fingerprint=fingerprint).get(symbol, {})
     value = summary_fields({**statistics, 'instrument_id': symbol, 'code': symbol[:6],
@@ -155,7 +157,8 @@ def summary_for(market, identifier, as_of=None):
         master[symbol], day)
     # Reuse this summary's existing P/T quote batch and dated pool closure.
     # Source text is additive display evidence, never a reconstructed history.
-    from app.services.stock_board_presentation import build_board_presentation, retained_proof, source_board_events
+    from app.services.stock_board_presentation import build_board_presentation, down_state, pattern_fields, retained_proof, source_board_events
+    from app.services.market_service import dated_events
     from app.services.strategy_limits import quote_index
     reference_method=getattr(market,'reference',None)
     reference=reference_method() if callable(reference_method) else {}
@@ -163,10 +166,17 @@ def summary_for(market, identifier, as_of=None):
     source_events=source_board_events(proof,symbol,day)
     own_quotes=quote_index(selected)
     up=proof._state(symbol,day,quote)
+    row = {**(quote or {}), 'instrument_id': symbol, 'date': day, 'snapshot_id': status.get('snapshot_id')}
+    down = down_state(proof, symbol, day, quote, up)
+    patterns = pattern_fields(symbol, master[symbol], day, status.get('snapshot_id'), calendar, own_quotes, row, up, down)
     value['board_presentation']=build_board_presentation(
-        {**(quote or {}),'instrument_id':symbol,'date':day,'snapshot_id':status.get('snapshot_id')},
+        row,
         symbol=symbol,day=day,snapshot_id=status.get('snapshot_id'),calendar=calendar,
-        quotes=own_quotes,events=source_events,up=up,board_text_events=source_events)
+        quotes=own_quotes, events=source_events, up=up, down=down, patterns=patterns,
+        previous_up=proof._state(symbol, previous_day, own_quotes.get(previous_day)),
+        before_previous_up=proof._state(symbol, before, own_quotes.get(before)),
+        break_events=dated_events({**reference, '_supplement': supplement}, day).get('breakpool', []),
+        board_text_events=source_events)
     if key is not None:
         with _LOCK:
             _CACHE[key] = deepcopy(value); _CACHE.move_to_end(key)

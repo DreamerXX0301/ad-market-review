@@ -41,7 +41,9 @@ def execute_research(job_id,progress=None):
     if cutoff!=day:raise ValueError('研究任务业务日已变化，请手动重新运行')
     plan=parameters.get('research_plan')
     enhanced=plan is not None
-    if enhanced and plan!=freeze_plan(symbol,requested,cutoff):raise ValueError('研究计划版本、来源或预算未通过冻结校验，请手动创建新研究任务')
+    if enhanced and plan not in (freeze_plan(symbol, requested, cutoff),
+                                 freeze_plan(symbol, requested, cutoff, market_cap_fallback=False)):
+        raise ValueError('研究计划版本、来源或预算未通过冻结校验，请手动创建新研究任务')
     def checkpoint():
         with connect() as connection:
             row=connection.execute('SELECT status FROM job WHERE job_id=?',(job_id,)).fetchone()

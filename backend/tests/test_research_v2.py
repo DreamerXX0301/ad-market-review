@@ -256,3 +256,44 @@ def test_pause_cancel_during_new_public_step_cannot_publish(research,monkeypatch
     monkeypatch.setattr(research_materials,'ResearchPublicClient',StopPublic)
     with pytest.raises(exception):research_service.execute_research(job['job_id'])
     with core.connect() as connection:assert connection.execute('SELECT count(*) FROM research_report').fetchone()[0]==0
+
+
+@pytest.mark.parametrize('invalid', [None, 'identity', 'currency', 'future', 'swapped'])
+def test_tencent_market_cap_accepts_only_dated_same_stock_cny_snapshot(invalid):
+    fields = [''] * 83
+    fields[0], fields[2], fields[30], fields[44], fields[45], fields[82] = (
+        '51', '000001', '20260109150100', '8.125', '10.25', 'CNY')
+    if invalid == 'identity': fields[2] = '000002'
+    if invalid == 'currency': fields[82] = 'HKD'
+    if invalid == 'future': fields[30] = '20260111093000'
+    if invalid == 'swapped': fields[44] = '20'
+    body = ('v_sz000001="' + '~'.join(fields) + '";').encode()
+    client = ResearchPublicClient(httpx.MockTransport(lambda _: httpx.Response(200, content=body)))
+    if invalid:
+        with pytest.raises(ProviderError):
+            client.tencent_market_cap('000001.SZ', as_of_ms=ms('2026-01-10'))
+        return
+    result = client.tencent_market_cap('000001.SZ', as_of_ms=ms('2026-01-10'))
+    assert result['total_market_cap_cny'] == 1_025_000_000
+    assert result['float_market_cap_cny'] == 812_500_000
+    assert result['source_date'] == '2026-01-09' and result['source'] == 'tencent'
+
+
+def test_market_cap_fallback_does_not_expand_old_frozen_plan():
+    class PublicWithFallback(Public):
+        calls = 0
+
+        def tencent_market_cap(self, symbol, *, as_of_ms=None):
+            self.calls += 1
+            return {'total_market_cap_cny': 1000, 'float_market_cap_cny': 500, 'source': 'tencent',
+                    'source_timestamp_ms': ms('2026-01-09'), 'coverage': {'complete': True}}
+
+    public = PublicWithFallback()
+    for enabled in (False, True):
+        plan = freeze_plan(SYMBOL, 'fixture', '2026-01-10', market_cap_fallback=enabled)
+        report = research_materials.collect_materials(SYMBOL, public=public, as_of_ms=ms('2026-01-10'),
+                                                      enhanced=True, plan=plan)
+        assert public.calls == int(enabled)
+        assert report['market_cap']['source'] == ('tencent' if enabled else 'eastmoney')
+        if enabled:
+            assert [row['source'] for row in report['materials'] if row['kind'] == 'market_cap'] == ['tencent']

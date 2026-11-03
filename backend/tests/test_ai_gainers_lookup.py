@@ -17,7 +17,7 @@ from test_topic_members import A, B, C, D, memberships
 from test_workspace import ws
 
 
-QUESTION = '30涨幅榜，里面有没有电池相关的票'
+QUESTION = '近30日涨幅帮里面有没有电池相关的股票'
 REAL_READ_TOOL = tools.execute_read_tool
 
 

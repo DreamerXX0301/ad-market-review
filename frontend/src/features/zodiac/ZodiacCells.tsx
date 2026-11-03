@@ -1,3 +1,4 @@
+import BoardTags from "../market/BoardTags";
 import type { Row } from "../../lib/api";
 import { useState } from "react";
 import { createPortal } from "react-dom";
@@ -116,6 +117,22 @@ export function MetricCell({ row, column }: { row: Row; column: Column }) {
     : column.key === "entry_price"
       ? row.entry_basis?.reason
       : undefined;
+  if (
+    column.key === "board_types" &&
+    value &&
+    row.board_presentation &&
+    row.metrics_as_of
+  )
+    return (
+      <BoardTags
+        row={row}
+        date={row.metrics_as_of}
+        snapshotId={row.snapshot_id}
+        height={false}
+        boardText={false}
+        volume={false}
+      />
+    );
   if (column.type === "topics") return <Memberships row={row} />;
   if (column.type === "limit") return <YearLimitCountCell row={row} />;
   if (column.type === "recent") return <RecentLimitCell row={row} />;

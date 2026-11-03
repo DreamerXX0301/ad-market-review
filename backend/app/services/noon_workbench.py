@@ -250,7 +250,7 @@ def _classification_counts(rows, source, day, *, height_field='board_count', pre
                 # Member identity is the source code, never a same-name match;
                 # duplicate tags or repeated pool identities count once.
                 group['_items'][symbol] = {**{key: row.get(key) for key in (
-                    'instrument_id', 'name', 'change_pct')}, 'board_count': _height(row.get(height_field))}
+                    'instrument_id', 'name', 'change_pct', 'current_state')}, 'board_count': _height(row.get(height_field))}
                 group['_partial'] |= row.get('membership_state') == 'partial'
                 classified.add(symbol)
                 if row.get('membership_state') == 'partial':
@@ -436,7 +436,7 @@ def _afternoon(payload, feedback, directions, quotes):
     return observations[:8]
 
 
-def _previous_close_feedback(previous, quotes, events, day, calendar):
+def _previous_close_feedback(previous, quotes, events, day, calendar, classifications):
     """Match a previously frozen small list, never a newly queried old review."""
     value = previous.get('close_review_summary')
     empty = {'date': previous.get('date'), 'state': 'unavailable', 'groups': [],
@@ -469,9 +469,11 @@ def _previous_close_feedback(previous, quotes, events, day, calendar):
             item = _feedback_row({'instrument_id': symbol, 'name': old.get('name'),
                 'previous_board_count': old.get('final_board_count'), 'previous_close': old.get('close_price')},
                 quotes, events, allow_frozen_noon=False)
-            item.update(industries=_rows(old.get('industries')), topics=_rows(old.get('topics')),
-                        membership_state=old.get('membership_state', 'unknown'),
-                        membership_reason='前日午评已冻结的成员归属，不用今日成员改写',
+            classification = old if old.get('industries') or old.get('topics') else classifications.get(symbol, {})
+            item.update(industries=_rows(classification.get('industries')), topics=_rows(classification.get('topics')),
+                        membership_state=classification.get('membership_state', classification.get('state', 'unknown')),
+                        membership_reason=('前日午评已冻结的成员归属，不用今日成员改写'
+                            if classification.get('industries') or classification.get('topics') else '前日快照未留存该股可核验的归属，不使用今日成员补写'),
                         previous_transition=old.get('transition'), previous_close_change_pct=old.get('close_change_pct'),
                         previous_close_review_id=value.get('review_id'))
             rows.append(item)
@@ -490,7 +492,7 @@ def _previous_close_feedback(previous, quotes, events, day, calendar):
         'groups': groups, 'reason': value.get('reason'), 'scope': empty['scope']}
 
 
-def build_workbench(payload, *, membership_context=None, prior_event_context=None):
+def build_workbench(payload, *, membership_context=None, prior_event_context=None, close_classifications=None):
     previous = payload.get('previous_review') or {}
     # A malformed or mismatched prior date must not relabel unrelated rows as
     # yesterday. The collector normally supplies this exact trading-day link.
@@ -532,7 +534,7 @@ def build_workbench(payload, *, membership_context=None, prior_event_context=Non
     from app.services.noon_temperature import build_noon_temperature
     return {'version': VERSION, 'scope': '基于本份不可变午评及其原采集代际成员证据派生；不联网、不用当前成员回填，不改变盘后及策略信号。',
             'previous_feedback': feedback,
-            'previous_close_feedback': _previous_close_feedback(previous, quotes, pool_states, payload.get('date'), payload.get('calendar') or {}),
+            'previous_close_feedback': _previous_close_feedback(previous, quotes, pool_states, payload.get('date'), payload.get('calendar') or {}, close_classifications or {}),
             'negative_feedback': {'cohorts': negative, 'high_position_drops': [row for row in feedback['items']
                 if (_height(row.get('previous_board_count')) or 0) >= 2
                 and _num(row.get('change_pct')) is not None and row['change_pct'] <= -5],

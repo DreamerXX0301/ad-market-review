@@ -13,12 +13,15 @@ export type BoardTagOptions = {
   boardText?: boolean;
   previousHeight?: boolean;
   types?: boolean;
+  typeCodes?: readonly string[];
   feedback?: boolean;
   volume?: boolean;
 };
 const version = "dated-stock-board-presentation-v1";
 const types = new Set([
   "earth_to_sky",
+  "broken_board",
+  "rebound_board",
   "one_price_limit_up",
   "one_price_limit_down",
   "limit_down",
@@ -126,13 +129,17 @@ export function boardTags(
   // A present but invalid new object never falls back across a generation/date.
   if (!Object.prototype.hasOwnProperty.call(row, "board_presentation")) {
     const tags: BoardTag[] = flags.types
-      ? ladderPatternTags(row, date, snapshotId).map((tag) => ({
-          key: "type:" + tag.kind,
-          dimension: "type" as const,
-          label: tag.label,
-          tone: tag.kind.includes("down") ? "down" : "up",
-          detail: tag.detail,
-        }))
+      ? ladderPatternTags(row, date, snapshotId)
+          .filter(
+            (tag) => !flags.typeCodes || flags.typeCodes.includes(tag.kind),
+          )
+          .map((tag) => ({
+            key: "type:" + tag.kind,
+            dimension: "type" as const,
+            label: tag.label,
+            tone: tag.kind.includes("down") ? "down" : "up",
+            detail: tag.detail,
+          }))
       : [];
     const previous = previousBoardHeight(row, date, snapshotId);
     if (flags.previousHeight && previous !== null)
@@ -204,6 +211,7 @@ export function boardTags(
       if (
         !item ||
         !types.has(item.code) ||
+        (flags.typeCodes && !flags.typeCodes.includes(item.code)) ||
         item.state !== "confirmed" ||
         item.source_date !== date ||
         !text(item.label)
@@ -220,9 +228,12 @@ export function boardTags(
                 "one_price_limit_up",
                 "non_one_price_limit_up",
                 "earth_to_sky",
+                "rebound_board",
               ].includes(item.code)
             ? "up"
-            : "neutral",
+            : ["broken_board", "broken_pool_source"].includes(item.code)
+              ? "event"
+              : "neutral",
         detail: `${date} · 当日板型：${item.reason || item.label}`,
       });
     }

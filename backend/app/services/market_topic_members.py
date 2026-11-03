@@ -16,6 +16,7 @@ from app.domain.universe import identity_flags, BOARDS
 from app.services.market_history import resolve_reference
 from app.services.topic_member_metrics import member_metrics
 from app.services.member_turnover import turnover_index, turnover_for
+from app.services.stock_board_presentation import decorate_board_collections
 
 
 def _number(value):
@@ -98,6 +99,12 @@ def list_members(market, status, day, reference, rows, *, topic_id=None, source_
     turnover = turnover_index(reference, supplement, day)
     valid_quotes = {symbol: row for symbol, row in quotes.items() if symbol not in duplicates and _number(row.get('close')) is not None and row['close'] > 0}
     historical = member_metrics(market, day, members, master, valid_quotes, supplement)
+    quoted_members = [valid_quotes[symbol] for symbol in members if symbol in valid_quotes]
+    board_views = {}
+    if quoted_members and callable(getattr(market, 'history_for_instruments', None)) and callable(getattr(market, 'status', None)):
+        decorated = decorate_board_collections(market, status, day, reference, {'members': quoted_members}, master=master)
+        board_views = {row['instrument_id']: row['board_presentation'] for row in decorated['members']
+                       if 'board_presentation' in row}
     output = []
     for symbol in members:
         candidate = quotes.get(symbol)
@@ -116,7 +123,8 @@ def list_members(market, status, day, reference, rows, *, topic_id=None, source_
                        'board_reason': None if board != 'unknown' else '证券身份或代码分类未能确认，不默认归为主板',
                        'quote_date': day if quote else None, 'quote_available': quote is not None,
                        'quote_reason': None if quote else '该日存在重复报价，无法确认唯一行情' if symbol in duplicates else '该盘面日缺少有效报价，不使用更早或未来报价替代',
-                       'price_basis': 'none', **historical.get(symbol, {})})
+                       'price_basis': 'none', **historical.get(symbol, {}),
+                       **({'board_presentation': board_views[symbol]} if symbol in board_views else {})})
     output.sort(key=lambda row: (row['change_pct'] is None, -row['change_pct'] if row['change_pct'] is not None else 0, row['instrument_id']))
     known = sum(row['quote_available'] for row in output)
     base.update(topic={'topic_id': topic['topic_id'], 'name': topic['name'], 'kind': topic.get('kind', 'concept'), 'source_code': topic.get('topic_code')},

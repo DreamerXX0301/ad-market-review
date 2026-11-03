@@ -48,6 +48,10 @@ _RESEARCH_CAPS = {'valuation_snapshot': 1, 'shareholders': 1, 'market_cap': 1,
                   'financial_income': 2, 'financial_balance': 2, 'financial_cashflow': 2}
 
 
+def _research_source_allowed(source, kind):
+    return source in _RESEARCH_SOURCES or (source == 'tencent' and kind == 'market_cap')
+
+
 def _finite(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -114,7 +118,7 @@ def _metrics(rows, prefix, *, as_of, dates=None, scope=None):
         row = {'metric_id': prefix + ':' + item['key'], 'label': item.get('label', item['key']),
                        'value': item.get('value') if _finite(item.get('value')) else None,
                        'unit': item.get('unit'), 'formula': item.get('formula'),
-                       'reason': item.get('reason'), 'as_of': as_of, 'dates': dates or {'trade_date': as_of},
+                       'reason': item.get('reason'), 'as_of': as_of, 'dates': item.get('dates') or dates or {'trade_date': as_of},
                        'price_basis': 'none'}
         if scope:
             row['scope'] = scope
@@ -144,9 +148,24 @@ def _research_metrics(evidence, as_of):
                           ('total_shares', '股'), ('float_shares', '股')):
             if key in data:
                 rows.append({'key': key, 'label': key, 'value': data[key], 'unit': unit})
+    elif kind == 'shareholders':
+        items = [item for item in data.get('items', []) if isinstance(item, dict)
+                 and isinstance(item.get('report_period'), str)
+                 and re.fullmatch(r'\d{4}-\d{2}-\d{2}', item['report_period'])]
+        periods = Counter(item['report_period'] for item in items)
+        for item in items:
+            if periods[item['report_period']] != 1:
+                continue
+            for key, unit in (('holder_count', '户'), ('change_ratio_pct', '%')):
+                if key in item:
+                    rows.append({'key': item['report_period'] + ':' + key, 'label': key, 'value': item[key],
+                                 'unit': unit, 'dates': {**dates, 'report_period': item['report_period'],
+                                                       'published_date': item.get('published_date')},
+                                 'reason': '已披露股东户数及来源环比；不能识别散户人数或实时持仓'})
     elif kind.startswith('financial_'):
         for key in ('operating_income', 'parent_holder_net_profit', 'net_profit', 'basic_eps',
-                    'assets_total', 'total_debt', 'holder_equity_total', 'act_cash_flow_net'):
+                    'assets_total', 'total_debt', 'holder_equity_total', 'act_cash_flow_net',
+                    'invest_cash_flow_net', 'financing_cash_flow_net'):
             if key in data:
                 rows.append({'key': key, 'label': key, 'value': data[key],
                              'unit': 'CNY/股' if key == 'basic_eps' else 'CNY',
@@ -203,7 +222,7 @@ def _research_context(report_id, as_of):
             reason = '证据标识缺失或重复'
         elif raw.get('instrument_id') != symbol:
             reason = '证据证券身份与父报告不一致'
-        elif source not in _RESEARCH_SOURCES or raw.get('kind') not in _RESEARCH_KINDS:
+        elif not _research_source_allowed(source, raw.get('kind')) or raw.get('kind') not in _RESEARCH_KINDS:
             reason = '不是本版允许的已核验结构化材料来源或类型'
         elif raw.get('content_hash') != digest(raw.get('data')):
             reason = '已保存证据内容与来源内容哈希不一致，未发送损坏材料'

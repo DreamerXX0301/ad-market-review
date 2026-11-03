@@ -306,6 +306,7 @@ const boardCode = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.ES2022 } },
 ).outputText;
 for (const [from, to] of Object.entries({
+  "./NoonStockChange": encoded("export default 'stock-change';"),
   react: encoded(
     "export const {useState,useEffect}=globalThis.__noonSectorHooks;",
   ),
@@ -446,12 +447,13 @@ try {
       .render(missingQuote.board).props.children,
     "主板",
   );
-  assert.equal(
-    table()
-      .props.columns.find((column) => column.key === "change_pct")
-      .render(null).props.children,
-    "—",
-  );
+  const changeCell = table().props.columns.find((column) => column.key === "change_pct").render;
+  assert.deepEqual(changeCell(null, missingQuote).props, { value: null, state: null });
+  assert.deepEqual(changeCell(9.99, { current_events: ["limit_up"] }).props, {
+    value: 9.99, state: "limit_up",
+  });
+  assert.equal(changeCell(9.99, { current_events: ["limit_up", "limit_break"] }).props.state, null);
+
   table().props.onStock(missingQuote.instrument_id);
   assert.deepEqual(
     openedStocks,

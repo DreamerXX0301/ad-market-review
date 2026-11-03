@@ -91,6 +91,27 @@ def test_stale_future_invalid_and_duplicate_quotes_never_fill_selected_day(archi
     assert '重复' in result['items'][-1]['quote_reason']
 
 
+def test_members_attach_selected_day_board_evidence_in_one_batch(archives, monkeypatch):
+    archives('market-old', OLD, [topic([A, B, C])])
+    quoted = quote(A, 5, open=9, high=11, low=9, volume=100)
+    calls = []
+
+    def history(self, symbols, *, start, end):
+        calls.append((symbols, start, end))
+        return {A: [quoted]}
+
+    monkeypatch.setattr(LocalMarket, 'history_for_instruments', history, raising=False)
+    monkeypatch.setattr(LocalMarket, 'status', lambda self: {'snapshot_id': 'market-current'}, raising=False)
+    reference = {'pool_history': {OLD: {'breakpool': [{'instrument_id': A, 'date': OLD, 'close': 10}]}}}
+    result = call(reference, [quoted, quote(B, 4), quote(B, 5)], topic_id='fuyao-881001.TI')
+    assert calls == [([A, B, C], OLD, OLD), ([A], OLD, OLD)]
+    by_symbol = {row['instrument_id']: row for row in result['items']}
+    board = by_symbol[A]['board_presentation']
+    assert board['date'] == OLD and board['snapshot_id'] == result['snapshot_id']
+    assert any(tag['code'] == 'broken_pool_source' for tag in board['types'])
+    assert all('board_presentation' not in by_symbol[symbol] for symbol in (B, C))
+
+
 def test_verified_empty_members_distinct_from_missing_history(archives):
     archives('market-old', OLD, [topic([])])
     result = call({}, [], topic_id='fuyao-881001.TI')

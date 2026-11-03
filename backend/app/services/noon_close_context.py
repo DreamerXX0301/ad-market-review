@@ -1,7 +1,7 @@
 """Freeze a bounded prior-close observation fragment before a noon capture.
 
-This is a collector-only SQLite read. Old noon GETs use the fragment already
-inside their immutable body. Review IDs and SHAs are provenance labels, not
+The collector freezes the original fragment. A read-only compatibility projection
+may recover missing classifications while the exact source remains retained. IDs and SHAs are not
 foreign keys or dependencies that indefinitely pin earlier noon snapshots.
 """
 from hashlib import sha256
@@ -155,6 +155,35 @@ def validated_frozen_provenance(payload):
         return value['review_id']
     except (TypeError, ValueError, KeyError, OverflowError, OSError):
         return None
+
+
+def retained_close_classifications(payload):
+    """Recover only missing display tags from the pinned prior review's original noon."""
+    review_id = validated_frozen_provenance(payload)
+    if review_id is None:
+        return {}
+    frozen = payload['previous_review']['close_review_summary']
+    missing = [row['instrument_id'] for row in frozen['items'] if not row['industries'] and not row['topics']]
+    if not missing:
+        return {}
+    try:
+        with connect() as connection:
+            source = connection.execute("""SELECT s.payload_json,s.content_sha256 FROM market_noon_close_review r
+                JOIN market_noon_snapshot s ON s.snapshot_id=r.snapshot_id
+                WHERE r.review_id=? AND r.trade_date=? AND s.trade_date=r.trade_date
+                  AND r.revision=? AND r.generated_at_ms=? AND r.result_sha256=? AND r.close_input_sha256=?
+                  AND s.content_sha256=r.noon_sha256""",
+                (review_id, frozen['date'], frozen['revision'], frozen['generated_at_ms'],
+                 frozen['result_sha256'], frozen['close_input_sha256'])).fetchone()
+        if not source or sha256(source['payload_json'].encode()).hexdigest() != source['content_sha256']:
+            return {}
+        original = json.loads(source['payload_json'])
+        if original.get('date') != frozen['date']:
+            return {}
+        from app.services.noon_sector_views import close_classifications
+        return close_classifications(original, missing)
+    except (ValueError, TypeError, KeyError, sqlite3.Error):
+        return {}
 
 
 def freeze_previous_close_summary(previous_day, known_at_ms):

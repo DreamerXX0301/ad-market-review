@@ -1,3 +1,4 @@
+import NoonStockChange from "./NoonStockChange";
 import { useRef, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import CopyStockCode from "../../components/CopyStockCode";
@@ -247,15 +248,13 @@ function FeedbackTable({
   const cell = (row: Row, key: string) => {
     if (key === "name")
       return <Stock row={row} onStock={onStock} chartDate={chartDate} />;
-    if (key === "membership")
-      return noonRows(row.industries).length || noonRows(row.topics).length ? (
-        <MembershipTags row={row} />
-      ) : (
-        <span title={row.membership_reason || "成员归属未通过核验"}>—</span>
-      );
+    if (key === "membership") return <MembershipTags row={row} />;
     if (key === "height")
       return heightOf(row) == null ? "—" : `${heightOf(row)}板`;
-    if (key === "change_pct") return percent(noonNumber(row.change_pct));
+    if (key === "change_pct")
+      return (
+        <NoonStockChange value={row.change_pct} state={row.current_state} />
+      );
     if (key === "latest_price") return num(noonNumber(row.latest_price));
     if (key === "high")
       return (
@@ -349,7 +348,7 @@ function FeedbackTable({
                     {columns.map((column) => (
                       <td
                         key={column.key}
-                        className={`${column.text ? "noon-text-column" : "noon-number-column"} ${column.key === "membership" ? "noon-member-classification-cell" : ""} ${column.key === "change_pct" ? tone(noonNumber(row.change_pct)) : ""} ${column.key === "reason" ? "noon-event-reason-cell" : ""}`}
+                        className={`${column.text ? "noon-text-column" : "noon-number-column"} ${column.key === "membership" ? "noon-member-classification-cell" : ""} ${column.key === "reason" ? "noon-event-reason-cell" : ""}`}
                       >
                         {cell(row, column.key)}
                       </td>
@@ -479,8 +478,11 @@ function GroupCard({ group, ...stockProps }: StockProps & { group: Row }) {
                     </span>
                   </div>
                   <PreviousTheme row={row} />
-                  <b className={tone(noonNumber(row.change_pct))}>
-                    {percent(noonNumber(row.change_pct))}
+                  <b>
+                    <NoonStockChange
+                      value={row.change_pct}
+                      state={row.current_state}
+                    />
                   </b>
                 </li>
               );
@@ -941,10 +943,11 @@ function LadderGroup({ group, ...stockProps }: StockProps & { group: Row }) {
                   <td className="noon-ladder-stock-cell noon-text-column">
                     <Stock row={row} {...stockProps} />
                   </td>
-                  <td
-                    className={`noon-number-column ${tone(noonNumber(row.change_pct))}`}
-                  >
-                    {percent(noonNumber(row.change_pct))}
+                  <td className="noon-number-column">
+                    <NoonStockChange
+                      value={row.change_pct}
+                      state={row.current_state}
+                    />
                   </td>
                   {hasClues && (
                     <td className="noon-text-column">

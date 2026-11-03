@@ -16,7 +16,7 @@ import httpx
 from app.adapters.providers import ProviderError
 
 CHINA=ZoneInfo('Asia/Shanghai')
-BASES={'cninfo':'https://www.cninfo.com.cn','holders':'https://datacenter-web.eastmoney.com','quote':'https://push2.eastmoney.com','business':'https://emweb.securities.eastmoney.com'}
+BASES={'tencent_quote':'https://qt.gtimg.cn','cninfo':'https://www.cninfo.com.cn','holders':'https://datacenter-web.eastmoney.com','quote':'https://push2.eastmoney.com','business':'https://emweb.securities.eastmoney.com'}
 
 
 def number(value):
@@ -58,6 +58,7 @@ class ResearchPublicClient:
                             elif count>4*1024*1024:raise ProviderError('公开研究来源单页超过容量边界')
                             content.extend(chunk)
                         if self.budget:self.budget.check_response(len(content))
+                if host == 'tencent_quote':return {'quote_text': content.decode('gb18030')}
                 result=json.loads(content)
                 if not isinstance(result,dict):raise ValueError('shape')
                 return result
@@ -122,6 +123,34 @@ class ResearchPublicClient:
         floating=floating if floating is not None and floating>=0 else None
         if total is None and floating is None:raise ProviderError('来源没有返回可核验市值字段')
         return {'total_market_cap_cny':total,'float_market_cap_cny':floating,'total_shares':number(data.get('f84')),'float_shares':number(data.get('f85')),'source_date':observed,'source':'eastmoney','unit':'CNY','coverage':{'complete':total is not None and floating is not None,'reason':None if total is not None and floating is not None else '部分市值字段未披露或无效'},'raw':raw}
+
+    def tencent_market_cap(self, symbol, *, as_of_ms=None):
+        """Independently dated CNY quote; never reconstruct historical market cap."""
+        if not re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', symbol):
+            raise ProviderError('市值须提供完整证券代码及市场')
+        market = symbol[-2:]
+        code = market.lower() + symbol[:6]
+        raw = self.request('tencent_quote', '/q=' + code)
+        observed_limit = as_of_ms if as_of_ms is not None else int(time.time() * 1000)
+        quote = re.fullmatch(r'v_' + code + r'="([^"\r\n]+)";', raw['quote_text'].strip())
+        fields = quote[1].split('~') if quote else []
+        if (len(fields) <= 82 or fields[2] != symbol[:6] or fields[0] != {'SH': '1', 'SZ': '51', 'BJ': '62'}[market]
+                or fields[82] != 'CNY' or not re.fullmatch(r'[0-9]{14}', fields[30])):
+            raise ProviderError('腾讯市值证券、币种或快照格式未通过核验')
+        try:
+            observed = datetime.strptime(fields[30], '%Y%m%d%H%M%S').replace(tzinfo=CHINA)
+        except ValueError:
+            raise ProviderError('腾讯市值来源时间无效') from None
+        stamp = int(observed.timestamp() * 1000)
+        floating, total = number(fields[44]), number(fields[45])
+        if (stamp <= 0 or stamp > observed_limit or total is None or floating is None
+                or not 0 < floating <= total):
+            raise ProviderError('腾讯市值来源时间或市值字段未通过核验')
+        return {'total_market_cap_cny': round(total * 100_000_000),
+                'float_market_cap_cny': round(floating * 100_000_000),
+                'source_date': observed.date().isoformat(), 'source_timestamp_ms': stamp,
+                'source': 'tencent', 'unit': 'CNY', 'coverage': {'complete': True, 'reason': None},
+                'raw': raw}
 
     def company_profile(self,symbol,as_of,*,max_rows=200):
         """Current business composition, independently verified identity and units.

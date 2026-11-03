@@ -1,3 +1,4 @@
+import NoonStockChange from "./NoonStockChange";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import {
@@ -322,9 +323,10 @@ function QuoteTable({
     {
       ...column("change_pct", "午间涨跌幅", (value) => percent(value)),
       cell: (row: Row) => (
-        <span className={tone(number(row, "change_pct"))}>
-          {percent(number(row, "change_pct"))}
-        </span>
+        <NoonStockChange
+          value={number(row, "change_pct")}
+          state={row.current_event_state}
+        />
       ),
     },
     ...(!poolKind

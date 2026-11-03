@@ -199,11 +199,14 @@ def overview(day=None):
             symbol = event.get("thscode")
             largest.append({**indexed.get(symbol, {"instrument_id": symbol, "code": event.get("ticker"), "name": event.get("name")}), "seal_money": event.get("seal_money"), "reason": event.get("limit_up_reason"), "limit_time": event.get("limit_up_time"), "board_count": event.get("continue_day_cnt"), "source":event.get("source","fuyao"), "date":day, "scope":"收盘池单次封单资金，不代表稳定性", "topics":indexed.get(symbol,{}).get("topics") or ([{"name":event["source_industry"],"kind":"source_industry"}] if event.get("source_industry") else [])})
     from app.services.stock_board_presentation import decorate_board_collections
-    displayed=decorate_board_collections(market,status,day,reference,{'divergence':divergence,'seals':largest})
-    divergence,largest=displayed['divergence'],displayed['seals']
     ranking,_=cached_gainers(market,status,reference,day,rows,5)
     from app.services.market_top_amount import decorate_top_amount
     top_amount, top_amount_activity = decorate_top_amount(market,status,day,rows,reference)
+    displayed = decorate_board_collections(market, status, day, reference, {
+        'divergence': divergence, 'seals': largest, 'amount': top_amount, 'gainers': top('change_pct'),
+        'losers': top('change_pct', False), 'gainers_30d': [r for r in ranking if r.get('rank') is not None][:5],
+    })
+    divergence, largest = displayed['divergence'], displayed['seals']
     from app.services.market_feedback import feedback_view
     feedback = feedback_view(market,status,reference,day,indexed)
     from app.services.market_broken_boards import build_analysis
@@ -213,7 +216,7 @@ def overview(day=None):
     feedback['broken_board_analysis'] = {**broken, **{
         key: {field: value for field, value in broken[key].items() if field != 'items'}
         for key in ('current', 'previous_feedback') if isinstance(broken.get(key), dict)}}
-    return json_clean({**feedback, "date": day, "snapshot_id": status["snapshot_id"], "data_coverage": data_coverage("overview", status, day, reference, market.calendar()), "indices": market.index_quotes(day) if hasattr(market,"index_quotes") else market.indices(day), "breadth": _breadth(market, rows, day), "total_amount": amount, "amount_scope": "沪深京已留存A股股票成交额", "shsz_total_amount": sum(r["amount"] for r in shsz if number(r.get("amount"))), "bj_amount": sum(r["amount"] for r in three if r["instrument_id"].endswith(".BJ") and number(r.get("amount"))), "sh_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SH") and number(r.get("amount"))), "sz_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SZ") and number(r.get("amount"))), **comparison, "top_amount": top_amount, "top_amount_activity": top_amount_activity, "top_gainers": top("change_pct"), "top_losers": top("change_pct", False), "top_30d": [r for r in ranking if r.get("rank") is not None][:5], "limit_up_count": len(events["limitup"]) if "limitup" in events else None, "limit_down_count": len(events["limitdown"]) if "limitdown" in events else None, "broken_count": len(events["breakpool"]) if "breakpool" in events else None, "divergence": divergence, "largest_seals": largest, "seal_funds_top5": largest, "seal_stability": {"items": [], "needed_capability":"盘中连续封单金额与委托队列快照，带时间戳、采样间隔和覆盖率；通常需要Level-2或许可的连续盘口采样", "unavailable_reason": "当前仅留存封单金额快照，尚无连续封单序列，不能据此计算封单稳定性"}, "warnings": ["行情与技术指标为真实未复权数据；公司行动附近指标重新预热", "上涨家数为已留存可比样本；停牌与缺数尚未全部解释"], "quality": status["quality"]})
+    return json_clean({**feedback, "date": day, "snapshot_id": status["snapshot_id"], "data_coverage": data_coverage("overview", status, day, reference, market.calendar()), "indices": market.index_quotes(day) if hasattr(market,"index_quotes") else market.indices(day), "breadth": _breadth(market, rows, day), "total_amount": amount, "amount_scope": "沪深京已留存A股股票成交额", "shsz_total_amount": sum(r["amount"] for r in shsz if number(r.get("amount"))), "bj_amount": sum(r["amount"] for r in three if r["instrument_id"].endswith(".BJ") and number(r.get("amount"))), "sh_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SH") and number(r.get("amount"))), "sz_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SZ") and number(r.get("amount"))), **comparison, "top_amount": displayed["amount"], "top_amount_activity": top_amount_activity, "top_gainers": displayed["gainers"], "top_losers": displayed["losers"], "top_30d": displayed["gainers_30d"], "limit_up_count": len(events["limitup"]) if "limitup" in events else None, "limit_down_count": len(events["limitdown"]) if "limitdown" in events else None, "broken_count": len(events["breakpool"]) if "breakpool" in events else None, "divergence": divergence, "largest_seals": largest, "seal_funds_top5": largest, "seal_stability": {"items": [], "needed_capability":"盘中连续封单金额与委托队列快照，带时间戳、采样间隔和覆盖率；通常需要Level-2或许可的连续盘口采样", "unavailable_reason": "当前仅留存封单金额快照，尚无连续封单序列，不能据此计算封单稳定性"}, "warnings": ["行情与技术指标为真实未复权数据；公司行动附近指标重新预热", "上涨家数为已留存可比样本；停牌与缺数尚未全部解释"], "quality": status["quality"]})
 
 
 @supplement_reader
@@ -397,6 +400,10 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base.update(page=page,page_size=page_size,pages=pages)
         base['items']=base['items'][(page-1)*page_size:page*page_size]
     else:base["items"] = base["items"][:max(1, min(int(limit), 1000))]
+    if (kind == 'gainers' and gainers_lookup is None and page_size is not None
+            and callable(getattr(market, 'history_for_instruments', None))):
+        from app.services.stock_board_presentation import decorate_board_collections
+        base['items'] = decorate_board_collections(market, status, day, reference, {'items': base['items']})['items']
     return json_clean(base)
 
 

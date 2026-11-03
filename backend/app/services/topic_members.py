@@ -12,6 +12,8 @@ from app.core import connect, get_market
 from app.domain.universe import BOARDS, identity_flags
 from app.services import topics
 from app.services.market_supplement import load_supplement
+from app.services.stock_board_presentation import decorate_board_collections
+from app.services.supplement_access import supplement_reader
 from app.services.topic_member_metrics import member_metrics
 from app.services.workspace_common import code_info, current, fail, obj, rows
 
@@ -103,6 +105,7 @@ def _guard(connection, day, head):
         fail('业务日或行情发布已变化，请重新加载后操作。', 409)
 
 
+@supplement_reader
 def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_order='desc', *, boards=None):
     selected = _ids(topic_ids, 'topic_ids', 20)
     selected_boards = _boards(boards)
@@ -123,7 +126,15 @@ def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_or
     # Exactly one panel read, with an exact observed-day check per security.
     panel = market.panel(day)
     if isinstance(panel, dict): panel = panel.get('items', panel.get('stocks', []))
-    quotes = {row['instrument_id']: row for row in panel if str(row.get('date', row.get('trade_date', '')))[:10] == day and row.get('instrument_id')}
+    quotes = {}
+    duplicates = set()
+    for row in panel:
+        ident = row.get('instrument_id')
+        if not ident or str(row.get('date', row.get('trade_date', '')))[:10] != day:
+            continue
+        if ident in quotes:
+            duplicates.add(ident)
+        quotes[ident] = row
     supplement = load_supplement(snapshot) if snapshot else {}
     public = supplement.get('public_pools', {}).get(day, {})
     turnover = {row['instrument_id']: row for row in public.get('items', []) if row.get('date') == day and row.get('instrument_id')} if public.get('date') == day else {}
@@ -148,6 +159,18 @@ def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_or
                     board_scope='当前已核验名录证券代码与交易所分类；不代表历史上市板块身份',
                     board_reason=None if board != 'unknown' else '没有可确认的股票名录身份，不默认归为主板')
         if not search or search in ' '.join([item['code'], item['name'], ident, *item['topics'], *item['industries']]).casefold(): output.append(item)
+    quoted_members = [quotes[item['instrument_id']] for item in output
+                      if item['quote_available'] and item['instrument_id'] not in duplicates
+                      and item['close'] is not None and item['close'] > 0]
+    if snapshot and quoted_members and callable(getattr(market, 'history_for_instruments', None)):
+        reference = {**market.reference(), '_supplement': supplement}
+        decorated = decorate_board_collections(market, {'snapshot_id': snapshot}, day, reference,
+                                               {'members': quoted_members}, master=master)
+        board_views = {row['instrument_id']: row['board_presentation'] for row in decorated['members']
+                       if 'board_presentation' in row}
+        for item in output:
+            if item['instrument_id'] in board_views:
+                item['board_presentation'] = board_views[item['instrument_id']]
     present = [item for item in output if item.get(sort_by) is not None]
     missing = [item for item in output if item.get(sort_by) is None]
     present.sort(key=lambda item: item[sort_by].casefold() if isinstance(item[sort_by], str) else item[sort_by], reverse=sort_order == 'desc')

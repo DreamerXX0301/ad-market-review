@@ -42,6 +42,20 @@ def test_new_frozen_members_join_only_the_same_noon_quotes_and_never_current_top
     assert result['items'][1]['amount'] == 0
 
 
+def test_closing_targets_reuse_only_original_frozen_members(monkeypatch):
+    value = payload()
+    value['stock_classifications'] = {}
+    value['sector_memberships'] = views.freeze_memberships(value, [topic()])
+    symbol = value['stocks'][1]['instrument_id']
+    monkeypatch.setattr(membership, '_load_topics', lambda *args: pytest.fail('no current catalog'))
+    result = views.close_classifications(value, [symbol, '600999.SH'])
+    assert result[symbol]['state'] == 'observed_sample'
+    assert result[symbol]['industries'][0]['topic_code'] == CODE
+    assert result['600999.SH']['state'] == 'unknown'
+    value['sector_memberships']['items'][CODE]['sha256'] = '0' * 64
+    assert views.close_classifications(value, [symbol])[symbol]['state'] == 'unknown'
+
+
 def test_missing_quote_stays_unknown_board_filter_sort_and_pages_are_full_sample():
     value, t = payload(), topic()
     t['instrument_ids'].extend(['300001.SZ', '688001.SH', '920001.BJ'])

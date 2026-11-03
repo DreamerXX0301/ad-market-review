@@ -358,7 +358,19 @@ function LegacyResearchDetails({
               <strong>{researchAmount(cap.float_market_cap_cny)}</strong>
             </div>
             <p>
-              市值来源日 <b>{cap.source_date || "尚未取得"}</b>
+              市值来源{" "}
+              <b>
+                {cap.source === "tencent"
+                  ? "腾讯行情"
+                  : cap.source === "eastmoney"
+                    ? "东方财富"
+                    : "尚未取得"}
+              </b>
+              {cap.source_timestamp_ms
+                ? ` · ${dateTime(cap.source_timestamp_ms)}`
+                : cap.source_date
+                  ? ` · ${cap.source_date}`
+                  : ""}
             </p>
           </div>
           <Notes>

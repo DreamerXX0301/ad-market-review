@@ -2399,7 +2399,11 @@ export function StockDrawer({
                   snapshotId={headerSummary.snapshot_id}
                   height
                   boardText
-                  types={false}
+                  typeCodes={[
+                    "broken_board",
+                    "broken_pool_source",
+                    "rebound_board",
+                  ]}
                   volume={false}
                   feedback={false}
                 />

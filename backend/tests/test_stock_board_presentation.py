@@ -45,7 +45,7 @@ def test_one_price_volume_contraction_height_and_promotion_are_independent(marke
     assert set(tags(value)) == {'one_price_limit_up'}
     assert value['volume']['state'] == 'contracted' and value['volume']['ratio'] == .5
     assert value['feedback']['code'] == 'promoted' and value['feedback']['cohort_date'] == DAYS[-2]
-    assert len(market.history_calls) == 1 and market.history_calls[0][1:] == (DAYS[-2], TODAY)
+    assert len(market.history_calls) == 1 and market.history_calls[0][1:] == (DAYS[-3], TODAY)
     assert market.history == original
 
 
@@ -89,9 +89,9 @@ def test_breakpool_unsealed_stock_has_no_current_height_and_conflicting_counts_a
     market.ref['breakpool'] = [{'thscode': B, 'last_price': 10, 'open_times': 4}]
     value = display(market, (B,))
     assert value['height']['state'] == 'unknown' and value['previous_height']['value'] == 1
-    assert set(tags(value)) == {'broken_pool_source', 'open_count', 'repeated_break'}
+    assert set(tags(value)) == {'broken_board', 'open_count', 'repeated_break'}
     market.ref['breakpool'][0]['open_num'] = 2
-    assert set(tags(display(market, (B,)))) == {'broken_pool_source'}
+    assert set(tags(display(market, (B,)))) == {'broken_board'}
 
 
 @pytest.mark.parametrize('mode', ['missing_p', 'duplicate_t', 'zero_p_volume', 'action', 'action_unknown',
@@ -204,4 +204,17 @@ def test_feedback_sort_uses_confirmed_height_and_unknown_last_without_changing_r
     states = [row['board_presentation']['previous_height']['state'] for row in result]
     assert states == (['confirmed', 'confirmed'] if mode == 'raw_disagreement' else
                       ['confirmed', 'unknown'] if mode == 'one_unknown' else ['unknown', 'unknown'])
-    assert len(market.history_calls) == 1 and market.history_calls[0][1:] == (DAYS[-2], TODAY)
+    assert len(market.history_calls) == 1 and market.history_calls[0][1:] == (DAYS[-3], TODAY)
+
+
+def test_rebound_marker_requires_all_three_adjacent_sessions(market):
+    assert tags(display(market, (A,)))['rebound_board']['label'] == '反包板候选'
+    market.history[A] = [row for row in market.history[A] if row['date'] != DAYS[-2]]
+    assert 'rebound_board' not in tags(display(market, (A,)))
+
+
+def test_break_pool_without_confirmed_negative_close_remains_source_sample(market):
+    market.ref['pool_trade_date'] = TODAY
+    market.ref['breakpool'] = [{'thscode': B, 'last_price': 10}]
+    market.ref['_supplement']['annual_pools'].pop(TODAY)
+    assert set(tags(display(market, (B,)))) == {'broken_pool_source'}

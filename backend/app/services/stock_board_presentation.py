@@ -1,6 +1,6 @@
 """Dated stock-board display facts, separate from raw fields and strategy rules.
 
-The pure builder consumes already-read P/T quotes and source proofs. The small
+The pure builder consumes already-read dated quotes and source proofs. The small
 collection adapter performs one bounded batch, never a per-stock history read.
 """
 from __future__ import annotations
@@ -146,7 +146,7 @@ def board_text_for(events, symbol, day, quote, confirmed):
 
 
 def build_board_presentation(row, *, symbol, day, snapshot_id, calendar, quotes, events=(), previous_events=(),
-                             break_events=(), up=None, previous_up=None, down=None, patterns=None, board_text_events=()):
+                             break_events=(), up=None, previous_up=None, before_previous_up=None, down=None, patterns=None, board_text_events=()):
     """Return independent height, shape, volume and next-day feedback facts."""
     valid_calendar = isinstance(calendar, list) and calendar == sorted(set(calendar)) and day in calendar
     position = calendar.index(day) if valid_calendar else 0
@@ -154,7 +154,8 @@ def build_board_presentation(row, *, symbol, day, snapshot_id, calendar, quotes,
     current = quotes.get(day); prior = quotes.get(previous) if previous else None
     generation = (isinstance(snapshot_id, str) and bool(snapshot_id) and STOCK.fullmatch(str(symbol))
                   and row.get('snapshot_id', snapshot_id) == snapshot_id and row.get('date', day) == day)
-    current_valid = bool(generation and _raw(current, symbol, day))
+    current_valid = bool(generation and _raw(current, symbol, day)
+                         and (row.get('close') is None or row['close'] == current['close']))
     prior_valid = bool(generation and previous and _raw(prior, symbol, previous))
     up_confirmed = bool(current_valid and _confirmed(up, current, symbol, day))
     prior_confirmed = bool(prior_valid and _confirmed(previous_up, prior, symbol, previous))
@@ -165,6 +166,10 @@ def build_board_presentation(row, *, symbol, day, snapshot_id, calendar, quotes,
     types = []
     def tag(code, label, reason):
         types.append({'code': code, 'label': label, 'state': 'confirmed', 'source_date': day, 'reason': reason})
+    if (up_confirmed and prior_valid and (previous_up or {}).get('state') is False
+            and position >= 2 and _raw(quotes.get(calendar[position-2]), symbol, calendar[position-2])
+            and _confirmed(before_previous_up, quotes[calendar[position-2]], symbol, calendar[position-2])):
+        tag('rebound_board', '反包板候选', '严格相邻三交易日依次确认收盘涨停、未涨停、收盘涨停；属于梯队反包候选口径')
     patterns = patterns or {}
     shape_codes = set()
     if (generation and patterns.get('pattern_date') == day and patterns.get('pattern_as_of') == day
@@ -186,7 +191,10 @@ def build_board_presentation(row, *, symbol, day, snapshot_id, calendar, quotes,
         tag('non_one_price_limit_up', '非一字涨停', '当日已确认涨停且原始成交价有价差；常见换手板观察，不代表充分换手或封板质量')
     matched_breaks = [event for event in break_events if current_valid and _event_matches(event, symbol, day, current)]
     if matched_breaks:
-        tag('broken_pool_source', '炸板来源样本', '同日来源炸板池证券、日期与原始收盘已匹配；不据此还原完整分时路径或保证收盘未封板')
+        if (up or {}).get('state') is False:
+            tag('broken_board', '炸板', '同日来源炸板池匹配原始收盘，且已确认收盘未涨停')
+        else:
+            tag('broken_pool_source', '炸板来源样本', '同日来源炸板池证券、日期与原始收盘已匹配；不据此还原完整分时路径或保证收盘未封板')
     source_events = [event for event in [*events, *break_events] if current_valid and _event_matches(event, symbol, day, current)]
     opens = [_count(event[key]) for event in source_events for key in ('open_times', 'open_num', 'break_count') if event.get(key) is not None]
     if opens and None not in opens and len(set(opens)) == 1 and opens[0] > 0:
@@ -226,22 +234,33 @@ def build_board_presentation(row, *, symbol, day, snapshot_id, calendar, quotes,
                             '未接入完整盘口，不能据此认定充分换手、锁量、封单稳定或明日可成交。']}
 
 
-def decorate_board_collections(market, status, day, reference, collections):
-    """Decorate only supplied small lists with one P/T batch; keep raw fields."""
+def decorate_board_collections(market, status, day, reference, collections, *, master=None):
+    """Decorate supplied rows using one bounded three-session batch."""
     from app.services.market_service import dated_events
     calendar = market.calendar()
     valid = isinstance(calendar, list) and calendar == sorted(set(calendar)) and day in calendar
     position = calendar.index(day) if valid else 0
     previous = calendar[position-1] if position else None
+    before = calendar[position-2] if position >= 2 else None
     symbols = sorted({row.get('instrument_id') for rows in collections.values() for row in rows
                       if isinstance(row.get('instrument_id'), str) and STOCK.fullmatch(row['instrument_id'])})
     if not symbols: return {key: list(rows) for key, rows in collections.items()}
     method = getattr(market, 'history_for_instruments', None)
-    histories = method(symbols, start=previous or day, end=day) if valid and symbols and callable(method) else {}
-    quotes = {symbol: quote_index(row for row in histories.get(symbol, []) if row.get('date', row.get('trade_date')) in (previous, day)) for symbol in symbols}
+    histories = method(symbols, start=before or previous or day, end=day) if valid and symbols and callable(method) else {}
+    quotes = {symbol: quote_index(row for row in histories.get(symbol, []) if row.get('date', row.get('trade_date')) in (before, previous, day)) for symbol in symbols}
     proof = retained_proof(reference, status.get('snapshot_id'))
-    master = {row['instrument_id']: row for row in market.instruments(limit=10000)} if callable(getattr(market, 'instruments', None)) else {}
+    if master is None:
+        master = {row['instrument_id']: row for row in market.instruments(limit=10000)} if callable(getattr(market, 'instruments', None)) else {}
     current_events = dated_events(reference, day); past_events = dated_events(reference, previous) if previous else {}
+    event_index = {}
+    for key, entries in (('up', current_events.get('limitup', [])), ('prior', past_events.get('limitup', [])),
+                         ('break', current_events.get('breakpool', []))):
+        event_index[key] = {}
+        for event in entries:
+            identifier = event.get('instrument_id') or event.get('thscode')
+            if isinstance(identifier, str):
+                event_index[key].setdefault(identifier, []).append(event)
+
     generation = status.get('snapshot_id') if market.status().get('snapshot_id') == status.get('snapshot_id') else None
     result = {}
     for key, rows in collections.items():
@@ -250,11 +269,13 @@ def decorate_board_collections(market, status, day, reference, collections):
             symbol = row.get('instrument_id'); own = quotes.get(symbol, {})
             current = own.get(day); prior = own.get(previous)
             up = proof._state(symbol, day, current); prior_up = proof._state(symbol, previous, prior) if previous else {}
+            before_up = proof._state(symbol, before, own.get(before)) if up.get('state') is True and prior_up.get('state') is False and before else None
             down = down_state(proof, symbol, day, current, up)
-            shape = pattern_fields(symbol, master.get(symbol, {}), day, generation, calendar, own, row, up, down)
+            shape = (pattern_fields(symbol, master.get(symbol, {}), day, generation, calendar, own, row, up, down)
+                     if up.get('state') is True or down.get('state') is True else None)
             display = build_board_presentation(row, symbol=symbol, day=day, snapshot_id=generation, calendar=calendar,
-                quotes=own, events=current_events.get('limitup', []), previous_events=past_events.get('limitup', []),
-                break_events=current_events.get('breakpool', []), up=up, previous_up=prior_up, down=down, patterns=shape,
+                quotes=own, events=event_index['up'].get(symbol, ()), previous_events=event_index['prior'].get(symbol, ()),
+                break_events=event_index['break'].get(symbol, ()), up=up, previous_up=prior_up, before_previous_up=before_up, down=down, patterns=shape,
                 board_text_events=source_board_events(proof,symbol,day))
             decorated.append({**row, 'board_presentation': display})
         result[key] = decorated

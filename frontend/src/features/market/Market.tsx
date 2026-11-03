@@ -1,3 +1,4 @@
+import { StockEventBadges } from "./BoardTags";
 import AbnormalMonitor from "./AbnormalMonitor";
 import { useEffect, useState } from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
@@ -77,6 +78,25 @@ import {
 } from "../topics/MemberHistoryCells";
 const indexIds = ["000001.SH", "399001.SZ", "399006.SZ", "000688.SH"];
 const indexNames = ["上证指数", "深证成指", "创业板指", "科创50"];
+function StockEventChange({
+  value,
+  row,
+  date,
+  snapshotId,
+}: {
+  value: unknown;
+  row: Row;
+  date: string;
+  snapshotId: unknown;
+}) {
+  return (
+    <span className="stock-event-change">
+      <span className={tone(value)}>{percent(value)}</span>
+      <StockEventBadges row={row} date={date} snapshotId={snapshotId} />
+    </span>
+  );
+}
+
 export function IndexCards({
   indices,
   selected,
@@ -390,7 +410,18 @@ export function MarketOverview({
                     render: (_, r, i) => <span className="rank">{i + 1}</span>,
                   },
                   { key: "name" },
-                  { key: "change_pct", align: "right" },
+                  {
+                    key: "change_pct",
+                    align: "right",
+                    render: (value, row) => (
+                      <StockEventChange
+                        value={value}
+                        row={row}
+                        date={date}
+                        snapshotId={data?.snapshot_id}
+                      />
+                    ),
+                  },
                   { key: "amount", align: "right" },
                   {
                     key: "active_top10_7d",
@@ -431,7 +462,18 @@ export function MarketOverview({
                     render: (_, r, i) => <span className="rank">{i + 1}</span>,
                   },
                   { key: "name" },
-                  { key: "change_pct", align: "right" },
+                  {
+                    key: "change_pct",
+                    align: "right",
+                    render: (value, row) => (
+                      <StockEventChange
+                        value={value}
+                        row={row}
+                        date={date}
+                        snapshotId={data?.snapshot_id}
+                      />
+                    ),
+                  },
                   { key: "close", align: "right" },
                   { key: "topics" },
                 ]}
@@ -1512,6 +1554,18 @@ export function MarketPage({
                               </small>
                             )}
                           </div>
+                        ),
+                      }
+                    : {}),
+                  ...(key === "change_pct" && isGainers
+                    ? {
+                        render: (value: unknown, row: Row) => (
+                          <StockEventChange
+                            value={value}
+                            row={row}
+                            date={date}
+                            snapshotId={data?.snapshot_id}
+                          />
                         ),
                       }
                     : {}),

@@ -1,3 +1,5 @@
+import { StockEventBadges } from "../market/BoardTags";
+import MemberDailyLimitBadge from "../market/MemberDailyLimitBadge";
 import { useEffect, useState } from "react";
 import {
   ArrowDown,
@@ -341,12 +343,29 @@ export default function TopicBrowser({
                 title: sortTitle("change_pct", "最新涨幅"),
                 align: "right",
                 render: (value, row) => (
-                  <span
-                    className={
-                      row.quote_available === false ? "muted" : tone(value)
-                    }
-                  >
-                    {quote(row, value, percent)}
+                  <span className="stock-event-change">
+                    <span
+                      className={
+                        row.quote_available === false ? "muted" : tone(value)
+                      }
+                    >
+                      {quote(row, value, percent)}
+                    </span>
+                    {data?.quote_date &&
+                      row.quote_available === true &&
+                      row.quote_date === data.quote_date && (
+                        <>
+                          <MemberDailyLimitBadge
+                            row={row}
+                            date={data.quote_date}
+                          />
+                          <StockEventBadges
+                            row={row}
+                            date={data.quote_date}
+                            snapshotId={data.snapshot_id}
+                          />
+                        </>
+                      )}
                   </span>
                 ),
               },

@@ -103,6 +103,20 @@ def collect_materials(symbol,adapter=None,*,public=None,as_of_ms=None,progress=N
             if value.get('coverage',{}).get('complete') is False:missing(key,title,value['coverage'].get('reason') or '来源只取得部分材料',source)
             if key=='shareholders' and not value.get('items'):missing(key,title,'没有取得可核验股东人数',source)
         except (ProviderError,TypeError,AttributeError,KeyError) as error:missing(key,title,str(error) if isinstance(error,ProviderError) else '公开来源响应字段发生变化',source)
+    if enhanced and 'tencent-market-cap' in plan.get('sources', []) and (
+            market_cap.get('total_market_cap_cny') is None or market_cap.get('float_market_cap_cny') is None):
+        try:
+            check()
+            replacement = public.tencent_market_cap(symbol, as_of_ms=as_of_ms if explicit_as_of else None)
+            market_cap = replacement
+            materials[:] = [row for row in materials if row['kind'] != 'market_cap']
+            gaps[:] = [row for row in gaps if row['capability'] != 'market_cap']
+            material('market_cap', '来源快照市值', 'tencent', replacement, unit='CNY',
+                     timestamp=replacement['source_timestamp_ms'], coverage=replacement['coverage'],
+                     endpoint='https://qt.gtimg.cn/')
+        except (ProviderError, TypeError, AttributeError, KeyError) as error:
+            missing('market_cap', '腾讯市值备用来源', str(error) if isinstance(error, ProviderError)
+                    else '备用来源响应字段未通过核验', 'tencent')
     if enhanced:
         if progress:progress('公司与主营证据',75,'查询指定证券的当前主营构成；不推导客户或供应商')
         try:

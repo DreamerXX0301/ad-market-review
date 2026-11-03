@@ -46,7 +46,7 @@ def test_common_summary_preserves_exact_count_latest_and_asof_without_future(loc
     assert market.calls['panel'] == 0 and market.calls['actions'] == 0
     assert market.calls['history_for_instruments'] == 2
     assert all(request['symbols'] == {A} and request['end'] == market.day for request in market.history_requests)
-    assert market.history_requests[0]['start'] == result['change_pct_previous_date']
+    assert market.history_requests[0]['start'] == market.days[market.days.index(market.day)-2]
 
 
 @pytest.mark.parametrize('case', ['previous_missing', 'previous_duplicate', 'current_duplicate',

@@ -90,7 +90,9 @@ def _snapshot_view(row):
                 cohorts[key] = item
         context_payload = {**context_payload, 'previous_review': {**previous, 'event_cohorts': cohorts}}
     value['membership_context'] = build_member_limit_context(context_payload)
-    value['workbench'] = build_workbench(value['payload'], membership_context=value['membership_context'], prior_event_context=value['prior_event_context'])
+    from app.services.noon_close_context import retained_close_classifications
+    value['workbench'] = build_workbench(value['payload'], membership_context=value['membership_context'],
+        prior_event_context=value['prior_event_context'], close_classifications=retained_close_classifications(value['payload']))
     value['date'] = value.pop('trade_date')
     value.pop('sources_json', None)
     return value

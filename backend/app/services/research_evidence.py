@@ -17,7 +17,7 @@ SECTIONS = [
 ]
 
 
-def freeze_plan(symbol, snapshot, target_date):
+def freeze_plan(symbol, snapshot, target_date, *, market_cap_fallback=True):
     end = date.fromisoformat(target_date)
     return {
         'version': VERSION, 'schema_version': SCHEMA_VERSION,
@@ -28,7 +28,8 @@ def freeze_plan(symbol, snapshot, target_date):
         'windows': {kind: {'start': (end-timedelta(days=days-1)).isoformat(), 'end': target_date}
                     for kind, days in [('announcements', 365), ('news', 30), ('institution_reports', 180)]},
         'sources': ['fuyao-financials', 'fuyao-valuations', 'cninfo-announcements',
-                    'eastmoney-shareholders', 'eastmoney-market-cap', 'eastmoney-business-composition'],
+                    'eastmoney-shareholders', 'eastmoney-market-cap', 'eastmoney-business-composition',
+                    *(['tencent-market-cap'] if market_cap_fallback else [])],
         'external_only': ['institution-reports', 'institution-forecasts', 'xueqiu', 'jiuyangongshe'],
         'source_budget': {'provider_endpoint_limit': 5, 'provider_transport': 'existing-bounded-provider-v1',
                           'public_max_http_attempts': 32, 'public_deadline_seconds': 90,
@@ -90,7 +91,7 @@ def build_evidence_report(symbol, instrument, source_data, plan):
     if source_data.get('valuation'):
         add('valuation_snapshot', '来源当前估值快照', 'fuyao', source_data['valuation'])
     for kind in ('shareholders', 'market_cap'):
-        if source_data.get(kind): add(kind, '股东人数' if kind == 'shareholders' else '来源市值快照', 'eastmoney', source_data[kind])
+        if source_data.get(kind): add(kind, '股东人数' if kind == 'shareholders' else '来源市值快照', source_data[kind].get('source', 'eastmoney'), source_data[kind])
 
     profile = source_data.get('company_profile', {})
     company = {'state': 'unavailable', 'name': instrument.get('name', symbol), 'main_business': None,

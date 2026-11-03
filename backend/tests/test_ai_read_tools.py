@@ -248,6 +248,32 @@ def test_current_stock_research_reads_same_instance_without_touching_ttl(databas
     assert before == tuple(database.execute('SELECT expires_at_ms,last_accessed_at_ms FROM research_report').fetchone())
 
 
+def test_company_research_returns_financial_and_ownership_facts_with_separate_dates(database):
+    value = report()
+    for kind, source, data in (
+        ('financial_cashflow', 'fuyao', {'report_period': '2025-12-31', 'act_cash_flow_net': 100,
+                                       'invest_cash_flow_net': -25, 'financing_cash_flow_net': -12}),
+        ('shareholders', 'eastmoney', {'items': [{'report_period': '2025-12-31',
+            'published_date': '2026-01-04', 'holder_count': 18000, 'change_ratio_pct': -1.25}]}),
+        ('market_cap', 'tencent', {'total_market_cap_cny': 1000, 'float_market_cap_cny': 800}),
+        ('financial_income', 'tencent', {'operating_income': 999}),
+    ):
+        value['evidence'].append({'evidence_id': kind, 'kind': kind, 'source': source, 'title': kind,
+            'data': data, 'content_hash': tools.digest(data), 'instrument_id': SYMBOL,
+            'report_period': data.get('report_period')})
+    save_report(database, value)
+    result = tools.execute_read_tool('read_stock_research', {'instrument_id': SYMBOL})
+    metrics = {m['metric_id'].rsplit(':', 1)[-1]: m for m in result['metrics']}
+    assert metrics['invest_cash_flow_net']['value'] == -25 and metrics['financing_cash_flow_net']['unit'] == 'CNY'
+    assert metrics['holder_count']['value'] == 18000 and metrics['holder_count']['unit'] == '户'
+    holder = next(e for e in result['evidence'] if e['kind'] == 'shareholders')
+    dates = {**result['summary'].get('metric_defaults', {}).get('dates', {}),
+             **holder.get('metric_dates', {}), **metrics['holder_count'].get('dates', {})}
+    assert dates['report_period'] == '2025-12-31' and dates['published_date'] == '2026-01-04'
+    assert metrics['float_market_cap_cny']['value'] == 800
+    assert 'operating_income' not in metrics
+
+
 def test_expired_stock_report_only_falls_back_to_same_stock_frozen_old_context(database, monkeypatch):
     value = report(); save_report(database, value, expires=1)
     monkeypatch.setattr(contexts, 'get_report', lambda *a, **kw: deepcopy(value))
