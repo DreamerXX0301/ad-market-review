@@ -53,7 +53,7 @@ def providers(): return service.providers()
 
 @router.put('/providers/{provider_id}')
 def save_provider(provider_id: Literal['deepseek','openai'], body: ProviderUpdate):
-    return service.save_provider(provider_id, body.model_dump(exclude_none=True))
+    return service.save_provider(provider_id, body.model_dump(exclude_none=True, exclude_unset=True))
 
 @router.delete('/providers/{provider_id}/credential')
 def delete_credential(provider_id: Literal['deepseek','openai'], expected_revision: int = Query(ge=0)):

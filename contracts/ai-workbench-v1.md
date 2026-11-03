@@ -17,7 +17,7 @@
 | GET `/context-preview` | `kind=stock|market,report_id?,as_of?` | 兼容的既存证据预览；不是新对话创建或续问的准入条件 |
 | POST `/sessions` | `SessionCreate` | 202，`{session_id,task_id}`，保存页面锚点并排队首问 |
 | GET `/sessions` | `kind?,instrument_id?,as_of?,cursor?,limit=20` | 历史分页，limit为1—50 |
-| GET `/sessions/{id}` | 无 | `{session,messages}`，完整本地历史 |
+| GET `/sessions/{id}` | 无 | `{session,messages,active_task_id,config_matches}`，完整本地历史及同一读取快照中的活动任务和配置绑定状态 |
 | POST `/sessions/{id}/messages` | `{text,consent:true,request_key}` | 202，为本轮问题重新准备工具与协议 |
 | PATCH `/sessions/{id}` | `{keep:boolean}` | 保留或取消保留 |
 | DELETE `/sessions/{id}` | 无 | 删除会话正文与来源，保留独立费用记录 |
@@ -165,3 +165,10 @@ schema35保存配置、会话和任务；schema36新增`ai_task_event/ai_request
 流式阅读：默认跟随实际消息高度增长，用户上翻、触摸或键盘阅读暂停，回到底部或“回到最新”恢复；ResizeObserver回调使用rAF，不积压smooth滚动。最终Markdown/来源重排也遵守跟随状态，切页前同步保存阅读位置。生成中复用安全Markdown渲染，尚未完成的来源不变成链接。
 
 新轮股票资源授权采用`ai-stock-scope-v4`，详见[逐轮语义任务计划](ai-agent-round-v1.md)和[完整v5角色](prompts/ai-agent-round-v5.md)。第一次模型请求只作真实用户语义计划及读数计划；不要求用户命中股票关键词，也不预先发送本地行情/报告或旧助手正文。控制线程绑定实际用户引用及冻结能力摘要，计划接受后才取数；真正资源边界仍为受限只读函数、日期和证券参数、官方域、预算及取消。概念/招呼计划后自然流式；明确域外/澄清计划不取数，首响应正文不外泄。保存的web plan仍在hosted出站前重核；只要本地数据时不拿网页替代。旧冻结请求继续原门控，不重写历史。
+
+
+### 同一实例的会话共享
+
+会话详情的 `active_task_id` 为 queued/running 任务 ID 或 null。`config_matches` 表示当前模型和凭据代际是否与会话绑定相容。两者均为只读状态。同会话提交在短事务中串行检查，重用相同请求键时返回原任务，另一项独立提交返回 `session_busy`。客户端保留未受理的草稿。SSE 按任务 ID 和序号续读。
+
+供应商更新中的 `limits` 支持部分字段。未提交的实例限制保留事务内当前值，保存响应绑定本次提交的配置修订。实例会话、配置和预算由访问该实例的人员共享。账户和租户归属属于独立设计范围。

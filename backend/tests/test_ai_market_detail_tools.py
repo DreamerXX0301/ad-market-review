@@ -184,20 +184,29 @@ def test_large_ladder_keeps_counts_and_explicit_bounded_lists(market, monkeypatc
 @pytest.mark.parametrize('section', tools.DETAIL_SECTIONS)
 def test_detail_injects_fixed_market_and_is_bounded(market, monkeypatch, section):
     row = ladder_row(SYMBOL, 1)
+    lookup_mode = tools.GAINERS_LOOKUP_MODES.get(section)
+    query = 'fixture-category' if lookup_mode else ''
     def page(kind, day, **kwargs):
         assert kwargs['market'] is market
-        return {'date': day, 'snapshot_id': SNAPSHOT, 'items': [row], 'total': 1,
+        data = {'date': day, 'snapshot_id': SNAPSHOT, 'items': [row], 'total': 1,
             'summary': {'basis': 'saved-page'}, 'data_coverage': {'partial': True, 'notice': 'fixture coverage'},
             'market_outlook': {'date': day, 'notice': 'conditional observation, not a prediction',
                 'next_session': {'date': None}, 'plan': {'stance': 'wait'},
                 'watchlist': {'stocks': [row], 'topics': [], 'coverage': {'complete': False}}}}
+        if lookup_mode:
+            assert kind == 'gainers' and kwargs['top_n'] == 1000
+            assert kwargs['query'] == '' and kwargs['gainers_lookup'] == {'mode': lookup_mode, 'query': query}
+            data.update(items=[], total=0, classification_lookup={
+                'state': 'unknown', 'matched_count': None, 'observed_count': 0, 'categories': [],
+            })
+        return data
     def indices(day, **kwargs):
         assert kwargs['market'] is market
         return {'date': day, 'snapshot_id': SNAPSHOT, 'indices': market.index_quotes(day), 'quality': 'partial'}
     monkeypatch.setattr(market_service, 'market_page', page)
     monkeypatch.setattr(market_service, 'index_overview', indices)
     monkeypatch.setattr(market_service, 'get_market', lambda: (_ for _ in ()).throw(AssertionError('rw app connect forbidden')))
-    value = tools.execute_read_tool('read_market_detail', {'date': 'today', 'section': section, 'query': ''})
+    value = tools.execute_read_tool('read_market_detail', {'date': 'today', 'section': section, 'query': query})
     assert value['ok'] and value['evidence'] and value['date'] == DAY
     assert value['source_bindings']['published_detail']['market_snapshot_id'] == SNAPSHOT
     assert len(dumps(value).encode()) <= tools.MAX_RESULT_BYTES

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
+import re
 
 from fastapi import HTTPException
 
@@ -70,7 +71,7 @@ def _reference_memberships(topics, symbols, day):
     return result
 
 
-def _memberships(market, status, reference, day, sample, connection_factory=None):
+def _memberships(market, status, reference, day, sample, connection_factory=None, *, include_classifications=False):
     symbols = [row['instrument_id'] for row in sample]
     if not symbols:
         return {}, {'state': 'empty', 'scope': '所选日没有可排名证券', 'snapshot_id': status.get('snapshot_id')}
@@ -81,6 +82,8 @@ def _memberships(market, status, reference, day, sample, connection_factory=None
             kwargs = {'expected_day': day, 'include_unregistered_provider': True}
             if connection_factory is not None:
                 kwargs['connection_factory'] = connection_factory
+            if include_classifications:
+                kwargs['include_classifications'] = True
             data = current_memberships(market, symbols, **kwargs)
         except HTTPException as error:
             if error.status_code != 409:
@@ -90,18 +93,25 @@ def _memberships(market, status, reference, day, sample, connection_factory=None
         found = {symbol: [tag for item in data['memberships'].get(symbol, [])
                           if (tag := _tag(item, day, current=True)) is not None] for symbol in symbols}
         return found, {'state': 'current_business_partial', 'scope': data['scope'],
-                       'business_date': data['business_date'], 'snapshot_id': status.get('snapshot_id')}
+                       'business_date': data['business_date'], 'snapshot_id': status.get('snapshot_id'),
+                       'snapshot_day': day, 'classifications': data.get('classifications', [])}
     if current:
         # Non-catalog/older imported readers can supply an explicitly dated
         # retained reference. Bare names from a cached rank are not evidence.
-        found = _reference_memberships(reference.get('topics', []), symbols, day)
+        topics = reference.get('topics', [])
+        found = _reference_memberships(topics, symbols, day)
         return found, {'state': 'dated_partial', 'scope': '仅按所选日已留存且采集日不晚于观察日的分类样本统计',
-                       'snapshot_id': status.get('snapshot_id')}
+                       'snapshot_id': status.get('snapshot_id'), 'classifications': topics,
+                       'snapshot_day': day}
     from app.services.market_history import resolve_reference
     local, coverage = resolve_reference('sectors', day, status, reference)
-    found = _reference_memberships(local.get('topics', []), symbols, day)
+    topics = local.get('topics', [])
+    if include_classifications and not coverage.get('selected_date_available'):
+        topics = []
+    found = _reference_memberships(topics, symbols, day)
     return found, {'state': 'dated_partial' if coverage.get('selected_date_available') else 'unavailable',
-                   'scope': coverage.get('notice'), 'snapshot_id': coverage.get('source_snapshot_id')}
+                   'scope': coverage.get('notice'), 'snapshot_id': coverage.get('source_snapshot_id'),
+                   'snapshot_day': coverage.get('source_snapshot_day'), 'classifications': topics}
 
 
 def _groups(sample, memberships, *, industry):
@@ -169,8 +179,7 @@ def _excluded_attributes(sample, memberships):
                       for identity in sorted(counts, key=lambda key: (-counts[key], key))]}
 
 
-def ranking_distribution(market, status, reference, day, ranked, *, connection_factory=None):
-    """Return copied rank rows plus an independent, fixed pre-filter summary."""
+def _rank_sample(ranked):
     eligible = sorted((row for row in ranked if type(row.get('rank')) is int
                        and 0 < row['rank'] <= SAMPLE_LIMIT and row.get('instrument_id')),
                       key=lambda row: (row['rank'], row['instrument_id']))
@@ -182,6 +191,13 @@ def ranking_distribution(market, status, reference, day, ranked, *, connection_f
             seen.add(row['instrument_id'])
             if len(sample) == SAMPLE_LIMIT:
                 break
+    return sample
+
+
+def ranking_distribution(market, status, reference, day, ranked, *, connection_factory=None):
+    """Return copied rank rows plus an independent, fixed pre-filter summary."""
+    sample = _rank_sample(ranked)
+    seen = {row['instrument_id'] for row in sample}
     memberships, context = _memberships(market, status, reference, day, sample, connection_factory)
     distribution = {'version': 'gainers-top1000-distribution-v1', 'date': day,
                     'sample_limit': SAMPLE_LIMIT, 'sample_count': len(sample),
@@ -199,3 +215,70 @@ def ranking_distribution(market, status, reference, day, ranked, *, connection_f
              'topics_observed_date': day, 'topics_scope': context['scope']}
             if row.get('instrument_id') in seen else row for row in ranked]
     return rows, distribution
+
+
+def classification_lookup(market, status, reference, day, ranked, *, mode, query, connection_factory=None):
+    """Match dated classifications against the same original ranked sample."""
+    sample = _rank_sample(ranked)
+    memberships, context = _memberships(market, status, reference, day, sample, connection_factory,
+                                        include_classifications=True)
+    folded = query.casefold()
+
+    def key(tag):
+        return (tag['topic_id'], tag['kind'], tag['source'])
+
+    def matches(tag):
+        if mode == 'topic_id':
+            return tag['topic_id'] == query
+        return folded in tag['name'].casefold()
+
+    categories = {}
+    current = context['state'] == 'current_business_partial'
+    for item in context.get('classifications', []):
+        if not current and not isinstance(item.get('instrument_ids') if isinstance(item, dict) else None, list):
+            continue
+        tag = _tag(item, day, current=current)
+        if tag is None or not matches(tag):
+            continue
+        identifier = key(tag)
+        category = {field: tag.get(field) for field in
+                    ('topic_id', 'name', 'kind', 'source', 'source_code', 'source_observed_date',
+                     'members_complete', 'egress_allowed', 'ai_processing_allowed')}
+        category['source_code'] = category['source_code'] or tag.get('topic_code')
+        if not current and category['members_complete'] is True:
+            category['members_complete'] = all(
+                isinstance(symbol, str) and re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', symbol)
+                for symbol in tag['instrument_ids'])
+        if prior := categories.get(identifier):
+            category['members_complete'] = (category['members_complete'] is True
+                                            and prior['members_complete'] is True
+                                            and category['source_observed_date'] == prior['source_observed_date'])
+            for field in ('egress_allowed', 'ai_processing_allowed'):
+                if prior[field] is False:
+                    category[field] = False
+        categories[identifier] = category
+
+    counts = Counter()
+    rows = []
+    for row in sample:
+        matched = sorted({key(tag) for tag in memberships.get(row['instrument_id'], []) if key(tag) in categories})
+        if not matched:
+            continue
+        counts.update(matched)
+        rows.append({**row, 'matched_classifications': [categories[identifier] for identifier in matched]})
+    complete = bool(categories) and all(item['members_complete'] is True for item in categories.values())
+    state = ('empty_sample' if not sample else 'matched' if rows
+             else 'confirmed_zero' if complete else 'unknown')
+    ordered = sorted(categories, key=lambda identifier: (-counts[identifier], categories[identifier]['name'], identifier))
+    return rows, {
+        'mode': mode, 'query': query, 'state': state, 'sample_count': len(sample),
+        'sample_limit': SAMPLE_LIMIT, 'sample_scope': 'top_1000_before_filters',
+        'observed_count': len(rows), 'matched_count': len(rows) if complete else None,
+        'categories': [{**categories[identifier], 'observed_count': counts[identifier],
+                        'matched_count': counts[identifier] if categories[identifier]['members_complete'] is True else None}
+                       for identifier in ordered],
+        'coverage': {'state': context['state'], 'scope': context['scope'], 'members_complete': complete,
+                     'classification_snapshot_id': context.get('snapshot_id'),
+                     'classification_snapshot_day': context.get('snapshot_day'),
+                     'membership_business_date': context.get('business_date')},
+    }

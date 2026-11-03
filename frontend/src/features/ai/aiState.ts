@@ -102,9 +102,11 @@ export const canGenerate = (provider?: AIProvider) =>
 export function sessionMatches(
   session: AISession,
   provider: AIProvider | undefined,
+  configMatches = true,
 ) {
   return (
     !!provider &&
+    configMatches &&
     session.provider_id === provider.provider_id &&
     session.model === provider.model
   );

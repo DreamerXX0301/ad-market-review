@@ -3,6 +3,8 @@
 This reads the existing local topic catalog and manual overrides only. The
 business date describes current research membership, never historical causation.
 """
+import re
+
 from app.core import connect
 from app.services import topics, topic_members
 from app.services.workspace_common import fail
@@ -13,7 +15,7 @@ CURRENT_TOPICS_SCOPE = ('当前业务日有效的本地行业/题材及人工归
 
 
 def current_memberships(market, symbols, *, expected_day=None, connection_factory=None,
-                        include_unregistered_provider=False):
+                        include_unregistered_provider=False, include_classifications=False):
     selected = set(symbols)
     catalog = topics._catalog_map(market)
     # AI readers inject a fixed query-only business connection; normal API
@@ -26,6 +28,7 @@ def current_memberships(market, symbols, *, expected_day=None, connection_factor
             fail('行情业务日已更新，请重新打开个股资料', 409)
         state = topic_members._read_state(connection, day, catalog) if day else {}
     memberships = {symbol: [] for symbol in selected}
+    classifications = []
     for entry in state.values():
         definition = entry['public']
         if definition['archived']:
@@ -36,6 +39,15 @@ def current_memberships(market, symbols, *, expected_day=None, connection_factor
         tag.update(source='local-manual' if definition['origin'] == 'manual' else source.get('source') or 'local-provider',
                    source_code=source.get('topic_code') or source.get('code') or definition.get('provider_topic_key'),
                    classification_level=source.get('classification_level', source.get('level')))
+        if include_classifications:
+            tag.update({key: source[key] for key in ('egress_allowed', 'ai_processing_allowed') if key in source})
+            if definition['origin'] != 'manual':
+                tag['members_complete'] = (
+                    tag['members_complete'] is True
+                    and isinstance(source.get('instrument_ids', source.get('members')), list)
+                    and all(re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', symbol) for symbol in entry['provider'])
+                )
+            classifications.append(tag)
         for symbol in entry['members'] & selected:
             memberships[symbol].append({**tag,**topic_members._membership(entry,symbol)})
     if include_unregistered_provider:
@@ -61,11 +73,18 @@ def current_memberships(market, symbols, *, expected_day=None, connection_factor
                    'source_code': source.get('topic_code') or source.get('code') or ident,
                    'classification_level': source.get('classification_level', source.get('level')),
                    'origin': 'provider', 'manual_override': None, 'provider_member': True}
+            if include_classifications:
+                tag.update({key: source[key] for key in ('egress_allowed', 'ai_processing_allowed') if key in source})
+                tag['members_complete'] = tag['members_complete'] is True and all(
+                    isinstance(symbol, str) and re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', symbol)
+                    for symbol in members)
+                classifications.append(tag)
             for symbol in selected.intersection(value for value in members if isinstance(value, str)):
                 memberships[symbol].append(dict(tag))
     for tags in memberships.values():
         tags.sort(key=lambda item: (item['kind'], item['name'], item['topic_id']))
-    return {'business_date': day, 'memberships': memberships, 'scope': CURRENT_TOPICS_SCOPE}
+    return {'business_date': day, 'memberships': memberships, 'scope': CURRENT_TOPICS_SCOPE,
+            **({'classifications': classifications} if include_classifications else {})}
 
 
 def stock_membership_fields(market, symbol):

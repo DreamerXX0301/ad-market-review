@@ -218,6 +218,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(""),
+    [errorStatus, setErrorStatus] = useState<number>(),
     [key, setKey] = useState(0);
   const previousPath = useRef<string | null>(null);
   const resolvedPath = useRef<string | null>(null);
@@ -235,11 +236,13 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
       setData(null);
       setLoading(false);
       setError("");
+      setErrorStatus(undefined);
       return;
     }
     const abort = new AbortController();
     setLoading(true);
     setError("");
+    setErrorStatus(undefined);
     if (previousPath.current !== path) setData(null);
     previousPath.current = path;
     api<T>(path, { signal: abort.signal })
@@ -254,6 +257,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
         if (!abort.signal.aborted && e.name !== "AbortError") {
           if (e.incrementLocked) incrementBlocked.current = true;
           setError(e.message);
+          setErrorStatus(e.status);
         }
       })
       .finally(() => {
@@ -333,6 +337,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     data: resolvedPath.current === path ? data : null,
     loading: active && (loading || (!!path && previousPath.current !== path)),
     error: previousPath.current === path ? error : "",
+    errorStatus: previousPath.current === path ? errorStatus : undefined,
     reload,
     setData,
   };

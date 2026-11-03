@@ -100,15 +100,18 @@ def providers():
         rows = [_provider(db, key) for key in MODELS]
         today = day_key()
         usage=budget_state(db,today,include_queued=False)
-    return {'items': [{'provider_id': row['provider_id'], 'name': 'DeepSeek' if row['provider_id'] == 'deepseek' else 'OpenAI',
+    return {'items': [_provider_view(row, limits) for row in rows],
+            'usage': {'day': today, 'requests': usage['sent_requests'], 'amount_usd': usd(usage['amount']), 'state': 'estimated_or_reserved'}}
+
+
+def _provider_view(row, limits):
+    return {'provider_id': row['provider_id'], 'name': 'DeepSeek' if row['provider_id'] == 'deepseek' else 'OpenAI',
                        'configured': bool(row['credential_ref']), 'enabled': bool(row['enabled']), 'model': row['model'],
                        'config_revision': row['config_revision'], 'verification': _verification(row, limits),
                        'models': [{'model_id': model['id'], 'id': model['id'], 'name': model['name'], 'price_state': 'reviewed', 'price_version': PRICE_VERSION} for model in MODELS[row['provider_id']]],
                        'discovered_models': [model for model in json.loads(row['models_json'])
                                              if row['provider_id'] != 'openai' or model in OPENAI_MODEL_IDS],
-                       'limits': limits_view(limits)} for row in rows],
-            'usage': {'day': today, 'requests': usage['sent_requests'], 'amount_usd': usd(usage['amount']), 'state': 'estimated_or_reserved'}}
-
+                       'limits': limits_view(limits)}
 
 def _invalidate_tasks(db, *, disabled_provider=None):
     limits = _limits(db)
@@ -181,10 +184,11 @@ def save_provider(identifier, payload):
             db.execute('UPDATE ai_provider_config SET model=?,credential_ref=?,credential_revision=?,config_revision=config_revision+1,enabled=?,updated_at_ms=? WHERE provider_id=?',
                        (model, credential_ref, row['credential_revision'], int(payload['enabled']), now_ms(), identifier))
             _invalidate_tasks(db, disabled_provider=identifier if old['enabled'] and not payload['enabled'] else None)
+            saved = _provider_view(_provider(db, identifier), limits)
     except BaseException:
         if new_ref: CredentialStore()._path(new_ref).unlink(missing_ok=True)
         raise
-    return next(item for item in providers()['items'] if item['provider_id'] == identifier)
+    return saved
 
 
 def delete_credential(identifier, expected_revision):
@@ -404,7 +408,14 @@ def list_sessions(kind=None, instrument_id=None, as_of=None, limit=20, cursor=No
 
 def get_session(identifier):
     with connect() as db:
+        db.execute('BEGIN')
         session = _session(db, identifier)
+        provider = _provider(db, session['provider_id'])
+        config_matches = _bound_session(provider, session, _limits(db))
+        active = db.execute(
+            "SELECT task_id FROM ai_task WHERE session_id=? AND state IN ('queued','running')",
+            (identifier,),
+        ).fetchone()
         rows = db.execute('SELECT m.*,t.usage_json,t.cost_nusd,t.cost_state,t.reservation_nusd,t.price_version FROM ai_message m LEFT JOIN ai_task t USING(task_id) WHERE m.session_id=? ORDER BY m.created_at_ms,m.rowid', (identifier,)).fetchall()
     session['title']=next((row['text'][:60] for row in rows if row['role']=='user'),None)
     messages = []
@@ -422,7 +433,8 @@ def get_session(identifier):
         view['usage'] = json.loads(row['usage_json'] or '{}')
         view['cost'] = {'state': row['cost_state'], 'currency': 'USD', 'amount': usd(row['cost_nusd']) if row['cost_nusd'] is not None else None, 'price_version': row['price_version']}
         messages.append(view)
-    return {'session': _session_view(session, True), 'messages': messages}
+    return {'session': _session_view(session, True), 'messages': messages,
+            'active_task_id': active['task_id'] if active else None, 'config_matches': config_matches}
 
 
 def _legacy_send_message(identifier, payload):
@@ -462,6 +474,7 @@ def change_session(identifier, keep):
 
 def delete_session(identifier):
     with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
         _session(db, identifier)
         if db.execute("SELECT 1 FROM ai_task WHERE session_id=? AND state='running'", (identifier,)).fetchone():
             fail(409, 'session_busy', '请先取消并等待本次请求结束后再删除会话')
@@ -486,6 +499,7 @@ def get_task(identifier):
 
 def cancel_task(identifier):
     with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
         row = db.execute('SELECT state,operation,provider_id FROM ai_task WHERE task_id=?', (identifier,)).fetchone()
         if row is None: fail(404, 'task_not_found', 'AI任务不存在')
         if row['state'] == 'queued':

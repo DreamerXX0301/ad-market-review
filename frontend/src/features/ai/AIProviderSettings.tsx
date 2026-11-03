@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, KeyRound, Settings2, ShieldCheck, Trash2 } from "lucide-react";
-import { api, requestKey, useApi, usePageActive } from "../../lib/api";
+import { requestKey, useApi, usePageActive } from "../../lib/api";
 import { dateTime } from "../../lib/format";
 import {
   Badge,
@@ -12,6 +12,7 @@ import {
   Warning,
 } from "../../components/UI";
 import { aiWrite, useAITask } from "./aiApi";
+import { publishAIChange, subscribeAIChanges } from "./aiTabSync";
 import {
   aiReason,
   plainText,
@@ -47,7 +48,7 @@ function ProviderEditor({
 }: {
   provider: AIProvider;
   onClose: () => void;
-  onSaved: (verify: boolean) => Promise<void>;
+  onSaved: (saved: AIProvider, verify: boolean) => Promise<void>;
 }) {
   const [key, setKey] = useState("");
   const [model, setModel] = useState(provider.model);
@@ -82,7 +83,7 @@ function ProviderEditor({
       model.trim() !== provider.model ||
       timeout !== (provider.limits?.timeout_seconds || 45);
     try {
-      await aiWrite(
+      const saved = await aiWrite<AIProvider>(
         `/providers/${provider.provider_id}`,
         {
           expected_revision: provider.config_revision,
@@ -90,15 +91,26 @@ function ProviderEditor({
           enabled: changed ? false : provider.enabled,
           ...(key.trim() ? { api_key: key.trim() } : {}),
           limits: {
-            daily_budget_usd: budget,
-            daily_request_limit: count,
-            timeout_seconds: timeout,
+            ...(budget !== (provider.limits?.daily_budget_usd || "0.50")
+              ? { daily_budget_usd: budget }
+              : {}),
+            ...(count !== (provider.limits?.daily_request_limit || 20)
+              ? { daily_request_limit: count }
+              : {}),
+            ...(timeout !== (provider.limits?.timeout_seconds || 45)
+              ? { timeout_seconds: timeout }
+              : {}),
           },
         },
         "PUT",
       );
       setKey("");
-      await onSaved(verify);
+      if (saved.config_revision !== provider.config_revision + 1) {
+        await onSaved(saved, false);
+        setError("配置已在其他页面更改，请重新打开设置后核对。");
+        return;
+      }
+      await onSaved(saved, verify);
       onClose();
     } catch (e: any) {
       setKey("");
@@ -279,6 +291,7 @@ export default function AIProviderSettings() {
       return;
     completedTask.current = taskId;
     providers.reload();
+    publishAIChange({ scope: "providers" });
     if (
       task.data?.state === "failed" ||
       task.data?.state === "interrupted_manual_retry"
@@ -286,6 +299,20 @@ export default function AIProviderSettings() {
       setError(aiReason(task.data.reason_code));
   }, [taskId, task.data, providers.reload]);
   const active = usePageActive();
+  useEffect(() => {
+    if (!active) return;
+    return subscribeAIChanges(
+      (change) => {
+        if (change.scope === "providers") providers.reload();
+        if (change.scope === "task" && change.id === taskId) task.reload();
+      },
+      () => {
+        providers.reload();
+        if (taskId) task.reload();
+      },
+      providers.reload,
+    );
+  }, [active, taskId, providers.reload, task.reload]);
   useEffect(() => {
     if (!active) {
       setEditing(null);
@@ -324,7 +351,6 @@ export default function AIProviderSettings() {
           expected_revision: provider.config_revision,
           model: provider.model,
           enabled: !provider.enabled,
-          limits: provider.limits,
         },
         "PUT",
       );
@@ -528,17 +554,9 @@ export default function AIProviderSettings() {
         <ProviderEditor
           provider={editing}
           onClose={() => setEditing(null)}
-          onSaved={async (shouldVerify) => {
+          onSaved={async (saved, shouldVerify) => {
             providers.reload();
-            if (shouldVerify) {
-              const latest = await api<{ items: AIProvider[] }>(
-                "/ai/providers",
-              );
-              const provider = latest.items.find(
-                (item) => item.provider_id === editing.provider_id,
-              );
-              if (provider) await verify(provider);
-            }
+            if (shouldVerify) await verify(saved);
           }}
         />
       )}

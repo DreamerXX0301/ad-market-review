@@ -22,6 +22,7 @@ from app.core import digest, dumps
 from app.infrastructure.config import data_dir, sqlite_path
 from app.services import ai_contexts as contexts
 from app.services import ai_market_brief as briefs
+from app.services.ai_tool_budget import DETAIL_SECTIONS, GAINERS_LOOKUP_MODES
 from app.services.sync_clock import CHINA, local_now
 
 MAX_RESULT_BYTES = 24 * 1024
@@ -29,7 +30,6 @@ MAX_REPORT_BYTES = 8 * 1024 * 1024
 SECTIONS = ('availability', 'auction', 'noon', 'close', 'overview', 'fund_flow')
 PHASES = {'auction': ('09:25', '竞价结束'), 'noon': ('11:30', '午盘'), 'close': ('15:00', '收盘')}
 _BRIEF_KIND = {'auction': 'auction', 'noon': 'noon', 'close': 'noon_close'}
-DETAIL_SECTIONS = ('indices', 'sectors', 'emotion', 'gainers', 'abnormal', 'broken_boards')
 MAX_DETAIL_ROWS = 30
 
 
@@ -48,10 +48,10 @@ def tool_schemas():
           'instrument_id': {'type': 'string', 'description': '证券名称、六位代码或完整代码，最多80字符；空串沿用当前页面证券'}}, ['date', 'instrument_id']),
         ('read_limit_up_data', '读取指定完成日已保存的涨停梯队、各连板高度名单、首板和最高板、反包/晋级失败/20cm及题材确认家数。复用与页面相同的日期及价格核验，来源不全时数量只给已确认下界，不能称全市场完整统计。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
-        ('read_market_detail', '读取系统已保存的盘面页面事实：指数、板块表现、情绪及次日观察条件、近30交易日涨幅榜、历史监管监控、炸板分析。query用于名称或代码筛选，空串不筛选。返回有界名单并明确总数及截取范围；观察条件不是确定预测，板块成交额不是净流入。',
-         {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'},
+        ('read_market_detail', '读取系统已保存的盘面页面事实：指数、板块表现、情绪及次日观察条件、近30交易日涨幅榜、历史监管监控、炸板分析。gainers_related按真实分类名称关键词筛完整前1000并取股票并集，gainers_topic按真实topic_id等值筛选；两者query必填。其他分区query用于名称或代码筛选，空串不筛选。返回有界名单，区分已观察数、确认总数及截取范围；观察条件不是确定预测，板块成交额不是净流入。',
+         {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today；仅gainers_related/gainers_topic可用latest读取最新已发布完成日，明确问今天用today，不回退旧日。'},
           'section': {'type': 'string', 'enum': list(DETAIL_SECTIONS)},
-          'query': {'type': 'string', 'description': '名称或代码的筛选文本，最多80字符；不筛选传空串'}}, ['date', 'section', 'query']),
+          'query': {'type': 'string', 'description': '最多80字符。gainers_related传分类名称关键词，如电池；gainers_topic传真实topic_id。其他分区不筛选传空串。'}}, ['date', 'section', 'query']),
     ]
     return [{'type': 'function', 'name': name, 'description': description, 'strict': True,
              'parameters': {'type': 'object', 'properties': properties, 'required': required,
@@ -449,7 +449,11 @@ def _completed_market(result, day, now):
     heads, supplement = _heads(), _supplement_head()
     market = _market(heads); status = market.status()
     calendar = market.calendar()
-    result['summary'] = {'requested_date': day, 'latest_completed_date': status.get('data_end'),
+    requested_day = day
+    if requested_day == 'latest':
+        day = status.get('data_end') if isinstance(status.get('data_end'), str) else None
+        result['date'] = day
+    result['summary'] = {'requested_date': requested_day, 'latest_completed_date': status.get('data_end'),
                          'now': now.isoformat(), 'timezone': 'Asia/Shanghai'}
     if (not status.get('ready') or day not in calendar
             or not isinstance(status.get('data_end'), str) or day > status['data_end']
@@ -587,14 +591,18 @@ def _limit_up(result, day, now):
 def _market_detail(result, day, section, query, now):
     available = _completed_market(result, day, now)
     if available is None: return
-    market, _, heads, supplement = available
+    market, status, heads, supplement = available
+    if day == 'latest':
+        day = result['date']
     market.business_read_connection = _business_read_connection
     from app.services import market_service
-    kind = 'broken-boards' if section == 'broken_boards' else section
+    lookup_mode = GAINERS_LOOKUP_MODES.get(section)
+    kind = 'gainers' if lookup_mode else 'broken-boards' if section == 'broken_boards' else section
     data = (market_service.index_overview(day, market=market) if section == 'indices' else
             market_service.market_page(kind, day, limit=1000 if section == 'sectors' else 200,
-                query='' if section == 'sectors' else query, market=market,
-                **({'top_n': 1000} if section == 'gainers' else {}),
+                query='' if lookup_mode or section == 'sectors' else query, market=market,
+                **({'top_n': 1000} if kind == 'gainers' else {}),
+                **({'gainers_lookup': {'mode': lookup_mode, 'query': query}} if lookup_mode else {}),
                 **({'supplement_dates': (day,)} if section == 'sectors' else {})))
     if _source_denied(data):
         _gap(result, 'source_permission', '所选盘面来源明确禁止外发或AI处理'); return
@@ -614,7 +622,29 @@ def _market_detail(result, day, section, query, now):
     if section == 'sectors' and query:
         result['summary'].update(query_source_count=data['query_source_count'], query_source_complete=data['query_source_complete'])
     if data.get('unavailable_reason'): _gap(result, section, data['unavailable_reason'])
-    if section == 'indices':
+    if lookup_mode:
+        lookup = data['classification_lookup']
+        rows = []
+        for row in data.get('items', []):
+            classifications = row['matched_classifications']
+            rows.append({
+                **_pick_fields(row, ('instrument_id', 'code', 'name', 'rank', 'change_30d_pct',
+                                     'return_30d_start', 'return_30d_end', 'return_30d_price_basis')),
+                'quote_date': day, 'quote_source': row.get('source') or status.get('source'),
+                'matched_classifications': classifications[:5],
+                'matched_classification_count': len(classifications),
+                'matched_classifications_truncated': len(classifications) > 5,
+            })
+        projection = {
+            'classification_lookup': {**lookup, 'categories': _table(lookup['categories'])},
+            'stocks': _table(rows, total=lookup['observed_count'], scope='已观察到的去重匹配股票，按原始排名有界返回'),
+            'scope': '固定前1000内的已留存分类；相关是分类名称匹配，不代表完整产业链或股票经营相关性',
+        }
+        if lookup['matched_count'] is None:
+            reason = ('所选日没有可排名证券，不能判断有哪些相关股票' if lookup['state'] == 'empty_sample'
+                      else '所选日无可核验的匹配分类或成员覆盖不完整；已观察数不能当作确认总数，未命中不能当作零')
+            _gap(result, 'gainers_classification_coverage', reason)
+    elif section == 'indices':
         rows = [_pick_fields(row, ('instrument_id', 'code', 'name', 'date', 'open', 'high', 'low', 'close', 'change_pct',
             'amount', 'source', 'price_basis', 'quote_available', 'quote_reason', 'change_pct_reason')) for row in data.get('indices', [])]
         if query: rows = [row for row in rows if query.casefold() in ' '.join(str(row.get(key, '')) for key in ('instrument_id', 'code', 'name')).casefold()]
@@ -851,7 +881,10 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
                          {'date', 'section', 'query'} if name == 'read_market_detail' else {'date'})
             if set(args) != permitted:
                 raise ValueError('工具参数与声明字段不符')
-            day = _day(args['date'], now); result['date'] = day
+            latest = (name == 'read_market_detail' and args['section'] in GAINERS_LOOKUP_MODES
+                      and args['date'] == 'latest')
+            day = 'latest' if latest else _day(args['date'], now)
+            result['date'] = None if latest else day
             from app.services.supplement_access import supplement_access
             # Pin only the local read itself. No database transaction or source
             # lock spans model HTTP, and GC cannot unlink inputs mid-projection.
@@ -863,7 +896,9 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
                     _limit_up(result, day, now)
                 else:
                     section, query = args['section'], args['query']
-                    if section not in DETAIL_SECTIONS or not isinstance(query, str) or len(query) > 80 or any(ord(c) < 32 for c in query):
+                    if (section not in DETAIL_SECTIONS or not isinstance(query, str) or len(query) > 80
+                            or any(ord(c) < 32 for c in query)
+                            or section in GAINERS_LOOKUP_MODES and not query.strip()):
                         raise ValueError('盘面分区或查询文本无效')
                     _market_detail(result, day, section, query.strip(), now)
         elif name in ('read_market_data', 'check_data_availability'):

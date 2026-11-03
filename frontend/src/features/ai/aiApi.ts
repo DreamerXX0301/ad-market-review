@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useApi, usePageActive } from "../../lib/api";
 import { aiReason, terminalTask } from "./aiState";
 import type { AITask } from "./aiTypes";
+import { aiChangeAfterWrite, publishAIChange } from "./aiTabSync";
 
 // Never show a supplier response body: it may contain the submitted material.
 export async function aiWrite<T = any>(
@@ -35,12 +36,17 @@ export async function aiWrite<T = any>(
       detail.message.length <= 2000
         ? detail.message
         : "";
-    throw new Error(
-      reason === "budget_exceeded"
-        ? aiReason(reason)
-        : localMessage || aiReason(reason, response.status),
+    throw Object.assign(
+      new Error(
+        reason === "budget_exceeded" || reason === "session_busy"
+          ? aiReason(reason)
+          : localMessage || aiReason(reason, response.status),
+      ),
+      { reason, status: response.status },
     );
   }
+  const change = aiChangeAfterWrite(path, method, data);
+  if (change) publishAIChange(change);
   return data;
 }
 export function useAITask(taskId: string) {

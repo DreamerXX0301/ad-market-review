@@ -18,6 +18,7 @@ import { ErrorBox, Loading, Modal } from "../../components/UI";
 import { AIMessageView } from "./AIContent";
 import { aiWrite, useAITask } from "./aiApi";
 import { useAIStream } from "./useAIStream";
+import { publishAIChange, subscribeAIChanges } from "./aiTabSync";
 import { useAIChatFollow } from "./useAIChatFollow";
 import { chatLocation, readChatLocation } from "./aiChatLocation";
 import {
@@ -73,6 +74,7 @@ export default function AIWorkspace({
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState("");
+  const [busyDraft, setBusyDraft] = useState(false);
   const [cursor, setCursor] = useState("");
   const [historyRows, setHistoryRows] = useState<AISession[]>([]);
   const [historyKind, setHistoryKind] = useState<AIKind | "">("");
@@ -81,9 +83,12 @@ export default function AIWorkspace({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [optimistic, setOptimistic] = useState<AIMessage | null>(null);
   const [scrollRequest, setScrollRequest] = useState(0);
-  const detail = useApi<{ session: AISession; messages: AIMessage[] }>(
-    sessionId ? `/ai/sessions/${encodeURIComponent(sessionId)}` : null,
-  );
+  const detail = useApi<{
+    session: AISession;
+    messages: AIMessage[];
+    active_task_id: string | null;
+    config_matches: boolean;
+  }>(sessionId ? `/ai/sessions/${encodeURIComponent(sessionId)}` : null);
   const historyParams = new URLSearchParams({
     limit: "20",
     ...(!allHistory ? { kind } : historyKind ? { kind: historyKind } : {}),
@@ -98,14 +103,24 @@ export default function AIWorkspace({
   );
   const task = useAITask(taskId);
   const live = useAIStream(taskId, sessionId, task.pending);
-  const pending = submitting || (task.pending && !live.finished);
+  const serverTask = detail.data?.active_task_id;
+  const pending =
+    submitting ||
+    (task.pending && !live.finished) ||
+    (!!serverTask && serverTask !== taskId);
   const provider = providers.data?.items.find(
     (item) => item.provider_id === providerId,
   );
-  const session = detail.data?.session;
+  const sessionMissing = detail.errorStatus === 404;
+  const session = sessionMissing ? undefined : detail.data?.session;
   const completedTask = useRef("");
   const submitGuard = useRef(false);
   const mounted = useRef(true);
+  const viewGeneration = useRef(0);
+  const currentTaskId = useRef(taskId);
+  currentTaskId.current = taskId;
+  const isCurrentView = (generation: number) =>
+    mounted.current && generation === viewGeneration.current;
   const attempt = useRef<{ signature: string; key: string } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -222,6 +237,52 @@ export default function AIWorkspace({
     setCursor("");
     history.reload();
   }
+  useEffect(() => {
+    if (!active) return;
+    return subscribeAIChanges(
+      (change) => {
+        if (change.scope === "providers") {
+          providers.reload();
+          detail.reload();
+        } else if (change.scope === "session") {
+          reloadHistory();
+          if (change.id === sessionId) detail.reload();
+        } else if (change.id === taskId) {
+          task.reload();
+        }
+      },
+      () => {
+        providers.reload();
+        if (!cursor) history.reload();
+        detail.reload();
+        if (taskId) task.reload();
+      },
+      () => {
+        providers.reload();
+        if (!cursor) history.reload();
+        if (sessionId) detail.reload();
+        if (taskId && task.error) task.reload();
+      },
+    );
+  }, [
+    active,
+    sessionId,
+    taskId,
+    cursor,
+    providers.reload,
+    history.reload,
+    detail.reload,
+    task.reload,
+    task.error,
+  ]);
+  const verifying = providers.data?.items.some(
+    (item) => item.verification?.state === "verifying",
+  );
+  useEffect(() => {
+    if (!active || !verifying || providers.loading || providers.error) return;
+    const timer = setTimeout(providers.reload, 2000);
+    return () => clearTimeout(timer);
+  }, [active, verifying, providers.loading, providers.error, providers.reload]);
   const terminal = terminalTask(task.data?.state)
     ? task.data!.state
     : live.finished
@@ -234,6 +295,7 @@ export default function AIWorkspace({
     detail.reload();
     reloadHistory();
     providers.reload();
+    if (sessionId) publishAIChange({ scope: "session", id: sessionId });
     if (["failed", "interrupted_manual_retry", "stale"].includes(terminal))
       setError(
         task.data?.reason_code === "budget_exceeded"
@@ -242,13 +304,26 @@ export default function AIWorkspace({
             ? task.data.message
             : aiReason(task.data?.reason_code || terminal),
       );
-  }, [taskId, terminal, detail.reload, providers.reload]);
+  }, [taskId, sessionId, terminal, detail.reload, providers.reload]);
   useEffect(() => {
-    if (!session || task.pending) return;
-    const last = detail.data?.messages.at(-1);
-    if (last?.role === "user" && last.task_id && last.task_id !== taskId)
-      setTaskId(last.task_id);
-  }, [detail.data]);
+    if (
+      !session ||
+      submitting ||
+      !serverTask ||
+      serverTask === taskId ||
+      (task.pending && !live.finished)
+    )
+      return;
+    setTaskId(serverTask);
+    setStopping(false);
+    setError("");
+  }, [session, submitting, serverTask, taskId, task.pending, live.finished]);
+  useEffect(() => {
+    if (!sessionId || !sessionMissing) return;
+    newSession(true);
+    setError("这段对话已删除或到期，已保留输入，可开始新对话。");
+    reloadHistory();
+  }, [sessionId, sessionMissing]);
   useEffect(() => {
     if (
       optimistic?.task_id &&
@@ -267,18 +342,27 @@ export default function AIWorkspace({
     scrolledAnswerTask.current = "";
   }
   function newSession(keepDraft = false) {
+    viewGeneration.current += 1;
     resetReading();
     setHistoryOpen(false);
     setSessionId("");
     setTaskId("");
     if (!keepDraft) setText("");
     setError("");
+    setBusyDraft(false);
     setOptimistic(null);
     setStopping(false);
+    setDeleting(null);
     attempt.current = null;
   }
-  const matches = !session || sessionMatches(session, provider);
-  const allowed = canGenerate(provider) && matches;
+  const matches =
+    !session || sessionMatches(session, provider, detail.data?.config_matches);
+  const allowed =
+    canGenerate(provider) &&
+    matches &&
+    !providers.loading &&
+    !providers.error &&
+    !detail.error;
   async function send() {
     if (
       submitGuard.current ||
@@ -288,9 +372,11 @@ export default function AIWorkspace({
       (sessionId && !session)
     )
       return;
+    const generation = viewGeneration.current;
     submitGuard.current = true;
     setSubmitting(true);
     setError("");
+    setBusyDraft(false);
     setStopping(false);
     const question = text.trim();
     follow.resume();
@@ -323,7 +409,7 @@ export default function AIWorkspace({
         sessionId ? `/sessions/${sessionId}/messages` : "/sessions",
         { ...payload, request_key: attempt.current.key },
       );
-      if (!mounted.current) return;
+      if (!isCurrentView(generation)) return;
       setOptimistic({
         ...local,
         task_id: response.task_id,
@@ -336,10 +422,16 @@ export default function AIWorkspace({
       detail.reload();
       reloadHistory();
     } catch (e: any) {
-      if (mounted.current) {
-        setError(e.message);
+      if (isCurrentView(generation)) {
         setOptimistic(null);
-        providers.reload();
+        if (e.reason === "session_busy") {
+          setBusyDraft(true);
+          detail.reload();
+        } else {
+          setError(e.message);
+          if (e.reason === "configuration_changed") detail.reload();
+          providers.reload();
+        }
       }
     } finally {
       submitGuard.current = false;
@@ -347,17 +439,22 @@ export default function AIWorkspace({
     }
   }
   async function stop() {
-    if (!taskId || stopping) return;
+    if (!taskId || stopping || !task.pending || live.finished) return;
+    const generation = viewGeneration.current;
     setStopping(true);
     try {
       await aiWrite(`/tasks/${taskId}/cancel`);
-      task.reload();
+      if (isCurrentView(generation) && currentTaskId.current === taskId)
+        task.reload();
     } catch (e: any) {
-      setError(e.message);
-      setStopping(false);
+      if (isCurrentView(generation) && currentTaskId.current === taskId) {
+        setError(e.message);
+        setStopping(false);
+      }
     }
   }
   async function keepSession(item: AISession) {
+    const generation = viewGeneration.current;
     setHistoryBusy(true);
     setError("");
     try {
@@ -367,11 +464,12 @@ export default function AIWorkspace({
         "PATCH",
       );
       reloadHistory();
-      if (item.session_id === sessionId) detail.reload();
+      if (isCurrentView(generation) && item.session_id === sessionId)
+        detail.reload();
     } catch (e: any) {
-      setError(e.message);
+      if (isCurrentView(generation)) setError(e.message);
     } finally {
-      setHistoryBusy(false);
+      if (mounted.current) setHistoryBusy(false);
     }
   }
   function suggest(question: string) {
@@ -380,9 +478,10 @@ export default function AIWorkspace({
       inputRef.current?.focus();
     }
   }
-  const stored = detail.data?.messages || [];
+  const stored = sessionMissing ? [] : detail.data?.messages || [];
   const displayed = [...stored];
   if (
+    !sessionMissing &&
     optimistic &&
     !stored.some(
       (message) =>
@@ -395,7 +494,7 @@ export default function AIWorkspace({
   const finalReply = stored.some(
     (message) => message.role === "assistant" && message.task_id === taskId,
   );
-  if (live.text && !finalReply)
+  if (!sessionMissing && live.text && !finalReply)
     displayed.push({
       message_id: `live-${taskId}`,
       task_id: taskId,
@@ -595,6 +694,11 @@ export default function AIWorkspace({
                   className="ai-history-open"
                   disabled={submitting}
                   onClick={() => {
+                    if (item.session_id === sessionId) {
+                      setHistoryOpen(false);
+                      return;
+                    }
+                    viewGeneration.current += 1;
                     resetReading();
                     setScrollRequest((value) => value + 1);
                     setProviderId(item.provider_id);
@@ -602,6 +706,8 @@ export default function AIWorkspace({
                     setTaskId("");
                     setText("");
                     setError("");
+                    setBusyDraft(false);
+                    setDeleting(null);
                     setOptimistic(null);
                     setStopping(false);
                     setHistoryOpen(false);
@@ -778,7 +884,9 @@ export default function AIWorkspace({
                 type="button"
                 aria-label="停止"
                 title="停止回答"
-                disabled={submitting || stopping}
+                disabled={
+                  submitting || stopping || !task.pending || live.finished
+                }
                 onClick={stop}
               >
                 <Square size={15} aria-hidden="true" />
@@ -843,6 +951,13 @@ export default function AIWorkspace({
               模型设置已更改，请开始新对话。
             </p>
           )}
+          {busyDraft && (
+            <p className="ai-chat-unavailable" role="status">
+              {pending || detail.loading || detail.error
+                ? "这段对话正在处理另一条提问。草稿已保留，回答结束后可继续发送。"
+                : "草稿已保留，可以继续发送。"}
+            </p>
+          )}
           {error && (
             <p className="ai-chat-unavailable" role="alert">
               {error}
@@ -867,6 +982,7 @@ export default function AIWorkspace({
               className="btn danger"
               disabled={historyBusy}
               onClick={async () => {
+                const generation = viewGeneration.current;
                 setHistoryBusy(true);
                 try {
                   await aiWrite(
@@ -874,13 +990,18 @@ export default function AIWorkspace({
                     undefined,
                     "DELETE",
                   );
-                  if (deleting.session_id === sessionId) newSession();
-                  setDeleting(null);
+                  if (isCurrentView(generation)) {
+                    if (deleting.session_id === sessionId) newSession(true);
+                    setDeleting(null);
+                  }
                   reloadHistory();
                 } catch (e: any) {
-                  setError(e.message);
+                  if (isCurrentView(generation)) {
+                    setError(e.message);
+                    if (e.reason === "session_busy") detail.reload();
+                  }
                 } finally {
-                  setHistoryBusy(false);
+                  if (mounted.current) setHistoryBusy(false);
                 }
               }}
             >

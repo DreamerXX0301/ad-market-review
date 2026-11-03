@@ -17,6 +17,8 @@ LOCAL_TOOL_BUDGET = {
     'max_reads': 5,
 }
 _SECTIONS = ('availability', 'auction', 'noon', 'close', 'overview', 'fund_flow')
+GAINERS_LOOKUP_MODES = {'gainers_topic': 'topic_id', 'gainers_related': 'related_name'}
+DETAIL_SECTIONS = ('indices', 'sectors', 'emotion', 'gainers', 'abnormal', 'broken_boards', *GAINERS_LOOKUP_MODES)
 
 
 def _day(value):
@@ -67,11 +69,13 @@ def classify_tool(name, args):
         return 'data'
     if name == 'read_market_detail':
         if (set(args) != {'date', 'section', 'query'}
-                or args['section'] not in ('indices','sectors','emotion','gainers','abnormal','broken_boards')
+                or args['section'] not in DETAIL_SECTIONS
                 or not isinstance(args['query'], str) or len(args['query']) > 80
-                or any(ord(c)<32 for c in args['query'])):
+                or any(ord(c)<32 for c in args['query'])
+                or args['section'] in GAINERS_LOOKUP_MODES and not args['query'].strip()):
             raise ValueError('invalid_tool_arguments')
-        _day(args['date'])
+        if args['date'] != 'latest' or args['section'] not in GAINERS_LOOKUP_MODES:
+            _day(args['date'])
         return 'data'
     raise ValueError('invalid_tool_arguments')
 
@@ -124,7 +128,7 @@ def assess_tool(frozen, prior_executed_calls, name, args):
     requested_day = args.get('date')
     result = {
         'ok': False, 'state': 'not_read', 'reason_code': 'tool_budget_exhausted',
-        'tool_name': name, 'date': None if requested_day == 'today' else requested_day,
+        'tool_name': name, 'date': None if requested_day in ('today', 'latest') else requested_day,
         'summary': '本轮未读取这项资料。请依据已经取得的资料直接回答，并说明这一项尚未取得；不能据此声称资料不存在、尚未采集或尚未到时点。不要再申请查询或联网，也不要只说准备查询。',
         'source': [], 'evidence': [], 'metrics': [],
         'gaps': [{'capability': name, 'state': 'not_read',

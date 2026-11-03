@@ -394,11 +394,13 @@ assert.ok(!shortcut.includes("textarea") && !shortcut.includes("ai-workspace"));
 const noApi = encode(
   'export function useApi(){throw Error("hook not expected")} export function usePageActive(){return false}',
 );
+const tabSyncUrl = encode(await compile("./aiTabSync.ts"));
 let client = await compile("./aiApi.ts");
 for (const [name, url] of Object.entries({
   react: import.meta.resolve("react"),
   "../../lib/api": noApi,
   "./aiState": helperUrl,
+  "./aiTabSync": tabSyncUrl,
 }))
   client = client.replaceAll(
     'from "' + name + '"',
@@ -445,7 +447,80 @@ await assert.rejects(
     !e.message.includes("DO_NOT_SHOW") &&
     !e.message.includes("[object Object]"),
 );
-globalThis.fetch = originalFetch;
+globalThis.fetch = async () =>
+  new Response(
+    JSON.stringify({
+      detail: {
+        origin: "local",
+        reason_code: "session_busy",
+        message: "本轮问题仍在处理",
+      },
+    }),
+    { status: 409 },
+  );
+await assert.rejects(
+  aiWrite("/sessions/active/messages", { text: "同会话草稿" }),
+  (error) =>
+    error.status === 409 &&
+    error.reason === "session_busy" &&
+    /等待/.test(error.message),
+);
+assert.equal(
+  sessionMatches(
+    { provider_id: "openai", model: "gpt-6.1-sol" },
+    provider,
+    false,
+  ),
+  false,
+);
+const { subscribeAIChanges } = await import(tabSyncUrl);
+const oldWindow = globalThis.window;
+const oldDocument = globalThis.document;
+globalThis.window = Object.assign(new EventTarget(), { BroadcastChannel });
+globalThis.document = Object.assign(new EventTarget(), {
+  visibilityState: "visible",
+});
+const notifications = [];
+let received;
+const nextNotice = new Promise((resolve) => {
+  received = resolve;
+});
+const unsubscribe = subscribeAIChanges(
+  (change) => {
+    notifications.push(change);
+    received();
+  },
+  () => {},
+  () => {},
+);
+try {
+  await assert.rejects(
+    aiWrite("/sessions/active/messages", { text: "未受理" }),
+  );
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({ task_id: "accepted", session_id: "active" }),
+      {
+        status: 202,
+      },
+    );
+  await aiWrite("/sessions/active/messages", { text: "只发请求、不广播草稿" });
+  const timeout = AbortSignal.timeout(2000);
+  await Promise.race([
+    nextNotice,
+    new Promise((_, reject) =>
+      timeout.addEventListener("abort", () => reject(timeout.reason), {
+        once: true,
+      }),
+    ),
+  ]);
+  assert.deepEqual(notifications, [{ scope: "session", id: "active" }]);
+} finally {
+  unsubscribe();
+  globalThis.window = oldWindow;
+  globalThis.document = oldDocument;
+  globalThis.fetch = originalFetch;
+}
 console.log(
   "AI minimal chat, legacy reading, native citations, partial safety, numeric references and safe errors passed",
 );
