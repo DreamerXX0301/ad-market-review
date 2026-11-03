@@ -4,6 +4,22 @@ type NoonRow = Record<string, any>;
 export const noonNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
+/** Amount difference uses the verified CNY pair before display rounding. */
+export function noonIndexAmountDelta(
+  comparison: NoonRow | undefined,
+): number | null {
+  if (
+    comparison?.state !== "matched_period" &&
+    comparison?.state !== "snapshot_comparison"
+  )
+    return null;
+  const current = noonNumber(comparison.current_amount);
+  const previous = noonNumber(comparison.previous_amount);
+  return current != null && current >= 0 && previous != null && previous > 0
+    ? current - previous
+    : null;
+}
+
 /** An explicit deep link pins the shared date; ordinary entry uses the server's today. */
 export function noonInitialDate(hash: string): string {
   const [route, search = ""] = hash.replace(/^#/, "").split("?", 2);

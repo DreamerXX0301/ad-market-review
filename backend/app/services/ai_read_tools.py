@@ -22,7 +22,7 @@ from app.core import digest, dumps
 from app.infrastructure.config import data_dir, sqlite_path
 from app.services import ai_contexts as contexts
 from app.services import ai_market_brief as briefs
-from app.services.ai_tool_budget import DETAIL_SECTIONS, GAINERS_LOOKUP_MODES
+from app.services.ai_tool_budget import DETAIL_SECTIONS, GAINERS_LOOKUP_MODES, TREND_PERIODS, TREND_WINDOWS, classify_tool
 from app.services.sync_clock import CHINA, local_now
 
 MAX_RESULT_BYTES = 24 * 1024
@@ -46,6 +46,12 @@ def tool_schemas():
         ('read_stock_quote', '按证券名称、六位代码或完整代码，读取本地指定完成交易日的个股原始报价和成交额；名称必须经本地名录消歧，不用不存在的代码或旧日价格代替。不需要先有研究报告，不联网。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'},
           'instrument_id': {'type': 'string', 'description': '证券名称、六位代码或完整代码，最多80字符；空串沿用当前页面证券'}}, ['date', 'instrument_id']),
+        ('read_stock_trend', '读取一只已核实A股最近已发布K线与量价、技术指标、涨跌停及可核验的板块对照。不读取实时分时。近期走势默认日线30根；明确周月线默认12根。无指定截止日用latest，明确今天用today。',
+         {'date': {'type': 'string', 'description': 'YYYY-MM-DD、today或latest'},
+          'instrument_id': {'type': 'string', 'description': '证券准确名称、六位代码或完整代码。承接前一条用户股票主题时传其明确名称；空串仅用于绑定的页面标的'},
+          'period': {'type': 'string', 'enum': list(TREND_PERIODS)},
+          'count': {'type': 'string', 'enum': list(TREND_WINDOWS)}},
+         ['date', 'instrument_id', 'period', 'count']),
         ('read_limit_up_data', '读取指定完成日已保存的涨停梯队、各连板高度名单、首板和最高板、反包/晋级失败/20cm及题材确认家数。复用与页面相同的日期及价格核验，来源不全时数量只给已确认下界，不能称全市场完整统计。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
         ('read_market_detail', '读取系统已保存的盘面页面事实：指数、板块表现、情绪及次日观察条件、近30交易日涨幅榜、历史监管监控、炸板分析。gainers_related按真实分类名称关键词筛完整前1000并取股票并集，gainers_topic按真实topic_id等值筛选；两者query必填。其他分区query用于名称或代码筛选，空串不筛选。返回有界名单，区分已观察数、确认总数及截取范围；观察条件不是确定预测，板块成交额不是净流入。',
@@ -468,10 +474,8 @@ def _completed_market(result, day, now):
     return market, status, heads, supplement
 
 
-def _stock_quote(result, identifier, day, page, now):
+def _stock_identity(result, market, status, identifier, day, page):
     # Resolve only the local small identity catalogue before reading prices.
-    heads, supplement = _heads(), _supplement_head()
-    market = _market(heads); status = market.status()
     term = identifier.strip() or page.get('instrument_id') or (page.get('instrument') or {}).get('instrument_id') or ''
     if not isinstance(term, str) or not 1 <= len(term) <= 80 or any(ord(c) < 32 for c in term):
         raise ValueError('证券名称或代码无效')
@@ -483,16 +487,46 @@ def _stock_quote(result, identifier, day, page, now):
     normalized = term.upper()
     matches = [row for row in identities if normalized in (row['instrument_id'].upper(), row['instrument_id'][:6])
                or term == row.get('name')]
-    result['summary'] = {'requested_instrument': term, 'requested_date': day,
+    result['summary'].update({'requested_instrument': term, 'requested_date': day,
         'identity_state': 'resolved' if len(matches) == 1 else 'ambiguous' if len(matches) > 1 else 'not_found',
         'candidates': _table([_pick_fields(row, ('instrument_id', 'name', 'kind')) for row in identities], maximum=8),
-        'latest_completed_date': status.get('data_end')}
+        'latest_completed_date': status.get('data_end')})
     if len(matches) != 1:
         _gap(result, 'instrument_identity', '本地名录没有唯一准确证券身份；不能猜代码或用近似名称的其他证券代替')
         return
-    identity = matches[0]; symbol = identity['instrument_id']
+    identity = matches[0]
     result['summary']['instrument'] = _pick_fields(identity, ('instrument_id', 'name', 'kind', 'list_date', 'end_date'))
     result['summary']['identity_name_scope'] = '名称来自当前本地证券名录；同证券历史行情不据此证明当时名称或行业归属'
+    return identity
+
+
+def _stock_trend(result, args, day, page, now):
+    from app.services.ai_stock_trend import project_stock_trend
+    available = _completed_market(result, day, now)
+    if available is None:
+        return
+    market, status, heads, supplement = available
+    actual_day = result['date']
+    identity = _stock_identity(result, market, status, args['instrument_id'], day, page)
+    if identity is None:
+        return
+    if _denied(identity):
+        _gap(result, 'source_permission', '所选证券行情来源明确禁止AI处理或外发')
+        return
+    project_stock_trend(result, market, status, actual_day, identity, args['period'], int(args['count']),
+                        reference=market.reference())
+    _bind_detail(result, actual_day, {'date': actual_day, 'snapshot_id': status.get('snapshot_id'),
+                 'summary': result['summary'], 'evidence': result['evidence'], 'gaps': result['gaps']},
+                 heads, supplement)
+
+
+def _stock_quote(result, identifier, day, page, now):
+    heads, supplement = _heads(), _supplement_head()
+    market = _market(heads); status = market.status()
+    identity = _stock_identity(result, market, status, identifier, day, page)
+    if identity is None:
+        return
+    symbol = identity['instrument_id']
     calendar = market.calendar()
     if (not status.get('ready') or day not in calendar
             or not isinstance(status.get('data_end'), str) or day > status['data_end']
@@ -888,6 +922,13 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
             if set(args) - {'instrument_id'} or not isinstance(args.get('instrument_id', ''), str):
                 raise ValueError('个股工具仅接受instrument_id')
             _research(result, args.get('instrument_id', ''), page_context or {}, fallback_context or {}, now)
+        elif name == 'read_stock_trend':
+            classify_tool(name, args)
+            day = args['date'] if args['date'] == 'latest' else _day(args['date'], now)
+            result['date'] = None if day == 'latest' else day
+            from app.services.supplement_access import supplement_access
+            with supplement_access():
+                _stock_trend(result, args, day, page_context or {}, now)
         elif name in ('read_stock_quote', 'read_limit_up_data', 'read_market_detail'):
             permitted = ({'date', 'instrument_id'} if name == 'read_stock_quote' else
                          {'date', 'section', 'query'} if name == 'read_market_detail' else {'date'})

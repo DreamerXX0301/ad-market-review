@@ -71,13 +71,15 @@ SessionSummary含`session_id,kind,report_id,instrument_id,as_of,provider_id,mode
 
 用户说“今天/现在/最新”时，数据工具使用`today`并由服务器实际`Asia/Shanghai`时钟解析。页面as_of不是今天的替代值。工具结果的日期、实际采集窗口、报告期、获取/披露时间分别保存；现在取得的资料不倒填为历史当时可知。
 
-本地工具只由唯一worker内AI控制线程执行。六项已声明能力：
+本地工具只由唯一worker内AI控制线程执行。七项已声明能力：
 
 | 工具 | 参数 | 范围 |
 | --- | --- | --- |
 | `read_market_data` | `date:'today'|ISO,section` | section为availability/auction/noon/close/overview/fund_flow |
 | `check_data_availability` | `date:'today'|ISO` | 检查资料与阶段，不采集 |
 | `read_stock_research` | `instrument_id`，空串沿用页面证券 | 当前实例已存未过期v2报告，不延长TTL；不存在时仅可回退同股会话旧材料并说明旧日期 |
+
+`read_stock_trend(date,instrument_id,period,count)` 读取同一已发布代际、未复权的个股日周月K线、有界技术指标、至多30个交易日的可核验收盘涨跌停及同日板块。最近默认 `latest,D,30`，周月默认12根，明确日期不回退，收盘K线不作实时分时。旧冻结工具清单不扩大。
 
 新增：`read_stock_quote(date,instrument_id)`读取名称/代码指定日行情和成交额；`read_limit_up_data(date)`复用涨停梯队明细；`read_market_detail(date,section,query)`复用指数、板块、情绪、近30交易日涨幅榜、监管异动、炸板页面。gainers题材/行业统计使用页面同份前1000、筛选前固定样本，多标签合计可能超过100%；缺分类明确未知。
 

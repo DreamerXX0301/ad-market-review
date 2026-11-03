@@ -6,7 +6,7 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const {
-  noonNumber, noonRows, noonLines, noonPayload, noonCaptureState,
+  noonIndexAmountDelta, noonNumber, noonRows, noonLines, noonPayload, noonCaptureState,
   noonShouldPoll, noonCalendarDates, noonClock, noonSortedRows, noonPreviousText, noonChartDate, noonSourceCaption, noonCanResume, noonPreviousFacts, noonInitialDate, noonSectorSelection,
 } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
 const day = "2026-10-28";
@@ -25,6 +25,15 @@ assert.equal(noonNumber(null), null);
 assert.equal(noonNumber("0"), null);
 assert.equal(noonNumber(NaN), null);
 assert.equal(noonNumber(0), 0);
+const comparison = { state: "snapshot_comparison", current_amount: 85_510_000_000,
+  previous_amount: 100_000_000_000, ratio: 0.86 };
+assert.equal(noonIndexAmountDelta(comparison), -14_490_000_000);
+assert.equal(noonIndexAmountDelta({ ...comparison, state: "matched_period", current_amount: 101_000_000_000 }), 1_000_000_000);
+assert.equal(noonIndexAmountDelta({ ...comparison, current_amount: 0 }), -100_000_000_000);
+assert.equal(noonIndexAmountDelta({ ...comparison, current_amount: comparison.previous_amount }), 0);
+assert.equal(noonIndexAmountDelta({ ...comparison, state: "unavailable" }), null);
+assert.equal(noonIndexAmountDelta({ ...comparison, previous_amount: 0 }), null);
+assert.equal(noonIndexAmountDelta({ ...comparison, current_amount: null }), null);
 assert.deepEqual(noonRows({ items: [null, "bad", { count: 0 }] }), [{ count: 0 }]);
 assert.deepEqual(noonLines([0, {}, "原文", { reason: "缺失" }]), ["原文", "缺失"]);
 assert.equal(noonCaptureState(view, day).disabled, false);

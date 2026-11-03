@@ -865,16 +865,20 @@ class MarketData:
             while len(self._panels)>4:self._panels.pop(next(iter(self._panels)))
             return [dict(r) for r in result]
 
-    def chart(self,instrument_id,period='D',as_of=None,price_basis='none',indicator_continuity='market_sessions'):
+    def chart(self,instrument_id,period='D',as_of=None,price_basis='none',indicator_continuity='market_sessions',*,ai_projection=False):
         period=period.upper()
         if period not in ('D','W','M'):raise ValueError('仅支持日K、周K和月K')
         if indicator_continuity not in ('quotes','market_sessions'):raise ValueError('图表指标连续口径仅支持quotes/market_sessions')
         status=self.status(); as_of=as_of or status.get('data_end')
         calendar=self.calendar()
         raw=self.bars(instrument_id,as_of)
-        forward,adjustment=self.prices(instrument_id,as_of,'forward')
+        if ai_projection and any(row.get('egress_allowed') is False or row.get('ai_processing_allowed') is False for row in raw):
+            raise ValueError('图表包含禁止外发或AI处理的原始报价')
+        if ai_projection and price_basis != 'none':
+            raise ValueError('AI图表仅支持未复权原始报价')
+        forward,adjustment=(None, {}) if ai_projection else self.prices(instrument_id,as_of,'forward')
         from .chart_annotation_projection import annotation_projection_evidence
-        annotation_projection = annotation_projection_evidence(raw, as_of, status.get('snapshot_id'))
+        annotation_projection = {} if ai_projection else annotation_projection_evidence(raw, as_of, status.get('snapshot_id'))
         if price_basis not in ('none','forward'):raise ValueError('价格口径仅支持none/forward')
         rows=forward if price_basis=='forward' else raw
         actual_basis='forward_event_affine' if price_basis=='forward' and adjustment.get('usable') else 'none'
@@ -900,10 +904,18 @@ class MarketData:
         from .waves import candidate_waves
         if period=='M':warnings.append('月K由已留存日行情聚合；首月或本月不完整、缺报价和公司行动会阻断指标预热。MACD/KDJ需要35根连续完整可比月柱。')
         same_snapshot = self.status().get('snapshot_id') == status.get('snapshot_id')
+        if not same_snapshot and ai_projection:
+            raise ValueError('读取期间行情代际变化，请重试')
         if not same_snapshot:
             annotation_projection.update(available=False, reason='读取期间行情代际变化，不能证明原锚至本图的公司行动区间，请刷新')
-        result = {'instrument':self.instrument(instrument_id),'period':period,'as_of':as_of,'bars':bars,'snapshot_id':status.get('snapshot_id'),'annotation_projection_evidence':annotation_projection,'requested_price_basis':price_basis,'price_basis':actual_basis,'price_basis_options':[{'value':'none','label':'未复权','available':True,'reason':None},{'value':'forward','label':'本地前复权','available':bool(adjustment.get('usable')),'reason':adjustment.get('reason')}],'adjustment':adjustment,'indicator_gaps':gaps,'requested_indicator_continuity':indicator_continuity,'indicator_continuity':actual_continuity,'indicator_continuity_notice':continuity_notice,'quote_gaps':missing_quotes,'waves':candidate_waves(bars,threshold_pct=2.0 if period=='D' else 4.0 if period=='W' else 8.0) if self.instrument(instrument_id).get('kind') in ('index','stock') else None,'volume_unit':'股','amount_unit':'CNY','price_unit':'点' if self.instrument(instrument_id)['kind']=='index' else 'CNY','quality':status.get('quality'),'warnings':warnings,'indicator_version':ALGORITHM+'+explicit-chart-basis-v2+display-continuity-v1','breadth_scope':breadth_scope}
+        instrument=self.instrument(instrument_id)
+        waves = None
+        if not ai_projection and instrument.get('kind') in ('index','stock'):
+            waves = candidate_waves(bars, threshold_pct={'D': 2.0, 'W': 4.0, 'M': 8.0}[period])
+        result = {'instrument':instrument,'period':period,'as_of':as_of,'bars':bars,'snapshot_id':status.get('snapshot_id'),'annotation_projection_evidence':annotation_projection,'requested_price_basis':price_basis,'price_basis':actual_basis,'price_basis_options':[{'value':'none','label':'未复权','available':True,'reason':None},{'value':'forward','label':'本地前复权','available':bool(adjustment.get('usable')),'reason':adjustment.get('reason')}],'adjustment':adjustment,'indicator_gaps':gaps,'requested_indicator_continuity':indicator_continuity,'indicator_continuity':actual_continuity,'indicator_continuity_notice':continuity_notice,'quote_gaps':missing_quotes,'waves':waves,'volume_unit':'股','amount_unit':'CNY','price_unit':'点' if instrument['kind']=='index' else 'CNY','quality':status.get('quality'),'warnings':warnings,'indicator_version':ALGORITHM+'+explicit-chart-basis-v2+display-continuity-v1','breadth_scope':breadth_scope}
 
+        if ai_projection:
+            return result
         from .chart_session_distance import attach_chart_session_distance
         return attach_chart_session_distance(result, calendar, same_snapshot=same_snapshot)
 

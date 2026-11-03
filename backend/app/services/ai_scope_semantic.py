@@ -44,8 +44,8 @@ _DIAGNOSTIC_PATH = re.compile(
     r'(?:response\.output|response\.output\[\]\.name|response\.function_call\.(?:call_id|arguments)'
     r'|scope_input|round_protocol|tool_schemas|request\.(?:receipt|accepted_stock_plan)|ipc\.plan_stock'
     r'|args(?:\.(?:purpose|current_user_quote|context_user_quote|goal|web_query|web_reason|reads))?'
-    r'|args\.reads\[[0-7]\](?:\.(?:name|arguments)(?:\.(?:date|section|instrument_id|query))?)?'
-    r'|tool(?:\.(?:name|arguments)(?:\.(?:date|section|instrument_id|query))?)?)'
+    r'|args\.reads\[[0-7]\](?:\.(?:name|arguments)(?:\.(?:date|section|instrument_id|query|period|count))?)?'
+    r'|tool(?:\.(?:name|arguments)(?:\.(?:date|section|instrument_id|query|period|count))?)?)'
 )
 
 
@@ -228,7 +228,7 @@ def classify_frozen_read(request, name, args, *, diagnostic=None):
         invalid('argument_fields', 'arguments')
     for key, rule in declared[name]['properties'].items():
         value = args[key]
-        path = 'arguments.' + key if key in ('date', 'section', 'instrument_id', 'query') else 'arguments'
+        path = 'arguments.' + key if key in ('date', 'section', 'instrument_id', 'query', 'period', 'count') else 'arguments'
         if not isinstance(value, str):invalid('argument_type', path)
         if 'enum' in rule and value not in rule['enum']:invalid('argument_enum', path)
         if ('minLength' in rule and len(value) < rule['minLength']
@@ -236,7 +236,7 @@ def classify_frozen_read(request, name, args, *, diagnostic=None):
             invalid('argument_length', path)
     try:return classify_tool(name, args)
     except (ValueError, TypeError):
-        if 'date' in args:
+        if 'date' in args and not (name == 'read_stock_trend' and args['date'] == 'latest'):
             try:classify_tool('check_data_availability', {'date': args['date']})
             except (ValueError, TypeError):invalid('read_date', 'arguments.date')
         invalid('read_executor_arguments', 'arguments')

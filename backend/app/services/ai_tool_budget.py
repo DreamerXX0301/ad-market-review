@@ -18,6 +18,8 @@ LOCAL_TOOL_BUDGET = {
 }
 _SECTIONS = ('availability', 'auction', 'noon', 'close', 'overview', 'fund_flow')
 GAINERS_LOOKUP_MODES = {'gainers_topic': 'topic_id', 'gainers_related': 'related_name'}
+TREND_PERIODS = ('D', 'W', 'M')
+TREND_WINDOWS = ('5', '10', '12', '20', '30', '40', '60')
 DETAIL_SECTIONS = ('indices', 'sectors', 'emotion', 'gainers', 'abnormal', 'broken_boards', *GAINERS_LOOKUP_MODES)
 
 
@@ -54,13 +56,18 @@ def classify_tool(name, args):
                     and not re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', args['instrument_id']))):
             raise ValueError('invalid_tool_arguments')
         return 'data'
-    if name == 'read_stock_quote':
-        if (set(args) != {'date', 'instrument_id'}
+    if name in ('read_stock_quote', 'read_stock_trend'):
+        trend = name == 'read_stock_trend'
+        required = {'date', 'instrument_id', 'period', 'count'} if trend else {'date', 'instrument_id'}
+        if (set(args) != required
                 or not isinstance(args['instrument_id'], str)
                 or len(args['instrument_id']) > 80
                 or any(ord(c)<32 for c in args['instrument_id'])):
             raise ValueError('invalid_tool_arguments')
-        _day(args['date'])
+        if trend and (args['period'] not in TREND_PERIODS or args['count'] not in TREND_WINDOWS):
+            raise ValueError('invalid_tool_arguments')
+        if not trend or args['date'] != 'latest':
+            _day(args['date'])
         return 'data'
     if name == 'read_limit_up_data':
         if set(args) != {'date'}:

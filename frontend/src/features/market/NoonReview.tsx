@@ -25,6 +25,7 @@ import {
   noonCaptureState,
   noonCanResume,
   noonClock,
+  noonIndexAmountDelta,
   noonLines,
   noonNumber,
   noonPayload,
@@ -1593,6 +1594,16 @@ export default function NoonReview({
                     ) || {};
                   const comparison =
                     snapshot.workbench?.index_comparisons?.[id];
+                  const amountDelta = noonIndexAmountDelta(comparison);
+                  const changePct = noonNumber(comparison?.change_pct);
+                  const absoluteYi =
+                    amountDelta == null ? null : Math.abs(amountDelta) / 1e8;
+                  const deltaText =
+                    absoluteYi == null || amountDelta == null
+                      ? null
+                      : amountDelta === 0
+                        ? "持平"
+                        : `${amountDelta > 0 ? "放量" : "缩量"}${absoluteYi < 0.005 ? "不足 0.01" : " " + num(absoluteYi)} 亿元`;
                   return (
                     <article key={id} className="noon-index">
                       <span>{name}</span>
@@ -1617,20 +1628,16 @@ export default function NoonReview({
                             ? "昨日同期成交额"
                             : comparison?.label || "昨日同期成交额"}
                         </span>
-                        {noonNumber(comparison?.ratio) != null ? (
-                          <b
-                            className={tone(noonNumber(comparison.change_pct))}
-                          >
-                            {percent(noonNumber(comparison.change_pct))} ·{" "}
-                            {num(comparison.ratio)}倍
-                          </b>
+                        {deltaText ? (
+                          <b className={tone(amountDelta)}>{deltaText}</b>
                         ) : (
                           <span>暂无可比数据</span>
                         )}
                       </div>
-                      {noonNumber(comparison?.previous_amount) != null && (
+                      {deltaText && (
                         <small className="noon-index-baseline">
-                          基准 {amount(comparison.previous_amount)} · 成交额比
+                          基准 {amount(comparison?.previous_amount)}
+                          {changePct != null && <> · {percent(changePct)}</>}
                         </small>
                       )}
                     </article>

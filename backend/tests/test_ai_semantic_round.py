@@ -540,3 +540,79 @@ def test_pre_v5_frozen_request_keeps_its_original_scope_gate(agent_client, monke
         assert not message['source_context']['scope']['resources_allowed']
     finally:
         runtime.shutdown()
+
+
+def test_stock_name_then_recent_trend_keeps_real_user_subject_and_reads_once(agent_client, monkeypatch):
+    client = agent_client
+    runtime = AIRuntime(fake)
+    subject, followup = '宏昌电子', '近期走势'
+    invitation = '你想看宏昌电子的近期走势、基本面还是估值？'
+    answer = '已按合成测试资料核对宏昌电子近期日线走势。'
+    arguments = {'instrument_id': subject, 'date': 'latest', 'period': 'D', 'count': '30'}
+    calls, reads = [], []
+    follow_task_ids = []
+
+    def read_tool(name, args, **kwargs):
+        assert follow_task_ids, 'name-only turn must not read local market data'
+        saved = task_request(follow_task_ids[0])
+        scope = semantic.accepted_scope(saved)
+        assert scope['authorized_user_messages'] == [followup, subject]
+        reads.append((name, deepcopy(args)))
+        return {**fixture_result(name, args), 'date': '2026-11-02'}
+
+    monkeypatch.setattr(ai_read_tools, 'execute_read_tool', read_tool)
+
+    async def handler(request):
+        payload = json.loads(request.content)
+        calls.append(payload)
+        if len(calls) == 1:
+            assert_initial_plan_only(payload)
+            return httpx.Response(200, content=complete([function('plan_stock_task',
+                planned(subject, purpose='concept'), 'choose-stock-topic')]))
+        if len(calls) == 2:
+            assert not payload.get('tools')
+            return httpx.Response(200, content=complete([final(invitation)], invitation))
+        if len(calls) == 3:
+            assert_initial_plan_only(payload)
+            parameters = payload['tools'][0]['parameters']['properties']
+            assert parameters['current_user_quote']['enum'] == [followup]
+            assert parameters['context_user_quote']['enum'] == ['', subject]
+            assert invitation not in json.dumps(payload['input'], ensure_ascii=False)
+            reads_schema = parameters['reads']['items']['anyOf']
+            branch = next(item for item in reads_schema
+                          if item['properties']['name']['enum'] == ['read_stock_trend'])
+            assert set(branch['properties']['arguments']['required']) == set(arguments)
+            return httpx.Response(200, content=complete([function('plan_stock_task',
+                planned(followup, purpose='stock_research', context=subject,
+                        reads=[{'name': 'read_stock_trend', 'arguments': arguments}]), 'read-recent-trend')]))
+        assert len(calls) == 4
+        output = next(json.loads(item['output']) for item in payload['input']
+                      if item.get('type') == 'function_call_output' and item['call_id'] == 'read-recent-trend')
+        assert output['ok'] and len(output['tool_results']) == 1
+        result = output['tool_results'][0]['result']
+        assert result['tool_name'] == 'read_stock_trend' and result['date'] == '2026-11-02'
+        return httpx.Response(200, content=complete([final(answer)], answer))
+
+    mock_network(monkeypatch, handler)
+    try:
+        enable(client, runtime, 'openai')
+        created = create(client, text=subject).json()
+        assert drive(runtime, created['task_id'])['state'] == 'completed'
+        assert deltas(created['task_id']) == invitation
+        assert len(calls) == 2 and reads == []
+
+        session_path = '/api/v1/ai/sessions/' + created['session_id']
+        response = client.post(session_path + '/messages',
+                               json={'text': followup, 'consent': True, 'request_key': 'stock-trend-followup'})
+        assert response.status_code == 202, response.text
+        task_id = response.json()['task_id']
+        follow_task_ids.append(task_id)
+        assert drive(runtime, task_id)['state'] == 'completed'
+        assert reads == [('read_stock_trend', arguments)] and len(calls) == 4
+        assert deltas(task_id) == answer
+        messages = client.get(session_path).json()['messages']
+        assert [row['text'] for row in messages] == [subject, invitation, followup, answer]
+        assert messages[-1]['source_context']['scope']['authorized_user_messages'] == [followup, subject]
+        assert messages[-1]['source_context']['web']['used'] is False
+    finally:
+        runtime.shutdown()

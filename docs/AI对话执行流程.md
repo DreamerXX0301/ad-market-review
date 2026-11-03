@@ -25,20 +25,21 @@
 
 每轮最多3次模型请求；本地最多3次实质读取和2次可用性检查，共5次。第一模型响应可以提出多项本地查询，后端顺序执行并配齐结果。最后一次不再提供新的本地读取或搜索规划函数；已经批准且当前模型支持的原生搜索仍可在最后一次请求执行并直接作答。超额的合法读取返回“本轮未读取”，而不是把整轮变成“股票问题不支持”。
 
-## 六项本地工具不是整套系统所有数据的直通口
+## 本地工具与资料边界
 
 | 函数 | 当前能读的资料 |
 | --- | --- |
 | `read_market_data` | 完成日概览、竞价、午间、午间至收盘及已存资金来源对照 |
 | `check_data_availability` | 指定日资料状态、时间阶段及已核验日历信息 |
 | `read_stock_quote` | 按经核实的证券名称/代码读取指定完成日价量与成交额，不要求先生成研究报告 |
+| `read_stock_trend` | 个股日、周、月K线，成交量额、MA/MACD/KDJ、窗口内可核验的收盘涨跌停及同日板块对照 |
 | `read_limit_up_data` | 涨停、首板、各连板高度、最高板及相关有界名单 |
 | `read_market_detail` | 指数、板块、情绪、近30交易日涨幅榜、异动与炸板页面的现有事实 |
 | `read_stock_research` | 已保存且未过期的个股研究及符合边界的同股历史材料 |
 
 这些函数读取已有发布和业务记录，不发起新的行情采集，不延长数据或报告保存期，不接受任意SQL、文件路径或代码。模型没有交易、自选或策略写入工具。API和worker继续遵守各自的SQLite、不可变Parquet及分析数据库边界。
 
-**系统有一项数据，不代表AI已经有相应读取接口。** 当前 `read_stock_quote` 是单日OHLC/价量，不是连续日K、周K和月K接口。图表模块能看K线，也不能据此宣称某轮AI已经读过这段序列；已存研究无报告时更不能补造技术结论。当前也没有专门的龙虎榜席位明细函数或任意多日全板块区间排名接口。具体缺口要说明缺什么，不能套用股票领域拒答。
+个股走势优先读系统已发布的K线。只报股票名称时，助手先确认研究方向；追问近期走势时用同股默认30根日线，无指定日期取最近已发布完成日。周线和月线默认12根，标出周期是否结束及报价覆盖；K线为未复权，缺档不补线。收盘涨跌停取最近至多30个交易日的原始收盘和已存来源池，板块对照仅使用可核验归属和同源指数日行情。工具不包含实时个股分时、龙虎榜席位明细或任意多日全板块区间排名。
 
 ## 个股深度研究
 
@@ -106,5 +107,5 @@
 
 - [逐轮契约](../contracts/ai-agent-round-v1.md)、[提示词v5](../contracts/prompts/ai-agent-round-v5.md)、[工作台契约](../contracts/ai-workbench-v1.md)。
 - [API与入队](../backend/app/routers/ai.py)、[会话上下文](../backend/app/services/ai_service.py)、[计划核验](../backend/app/services/ai_scope_semantic.py)。
-- [执行与账本](../backend/app/services/ai_agent_runtime.py)、[Responses循环](../backend/app/adapters/ai_agent.py)、[六项本地读取](../backend/app/services/ai_read_tools.py)。
+- [执行与账本](../backend/app/services/ai_agent_runtime.py)、[Responses循环](../backend/app/adapters/ai_agent.py)、[本地读取](../backend/app/services/ai_read_tools.py)。
 - [Markdown渲染](../frontend/src/features/ai/AIAnswerText.tsx)、[SSE接收](../frontend/src/features/ai/useAIStream.ts)、[滚动跟随](../frontend/src/features/ai/useAIChatFollow.ts)。

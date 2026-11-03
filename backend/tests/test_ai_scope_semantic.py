@@ -99,7 +99,7 @@ def test_plan_schema_uses_strict_declared_tool_arguments():
     branches = params['properties']['reads']['items']['anyOf']
     assert {branch['properties']['name']['enum'][0] for branch in branches} == {
         'read_market_data', 'read_stock_research', 'check_data_availability',
-        'read_stock_quote', 'read_limit_up_data', 'read_market_detail',
+        'read_stock_quote', 'read_stock_trend', 'read_limit_up_data', 'read_market_detail',
     }
     assert all(branch['additionalProperties'] is False
                and branch['properties']['arguments']['additionalProperties'] is False
@@ -316,3 +316,22 @@ def test_new_read_capabilities_still_require_the_exact_frozen_arguments(read_ite
     req = request()
     result = semantic.validate_plan(req, plan(req, reads=[read_item]))
     assert result['ok'] and result['reads'] == [read_item]
+
+
+def test_stock_trend_uses_frozen_catalog_and_counts_as_one_substantive_read():
+    args = {'instrument_id': '宏昌电子', 'date': 'latest', 'period': 'D', 'count': '30'}
+    fresh = request('近期走势', history=['宏昌电子'])
+    assert semantic.classify_frozen_read(fresh, 'read_stock_trend', args) == 'data'
+    diagnostic = {}
+    for changes, expected in (
+        ({'period': 'minute'}, {'code': 'argument_enum', 'path': 'arguments.period'}),
+        ({'count': '5000'}, {'code': 'argument_enum', 'path': 'arguments.count'}),
+        ({'date': '2026-02-30'}, {'code': 'read_date', 'path': 'arguments.date'}),
+    ):
+        with pytest.raises(ValueError):
+            semantic.classify_frozen_read(fresh, 'read_stock_trend', {**args, **changes}, diagnostic=diagnostic)
+        assert diagnostic == expected
+    old = {**fresh, 'tool_schemas': [s for s in fresh['tool_schemas'] if s['name'] != 'read_stock_trend']}
+    with pytest.raises(ValueError):
+        semantic.classify_frozen_read(old, 'read_stock_trend', args, diagnostic=diagnostic)
+    assert diagnostic == {'code': 'tool_not_frozen', 'path': 'name'}

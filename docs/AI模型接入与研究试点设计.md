@@ -20,7 +20,7 @@ AI是A股盘面及上市公司研究助手，以自然多轮对话为主体。�
 
 ## 资料能力与固定统计
 
-六项受限读取分别为盘面`read_market_data`、可用性`check_data_availability`、个股价量`read_stock_quote`、涨停梯队`read_limit_up_data`、盘面明细`read_market_detail`和已存研究`read_stock_research`。它们复用本系统已有日期、价格、发布与来源核验，不接受任意SQL、文件路径、代码、写策略、自选修改或交易指令。
+七项受限读取分别为盘面`read_market_data`、可用性`check_data_availability`、个股价量`read_stock_quote`、个股走势`read_stock_trend`、涨停梯队`read_limit_up_data`、盘面明细`read_market_detail`和已存研究`read_stock_research`。它们复用本系统已有日期、价格、发布与来源核验，不接受任意SQL、文件路径、代码、写策略、自选修改或交易指令。
 
 没有研究报告不妨碍查询已存日价量；概览未附名字不代表梯队不存在。资料不足、尚未采集、未到时点与本轮未读取分别说明。指数日价与历史成分独立，成员缺档不清空真实指数行情；成交额及价格活跃不等于净流入，无连续时序不能推造资金路径。
 

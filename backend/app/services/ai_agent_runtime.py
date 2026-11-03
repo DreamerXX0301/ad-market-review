@@ -52,7 +52,7 @@ def _bind_stock_anchor(db,session_id,result):
     Historical evidence/protocol and this round's original anchor stay intact.
     Only future rounds use this current page anchor; model prose is never read.
     """
-    if (not session_id or result.get('tool_name')!='read_stock_research' or result.get('ok') is not True
+    if (not session_id or result.get('tool_name') not in ('read_stock_research', 'read_stock_trend') or result.get('ok') is not True
             or result.get('state') not in ('available','partial') or not result.get('evidence')
             or any(isinstance(gap,dict) and gap.get('capability')=='research_permission' for gap in result.get('gaps',[]))):return
     summary=result.get('summary') or {}
@@ -211,7 +211,8 @@ class AgentRuntimeMixin:
             db.execute('BEGIN IMMEDIATE')
             current=db.execute('SELECT cancel_requested,session_id FROM ai_task WHERE task_id=?',(task['task_id'],)).fetchone()
             if current is None or current['cancel_requested']:return {'_error':'cancelled'}
-            if name=='read_stock_research':_bind_stock_anchor(db,current['session_id'],result)
+            if name in ('read_stock_research', 'read_stock_trend'):
+                _bind_stock_anchor(db, current['session_id'], result)
             append_event(db,task,'tool',{**trace,'label':label})
             request['agent_state']=self.agent_state
             db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(request),task['task_id']))
