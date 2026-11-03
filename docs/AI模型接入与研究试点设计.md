@@ -1,6 +1,6 @@
 # AI模型接入、会话与复盘设计
 
-当前决策对应0.1.21源码、schema36与`ai-agent-round-v5`。操作见[AI使用说明](AI研究与复盘使用说明.md)，每步执行见[AI对话执行流程](AI对话执行流程.md)，接口与边界以[工作台契约](../contracts/ai-workbench-v1.md)、[逐轮协议](../contracts/ai-agent-round-v1.md)及实现为准。源码、镜像与实例部署分开验收，不以本文认定线上已更新。
+当前决策对应0.1.22源码、schema36与`ai-agent-round-v5`。操作见[AI使用说明](AI研究与复盘使用说明.md)，每步执行见[AI对话执行流程](AI对话执行流程.md)，接口与边界以[工作台契约](../contracts/ai-workbench-v1.md)、[逐轮协议](../contracts/ai-agent-round-v1.md)及实现为准。源码、镜像与实例部署分开验收，不以本文认定线上已更新。
 
 ## 产品定位与入口
 
