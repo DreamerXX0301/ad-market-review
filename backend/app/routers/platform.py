@@ -60,7 +60,11 @@ def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),qu
     return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope,rank_state=rank_state))
 
 @router.get('/instruments')
-def instruments(query:str='',limit:int=Query(50,ge=1,le=10000)):
+def instruments(query:str='',limit:int=Query(50,ge=1,le=10000),fuzzy:bool=False):
+    if fuzzy:
+        from app.services.unified_search import search
+        result = search(query, limit, include_sectors=False)
+        return {'items': result['items'], 'total': result['total']}
     from app.core import get_market
     items=get_market().instruments(query,limit)
     return {'items':items,'total':len(items)}

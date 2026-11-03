@@ -1,4 +1,4 @@
-"""Small current-identity search, separate from the stock research picker."""
+"""Bounded identity matching shared by global and security-only pickers."""
 from collections import Counter
 import re
 
@@ -12,7 +12,7 @@ KINDS = ('industry', 'concept', 'stock', 'index')
 SCOPE = '已留存股票和指数身份、当前已核验行业概念目录；支持名称、代码、全拼和首字母，轻度错字单列建议，代码不纠错；不代表历史目录或历史成员。'
 
 
-def search(query='', limit=20, market=None, *, stocks_only=False):
+def search(query='', limit=20, market=None, *, stocks_only=False, include_sectors=True):
     if not isinstance(query, str) or len(query) > 512: fail('搜索内容需要文字，原始长度最多512字')
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_LIMIT:
         fail('搜索数量需要1至100的整数')
@@ -37,7 +37,7 @@ def search(query='', limit=20, market=None, *, stocks_only=False):
             rank, evidence = match
             found[(kind, symbol)] = ({'instrument_id': symbol, 'code': code, 'name': name,
                 'kind': kind, 'target_type': kind, **evidence}, rank)
-    reference = market.reference() if not stocks_only and callable(getattr(market, 'reference', None)) else {}
+    reference = market.reference() if include_sectors and not stocks_only and callable(getattr(market, 'reference', None)) else {}
     catalog, failures, _, _ = _catalog(reference)
     for code, topic in catalog.items():
         match = identity_match(cleaned, topic['name'], code, code.split('.')[0])

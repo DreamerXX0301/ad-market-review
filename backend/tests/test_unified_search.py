@@ -177,3 +177,27 @@ def test_matching_cache_is_bounded_and_results_are_not_shared(local):
     rows = unified_search.search('zwcm')['items']
     rows[0]['name'] = 'caller mutation'
     assert unified_search.search('zwcm')['items'][0]['name'] == '中文传媒'
+
+
+@pytest.mark.parametrize('query,symbol,kind,match_type', [
+    ('zwcm', '600373.SH', 'stock', 'initials'),
+    ('zhongwenchuanmei', '600373.SH', 'stock', 'pinyin'),
+    ('中闻传媒', '600373.SH', 'stock', 'homophone'),
+    ('szzs', '000001.SH', 'index', 'initials'),
+    ('rgzn', None, None, None),
+    ('600374', None, None, None),
+])
+def test_security_picker_fuzzy_route_keeps_original_universe(local, query, symbol, kind, match_type):
+    from app.routers.platform import router
+
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as client:
+        response = client.get('/api/v1/instruments', params={'query': query, 'fuzzy': True})
+    assert response.status_code == 200
+    rows = response.json()['items']
+    if symbol is None:
+        assert rows == []
+    else:
+        assert (rows[0]['instrument_id'], rows[0]['kind'], rows[0]['match_type']) == (symbol, kind, match_type)
+    assert all(row['target_type'] in ('stock', 'index') for row in rows)

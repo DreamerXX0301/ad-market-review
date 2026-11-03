@@ -6,7 +6,7 @@ export function instrumentSearchRequest(
 ): string | null {
   const text = query.trim();
   return text
-    ? `${includeSectors || stocksOnly ? "/search" : "/instruments"}?query=${encodeURIComponent(text)}&limit=12${stocksOnly ? "&stocks_only=true" : ""}`
+    ? `${includeSectors || stocksOnly ? "/search" : "/instruments"}?query=${encodeURIComponent(text)}&limit=12${stocksOnly ? "&stocks_only=true" : includeSectors ? "" : "&fuzzy=true"}`
     : null;
 }
 export function searchResultView(row: Row) {

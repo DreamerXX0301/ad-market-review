@@ -82,7 +82,7 @@ export default function TopicMaintenance({
           <span>添加成员</span>
           <InstrumentSearch
             onSelect={(id) => onMembership(topic.topic_id, id, "include")}
-            placeholder="输入股票代码或名称加入当前分类"
+            placeholder="名称 / 代码 / 拼音 / 首字母"
           />
         </div>
       )}

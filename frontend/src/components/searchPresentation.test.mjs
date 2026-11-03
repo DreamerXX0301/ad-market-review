@@ -19,8 +19,8 @@ const { instrumentSearchRequest, searchResultView, globalSectorSelection } =
   );
 assert.equal(
   instrumentSearchRequest("出版"),
-  "/instruments?query=%E5%87%BA%E7%89%88&limit=12",
-  "stock-only controls retain original endpoint",
+  "/instruments?query=%E5%87%BA%E7%89%88&limit=12&fuzzy=true",
+  "security-only controls retain their endpoint and enable identity matching",
 );
 assert.equal(
   instrumentSearchRequest(" 出版 ", true),
@@ -37,8 +37,8 @@ assert.equal(
 );
 assert.equal(
   instrumentSearchRequest("hyw"),
-  "/instruments?query=hyw&limit=12",
-  "个股研究默认入口不改变",
+  "/instruments?query=hyw&limit=12&fuzzy=true",
+  "个股研究在原入口开启模糊查询",
 );
 const stock = {
   instrument_id: "600825.SH",

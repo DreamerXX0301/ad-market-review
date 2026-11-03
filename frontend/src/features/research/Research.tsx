@@ -311,7 +311,7 @@ export default function Research({
             onSelect={(id, row) => {
               selectInstrument({ ...row, instrument_id: id });
             }}
-            placeholder="输入股票代码或简称，例如 600519 / 贵州茅台"
+            placeholder="名称 / 代码 / 拼音 / 首字母，例如 贵州茅台 / gzmt"
           />
           {selected && (
             <div className="selected-instrument">

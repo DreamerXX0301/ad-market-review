@@ -42,7 +42,7 @@
 | `GET /bootstrap` | 应用、当前业务日和已发布数据元信息 |
 | `GET /overview?date=` 或 `/market/overview?date=` | 四指数、广度、总成交额、成交额排行、封板观察、连板反馈概览等 |
 | `GET /market/indices?date=` | 指数页轻量读取，只含 `date/snapshot_id/indices/data_coverage/quality`；四指数报价与总览一致，不构建全市场股票面板、30日榜或年内涨停证明，不展开盘面补充历史 |
-| `GET /instruments?query=&limit=` | 原股票/指数检索；研究选择器继续使用此接口 |
+| `GET /instruments?query=&limit=&fuzzy=false` | 股票/指数专用检索。默认沿用原包含匹配。选择器传 `fuzzy=true`，在股票、指数范围复用名称、代码、全拼、首字母与轻度错字匹配，limit 为 1–100 |
 | `GET /search?query=&limit=&stocks_only=false` | 股票、指数、行业、概念统一检索；空白返回空，limit 为 1–100。`stocks_only=true` 在排序截取前仅保留股票，复用相同名称、代码、拼音、首字母及容错匹配；默认行为不变 |
 | `GET /instruments/{id}?as_of=` | 标的身份、所选日行情、可用题材/风险标签及缺口 |
 
