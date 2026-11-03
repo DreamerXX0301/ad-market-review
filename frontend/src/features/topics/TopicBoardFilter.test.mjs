@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
 // Execute actual component handlers. API data is an isolated fixture; this test
@@ -74,13 +75,15 @@ const encoded = (source) =>
 const modules = new Map();
 async function moduleUrl(path) {
   if (modules.has(path.href)) return modules.get(path.href);
-  let source = ts.transpileModule(await fs.readFile(path, "utf8"), {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022,
-      jsx: ts.JsxEmit.ReactJSX,
-    },
-  }).outputText;
+  let source = ts
+    .transpileModule(await fs.readFile(path, "utf8"), {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022,
+        jsx: ts.JsxEmit.ReactJSX,
+      },
+    })
+    .outputText.replace(/^import ["'][^"']+\.css["'];?$/gm, "");
   for (const match of [...source.matchAll(/from (["'])([^"']+)\1/g)]) {
     const name = match[2];
     let target;
@@ -116,10 +119,16 @@ async function moduleUrl(path) {
       target = encoded(
         "export function HistoryReturnCell(){} export function MemberMetricCoverage(){} export function RecentLimitCell(){} export function YearLimitCountCell(){}",
       );
-    else
-      target = name.startsWith(".")
-        ? await moduleUrl(new URL(name + ".tsx", path))
-        : import.meta.resolve(name);
+    else if (name.startsWith(".")) {
+      const { resolvedModule } = ts.resolveModuleName(
+        name,
+        fileURLToPath(path),
+        {},
+        ts.sys,
+      );
+      assert.ok(resolvedModule, `Cannot resolve ${name} from ${path}`);
+      target = await moduleUrl(pathToFileURL(resolvedModule.resolvedFileName));
+    } else target = import.meta.resolve(name);
     source = source.replace(match[0], "from " + JSON.stringify(target));
   }
   const url = encoded(source);
