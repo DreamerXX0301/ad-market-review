@@ -26,6 +26,7 @@ def test_three_exchange_turnover_history_excludes_nonstocks_and_caches(tmp_path,
 
 def test_overview_total_reconciles_three_exchanges(monkeypatch):
     class Market:
+        def status(self):return {'snapshot_id':'fixture'}
         def calendar(self):return ['2026-10-19','2026-10-20']
         def turnover_history(self,day):return [{'date':d,'amount':v,'scope':'沪深京','source':'fixture'} for d,v in zip(self.calendar(),(330,350))]
         def indices(self,day):return []

@@ -68,7 +68,14 @@ def test_full_and_partial_cache_are_isolated_in_parallel_and_fingerprint_actual_
         # rank and annual-proof field must still match its exact cache slice.
         expected_tag={**topic,'source_observed_date':day}
         for response,expected_rows in ((first,full[:25]),(second,full[25:50])):
-            assert response['items']==[
+            page_rows=[]
+            for item in response['items']:
+                row=dict(item)
+                board=row.pop('board_presentation')
+                assert (board['version'],board['date'],board['snapshot_id'],board['instrument_id'])==(
+                    'dated-stock-board-presentation-v1',day,status['snapshot_id'],row['instrument_id'])
+                page_rows.append(row)
+            assert page_rows==[
                 {**row,'topics':[expected_tag] if row['instrument_id'] in topic['instrument_ids'] else [],
                  'industries':[],'topics_observed_date':day,'topics_scope':distribution['classification_scope']}
                 for row in expected_rows]

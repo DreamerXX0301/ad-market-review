@@ -127,7 +127,10 @@ def test_member_endpoint_enriches_only_selected_members_and_board_tags(archives)
     assert by_id[A]['turnover_rate'] == 12.3 and by_id[A]['turnover_rate_source'] == 'eastmoney-public'
     assert by_id[C]['turnover_rate'] is None and by_id[C]['turnover_rate_reason']
     assert result['metric_coverage']['turnover_known'] == 1
-    assert market.requests[0]['symbols'] == {A, C, D, E} and len(market.requests) == 1
+    assert market.requests == [
+        {'symbols': {A, C, D, E}, 'start': '2025-12-31', 'end': DAY},
+        {'symbols': {A, C, D, E}, 'start': '2026-10-16', 'end': DAY},
+    ]
 
 
 def test_unknown_board_does_not_default_to_main(archives):
