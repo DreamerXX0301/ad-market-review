@@ -165,6 +165,37 @@ def test_request_replay_and_daily_lock_survive_failure_and_cancel(noon):
     assert create(noon).json()['task_id'] == identifier
 
 
+def test_stock_quote_reads_only_the_retained_noon_snapshot(noon, monkeypatch):
+    _, client, source, _, _, _, _ = noon
+    _, result = execute(noon)
+    monkeypatch.setattr(source, 'request', lambda *_args, **_kwargs: pytest.fail('GET must not fetch'))
+    monkeypatch.setattr(service, 'get_market', lambda: pytest.fail('GET must not read current market'))
+    snapshot_id = result['snapshot_id']
+    endpoint = f'/api/v1/market/noon/{snapshot_id}/stocks/'
+    response = client.get(endpoint + '600001.SH/quote')
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['snapshot_id'] == snapshot_id and body['trade_date'] == DAY
+    assert body['previous_trade_date'] == '2026-10-27'
+    assert body['collected_start_at'].startswith(DAY)
+    assert body['collected_end_at'].startswith(DAY)
+    assert body['reason'] is None
+    assert body['quote'] == {'instrument_id': '600001.SH', 'price_basis': 'none',
+                             'open': 10, 'high': 11, 'low': 10, 'latest_price': 11,
+                             'prev_close': 10, 'volume': 100, 'amount': 1100, 'change_pct': 10}
+    for code in ('301001.SZ', '600002.SH'):
+        missing = client.get(endpoint + code + '/quote')
+        assert missing.status_code == 200
+        assert missing.json()['quote'] is None and missing.json()['reason']
+    assert client.get(endpoint + '600001/quote').status_code == 422
+    absent = client.get(f'/api/v1/market/noon/noon_{"0" * 32}/stocks/600001.SH/quote')
+    assert absent.status_code == 404
+    with core.connect() as connection:
+        connection.execute('DROP TRIGGER retain_noon_snapshot_update')
+        connection.execute("UPDATE market_noon_snapshot SET payload_json=payload_json || ' '")
+    assert client.get(endpoint + '600001.SH/quote').status_code == 409
+
+
 def test_parallel_create_consumes_one_permanent_daily_slot(noon):
     def submit(key):
         try:

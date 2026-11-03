@@ -160,7 +160,7 @@ function QuoteIdentity({
           disabled={!chartDate}
           title={
             chartDate
-              ? `图表截至此前收盘日 ${chartDate}；午间报价仍看本页`
+              ? `正式行情截至 ${chartDate}，同日收盘发布后优先显示完整日 K`
               : "该午评之前没有已发布收盘行情"
           }
           onClick={() => onStock(row.instrument_id)}
@@ -1007,7 +1007,7 @@ export default function NoonReview({
   date,
   onDate,
   onDatesChanged,
-  onStock,
+  onStock: onNoonStock,
   chartDate,
   onSector,
   onCloseStock,
@@ -1016,7 +1016,7 @@ export default function NoonReview({
   date: string;
   onDate: (value: string) => void;
   onDatesChanged?: () => void;
-  onStock?: (id: string) => void;
+  onStock?: (id: string, snapshotId: string) => void;
   chartDate?: string;
   onSector?: (row: Row, view?: "chart" | "members") => void;
   onCloseStock?: (id: string, date: string) => void;
@@ -1155,6 +1155,10 @@ export default function NoonReview({
     summary = payload?.summary || {},
     breadth = summary.breadth || {},
     events = payload?.events || {};
+  const onStock =
+    onNoonStock && typeof snapshot.snapshot_id === "string"
+      ? (id: string) => onNoonStock(id, snapshot.snapshot_id)
+      : undefined;
   const previous = payload?.previous_review || { state: "missing" };
   const quoteContext = noonQuoteContext(snapshot);
   const analysis = payload?.analysis || {};
@@ -1895,7 +1899,9 @@ export default function NoonReview({
                       />
                       <p className="noon-footnote">
                         {chartDate
-                          ? `打开个股图表仅使用 ${chartDate} 及以前的已发布收盘行情；午间报价仍看本页。`
+                          ? chartDate === date
+                            ? "点击股票查看当日收盘日 K，表格仍显示午间报价。"
+                            : `点击股票查看午间临时日 K，正式行情截至 ${chartDate}。`
                           : "该午评之前尚无已发布收盘行情，暂不能打开个股图表。"}
                       </p>
                     </Panel>

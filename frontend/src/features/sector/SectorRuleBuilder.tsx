@@ -216,7 +216,9 @@ export default function SectorRuleBuilder({
                       ? "等于"
                       : operator === "!="
                         ? "不等于"
-                        : operator}
+                        : operator === "matches"
+                          ? "满足"
+                          : operator}
                   </option>
                 ))}
             </select>
@@ -237,31 +239,37 @@ export default function SectorRuleBuilder({
             </label>
           ) : (
             <>
+              {!spec?.constant_only && (
+                <label>
+                  比较对象
+                  <select
+                    aria-label="板块比较对象类型"
+                    value={rightField ? "field" : "value"}
+                    onChange={(event) => {
+                      const next = { ...value };
+                      delete next.value;
+                      delete next.right_field;
+                      onChange(
+                        event.target.value === "field"
+                          ? {
+                              ...next,
+                              right_field: numericFields[0]?.field,
+                            }
+                          : { ...next, value: 0 },
+                      );
+                    }}
+                  >
+                    <option value="value">数值</option>
+                    <option value="field">同周期指标</option>
+                  </select>
+                </label>
+              )}
               <label>
-                比较对象
-                <select
-                  aria-label="板块比较对象类型"
-                  value={rightField ? "field" : "value"}
-                  onChange={(event) => {
-                    const next = { ...value };
-                    delete next.value;
-                    delete next.right_field;
-                    onChange(
-                      event.target.value === "field"
-                        ? {
-                            ...next,
-                            right_field: numericFields[0]?.field,
-                          }
-                        : { ...next, value: 0 },
-                    );
-                  }}
-                >
-                  <option value="value">数值</option>
-                  <option value="field">同周期指标</option>
-                </select>
-              </label>
-              <label>
-                {rightField ? "指标" : "阈值"}
+                {rightField
+                  ? "指标"
+                  : spec?.selection_only
+                    ? "阈值 (%)"
+                    : "阈值"}
                 {rightField ? (
                   <select
                     aria-label="板块比较指标"

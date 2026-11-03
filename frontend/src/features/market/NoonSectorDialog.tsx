@@ -79,6 +79,7 @@ export default function NoonSectorDialog({
   initialView = "members",
   onClose,
   onStock,
+  closeChartDate,
   embedded = false,
 }: {
   topic: Row;
@@ -86,6 +87,7 @@ export default function NoonSectorDialog({
   initialView?: "chart" | "members";
   onClose?: () => void;
   onStock?: (id: string, asOf?: string) => void;
+  closeChartDate?: string;
   embedded?: boolean;
 }) {
   const [view, setView] = useState(initialView),
@@ -113,6 +115,9 @@ export default function NoonSectorDialog({
     }),
   );
   const data = result.data;
+  const publishedClose =
+    closeChartDate === data?.date ? closeChartDate : undefined;
+  const chartAsOf = publishedClose || data?.formal_chart_as_of;
   const content = (
     <div
       className={`${embedded ? "noon-sector-embedded" : "modal-body"} noon-sector-body ${view === "chart" ? "sector-chart-dialog-body entry-page-scroll" : "market-members-body"}`}
@@ -160,16 +165,33 @@ export default function NoonSectorDialog({
             {view === "chart" ? (
               <>
                 <p className="muted sector-chart-scope">
-                  午间形成中报价单独展示。下方历史图最晚截至{" "}
-                  {data.formal_chart_as_of || "未知"}{" "}
-                  的已留存收盘，不将本次午间报价拼入历史K线，不触发远程加载。
+                  {publishedClose
+                    ? `查看 ${publishedClose} 收盘行情。上方报价仍为午间留存。`
+                    : `正式历史行情截至 ${chartAsOf || "未知"} 收盘。日 K 可叠加同一板块的午间临时 K 线。`}
                 </p>
-                {data.formal_chart_as_of ? (
+                {chartAsOf ? (
                   <CandleChart
                     instrumentId={topic.topic_code}
                     instrumentKind="index"
-                    asOf={data.formal_chart_as_of}
-                    dataEndpoint={`/market/sector-chart?topic_code=${encodeURIComponent(topic.topic_code)}&date=${data.formal_chart_as_of}`}
+                    asOf={chartAsOf}
+                    dataEndpoint={`/market/sector-chart?topic_code=${encodeURIComponent(topic.topic_code)}&date=${chartAsOf}`}
+                    noonPreview={
+                      publishedClose
+                        ? undefined
+                        : {
+                            trade_date: data.date,
+                            previous_trade_date: data.formal_chart_as_of,
+                            collected_end_at: data.collected_end_at,
+                            quote:
+                              data.sector_quote?.price_basis === "none"
+                                ? {
+                                    ...data.sector_quote,
+                                    volume: null,
+                                  }
+                                : null,
+                            reason: "本份午评没有可核验的同口径板块报价",
+                          }
+                    }
                     showStockSummary={false}
                     showDataNotes={false}
                     height={680}
@@ -208,7 +230,9 @@ export default function NoonSectorDialog({
                   <div>
                     <p>{data.membership_basis || "成员口径尚未核验"}。</p>
                     <p>
-                      股票名称打开的正式历史K线仍截至前一交易日；午间价格以上表为准。
+                      {publishedClose
+                        ? "点击股票查看当日收盘日 K，表格仍显示午间报价。"
+                        : "点击股票查看同份快照的午间临时日 K，正式行情截至前一交易日。"}
                     </p>
                   </div>
                 </details>
@@ -311,8 +335,8 @@ export default function NoonSectorDialog({
                       "仅显示本份已留存成员；缺少午间报价时保持未知。"
                     }
                     onStock={
-                      data.formal_chart_as_of && onStock
-                        ? (id) => onStock(id, data.formal_chart_as_of)
+                      chartAsOf && onStock
+                        ? (id) => onStock(id, chartAsOf)
                         : undefined
                     }
                     columns={[

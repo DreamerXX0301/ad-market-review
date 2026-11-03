@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from math import isfinite
 from typing import Any
+from app.analytics import strategy_trendlines
 from app.analytics.boll_conditions import field_spec as boll_field_spec
 
 NUMERIC_FIELDS = ['close','change_pct','volume','amount','volume_ratio','turnover_ratio_pct','macd_dif','macd_dea','macd_hist','kdj_k','kdj_d','kdj_j','tracking_change_pct','trading_age','limit_up_count_1y'] + [f'ma{n}' for n in (5,10,20,30,60,250)]
@@ -19,6 +20,7 @@ FIELDS['close_below_entry_low'].update(tracking_only=True)
 FIELDS['close_breakout_high']={'type':'number','operators':['new_high'],'integer':True,'min':1,'max':750,'step':1,'constant_only':True,'parameter_kind':'lookback_sessions','default':60}
 FIELDS['higher_lows']={'type':'number','operators':['confirmed_rising_lows'],'integer':True,'min':8,'max':750,'step':1,'constant_only':True,'parameter_kind':'lookback_periods','default':60,'structure_version':'higher-lows-v1','left_bars':2,'right_bars':2}
 FIELDS['boll_signal']=boll_field_spec()
+FIELDS.update(strategy_trendlines.FIELDS)
 FIELDS['close']['event_price_comparison']={'scope':'event_then','right_fields':['close','high','low'],
     'change_pct':{'min_exclusive':-100,'max':10000,'default':0}}
 FIELDS['topic_ids']={'type':'topic','operators':['contains','not_contains']}
@@ -34,6 +36,7 @@ LABELS['close_breakout_high']='收盘价突破前N个市场交易日最高价'
 LABELS['higher_lows']='底部抬高（最近两个已确认低点）'
 LABELS['boll_signal']='BOLL收口与方向'
 LABELS['intraday_high_change_pct']='当日最高涨幅（相对前收，%）'
+LABELS.update(strategy_trendlines.LABELS)
 LABELS.update(open='开盘价', high='最高价', low='最低价')
 DAILY_ONLY_FIELDS = {'limit_up','prev_limit_up','limit_up_1y','limit_up_count_1y',
                      'close_breakout_high','intraday_high_change_pct','turnover_ratio_pct','board','is_st','topic_ids',
@@ -48,7 +51,7 @@ def specs():
     result=[]
     for key,spec in FIELDS.items():
         hidden=key.startswith(('close_above_ma','close_below_ma')) or key in ('volume_expand','volume_shrink','board','is_st','close_above_entry_high','close_below_entry_low') or (key.startswith('ma') and key[2:].isdigit())
-        category='BOLL收口与方向' if key=='boll_signal' else '趋势状态' if key in ('bullish_ma_alignment','close_breakout_high','higher_lows') else '事件信号' if key in ('macd_cross','kd_cross','macd_dead_cross','kd_dead_cross','limit_up','prev_limit_up') or key.startswith('cross_above_ma') else '题材归属' if key=='topic_ids' else '跟踪状态' if key in ('tracking_change_pct','trading_age','close_below_entry','close_above_entry_high','close_below_entry_low') else '数值比较'
+        category='趋势线' if key in strategy_trendlines.FIELDS else 'BOLL收口与方向' if key=='boll_signal' else '趋势状态' if key in ('bullish_ma_alignment','close_breakout_high','higher_lows') else '事件信号' if key in ('macd_cross','kd_cross','macd_dead_cross','kd_dead_cross','limit_up','prev_limit_up') or key.startswith('cross_above_ma') else '题材归属' if key=='topic_ids' else '跟踪状态' if key in ('tracking_change_pct','trading_age','close_below_entry','close_above_entry_high','close_below_entry_low') else '数值比较'
         result.append({'field':key,'label':LABELS.get(key,key),'category':category,'hidden_in_builder':hidden,'historical_event_supported':supported_field(key),'supported_periods':['D'] if key in DAILY_ONLY_FIELDS else ['D','W','M'],**({'fixed_period':'D'} if key in DAILY_ONLY_FIELDS else {}),**spec})
     return result
 
@@ -92,6 +95,10 @@ def validate(node:dict, depth=0, counter=None, scope=None)->dict:
     field=node.get('field');op=node.get('op');value=node.get('value')
     if field not in FIELDS:raise ValueError('不支持的策略字段：'+str(field))
     spec=FIELDS[field]
+    if field in strategy_trendlines.FIELDS:
+        if scope is not None or op != 'matches' or 'right_field' in node or 'right_event_field' in node:
+            raise ValueError('趋势线只支持外层选股条件和百分数阈值')
+        return {'field':field,'op':op,'value':strategy_trendlines.validate_threshold(value)}
     if scope=='event_where':
         if field=='higher_lows' or node.get('right_field')=='higher_lows':raise ValueError('底部抬高第一版支持独立条件或历史事件的今日条件；不用于历史事件日where扫描，请在外层用AND/OR组合')
         if field=='boll_signal' or node.get('right_field')=='boll_signal':raise ValueError('BOLL支持独立条件或历史事件的今日条件；不用于历史事件日where扫描，请在外层用AND/OR组合')
@@ -131,8 +138,9 @@ def evaluate(node:dict, metrics:dict, history=None)->dict:
         else:
             scoped=metrics.get('_period_metrics',{}).get(period)
             if scoped is None:scoped=metrics if metrics.get('indicator_period','D')==period else {}
-        return {**evaluate(clean,scoped,history),'period':period,
-                'observed_date':scoped.get('observed_date')}
+        check=evaluate(clean,scoped,history)
+        return {**check,'period':period,
+                'observed_date':check.get('observed_date',scoped.get('observed_date'))}
     if 'history_event' in node:
         from app.domain.history_events import evaluate_event
         return evaluate_event(node,metrics,history)
@@ -151,6 +159,7 @@ def evaluate(node:dict, metrics:dict, history=None)->dict:
     if node['field']=='higher_lows':
         from app.analytics.higher_lows import evaluate as evaluate_structure
         return evaluate_structure(node,metrics)
+    if node['field'] in strategy_trendlines.FIELDS:return strategy_trendlines.evaluate(node,metrics)
     if node['field']=='boll_signal':
         from app.analytics.boll_conditions import evaluate as evaluate_boll
         return evaluate_boll(node,metrics)

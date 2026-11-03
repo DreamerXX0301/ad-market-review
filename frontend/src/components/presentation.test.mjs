@@ -563,6 +563,10 @@ assert.deepEqual(
     stockPriceBasis: "forward",
     showLimits: false,
     showEventBaseline: true,
+    stockShowAutomaticTrendlines: true,
+    indexShowAutomaticTrendlines: true,
+    stockShowAllTrendHistory: false,
+    indexShowAllTrendHistory: false,
     stockShowWaves: true,
     indexShowWaves: true,
     stockWaveMode: "turning",
@@ -606,6 +610,8 @@ chartStore.update({
   stockPriceBasis: "forward",
   showLimits: false,
   showEventBaseline: false,
+  stockShowAutomaticTrendlines: false,
+  stockShowAllTrendHistory: true,
   ignoredToken: "must-not-persist",
 });
 assert.equal(chartA, 1);
@@ -613,6 +619,11 @@ assert.equal(chartB, 1);
 assert.equal(rawPreferences.includes("ignoredToken"), false);
 assert.equal(rawPreferences.includes("must-not-persist"), false);
 assert.equal(chartStore.getSnapshot().preferences.showEventBaseline, false);
+const reopenedTrendPreferences = createChartPreferenceStore(storage).getSnapshot().preferences;
+assert.equal(reopenedTrendPreferences.stockShowAutomaticTrendlines, false);
+assert.equal(reopenedTrendPreferences.indexShowAutomaticTrendlines, true);
+assert.equal(reopenedTrendPreferences.stockShowAllTrendHistory, true);
+assert.equal(reopenedTrendPreferences.indexShowAllTrendHistory, false);
 assert.equal(rawPreferences.includes("rawClose"), false);
 const reloadedStore = createChartPreferenceStore(storage);
 assert.deepEqual(
@@ -694,20 +705,20 @@ waveStore.update({ stockShowWaves: false, stockWaveMode: "down" });
 waveStore.update({ indexWaveMode: "up" });
 let waveReload = createChartPreferenceStore(waveStorageAdapter);
 assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, false), {
-  showWaves: false, waveMode: "down",
+  showWaves: false, waveMode: "latest",
 });
 assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, true), {
-  showWaves: true, waveMode: "up",
+  showWaves: true, waveMode: "latest",
 });
 assert.equal(waveStorage.get(EARLIER_CHART_PREFERENCES_KEY), v2Raw);
 // An old tab may write its v2 key; it cannot replace saved v4 wave settings.
 waveStorage.set(EARLIER_CHART_PREFERENCES_KEY, JSON.stringify({ version: 2, stockMas: [] }));
 waveReload = createChartPreferenceStore(waveStorageAdapter);
-assert.equal(waveReload.getSnapshot().preferences.stockWaveMode, "down");
+assert.equal(waveReload.getSnapshot().preferences.stockWaveMode, "latest");
 assert.deepEqual(waveReload.getSnapshot().preferences.stockMas, [30, 60]);
 for (const mode of ["latest", "up", "down", "turning"]) {
   waveStore.update({ stockWaveMode: mode });
-  assert.equal(createChartPreferenceStore(waveStorageAdapter).getSnapshot().preferences.stockWaveMode, mode);
+  assert.equal(createChartPreferenceStore(waveStorageAdapter).getSnapshot().preferences.stockWaveMode, mode === "turning" ? "turning" : "latest");
 }
 for (const mode of ["unknown", null, {}, 1]) {
   const sanitized = normalizeChartPreferences({ version: 3, stockWaveMode: mode, indexWaveMode: mode, stockShowWaves: "false" });
@@ -715,11 +726,11 @@ for (const mode of ["unknown", null, {}, 1]) {
   assert.deepEqual(effectiveChartWaves(sanitized, true), { showWaves: true, waveMode: "latest" });
 }
 waveStore.receiveStorage(JSON.stringify({ version: 3, stockShowWaves: false, stockWaveMode: "up" }));
-assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "up" });
+assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "latest" });
 waveStore.reset();
 assert.deepEqual(waveStore.getSnapshot().preferences, defaultPreferences);
 deniedStore.update({ stockShowWaves: false, stockWaveMode: "up" });
-assert.deepEqual(effectiveChartWaves(deniedStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "up" });
+assert.deepEqual(effectiveChartWaves(deniedStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "latest" });
 assert.equal(deniedStore.getSnapshot().persistent, false);
 // Execute the actual App theme adapters in isolation: restricted localStorage
 // must not throw before the chart preference store can fall back to memory.

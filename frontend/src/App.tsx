@@ -129,6 +129,7 @@ export default function App() {
     [stock, setStock] = useState<{
       id: string;
       asOf?: string;
+      noonSnapshotId?: string;
       eventBaseline?: ChartEventBaseline;
       navigation?: StockNavigation;
     } | null>(null),
@@ -169,6 +170,17 @@ export default function App() {
   const dates = [...(bootstrap.data?.market_dates || [])].sort();
   const latestDate = bootstrap.data?.data_date || dates.at(-1) || "";
   const date = marketViewDate(route, dateChoice, latestDate, today);
+  const noonPublishedClose = noonCloseChartDate(dates, date, date);
+  const noonSectorDay = sector?.topic.noon_snapshot_date ?? "";
+  const noonSectorPublishedClose = noonCloseChartDate(
+    dates,
+    noonSectorDay,
+    noonSectorDay,
+  );
+  const reloadBootstrap = bootstrap.reload;
+  useEffect(() => {
+    if (route === "noon" && visible) reloadBootstrap();
+  }, [route, visible, reloadBootstrap]);
   const setDate = useCallback((day: string) => {
     if (!isCalendarDate(day)) return;
     setDateChoice({ date: day, mode: "manual" });
@@ -405,8 +417,20 @@ export default function App() {
             date={date}
             onDate={resetDate}
             onDatesChanged={noonDates.reload}
-            onStock={openStock}
-            chartDate={noonChartAsOf || undefined}
+            onStock={(id, noonSnapshotId) => {
+              if (noonPublishedClose) {
+                setStock(
+                  stockSelectionForOpen(id, undefined, noonPublishedClose),
+                );
+                return;
+              }
+              if (!noonChartAsOf) {
+                notify("午评日期之前没有已发布收盘行情。", "error");
+                return;
+              }
+              setStock({ id, asOf: noonChartAsOf, noonSnapshotId });
+            }}
+            chartDate={noonPublishedClose || noonChartAsOf || undefined}
             onCloseStock={openNoonCloseStock}
             onCloseSector={(row, view, closeDay) => {
               const next = noonCloseSectorSelection(
@@ -590,7 +614,22 @@ export default function App() {
               snapshotId={sector.topic.noon_members_snapshot_id}
               initialView={sector.view}
               onClose={() => setSector(null)}
-              onStock={(id, asOf) => setStock({ id, asOf })}
+              closeChartDate={noonSectorPublishedClose || undefined}
+              onStock={(id, asOf) => {
+                setStock(
+                  noonSectorPublishedClose
+                    ? stockSelectionForOpen(
+                        id,
+                        undefined,
+                        noonSectorPublishedClose,
+                      )
+                    : {
+                        id,
+                        asOf,
+                        noonSnapshotId: sector.topic.noon_members_snapshot_id,
+                      },
+                );
+              }}
             />
           ) : sector.view === "chart" ? (
             <SectorChartDialog
@@ -648,6 +687,7 @@ export default function App() {
           <StockDrawer
             id={stock.id}
             asOf={stock.asOf}
+            noonSnapshotId={stock.noonSnapshotId}
             eventBaseline={stock.eventBaseline}
             navigation={stock.navigation}
             onStep={(direction) =>

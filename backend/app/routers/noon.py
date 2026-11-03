@@ -57,6 +57,11 @@ def sector_members(snapshot_id: str, topic_code: str = Query(..., max_length=30)
         sort=sort, direction=direction, page=page, limit=limit)))
 
 
+@router.get('/{snapshot_id}/stocks/{instrument_id}/quote')
+def stock_quote(snapshot_id: str, instrument_id: str):
+    return JSONResponse(json_clean(service.read_stock_quote(snapshot_id, instrument_id)))
+
+
 @router.post('/{snapshot_id}/notes')
 def save_note(snapshot_id: str, payload: dict = Body(...)):
     from app.services.noon_notes import save_note

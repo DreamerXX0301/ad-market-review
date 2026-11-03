@@ -177,8 +177,8 @@ for (let height = 150; height <= 1400; height++) {
     const selected = panes.filter((_, i) => mask & (1 << i));
     const original = [...selected];
     const layout = layoutFor(height, selected);
-    assert.equal(layout.actualHeight, Math.max(480, height));
-    assert.ok(layout.mainHeight >= 130);
+    assert.ok(layout.actualHeight >= Math.max(480, height));
+    assert.ok(layout.mainHeight >= 300);
     assert.equal(layout.paneHeights.length, selected.length);
     assert.equal(layout.paneTops.length, selected.length);
     let bottom = 24 + layout.mainHeight;
@@ -186,7 +186,7 @@ for (let height = 150; height <= 1400; height++) {
       assert.ok(Math.abs(layout.paneTops[i] - (bottom + 22)) < 1e-8);
       assert.ok(
         layout.paneHeights[i] >=
-          { volume: 32, boll: 70, kdj: 38, macd: 42 }[key],
+          { volume: 96, boll: 145, kdj: 104, macd: 104 }[key],
       );
       bottom = layout.paneTops[i] + layout.paneHeights[i];
     });
@@ -199,6 +199,12 @@ for (let height = 150; height <= 1400; height++) {
   }
 }
 const all = layoutFor(620, panes);
+const fitted = layoutFor(620, panes, true);
+assert.equal(fitted.actualHeight, 620);
+assert.ok(fitted.actualHeight < all.actualHeight);
+const tiny = layoutFor(360, panes, true);
+assert.ok(tiny.mainHeight >= 135);
+assert.ok(tiny.paneTops[3] + tiny.paneHeights[3] <= tiny.actualHeight - 50);
 assert.equal(all.paneTops.length, 4);
 assert.ok(
   all.paneHeights[1] > all.paneHeights[2],

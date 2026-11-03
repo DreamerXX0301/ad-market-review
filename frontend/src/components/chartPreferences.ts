@@ -23,6 +23,10 @@ export type ChartPreferences = {
   stockPriceBasis: "none" | "forward";
   showLimits: boolean;
   showEventBaseline: boolean;
+  stockShowAutomaticTrendlines: boolean;
+  indexShowAutomaticTrendlines: boolean;
+  stockShowAllTrendHistory: boolean;
+  indexShowAllTrendHistory: boolean;
   stockShowWaves: boolean;
   indexShowWaves: boolean;
   stockWaveMode: WaveMode;
@@ -43,6 +47,10 @@ const defaults = (): ChartPreferences => ({
   stockPriceBasis: "none",
   showLimits: true,
   showEventBaseline: true,
+  stockShowAutomaticTrendlines: true,
+  indexShowAutomaticTrendlines: true,
+  stockShowAllTrendHistory: false,
+  indexShowAllTrendHistory: false,
   stockShowWaves: true,
   indexShowWaves: true,
   stockWaveMode: "turning",
@@ -60,10 +68,11 @@ export function normalizeChartPreferences(value: unknown): ChartPreferences {
   const input = value as Record<string, unknown>;
   if (![1, 2, 3, 4].includes(input.version as number)) return defaults();
   const waveMode = (value: unknown, fallback: WaveMode): WaveMode =>
-    typeof value === "string" &&
-    ["latest", "up", "down", "turning"].includes(value)
-      ? (value as WaveMode)
-      : fallback;
+    value === "turning"
+      ? "turning"
+      : value === "latest" || value === "up" || value === "down"
+        ? "latest"
+        : fallback;
   const mas = (value: unknown, fallback: number[]) =>
     Array.isArray(value) &&
     value.length <= MA_WINDOWS.length &&
@@ -96,6 +105,14 @@ export function normalizeChartPreferences(value: unknown): ChartPreferences {
       typeof input.showEventBaseline === "boolean"
         ? input.showEventBaseline
         : true,
+    stockShowAutomaticTrendlines:
+      input.version !== 4 || input.stockShowAutomaticTrendlines !== false,
+    indexShowAutomaticTrendlines:
+      input.version !== 4 || input.indexShowAutomaticTrendlines !== false,
+    stockShowAllTrendHistory:
+      input.version === 4 && input.stockShowAllTrendHistory === true,
+    indexShowAllTrendHistory:
+      input.version === 4 && input.indexShowAllTrendHistory === true,
     stockShowWaves:
       (input.version === 3 || input.version === 4) &&
       typeof input.stockShowWaves === "boolean"

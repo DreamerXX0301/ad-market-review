@@ -204,6 +204,25 @@ export function summarizeChecks(checks: any, onlySatisfied = false): string {
           c.result === true ? "满足" : c.result === false ? "未满足" : "待核验";
         return `${higherLowsSummary({ ...c, period: c.indicator_period || c.period })} · ${state}${c.reason ? "；" + conditionReasonText(c.reason) : ""}`;
       }
+      if (
+        c.field === "trendline_pullback" ||
+        c.field === "trendline_breakout"
+      ) {
+        const label =
+          c.field === "trendline_pullback" ? "回踩上升支撑" : "收盘突破压力";
+        const state =
+          c.result === true ? "满足" : c.result === false ? "未满足" : "待核验";
+        const line = c.evidence?.line;
+        return [
+          label,
+          state,
+          c.observed_date,
+          line ? `线价 ${num(line.projected_price, 4)}` : null,
+          c.reason,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      }
       if (c.field === "boll_signal") {
         const state =
           c.result === true ? "满足" : c.result === false ? "未满足" : "待核验";
@@ -487,6 +506,7 @@ export default function Conditions({
   const candidateFields = fields.filter(
     (f) =>
       !isHiddenConditionField(f.field) &&
+      (scope === "selection" || !f.selection_only) &&
       (!f.hidden_in_builder ||
         ["volume_expand", "volume_shrink"].includes(f.field)) &&
       trackingConditionAllowed(
@@ -598,7 +618,7 @@ export default function Conditions({
                             ? true
                             : f?.type === "topic"
                               ? ""
-                              : 0,
+                              : (f?.default ?? 0),
                 };
                 if (
                   c.period &&
@@ -638,28 +658,31 @@ export default function Conditions({
                 </optgroup>
               ))}
             </select>
-            {!isNewHigh && !isHigherLows && !isBoll && (
-              <select
-                aria-label="比较关系"
-                className="operator"
-                value={c.op}
-                onChange={(e) => update(i, { op: e.target.value })}
-              >
-                {!ops.includes(c.op) && <option>{c.op}</option>}
-                {ops.map((op: string) => (
-                  <option key={op} value={op}>
-                    {(
-                      {
-                        "==": "等于",
-                        "!=": "不等于",
-                        contains: "包含",
-                        not_contains: "不包含",
-                      } as Row
-                    )[op] || op}
-                  </option>
-                ))}
-              </select>
-            )}
+            {!isNewHigh &&
+              !isHigherLows &&
+              !isBoll &&
+              !field.selection_only && (
+                <select
+                  aria-label="比较关系"
+                  className="operator"
+                  value={c.op}
+                  onChange={(e) => update(i, { op: e.target.value })}
+                >
+                  {!ops.includes(c.op) && <option>{c.op}</option>}
+                  {ops.map((op: string) => (
+                    <option key={op} value={op}>
+                      {(
+                        {
+                          "==": "等于",
+                          "!=": "不等于",
+                          contains: "包含",
+                          not_contains: "不包含",
+                        } as Row
+                      )[op] || op}
+                    </option>
+                  ))}
+                </select>
+              )}
             {isBoll ? (
               <BollConditionEditor
                 value={c.value}
@@ -739,7 +762,7 @@ export default function Conditions({
               />
             ) : (
               <>
-                {!isYearlyLimitCount && (
+                {!isYearlyLimitCount && !field.constant_only && (
                   <select
                     className="rhs-type"
                     aria-label="比较对象"
@@ -815,8 +838,9 @@ export default function Conditions({
                         : "条件数值"
                     }
                     type="number"
-                    step={isYearlyLimitCount ? 1 : "any"}
-                    min={isYearlyLimitCount ? 0 : undefined}
+                    step={field.step ?? "any"}
+                    min={field.min}
+                    max={field.max}
                     placeholder={
                       isYearlyLimitCount ? "输入次数，例如 3" : undefined
                     }

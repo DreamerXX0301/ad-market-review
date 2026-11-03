@@ -75,6 +75,35 @@ export function visibleChartLineLabels(
   return lines.filter((line) => line.enabled && !hidden.has(line.id));
 }
 
+/** Keep annotations and extended trendlines from changing the candle scale. */
+export function candlePriceAxis(
+  bars: readonly { low?: unknown; high?: unknown }[],
+  { start, end }: { start: number; end: number },
+) {
+  const last = bars.length - 1;
+  const firstVisible = Math.max(0, Math.floor((start / 100) * last));
+  const lastVisible = Math.min(last, Math.ceil((end / 100) * last));
+  let low = Infinity;
+  let high = -Infinity;
+  for (let index = firstVisible; index <= lastVisible; index++) {
+    const bar = bars[index];
+    if (
+      typeof bar.low !== "number" ||
+      typeof bar.high !== "number" ||
+      !Number.isFinite(bar.low) ||
+      !Number.isFinite(bar.high) ||
+      bar.low <= 0 ||
+      bar.high < bar.low
+    )
+      continue;
+    low = Math.min(low, bar.low);
+    high = Math.max(high, bar.high);
+  }
+  if (!Number.isFinite(low)) return {};
+  const padding = Math.max((high - low) * 0.08, high * 0.005);
+  return { min: Math.max(0, low - padding), max: high + padding };
+}
+
 /** Width limits actual candles, never indicator seeds or the stored date range. */
 export function readableChartWindow<
   T extends { start: number; end: number; firstDate?: string | null },

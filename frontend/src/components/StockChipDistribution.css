@@ -1,0 +1,51 @@
+.stock-chip-viewer {
+  padding: 8px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.stock-chip-viewer summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.stock-chip-viewer p {
+  margin: 6px 0;
+  color: var(--muted);
+}
+
+.stock-chip-viewer label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.stock-chip-levels {
+  display: grid;
+  gap: 3px;
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 6px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-chip-levels li {
+  display: grid;
+  grid-template-columns: 5em minmax(0, 1fr) 5em;
+  gap: 8px;
+  align-items: center;
+}
+
+.stock-chip-track {
+  height: 8px;
+}
+
+.stock-chip-track span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--blue);
+}

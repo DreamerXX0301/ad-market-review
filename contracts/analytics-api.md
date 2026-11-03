@@ -175,6 +175,9 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 `GET /instruments/{id}/chart?period=D|W|M&as_of=&price_basis=none|forward&indicator_continuity=quotes|market_sessions`。
 
 - 返回 `instrument/period/as_of/bars/snapshot_id/quality/warnings`、价格/量额单位、实际与请求价格口径、`adjustment/indicator_gaps/quote_gaps/waves` 及涨跌停事件覆盖。
+- `automatic_trendlines` 为个股、指数和行业/概念板块图表的可选展示字段。包含 `algorithm=confirmed-pivot-trendlines-v1`、`pivot_wing/lookback/instrument_id/snapshot_id/as_of/period/price_basis/items/reason`。同一已发布图表的最近 120 根内，只使用最新连续且完整可比的一段。用左右各两根完整柱确认高低拐点，各取最多一条未被后续高低价穿越、末端最接近最新可比收盘的斜支撑和斜压力。
+- 每条线带 `line_type/start_date/start_price/end_date/end_price/slope_per_bar/confirmed_on` 及两个 `anchors`（各有 `date/price/confirmed_on`）。线止于最新可用完整柱。形成中的周月柱不会成为锚点或终点，缺口与无法核验的价格口径由空列表和原因表达。前复权请求回退时沿用父图实际显示的未复权 K 线，仍按公司行动覆盖与连续性分段。前端以父图表的证券、代际、观察日、周期和实际价格口径核对线条。这些线只供图表观察，手工画线、提醒、策略与回测各自保持原口径。
+- `near_items` 复用主线字段，用最近 35 根可比柱的拐点形成近端线，各方向最多一条，并排除与主线近似重合的线。`zones` 含 `lower_price/upper_price/start_date/end_date/line_type/touches`，来自确认拐点的邻近价位聚集，属于水平观察区。`events` 记录近期穿线，带 `scope/state/date/price/line`，其中 `line` 使用前一完整柱已确认的旧线，止于事件日。`price` 为穿线当天的线价。事件只在图上展示。
 - bar 含 date/OHLCV/amount、MA5/10/20/30/60/250、MACD DIF/DEA/柱、KDJ K/D/J；预热不足为 null。前端不另算一套指标。
 - 周/月从日线聚合，形成中和不完整周期带状态；策略信号只读已闭合可比周期，图表可显示形成中柱。缺交易日报价不补 K 线。
 - `trading_day_distance={anchor_date,basis:"market_calendar",state:"available"|"unknown",reason}` 为图表自己的市场日历距离证据；`anchor_date`固定本图`as_of`，不是电脑当前日期。每根bar追加`trading_days_to_as_of:number|null`，计算区间为`(bar.date,as_of]`，同日为0。停牌、缺报价不减少市场日间隔，不按K线根数、自然日或工作日猜算；已知的后续日历不会越过本图观察日参与计数。日历缺失、日期无效、重复、无序、观察日不在已留存日历或读取期间行情代际变化时状态保持unknown且距离为null；单根报价日不在该日历时该根距离为null。
@@ -226,7 +229,7 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 
 ## 板块 K 线与成员
 
-- `GET /market/sector-chart?topic_code=&date=&period=D|W|M` 返回通用 chart shape 加 `available/task/unavailable_reason`；未缓存时 bars 为空，不联网。
+- `GET /market/sector-chart?topic_code=&date=&period=D|W|M` 返回通用 chart shape 加 `available/task/unavailable_reason`。已缓存且核验通过的板块行情支持 `automatic_trendlines`，按指定来源代码的指数点位计算，独立于历史成员可用性。周/月只使用完整可比的柱。未缓存时 bars 为空，读取不联网。
 - `POST /market/sector-chart/jobs {topic_code,date?,request_key?}` 手动加载单板块；返回标准任务或 `{cache_hit:true}`，随后重读 GET。只加载该来源代码，不扫描全库。
 - 历史缓存须先复验原始全段与 SHA，再按目标日截断重算聚合和指标；不得从未来已聚合结果切片。板块是原始指数点位，不做个股复权/涨跌停标记。
 - 新手动盘后增量额外冻结 `sector_tail_request_policy_version=sector-tail-pacing-v2`，沿父任务传给板块增量子任务，并进入批次 `request_signature`；逐板来源窗口、身份、缓存签名与来源SHA不因节奏变化而改变。旧父/子任务缺省该字段，恢复、重试与后续创建子任务仍沿用旧节奏，不自动补版本。首次全库、单板块加载、主行情和盘面补充不启用该策略。

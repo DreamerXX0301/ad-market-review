@@ -122,13 +122,24 @@ def test_task_lookup_does_not_attach_same_signature_from_another_source(local):
     assert jobs.chart_view(local.market, CODE, DAY)['task'] is None
 
 
-def test_cached_get_and_post_are_offline_and_do_not_enqueue(http, local):
-    accepted = cache(local)
+@pytest.mark.parametrize('code', [CODE, '881101.TI'])
+def test_cached_get_and_post_are_offline_and_do_not_enqueue(http, local, code):
+    accepted = cache(local, code)
     calls = len(local.adapter.calls)
-    response = http.get('/api/v1/market/sector-chart', params={'topic_code': CODE, 'date': DAY, 'period': 'W'})
-    assert response.status_code == 200 and response.json()['available']
-    assert response.json()['raw_sha256'] == accepted['record']['raw_sha256']
-    response = http.post('/api/v1/market/sector-chart/jobs', json={'topic_code': CODE, 'date': DAY})
+    for period in ('D', 'W', 'M'):
+        response = http.get('/api/v1/market/sector-chart', params={'topic_code': code, 'date': DAY, 'period': period})
+        assert response.status_code == 200 and response.json()['available']
+        result = response.json()
+        assert result['raw_sha256'] == accepted['record']['raw_sha256']
+        lines = result['automatic_trendlines']
+        assert (lines['instrument_id'], lines['period'], lines['price_basis']) == (code, period, 'none')
+        assert lines['snapshot_id'] == result['snapshot_id'] == local.market.status()['snapshot_id']
+        assert lines['as_of'] == DAY
+        if period == 'D':
+            assert lines['items']
+        if period == 'M':
+            assert not lines['items'] and lines['reason']
+    response = http.post('/api/v1/market/sector-chart/jobs', json={'topic_code': code, 'date': DAY})
     assert response.status_code == 200 and response.json()['cache_hit'] is True
     assert tasks.list_tasks()['total'] == 0 and local.client_calls == []
     assert len(local.adapter.calls) == calls

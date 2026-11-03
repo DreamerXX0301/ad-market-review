@@ -96,8 +96,8 @@ for (const [version, key] of [
   assert.equal(migrated.showEventBaseline, false);
   assert.equal(migrated.stockShowWaves, version < 3);
   assert.equal(migrated.indexShowWaves, version < 3);
-  assert.equal(migrated.stockWaveMode, version === 3 ? "down" : "turning");
-  assert.equal(migrated.indexWaveMode, version === 3 ? "up" : "latest");
+  assert.equal(migrated.stockWaveMode, version === 3 ? "latest" : "turning");
+  assert.equal(migrated.indexWaveMode, "latest");
   assert.deepEqual(migrated.stockPanels, defaults.stockPanels);
   assert.deepEqual(migrated.indexPanels, defaults.indexPanels);
   assert.equal(migrated.stockShowBoll, false);
@@ -128,7 +128,7 @@ const disk = browserStorage([
 ]);
 const stock = createChartPreferenceStore(disk.storage);
 assert.deepEqual(stock.getSnapshot().preferences.stockMas, [30]);
-assert.equal(stock.getSnapshot().preferences.stockWaveMode, "up");
+assert.equal(stock.getSnapshot().preferences.stockWaveMode, "latest");
 let firstChart = 0,
   secondChart = 0;
 stock.subscribe(() => firstChart++);

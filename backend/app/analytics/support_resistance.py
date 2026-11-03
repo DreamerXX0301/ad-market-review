@@ -26,6 +26,38 @@ def _day(value):
         return False
 
 
+def _valid_bar(bar, period):
+    return (all(_number(bar.get(key)) for key in ('open', 'high', 'low', 'close'))
+            and bar['low'] <= min(bar['open'], bar['close']) <= max(bar['open'], bar['close']) <= bar['high']
+            and (period == 'D' or bar.get('complete') is True))
+
+
+def _consecutive(left, right, period, sessions):
+    if period == 'D':
+        return left['date'] in sessions and sessions.get(right['date']) == sessions[left['date']] + 1
+    before, after = date.fromisoformat(left['date']), date.fromisoformat(right['date'])
+    if period == 'W':
+        return (after - timedelta(days=after.weekday())) - (before - timedelta(days=before.weekday())) == timedelta(days=7)
+    return (after.year * 12 + after.month) - (before.year * 12 + before.month) == 1
+
+
+def confirmed_pivots(bars, period, sessions):
+    """Emit strict extrema after both right-hand bars are complete."""
+    for index in range(WING, len(bars) - WING):
+        window = bars[index-WING:index+WING+1]
+        if not all(_valid_bar(bar, period) for bar in window):
+            continue
+        if any(not _consecutive(left, right, period, sessions) for left, right in zip(window, window[1:])):
+            continue
+        center = bars[index]
+        neighbors = window[:WING] + window[WING+1:]
+        for kind, field, comparison in (('support', 'low', min), ('resistance', 'high', max)):
+            value = center[field]
+            if value != comparison(bar[field] for bar in window) or any(value == bar[field] for bar in neighbors):
+                continue
+            yield {'line_type': kind, 'price': value, 'date': center['date'], 'confirmed_on': window[-1]['date']}
+
+
 def local_levels(chart, calendar, lookback=120):
     """Return at most six levels from this already-published chart only."""
     period, as_of = chart.get('period'), chart.get('as_of')
@@ -37,7 +69,6 @@ def local_levels(chart, calendar, lookback=120):
         raise ValueError('候选行情存在无效、重复或晚于观察日的报价')
     bars = supplied[-lookback:]
     sessions = {day: index for index, day in enumerate(calendar)}
-    valid = lambda bar: all(_number(bar.get(key)) for key in ('open', 'high', 'low', 'close')) and bar['low'] <= min(bar['open'], bar['close']) <= max(bar['open'], bar['close']) <= bar['high'] and (period == 'D' or bar.get('complete') is True)
     # Unadjusted prices before an action must not be clustered with prices after it.
     # A weekly/monthly action candle itself can mix two price bases.
     reset = 0
@@ -46,7 +77,7 @@ def local_levels(chart, calendar, lookback=120):
             if bar.get('corporate_action'):
                 reset = index + (0 if period == 'D' else 1)
     bars = bars[reset:]
-    completed = [bar for bar in bars if valid(bar)]
+    completed = [bar for bar in bars if _valid_bar(bar, period)]
     latest = completed[-1] if completed else None
     reference = chart.get('reference_quote')
     if isinstance(reference, dict) and _day(reference.get('date')) and reference['date'] <= as_of and _number(reference.get('close')):
@@ -64,31 +95,8 @@ def local_levels(chart, calendar, lookback=120):
         return {**result, 'reason': '公司行动来源覆盖未知，不能将未复权历史价位合并为可比候选'}
     if not latest or len(completed) < WING * 2 + 1:
         return {**result, 'reason': '完整可比报价不足，暂不能形成已确认支撑压力候选'}
-    pivots = []
-    def consecutive(left, right):
-        if period == 'D':
-            return sessions.get(right['date'], -10) - sessions.get(left['date'], -10) == 1
-        before, after = date.fromisoformat(left['date']), date.fromisoformat(right['date'])
-        if period == 'W':
-            return (after - timedelta(days=after.weekday())) - (before - timedelta(days=before.weekday())) == timedelta(days=7)
-        return (after.year * 12 + after.month) - (before.year * 12 + before.month) == 1
-    for index in range(WING, len(bars) - WING):
-        window = bars[index-WING:index+WING+1]
-        if not all(valid(bar) for bar in window):
-            continue
-        if any(not consecutive(left, right) for left, right in zip(window, window[1:])):
-            continue
-        center = bars[index]
-        neighbors = window[:WING] + window[WING+1:]
-        for kind, field, comparison in [('support', 'low', min), ('resistance', 'high', max)]:
-            value = center[field]
-            # Strictly distinct extremum; a flat run is not counted repeatedly.
-            if value != comparison(bar[field] for bar in window) or any(value == bar[field] for bar in neighbors):
-                continue
-            if kind == 'support' and value > latest['close'] or kind == 'resistance' and value < latest['close']:
-                continue
-            pivots.append({'line_type': kind, 'price': value, 'date': center['date'],
-                           'confirmed_on': window[-1]['date']})
+    pivots = [pivot for pivot in confirmed_pivots(bars, period, sessions)
+              if (pivot['price'] <= latest['close'] if pivot['line_type'] == 'support' else pivot['price'] >= latest['close'])]
     levels = []
     for kind in ('support', 'resistance'):
         clusters = []

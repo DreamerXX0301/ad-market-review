@@ -47,6 +47,7 @@ import {
   tone,
   textValue,
 } from "../lib/format";
+import { chartAutomaticTrendlines } from "./chartAutomaticTrendlines";
 import { candleChange } from "./candleChange";
 import { candleExtremeChange } from "./candleExtremeChange";
 import { bollCandleValues, chartBoll } from "./chartBoll";
@@ -88,6 +89,12 @@ import StockLimitSummary from "./StockLimitSummary";
 import BoardTags from "../features/market/BoardTags";
 import StockHeaderQuote from "./StockHeaderQuote";
 import StockCompactMetrics from "./StockCompactMetrics";
+import {
+  noonCollectionTime,
+  provisionalNoonBar,
+  type NoonChartPreview,
+} from "./noonChartPreview";
+import StockChipDistribution from "./StockChipDistribution";
 import { stockPatternHeader } from "./stockPatternHeader";
 import StockCurrentTopics from "./StockCurrentTopics";
 import WatchlistButton from "../features/watchlist/WatchlistButton";
@@ -110,6 +117,7 @@ import {
 import type { ChartLine } from "./chartAnnotations";
 import { ChartLineControls, ChartLineRail } from "./ChartLineLabels";
 import {
+  candlePriceAxis,
   chartLineRailWidth,
   readableChartWindow,
   visibleChartLineLabels,
@@ -187,6 +195,8 @@ function chartPalette() {
     line: light ? "#e6eaf0" : "#202b3a",
     bg: light ? "#ffffff" : "#111924",
     tooltip: light ? "#ffffff" : "#192332",
+    tooltipText: light ? "#34435a" : "#dce6f5",
+    provisional: light ? "#875b12" : "#efba55",
     up: light ? "#d85151" : "#ed6865",
     down: light ? "#119573" : "#39bd9b",
     bollUpper: light ? "#ce4147" : "#f07178",
@@ -194,6 +204,8 @@ function chartPalette() {
     bollLower: light ? "#228447" : "#57cc83",
     waveCorrection: light ? "#7754b4" : "#b292f0",
     waveTurning: light ? "#758496" : "#a0aec1",
+    trendFocus: light ? "#792bb0" : "#e6b4ff",
+    trendFocusText: light ? "#fff" : "#241333",
   };
 }
 export function EChart({
@@ -248,7 +260,11 @@ export function CandleChart({
   showDataNotes = true,
   frozenChartsByPeriod,
   entryFocus = false,
+  controlledPeriod,
+  onPeriodChange,
   onBoardPresentation,
+  noonPreview,
+  noonMode = Boolean(noonPreview),
 }: {
   instrumentId: string;
   asOf?: string;
@@ -265,6 +281,10 @@ export function CandleChart({
   showDataNotes?: boolean;
   frozenChartsByPeriod?: Partial<Record<ChartPeriod, Row>>;
   entryFocus?: boolean;
+  controlledPeriod?: ChartPeriod;
+  onPeriodChange?: (period: ChartPeriod) => void;
+  noonPreview?: NoonChartPreview;
+  noonMode?: boolean;
   onBoardPresentation?: (value: { row: Row; date: string } | null) => void;
 }) {
   const { preferences, persistent, update, reset } = useChartPreferences();
@@ -282,6 +302,7 @@ export function CandleChart({
   const entryStage = useRef<HTMLElement>(null);
   const [entryCanvasReadyKey, setEntryCanvasReadyKey] = useState("");
   const [entryLocateNonce, setEntryLocateNonce] = useState(0);
+  const [fitPanesToWindow, setFitPanesToWindow] = useState(false);
   const [entryPanels, setEntryPanels] = useState([
     "volume",
     "boll",
@@ -294,7 +315,7 @@ export function CandleChart({
     "399006.SZ",
     "000688.SH",
   ].includes(instrumentId.toUpperCase());
-  const [period, setPeriod] = useState<ChartPeriod>("D"),
+  const [localPeriod, setLocalPeriod] = useState<ChartPeriod>("D"),
     [indicatorContinuity, setIndicatorContinuity] = useState<
       "quotes" | "market_sessions"
     >("quotes"),
@@ -306,12 +327,58 @@ export function CandleChart({
     [activeDate, setActiveDate] = useState<string | null>(null),
     [wavePatternKey, setWavePatternKey] = useState("latest"),
     [themeTick, setThemeTick] = useState(0);
+  const period = controlledPeriod ?? localPeriod;
   const [showHistoricalEvents, setShowHistoricalEvents] = useState(true);
   const isIndex =
     knownIndex ||
     instrumentKind === "index" ||
     (resolvedKind?.id === instrumentId && resolvedKind.kind === "index");
+  const defaultAutomaticTrendlines = isIndex
+    ? preferences.indexShowAutomaticTrendlines
+    : preferences.stockShowAutomaticTrendlines;
+  const [automaticTrendlineOverride, setAutomaticTrendlineOverride] = useState<
+    boolean | null
+  >(null);
+  useEffect(() => {
+    setAutomaticTrendlineOverride(null);
+  }, [instrumentId, isIndex, defaultAutomaticTrendlines]);
+  const showAutomaticTrendlines =
+    automaticTrendlineOverride ?? defaultAutomaticTrendlines;
+  const defaultShowAllTrendHistory = isIndex
+    ? preferences.indexShowAllTrendHistory
+    : preferences.stockShowAllTrendHistory;
+  const [showAllTrendHistoryOverride, setShowAllTrendHistoryOverride] =
+    useState<boolean | null>(null);
+  useEffect(
+    () => setShowAllTrendHistoryOverride(null),
+    [instrumentId, isIndex, defaultShowAllTrendHistory],
+  );
+  const showAllTrendHistory =
+    showAllTrendHistoryOverride ?? defaultShowAllTrendHistory;
+  const [trendLayers, setTrendLayers] = useState({
+    main: true,
+    near: true,
+    zones: true,
+    events: true,
+  });
+  const [selectedTrendEvent, setSelectedTrendEvent] = useState<number | null>(
+    null,
+  );
+  useEffect(() => setSelectedTrendEvent(null), [instrumentId, asOf, period]);
+  const setTrendLayer = (layer: keyof typeof trendLayers, value: boolean) =>
+    setTrendLayers((previous) => ({ ...previous, [layer]: value }));
   const priceBasis = effectiveChartPriceBasis(preferences, isIndex);
+  const [hiddenTrendItems, setHiddenTrendItems] = useState(EMPTY_LINE_IDS);
+  useEffect(
+    () => setHiddenTrendItems(EMPTY_LINE_IDS),
+    [instrumentId, asOf, period, priceBasis],
+  );
+  const toggleTrendItem = (id: string) =>
+    setHiddenTrendItems((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const cycleLabel = period === "D" ? "日" : period === "W" ? "周" : "月";
   const mas = effectiveChartMas(preferences, isIndex);
   const panels = entryFocus
@@ -395,7 +462,19 @@ export function CandleChart({
   const data = frozenMode
     ? frozenChartsByPeriod[period] || null
     : initialData || result.data;
-  const bars = useMemo<Row[]>(() => data?.bars || [], [data]);
+  const completedBars = useMemo<Row[]>(() => data?.bars || [], [data]);
+  const noonBar = useMemo(
+    () => provisionalNoonBar(noonPreview, data, period),
+    [noonPreview, data, period],
+  );
+  const bars = useMemo<Row[]>(
+    () => (noonBar ? [...completedBars, noonBar] : completedBars),
+    [completedBars, noonBar],
+  );
+  const automaticTrendlines = useMemo(
+    () => chartAutomaticTrendlines(data, instrumentId, period, asOf),
+    [data, instrumentId, period, asOf],
+  );
   useEffect(() => {
     const node = plotRoot.current;
     if (!node) return;
@@ -408,7 +487,7 @@ export function CandleChart({
   const entryHeight = useSinglePageEntry(
     entryRoot,
     entryStage,
-    `${instrumentId}|${asOf || ""}|${period}|${entryLocateNonce}`,
+    `${instrumentId}|${asOf || ""}|${controlledPeriod === undefined ? period : ""}|${entryLocateNonce}`,
     entryFocus,
     !result.loading &&
       (!!data || !!result.error) &&
@@ -426,8 +505,8 @@ export function CandleChart({
   const annotationPick = useRef<((price: number) => void) | null>(null);
   annotationPick.current = annotations.drawing ? annotations.picked : null;
   const entryWindow = useMemo(
-    () => singlePageDefaultWindow(period, bars, data),
-    [period, bars, data],
+    () => singlePageDefaultWindow(period, completedBars, data),
+    [period, completedBars, data],
   );
   const nextZoomContext = JSON.stringify([
     instrumentId,
@@ -643,7 +722,13 @@ export function CandleChart({
   const last = bars.at(-1);
   const activeBar = bars.find((b) => b.date === activeDate) || last;
   const activeBoll = boll.find((point) => point.date === activeBar?.date);
-  const activeChange = candleChange(activeBar, period);
+  const activeChange = activeBar?.noon_provisional
+    ? {
+        label: "午间涨跌幅",
+        value: activeBar.change_pct,
+        reason: "午间快照记录的涨跌幅",
+      }
+    : candleChange(activeBar, period);
   const activeExtremes = candleExtremeChange(activeBar, period);
   const activeSinceReturn = chartSinceReturn(activeBar, data);
   const activeSessionDistance = chartSessionDistance(activeBar, data);
@@ -663,7 +748,7 @@ export function CandleChart({
   );
   const palette = chartPalette();
   const { actualHeight, mainHeight, paneHeights, paneTops } = entryFocus
-    ? singlePagePaneLayout(entryHeight, chosen)
+    ? singlePagePaneLayout(entryHeight, chosen, fitPanesToWindow)
     : chartPaneLayout(
         height,
         chosen.length,
@@ -677,32 +762,32 @@ export function CandleChart({
       showWaves && waveMode !== "turning"
         ? wavePatterns(
             waves,
-            bars.map((bar) => bar.date),
+            completedBars.map((bar) => bar.date),
             waveAsOf,
           )
         : [],
-    [waves, bars, waveAsOf, showWaves, waveMode],
+    [waves, completedBars, waveAsOf, showWaves, waveMode],
   );
   const turns = useMemo(
     () =>
       showWaves && waveMode === "turning"
         ? waveTurningPoints(
             waves,
-            bars.map((bar) => bar.date),
+            completedBars.map((bar) => bar.date),
             waveAsOf,
           )
         : [],
-    [waves, bars, waveAsOf, showWaves, waveMode],
+    [waves, completedBars, waveAsOf, showWaves, waveMode],
   );
   const candidates = useMemo(
     () => waveCandidates(patterns, waveMode),
     [patterns, waveMode],
   );
-  const effectivePatternKey =
-    candidates.some((pattern) => pattern.pattern_id === wavePatternKey) ||
-    (wavePatternKey === "all" && waveMode !== "latest")
-      ? wavePatternKey
-      : "latest";
+  const effectivePatternKey = candidates.some(
+    (pattern) => pattern.pattern_id === wavePatternKey,
+  )
+    ? wavePatternKey
+    : "latest";
   const selectedPatterns = useMemo(
     () => selectedWavePatterns(candidates, effectivePatternKey, waveMode),
     [candidates, effectivePatternKey, waveMode],
@@ -762,6 +847,7 @@ export function CandleChart({
         type: "value",
         gridIndex: i,
         scale: true,
+        ...(i === 0 ? candlePriceAxis(bars, zoomWindow.current) : {}),
         splitNumber: i === 0 ? 4 : 2,
         axisLabel: {
           color: pal.text,
@@ -789,8 +875,97 @@ export function CandleChart({
         borderColor: "#ed6865",
         borderColor0: "#39bd9b",
       },
-      barMaxWidth: 12,
+      barMaxWidth: 22,
     });
+    if (showAutomaticTrendlines) {
+      const plotTrend = (line: (typeof automaticTrendlines.lines)[number]) => ({
+        name: line.label,
+        type: "line",
+        data: line.values,
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        z: 6,
+        silent: true,
+        clip: true,
+        showSymbol: false,
+        animation: false,
+        tooltip: { show: false },
+        lineStyle: {
+          color: line.color,
+          width: line.scope === "near" ? 2.7 : 3.2,
+          opacity: trendLayers.events && selectedTrendEvent != null ? 0.65 : 1,
+          type: line.stroke,
+        },
+      });
+      for (const line of automaticTrendlines.lines)
+        if (trendLayers[line.scope] && !hiddenTrendItems.has(line.id))
+          series.push(plotTrend(line));
+      const zones = automaticTrendlines.zones.filter(
+        (zone) => !hiddenTrendItems.has(zone.id),
+      );
+      if (trendLayers.zones && zones.length)
+        series.push({
+          name: "水平观察区",
+          type: "line",
+          data: [],
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          z: 0,
+          silent: true,
+          tooltip: { show: false },
+          markArea: {
+            silent: true,
+            animation: false,
+            label: { show: false },
+            data: zones.map((zone) => [
+              {
+                coord: [zone.startDate, zone.low],
+                itemStyle: {
+                  color: `${zone.color}40`,
+                  borderColor: zone.color,
+                  borderWidth: 1,
+                },
+              },
+              { coord: [zone.endDate, zone.high] },
+            ]),
+          },
+        });
+      if (trendLayers.events)
+        for (const [index, event] of automaticTrendlines.events.entries()) {
+          const selected = selectedTrendEvent === index;
+          series.push({
+            ...plotTrend(event.line),
+            name: event.label,
+            data: selected || showAllTrendHistory ? event.line.values : [],
+            z: selected ? 12 : 5,
+            lineStyle: {
+              color: selected ? pal.trendFocus : event.line.color,
+              width: selected ? 4.5 : 2.4,
+              opacity: selected ? 1 : 0.7,
+              type: "dotted",
+              shadowColor: pal.bg,
+              shadowBlur: selected ? 3 : 0,
+            },
+            markPoint: {
+              silent: true,
+              symbol: "diamond",
+              symbolSize: selected ? 29 : 23,
+              itemStyle: {
+                color: selected ? pal.trendFocus : event.line.color,
+                borderColor: pal.bg,
+                borderWidth: 2,
+              },
+              label: {
+                show: true,
+                formatter: String(index + 1),
+                color: selected ? pal.trendFocusText : "#fff",
+                fontSize: 10,
+              },
+              data: [{ coord: [event.date, event.price], name: event.label }],
+            },
+          });
+        }
+    }
     historyViews.forEach((view, index) => {
       if (view.price == null || view.closePrice == null || !view.slot) return;
       if (!visibleLineIds.has(`history:${view.event.key}:${view.event.date}`))
@@ -941,7 +1116,7 @@ export function CandleChart({
           type: "candlestick",
           xAxisIndex: ix,
           yAxisIndex: ix,
-          data: bars.map(bollCandleValues),
+          data: completedBars.map(bollCandleValues),
           itemStyle: {
             color: "transparent",
             color0: pal.down,
@@ -1045,6 +1220,20 @@ export function CandleChart({
               bars.find((bar) => bar.date === entries[0]?.axisValue) ||
               bars[candle?.dataIndex ?? entries[0]?.dataIndex];
           if (!b) return "";
+          if (b.noon_provisional) {
+            const changeColor =
+              b.change_pct > 0
+                ? pal.up
+                : b.change_pct < 0
+                  ? pal.down
+                  : pal.tooltipText;
+            return (
+              `<div style="color:${pal.tooltipText}"><strong>${b.date}</strong> <strong style="color:${pal.provisional}">· 午间未收盘</strong>` +
+              `<div>开 ${num(b.open)}　午间价 <strong>${num(b.close)}</strong></div>` +
+              `<div>高 ${num(b.high)}　低 ${num(b.low)}</div>` +
+              `<div>午间涨跌幅 <strong style="color:${changeColor}">${percent(b.change_pct)}</strong></div></div>`
+            );
+          }
           const change = candleChange(b, period);
           const extremes = candleExtremeChange(b, period);
           const since = chartSinceReturn(b, data);
@@ -1110,9 +1299,9 @@ export function CandleChart({
             return `<span style="color:${color}" title="${escape(view.reason)}">（${view.label} ${percent(view.value)}${view.value == null ? " · 待核验" : ""}）</span>`;
           };
           return (
-            `<div style="font-weight:700;margin-bottom:6px;color:${pal.text}">${b.date}</div>` +
+            `<div style="font-weight:700;margin-bottom:6px;color:${pal.text}">${b.date}${b.noon_provisional ? " · 午间未收盘" : ""}</div>` +
             `<div style="margin-bottom:6px;color:${pal.text}" title="${escape(sessionDistance.reason)}">${escape(sessionDistance.label)}</div>` +
-            `<div>开 ${num(b.open)}　收 ${num(b.close)}</div>` +
+            `<div>开 ${num(b.open)}　${b.noon_provisional ? "午间价" : "收"} ${num(b.close)}</div>` +
             `<div>高 ${num(b.high)} ${extremeHtml("high")}</div>` +
             `<div>低 ${num(b.low)} ${extremeHtml("low")}</div>` +
             `<div style="color:${color}" title="${escape(change.reason)}">${change.label}　${percent(change.value)}</div>` +
@@ -1171,6 +1360,12 @@ export function CandleChart({
     bars,
     data?.as_of,
     data?.trading_day_distance,
+    automaticTrendlines,
+    hiddenTrendItems,
+    showAutomaticTrendlines,
+    trendLayers,
+    selectedTrendEvent,
+    showAllTrendHistory,
     mas.join(","),
     boll,
     showBoll,
@@ -1229,21 +1424,23 @@ export function CandleChart({
         aria-label={entryFocus ? "K线与全部技术副图" : undefined}
       >
         <div className="chart-toolbar">
-          <div className="segmented">
-            {(["D", "W", "M"] as const).map((v) => (
-              <button
-                key={v}
-                className={period === v ? "active" : ""}
-                aria-pressed={period === v}
-                onClick={() => {
-                  setPeriod(v);
-                  if (entryFocus) setEntryLocateNonce((value) => value + 1);
-                }}
-              >
-                {v === "D" ? "日 K" : v === "W" ? "周 K" : "月 K"}
-              </button>
-            ))}
-          </div>
+          {controlledPeriod === undefined && (
+            <div className="segmented">
+              {(["D", "W", "M"] as const).map((v) => (
+                <button
+                  key={v}
+                  className={period === v ? "active" : ""}
+                  aria-pressed={period === v}
+                  onClick={() => {
+                    (onPeriodChange ?? setLocalPeriod)(v);
+                    if (entryFocus) setEntryLocateNonce((value) => value + 1);
+                  }}
+                >
+                  {v === "D" ? "日 K" : v === "W" ? "周 K" : "月 K"}
+                </button>
+              ))}
+            </div>
+          )}
           {frozenMode ? (
             <span
               className="chart-index-basis"
@@ -1340,6 +1537,41 @@ export function CandleChart({
               color="#b292f0"
             />
           )}
+          {automaticTrendlines.available && (
+            <div className="chart-auto-trends">
+              <ChartToggle
+                label="自动趋势线"
+                checked={showAutomaticTrendlines}
+                onChange={setAutomaticTrendlineOverride}
+                title={automaticTrendlines.reason}
+              />
+              <details className="chart-auto-trend-layers">
+                <summary className="btn small">图层</summary>
+                <div className="chart-auto-trend-layer-menu">
+                  <ChartToggle
+                    label="主线"
+                    checked={trendLayers.main}
+                    onChange={(value) => setTrendLayer("main", value)}
+                  />
+                  <ChartToggle
+                    label="近端线"
+                    checked={trendLayers.near}
+                    onChange={(value) => setTrendLayer("near", value)}
+                  />
+                  <ChartToggle
+                    label="水平区"
+                    checked={trendLayers.zones}
+                    onChange={(value) => setTrendLayer("zones", value)}
+                  />
+                  <ChartToggle
+                    label="穿线记录"
+                    checked={trendLayers.events}
+                    onChange={(value) => setTrendLayer("events", value)}
+                  />
+                </div>
+              </details>
+            </div>
+          )}
           {supportsLimits && period === "D" && (
             <ChartToggle
               label="涨跌停标记"
@@ -1366,6 +1598,36 @@ export function CandleChart({
             onAll={toggleAllLines}
           />
           <div className="chart-zoom">
+            {entryFocus && (
+              <button
+                type="button"
+                className="btn small"
+                aria-pressed={fitPanesToWindow}
+                title="压缩主图和副图，尽量在当前窗口内一起展示"
+                onClick={() => setFitPanesToWindow((fit) => !fit)}
+              >
+                {fitPanesToWindow ? "恢复大图" : "适配一屏"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn small"
+              disabled={!bars.length}
+              title="放大图表右侧最近的K线"
+              onClick={() => {
+                const visible = period === "D" ? 35 : period === "W" ? 24 : 18;
+                zoomTo(
+                  Math.max(
+                    0,
+                    ((bars.length - visible) / Math.max(1, bars.length - 1)) *
+                      100,
+                  ),
+                  100,
+                );
+              }}
+            >
+              聚焦近期
+            </button>
             <button
               className="icon-btn"
               title="缩小"
@@ -1396,6 +1658,213 @@ export function CandleChart({
             </button>
           </div>
         </div>
+        {automaticTrendlines.available && (
+          <div
+            className="chart-auto-trend-key"
+            tabIndex={0}
+            aria-label="自动趋势线图例"
+          >
+            <strong className="chart-auto-trend-heading">当前价位</strong>
+            {showAutomaticTrendlines &&
+              automaticTrendlines.lines
+                .filter((line) => trendLayers[line.scope])
+                .map((line) => (
+                  <button
+                    type="button"
+                    key={line.id}
+                    className="chart-auto-trend-key-item"
+                    aria-pressed={!hiddenTrendItems.has(line.id)}
+                    onClick={() => toggleTrendItem(line.id)}
+                    title={`点击显示或隐藏 · ${line.endDate} · ${line.kind === "support" ? "观察回踩能否守住" : "观察反弹能否突破"}`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        width: 18,
+                        borderTop: `2px ${line.stroke} ${line.color}`,
+                      }}
+                    />
+                    {line.label}
+                    <strong>{num(line.endPrice)}</strong>
+                  </button>
+                ))}
+            {showAutomaticTrendlines &&
+              trendLayers.zones &&
+              automaticTrendlines.zones.map((zone) => (
+                <button
+                  type="button"
+                  key={zone.id}
+                  className="chart-auto-trend-key-item"
+                  aria-pressed={!hiddenTrendItems.has(zone.id)}
+                  onClick={() => toggleTrendItem(zone.id)}
+                  title={`点击显示或隐藏 · ${zone.touches} 次拐点反应`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="chart-auto-trend-zone-swatch"
+                    style={{
+                      borderColor: zone.color,
+                      backgroundColor: `${zone.color}40`,
+                    }}
+                  />
+                  {zone.label}{" "}
+                  <strong>
+                    {num(zone.low)}–{num(zone.high)}
+                  </strong>
+                </button>
+              ))}
+            {(!showAutomaticTrendlines ||
+              (!automaticTrendlines.lines.some(
+                (line) => trendLayers[line.scope],
+              ) &&
+                (!trendLayers.zones || !automaticTrendlines.zones.length))) && (
+              <span
+                className="chart-auto-trend-empty"
+                title={automaticTrendlines.reason}
+              >
+                {!showAutomaticTrendlines
+                  ? "自动趋势线已关闭"
+                  : automaticTrendlines.lines.length ||
+                      automaticTrendlines.zones.length
+                    ? "线与水平区已隐藏"
+                    : "暂无可核验线"}
+              </span>
+            )}
+          </div>
+        )}
+        {(automaticTrendlines.events.length > 0 || waves) && (
+          <div className="chart-analysis-controls">
+            {automaticTrendlines.events.length > 0 && (
+              <div
+                className="chart-auto-trend-events"
+                aria-label="穿线记录"
+                aria-hidden={!showAutomaticTrendlines || !trendLayers.events}
+              >
+                <span className="chart-auto-trend-explainer">
+                  <strong>穿线记录</strong>
+                  <span>记录价格曾跌破支撑线或越过压力线。</span>
+                  <span>编号对应图上标记，点记录可看当时的线。</span>
+                </span>
+                <ChartToggle
+                  label="显示全部旧线"
+                  checked={showAllTrendHistory}
+                  onChange={(value) => {
+                    setShowAllTrendHistoryOverride(value);
+                    setSelectedTrendEvent(null);
+                  }}
+                />
+                {automaticTrendlines.events.map((event, index) => (
+                  <button
+                    type="button"
+                    className="chart-auto-trend-event"
+                    key={`${event.date}:${event.line.scope}:${event.line.kind}`}
+                    aria-pressed={selectedTrendEvent === index}
+                    style={
+                      selectedTrendEvent === index
+                        ? { borderColor: palette.trendFocus }
+                        : undefined
+                    }
+                    onClick={() =>
+                      setSelectedTrendEvent(
+                        selectedTrendEvent === index ? null : index,
+                      )
+                    }
+                  >
+                    <strong
+                      style={
+                        selectedTrendEvent === index
+                          ? { color: palette.trendFocus }
+                          : undefined
+                      }
+                    >
+                      {index + 1} · {event.label}
+                    </strong>
+                    <span>
+                      {event.date.slice(5)} · 原{event.line.label}{" "}
+                      {num(event.price)}
+                      {event.confirmedOn &&
+                        ` · ${event.confirmedOn.slice(5)} 确认`}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {waves && (
+              <div className="chart-wave-selectors">
+                <label>
+                  波浪结构
+                  <ChartSelect
+                    label="波浪结构显示范围"
+                    value={showWaves ? waveMode : "off"}
+                    onChange={(value) => {
+                      if (value === "off") {
+                        setShowWaves(false);
+                      } else {
+                        setWaveMode(value as WaveMode);
+                        if (!showWaves) setShowWaves(true);
+                      }
+                    }}
+                    options={[
+                      { value: "off", label: "关闭" },
+                      { value: "latest", label: "最新结构" },
+                      { value: "turning", label: "仅转折" },
+                    ]}
+                  />
+                </label>
+                {showWaves && waveMode !== "turning" && (
+                  <label>
+                    结构日期
+                    <ChartSelect
+                      label="选择波浪结构日期"
+                      value={effectivePatternKey}
+                      onChange={setWavePatternKey}
+                      disabled={!candidates.length}
+                      options={[
+                        {
+                          value: "latest",
+                          label: candidates.length
+                            ? "最新已识别结构"
+                            : "尚未识别",
+                        },
+                        ...candidates.map((pattern) => ({
+                          value: pattern.pattern_id,
+                          label: `${pattern.direction === "up" ? "↑" : "↓"} ${pattern.start_date} → ${pattern.end_date}`,
+                          description: pattern.has_correction
+                            ? "含 ABC 修正"
+                            : "五浪候选",
+                        })),
+                      ]}
+                    />
+                  </label>
+                )}
+                {showWaves && waveMode !== "turning" && (
+                  <button
+                    className="btn small"
+                    disabled={!waveWindow}
+                    onClick={() => {
+                      if (waveWindow) zoomTo(waveWindow.start, waveWindow.end);
+                    }}
+                    title={
+                      waveWindow
+                        ? "缩放到选中结构起止，并保留两端边距"
+                        : "选择一个已识别结构后可定位"
+                    }
+                  >
+                    <Maximize2 size={12} />
+                    定位结构
+                  </button>
+                )}
+                {showWaves && (
+                  <span className="chart-wave-hint">
+                    {waveMode === "turning"
+                      ? "已确认高低点 · 不编号"
+                      : "推进实线 · ABC虚线 · 每个结构独立连线"}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         <ChartAnnotationPanel
           state={annotations}
           displayedIds={
@@ -1421,77 +1890,29 @@ export function CandleChart({
             annotations.setShow(show);
           }}
         />
-        {waves && showWaves && (
-          <div className="chart-wave-selectors">
-            <label>
-              显示
-              <ChartSelect
-                label="波浪结构显示范围"
-                value={waveMode}
-                onChange={(value) => {
-                  setWaveMode(value as WaveMode);
-                }}
-                options={[
-                  { value: "latest", label: "最新结构" },
-                  { value: "up", label: "↑ 上涨候选" },
-                  { value: "down", label: "↓ 下跌候选" },
-                  { value: "turning", label: "仅转折" },
-                ]}
-              />
-            </label>
-            {waveMode !== "turning" && (
-              <label>
-                结构日期
-                <ChartSelect
-                  label="选择波浪结构日期"
-                  value={effectivePatternKey}
-                  onChange={setWavePatternKey}
-                  disabled={!candidates.length}
-                  options={[
-                    {
-                      value: "latest",
-                      label: candidates.length ? "最新已识别结构" : "尚未识别",
-                    },
-                    ...(waveMode !== "latest" && candidates.length > 1
-                      ? [
-                          {
-                            value: "all",
-                            label: `全部${waveMode === "up" ? "上涨" : "下跌"}候选（${candidates.length}）`,
-                          },
-                        ]
-                      : []),
-                    ...candidates.map((pattern) => ({
-                      value: pattern.pattern_id,
-                      label: `${pattern.direction === "up" ? "↑" : "↓"} ${pattern.start_date} → ${pattern.end_date}`,
-                      description: pattern.has_correction
-                        ? "含 ABC 修正"
-                        : "五浪候选",
-                    })),
-                  ]}
-                />
-              </label>
+        {noonMode && noonPreview && (
+          <div
+            className="ohlc-strip noon-chart-summary"
+            role="region"
+            aria-label="午间快照"
+          >
+            <strong>{noonPreview.trade_date} 午间快照</strong>
+            {noonPreview.quote && (
+              <span>
+                午间{isIndex ? "点位" : "价"}{" "}
+                <b>{num(noonPreview.quote.latest_price)}</b>
+              </span>
             )}
-            {waveMode !== "turning" && (
-              <button
-                className="btn small"
-                disabled={!waveWindow}
-                onClick={() => {
-                  if (waveWindow) zoomTo(waveWindow.start, waveWindow.end);
-                }}
-                title={
-                  waveWindow
-                    ? "缩放到选中结构起止，并保留两端边距"
-                    : "选择一个已识别结构后可定位"
-                }
-              >
-                <Maximize2 size={12} />
-                定位结构
-              </button>
+            {noonCollectionTime(noonPreview) && (
+              <span>采集完成 {noonCollectionTime(noonPreview)}</span>
             )}
-            <span className="chart-wave-hint">
-              {waveMode === "turning"
-                ? "已确认高低点 · 不编号"
-                : "推进实线 · ABC虚线 · 每个结构独立连线"}
+            <span>
+              {period !== "D"
+                ? "周K、月K仅显示午评日前已发布的行情"
+                : noonBar
+                  ? "末根日 K 为午间临时柱，趋势线基于已发布日 K"
+                  : noonPreview.reason ||
+                    "前收或价格口径未能核对，午间报价单独显示"}
             </span>
           </div>
         )}
@@ -1508,10 +1929,15 @@ export function CandleChart({
         >
           {activeBar && (
             <div className="ohlc-strip">
-              <span>{activeBar.date}</span>
-              <span title={activeSessionDistance.reason}>
-                {activeSessionDistance.label}
+              <span>
+                {activeBar.date}
+                {activeBar.noon_provisional ? " · 午间未收盘" : ""}
               </span>
+              {!activeBar.noon_provisional && (
+                <span title={activeSessionDistance.reason}>
+                  {activeSessionDistance.label}
+                </span>
+              )}
               <span>
                 开 <b>{num(activeBar.open)}</b>
               </span>
@@ -1536,7 +1962,7 @@ export function CandleChart({
                 </small>
               </span>
               <span>
-                收{" "}
+                {activeBar.noon_provisional ? "午间价" : "收"}{" "}
                 <b className={tone(activeBar.close - activeBar.open)}>
                   {num(activeBar.close)}
                 </b>
@@ -1559,15 +1985,17 @@ export function CandleChart({
                     原始收盘 <b>{num(activeBar.raw_close)}</b>
                   </span>
                 )}
-              <span title={activeSinceReturn.reason}>
-                至{activeSinceReturn.end || "观察日"}涨跌幅{" "}
-                <b className={tone(activeSinceReturn.value)}>
-                  {percent(activeSinceReturn.value)}
-                </b>
-                {activeSinceReturn.value == null && (
-                  <small className="muted">（待核验）</small>
-                )}
-              </span>
+              {!activeBar.noon_provisional && (
+                <span title={activeSinceReturn.reason}>
+                  至{activeSinceReturn.end || "观察日"}涨跌幅{" "}
+                  <b className={tone(activeSinceReturn.value)}>
+                    {percent(activeSinceReturn.value)}
+                  </b>
+                  {activeSinceReturn.value == null && (
+                    <small className="muted">（待核验）</small>
+                  )}
+                </span>
+              )}
               <span className="muted">
                 {period !== "D" && activeBar.complete === false
                   ? (period === "M"
@@ -1581,10 +2009,10 @@ export function CandleChart({
                       : `${cycleLabel}K未完整`
                   : ""}
               </span>
-              {supportsLimits && (
+              {supportsLimits && !activeBar.noon_provisional && (
                 <LimitStatus bar={activeBar} period={period} />
               )}
-              {supportsLimits && (
+              {supportsLimits && !activeBar.noon_provisional && (
                 <PatternStatus bar={activeBar} period={period} />
               )}
             </div>
@@ -1603,7 +2031,11 @@ export function CandleChart({
           )}
         </div>
         {!frozenMode && result.loading ? (
-          <Loading />
+          <div
+            style={controlledPeriod ? { minHeight: actualHeight } : undefined}
+          >
+            <Loading />
+          </div>
         ) : !frozenMode && result.error ? (
           <ErrorBox message={result.error} retry={result.reload} />
         ) : !bars.length ? (
@@ -1656,6 +2088,18 @@ export function CandleChart({
                       start: current.start ?? 0,
                       end: current.end ?? 100,
                     };
+                  if (current)
+                    c.setOption(
+                      {
+                        yAxis: [
+                          candlePriceAxis(
+                            latestBars.current,
+                            zoomWindow.current,
+                          ),
+                        ],
+                      },
+                      { silent: true },
+                    );
                   if (entryFocus && entryStage.current && current) {
                     entryStage.current.dataset.zoomStart = String(
                       zoomWindow.current.start,
@@ -1954,7 +2398,8 @@ export function CandleChart({
             : ["forward", "forward_event_affine"].includes(data.price_basis)
               ? "本地前复权"
               : data.price_basis || "价格口径待核验"}{" "}
-          · {bars.length} 根{cycleLabel}K ·{" "}
+          · {completedBars.length} 根{cycleLabel}K
+          {noonBar ? " + 1 根午间临时柱" : ""} ·{" "}
           {broad
             ? (data.breadth_scope || "上涨家数：沪深已留存可比样本") + " · "
             : ""}
@@ -2013,11 +2458,7 @@ export function CandleChart({
               ))}
             </div>
           ) : (
-            <p>
-              尚未识别
-              {waveMode === "up" ? "上涨" : waveMode === "down" ? "下跌" : ""}
-              五浪候选；可切换“仅转折”查看已确认高低点。
-            </p>
+            <p>尚未识别五浪候选。切换“仅转折”可查看已确认高低点。</p>
           )}
           <details>
             <summary>候选口径与规则</summary>
@@ -2116,14 +2557,10 @@ export function CandleChart({
         >
           <div className="modal-body chart-preferences-form">
             <p className="muted">
-              均线、指标显隐、波浪结构及显示范围按指数和个股分别保存，同类型图表同步。修改
-              {isIndex ? "指数" : "个股"}的上述设置不会影响
-              {isIndex ? "个股" : "指数"}
-              ；切换、重开和刷新沿用。日 / 周 /
-              月周期和缩放范围由各张图独立设置。
+              同类图表共用显示偏好，修改即时生效并自动保存。周期和缩放范围由各张图独立设置。
             </p>
             <fieldset>
-              <legend>{isIndex ? "指数" : "个股"}默认均线</legend>
+              <legend>均线</legend>
               <div className="chart-preferences-mas">
                 {MA_WINDOWS.map((n, i) => (
                   <ChartToggle
@@ -2137,7 +2574,7 @@ export function CandleChart({
               </div>
             </fieldset>
             <fieldset>
-              <legend>{isIndex ? "指数" : "个股"}默认指标</legend>
+              <legend>副图指标</legend>
               <div className="chart-preferences-mas">
                 {CHART_INDICATOR_ORDER.filter(
                   (key) => key !== "breadth" || isIndex,
@@ -2162,73 +2599,98 @@ export function CandleChart({
                 ))}
               </div>
               <p className="muted">
-                副图按成交量、BOLL、KDJ、MACD排列，各占一张副图。BOLL包含当前周期同口径蜡烛K线与上中下轨，
-                按当前周期收盘价计算，参数20 ·
-                2；图下开关与这里同步，也可关闭全部副图。
+                可关闭全部副图。BOLL 按当前周期收盘价计算，参数为 20 · 2。
               </p>
             </fieldset>
             <fieldset>
-              <legend>{isIndex ? "指数" : "个股"}默认波浪结构</legend>
-              <ChartToggle
-                label="默认显示波浪结构"
-                checked={showWaves}
-                onChange={setShowWaves}
-                color="#b292f0"
-              />
-              <label>
-                默认显示范围
-                <ChartSelect
-                  label="默认波浪结构显示范围"
-                  value={waveMode}
-                  onChange={(value) => setWaveMode(value as WaveMode)}
-                  options={[
-                    { value: "latest", label: "最新结构" },
-                    { value: "up", label: "↑ 上涨候选" },
-                    { value: "down", label: "↓ 下跌候选" },
-                    { value: "turning", label: "仅转折" },
-                  ]}
+              <legend>趋势与波浪</legend>
+              <div className="chart-preferences-mas">
+                <ChartToggle
+                  label="默认显示自动趋势线"
+                  checked={
+                    isIndex
+                      ? preferences.indexShowAutomaticTrendlines
+                      : preferences.stockShowAutomaticTrendlines
+                  }
+                  onChange={(value) =>
+                    update(
+                      isIndex
+                        ? { indexShowAutomaticTrendlines: value }
+                        : { stockShowAutomaticTrendlines: value },
+                    )
+                  }
                 />
-              </label>
+                <ChartToggle
+                  label="默认显示全部穿线旧线"
+                  checked={defaultShowAllTrendHistory}
+                  onChange={(value) =>
+                    update(
+                      isIndex
+                        ? { indexShowAllTrendHistory: value }
+                        : { stockShowAllTrendHistory: value },
+                    )
+                  }
+                />
+                <ChartToggle
+                  label="默认显示波浪结构"
+                  checked={showWaves}
+                  onChange={setShowWaves}
+                  color="#b292f0"
+                />
+                <label>
+                  默认显示范围
+                  <ChartSelect
+                    label="默认波浪结构显示范围"
+                    value={waveMode}
+                    onChange={(value) => setWaveMode(value as WaveMode)}
+                    options={[
+                      { value: "latest", label: "最新结构" },
+                      { value: "turning", label: "仅转折" },
+                    ]}
+                  />
+                </label>
+              </div>
               <p className="muted">
-                工具栏修改也会自动保存；具体结构日期由每张图独立选择。
+                在单张图的工具栏可临时切换自动趋势线。波浪结构的具体日期由各张图选择。
               </p>
             </fieldset>
-            <p className="muted">
-              首次升级时，旧共享均线保留为指数设置；个股默认使用MA5、10、20、30，也可独立开启60、250。
-            </p>
-            <label>
-              个股默认价格口径
-              <ChartSelect
-                label="全局个股复权口径"
-                value={preferences.stockPriceBasis}
-                onChange={(value) =>
-                  update({
-                    stockPriceBasis: value === "forward" ? "forward" : "none",
-                  })
-                }
-                options={[
-                  { value: "none", label: "未复权" },
-                  { value: "forward", label: "本地前复权" },
-                ]}
-              />
-            </label>
-            <p className="muted">
-              指数始终显示原始点位，不覆盖个股偏好。本地前复权仍需每只股票通过事件核验；资料不足时保留原始价并提示。
-            </p>
-            <ChartToggle
-              label="默认显示个股日K涨跌停及日形态标记"
-              checked={showLimits}
-              onChange={(value) => update({ showLimits: value })}
-            />
-            <ChartToggle
-              label="默认显示跟踪图事件基准线"
-              checked={showEventBaseline}
-              color="#c79136"
-              onChange={(value) => update({ showEventBaseline: value })}
-            />
-            <p className="muted">
-              只保存显示偏好，不改变策略、跟踪或回测的计算口径，不保存标的、持仓或密钥。
-            </p>
+            <fieldset>
+              <legend>个股价格与标记</legend>
+              <div className="chart-preferences-mas">
+                <label>
+                  个股默认价格口径
+                  <ChartSelect
+                    label="全局个股复权口径"
+                    value={preferences.stockPriceBasis}
+                    onChange={(value) =>
+                      update({
+                        stockPriceBasis:
+                          value === "forward" ? "forward" : "none",
+                      })
+                    }
+                    options={[
+                      { value: "none", label: "未复权" },
+                      { value: "forward", label: "本地前复权" },
+                    ]}
+                  />
+                </label>
+                <ChartToggle
+                  label="默认显示个股日K涨跌停及日形态标记"
+                  checked={showLimits}
+                  onChange={(value) => update({ showLimits: value })}
+                />
+                <ChartToggle
+                  label="默认显示跟踪图事件基准线"
+                  checked={showEventBaseline}
+                  color="#c79136"
+                  onChange={(value) => update({ showEventBaseline: value })}
+                />
+              </div>
+              <p className="muted">
+                指数使用原始点位。个股的本地前复权证据不足时，图表显示原始价格。
+              </p>
+            </fieldset>
+            <p className="muted">这些设置只影响图表显示。</p>
             {!persistent && (
               <Warning>
                 浏览器未允许保存偏好，当前窗口内仍已同步；刷新后可能恢复默认。
@@ -2254,6 +2716,7 @@ export function CandleChart({
 export function StockDrawer({
   id,
   asOf,
+  noonSnapshotId,
   onClose,
   onResearch,
   eventBaseline,
@@ -2262,6 +2725,7 @@ export function StockDrawer({
 }: {
   id: string;
   asOf?: string;
+  noonSnapshotId?: string;
   onClose: () => void;
   onResearch?: (id: string) => void;
   eventBaseline?: ChartEventBaseline;
@@ -2277,6 +2741,16 @@ export function StockDrawer({
     row: Row;
     date: string;
   } | null>(null);
+  const [periodSelection, setPeriodSelection] = useState<{
+    id: string;
+    value: ChartPeriod;
+  } | null>(null);
+  const drawerPeriod = periodSelection?.id === id ? periodSelection.value : "D";
+  const setDrawerPeriod = (value: ChartPeriod) =>
+    setPeriodSelection({ id, value });
+  useEffect(() => {
+    setPeriodSelection((previous) => (previous?.id === id ? previous : null));
+  }, [id]);
   const drawerRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -2286,6 +2760,17 @@ export function StockDrawer({
   const detail = useApi<Row>(
     `/instruments/${encodeURIComponent(id)}${asOf ? "?as_of=" + encodeURIComponent(asOf) : ""}`,
   );
+  const noon = useApi<NoonChartPreview>(
+    noonSnapshotId
+      ? `/market/noon/${encodeURIComponent(noonSnapshotId)}/stocks/${encodeURIComponent(id)}/quote`
+      : null,
+  );
+  const noonPreview =
+    noon.data &&
+    noon.data.snapshot_id === noonSnapshotId &&
+    (!noon.data.quote || noon.data.quote.instrument_id === id)
+      ? noon.data
+      : undefined;
   const data =
     loaded?.id === id &&
     loaded.asOf === asOf &&
@@ -2410,14 +2895,50 @@ export function StockDrawer({
               )}
               <PatternStatus bar={stockPatternHeader(detailData, asOf)} />
             </div>
+            <div
+              className="segmented entry-header-period"
+              role="group"
+              aria-label="K线周期"
+            >
+              {(["D", "W", "M"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={drawerPeriod === value ? "active" : ""}
+                  aria-pressed={drawerPeriod === value}
+                  onClick={() => setDrawerPeriod(value)}
+                >
+                  {value === "D" ? "日 K" : value === "W" ? "周 K" : "月 K"}
+                </button>
+              ))}
+            </div>
           </div>
-          <StockCompactMetrics
-            summary={headerSummary}
-            detail={detailData}
-            instrumentId={id}
-            asOf={asOf || detailData?.data_date}
-            isIndex={meta.kind === "index"}
-          />
+          {noonSnapshotId ? (
+            <div className="entry-header-metrics">
+              <div className="entry-header-metric">
+                <span>午间价</span>
+                <b>
+                  {noonPreview?.quote
+                    ? `${num(noonPreview.quote.latest_price)} 元`
+                    : "—"}
+                </b>
+              </div>
+              <div className="entry-header-metric">
+                <span>午间涨幅</span>
+                <b className={tone(noonPreview?.quote?.change_pct)}>
+                  {percent(noonPreview?.quote?.change_pct)}
+                </b>
+              </div>
+            </div>
+          ) : (
+            <StockCompactMetrics
+              summary={headerSummary}
+              detail={detailData}
+              instrumentId={id}
+              asOf={asOf || detailData?.data_date}
+              isIndex={meta.kind === "index"}
+            />
+          )}
           <div className="entry-header-actions">
             <div
               className="stock-navigation-controls entry-header-navigation"
@@ -2576,13 +3097,22 @@ export function StockDrawer({
           </div>
           <div className="drawer-body">
             <StockEventBaseline state={eventReference} />
+            {noonSnapshotId && !noonPreview && (
+              <p className="muted">
+                {noon.loading ? "正在读取午间快照…" : "午间快照暂不可用。"}
+              </p>
+            )}
             <CandleChart
+              noonPreview={noonPreview}
+              noonMode={Boolean(noonSnapshotId)}
               key={id}
               instrumentId={id}
               instrumentKind={meta.kind}
               asOf={asOf}
               height={660}
               entryFocus
+              controlledPeriod={drawerPeriod}
+              onPeriodChange={setDrawerPeriod}
               onBoardPresentation={setEntryHeaderBoard}
               onLoad={(next) => {
                 if (
@@ -2597,6 +3127,16 @@ export function StockDrawer({
               historicalChecksReason={eventReference.historicalChecksReason}
               showDataNotes={false}
             />
+            {["stock", "equity", "a_share", "A"].includes(
+              meta.kind || meta.asset_type,
+            ) &&
+              typeof data?.as_of === "string" &&
+              !!data.bars?.length && (
+                <StockChipDistribution
+                  instrumentId={id.toUpperCase()}
+                  date={data.as_of}
+                />
+              )}
             <Panel title="资料与风险">
               <div className="detail-list">
                 <p>

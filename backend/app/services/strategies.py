@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib,json,sqlite3,time
 from decimal import Decimal,ROUND_HALF_UP
 from fastapi import HTTPException
+from app.analytics import strategy_trendlines as trend
+from app.services.selection_trendlines import stock_batch as trend_stock_batch
 from app.core import connect,get_market,now_ms,new_id
 from app.domain.conditions import validate,evaluate,metrics_for,metrics_from_enriched,names,specs,topic_dependencies,past_limit_up_metrics,prepare_metric_bars
 from app.domain.universe import identity_flags
@@ -42,6 +44,7 @@ def stored_period(period):
 
 
 def evaluator_for(definition,period,trade_rules=None,hot_filter=None,price_basis='none'):
+    if names(definition) & trend.FIELDS.keys():return trend.VERSION
     if price_basis=='forward':return FORWARD_ENGINE_VERSION
     trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
     if any(names(tree)&{'volume_expand','volume_shrink'} for tree in trees):return 'workspace-v16-volume-comparison-v1'
@@ -75,6 +78,7 @@ def policy_normalized(payload=None):
         if not isinstance(values,list) or len(values)>50:fail('提醒/结束条件需为最多50项的数组')
         try:result[key]=[validate(x) for x in values]
         except ValueError as e:fail(str(e))
+        if any(names(node) & trend.FIELDS.keys() for node in result[key]):fail('趋势线首版仅用于选股')
         if key=='exits' and any('close_above_entry_high' in names(node) for node in result[key]):fail('收盘价高于本轮事件日最高价仅用于跟踪提醒，触发后继续跟踪，不能配置为结束条件')
     return result
 
@@ -453,6 +457,9 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
         price_basis=st.get('price_basis','none')
         fast=price_basis=='none' and st['period']=='D' and not required&{'higher_lows','boll_signal'}
         metric_plan=compile_metric_plan(st['definition'],st['period'])
+        trend_fields=trend.requested_fields(st['definition'],st['period'])
+        trend_windows=trend.windows_for(calendar,day,trend_fields)
+        batch_trends={}
         candidate_fields=candidate_requirements(st['definition'])
         status_method=getattr(market,'status',None)
         generation=status_method().get('snapshot_id') if callable(status_method) else None
@@ -505,6 +512,10 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
                         'history_trees':[st['definition']],'computed_histories':computed_histories} if price_basis=='forward' else {}))
                 if limit_evidence and not needs_count and not prefetched_quotes:
                     limit_quotes=batch_quote_indexes(market,selected,day,calendar,batch_bars if len(batch_bars)==len(selected) else None)
+            if trend_fields and sequence%metric_batch==0:
+                batch_trends=trend_stock_batch(market,ordered[sequence:sequence+metric_batch],calendar,day,
+                    trend_windows,trend_fields,price_basis=price_basis,source_token=source_token,
+                    generation=generation,price_contexts=batch_price_contexts)
             if event_nodes and sequence%history_batch==0:
                 event_contexts=contexts_for_batch(market,ordered[sequence:sequence+history_batch],[st['definition']],calendar,day,batch_bars if not fast else None,shared=history_shared,limit_evidence=limit_evidence,
                     **({'price_basis':price_basis,'price_contexts':batch_price_contexts,'prepared_contexts':batch_history_contexts,'computed_contexts':computed_histories} if price_basis=='forward' else {}))
@@ -530,6 +541,11 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
                 if 'limit_up_1y' in required:ms.update(past_limit_up_metrics(count_values[ident]))
             elif limit_evidence:ms.update(limit_evidence.metrics(ident,day,calendar,limit_quotes.get(ident,{})))
             context=event_contexts.get(ident)
+            if trend_fields:
+                scoped=ms.get('_period_metrics',{})
+                for period,state in batch_trends.get(ident,{}).items():
+                    if period==st['period']:ms['trendline_state']=state
+                    if period in scoped:scoped[period]={**scoped[period],'trendline_state':state}
             check=evaluate(st['definition'],ms,context.at(day) if context else None)
             if hot_evidence is not None:check=hot_universe.combine(check,ident,hot_evidence,hot_by_stock)
             decision='matched' if check['result'] is True else 'unmatched' if check['result'] is False else 'unknown'

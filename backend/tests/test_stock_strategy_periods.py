@@ -241,3 +241,27 @@ def test_monthly_strategy_daily_new_high_does_not_require_sixty_months():
     assert bounds['daily_lookback_sessions'] == 60
     _, _, rows, _ = prepare(market, strategy, '2026-08-03', '2026-10-13')
     assert rows and all(row['checks']['lookback_sessions'] == 60 for row in rows)
+
+
+def test_stock_trendline_runs_with_existing_conditions_and_frozen_evidence(ws):
+    market, client = ws
+    symbol = '600001.SH'
+    rows = [row for row in market.data[symbol] if row['date'] <= market.entry]
+    pattern = [19, 20, 21, 23, 21, 19, 18, 19, 21, 19, 18, 21]
+    for row in rows:
+        row.update(open=15, close=15, high=17, low=14, volume=100,
+                   corporate_action=False, corporate_action_coverage_known=True)
+    for row, high in zip(rows[-len(pattern):], pattern):
+        row['high'] = high
+    rows[-1]['close'] = 20
+    definition = {'all': [leaf(), leaf('trendline_breakout', 'matches', 0.5, period='D')]}
+    response = client.post('/api/v1/strategies', json={'name': '压力线', 'period': 'W', 'definition': definition})
+    assert response.status_code == 200, response.text
+    run = client.post('/api/v1/strategies/'+response.json()['strategy_id']+'/runs', json={})
+    assert run.status_code == 200, run.text
+    item = next(row for row in run.json()['items'] if row['instrument_id'] == symbol)
+    assert item['decision'] == 'matched'
+    evidence = item['checks']['checks'][1]['evidence']
+    assert evidence['observed_date'] == market.entry
+    assert evidence['line']['projected_price'] == pytest.approx(19.8)
+    assert evidence['line']['confirmed_on'] < market.entry

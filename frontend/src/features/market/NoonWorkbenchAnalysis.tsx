@@ -67,7 +67,7 @@ function Stock({ row, onStock, chartDate }: StockProps & { row: Row }) {
           disabled={!chartDate}
           title={
             chartDate
-              ? `图表截至此前收盘日 ${chartDate}；午间报价见本页`
+              ? `正式行情截至 ${chartDate}，同日收盘发布后优先显示完整日 K`
               : "此前暂无已发布收盘行情"
           }
           onClick={() => onStock(row.instrument_id)}
@@ -1426,6 +1426,7 @@ export function NoonDirections({
                   key={`${snapshotId}:${identity(selected)}`}
                   topic={{ ...selected, topic_code: code }}
                   snapshotId={snapshotId!}
+                  closeChartDate={stockProps.chartDate}
                   embedded
                   onStock={stockProps.onStock}
                 />

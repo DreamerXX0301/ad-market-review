@@ -19,6 +19,7 @@ FORWARD_VERSION='restricted-next-open-v7-local-forward-prices-v1'
 DEFAULTS={'initial_capital':100000,'max_positions':5,'position_pct':20,'hold_days':10,'stop_loss_pct':8,'take_profit_pct':20,'commission_bps':3,'min_commission':5,'sell_tax_bps':5,'slippage_bps':5,'exit_ma':0}
 WARNINGS=['受限研究样本：当前证券名单、区间内完整报价且无公司行动；存在幸存者与事后样本选择偏差，不是严格无偏的全市场历史回测。','撮合市场范围：仅主板、创业板的当前非 ST 研究样本；科创板、北交所和当前 ST 不参与撮合，不能据此评估策略在这些股票上的表现。','仅未复权原始价格，不模拟未经完整验收的分红送股；历史ST及退市身份覆盖不足，ST 筛选按当前名称识别，不能冒充历史逐日身份。','日收盘产生信号，下一市场交易日开盘尝试成交；止盈止损也按收盘判断，不能推断盘中成交。','费用、滑点为可配置研究参数，非现行法定费率声明；期末持仓估值且不强制平仓。']
 UNSUPPORTED={'topic_ids':'缺少历史题材成员版本','limit_up':'缺少完整历史限价身份与涨停证据','prev_limit_up':'昨日涨停条件尚未接入回测的完整历史限价证据，不能按上一条报价或未来来源补算','limit_up_count_1y':'截至昨日近一年涨停次数尚未接入回测的完整滚动历史来源证据，不能用年内次数或未来来源补算','limit_up_1y':'缺少完整一年历史涨停证据','turnover_ratio_pct':'换手率数据未覆盖','trading_age':'跟踪字段不是选股历史特征','tracking_change_pct':'跟踪字段不是选股历史特征','close_below_entry':'选股时尚无事件日价格'}
+UNSUPPORTED.update(trendline_pullback='趋势线回踩首版仅支持选股', trendline_breakout='趋势线突破首版仅支持选股')
 UNSUPPORTED['close_below_entry_low']='事件日最低价属于跟踪结束基准，回测没有本轮入池基准'
 UNSUPPORTED['close_above_entry_high']='本轮事件日最高价属于跟踪提醒基准，选股回测没有该跟踪轮次，不能作为回测条件'
 

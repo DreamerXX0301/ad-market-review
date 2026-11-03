@@ -34,8 +34,9 @@ _PERSIST_LOCK = RLock()
 _PERSIST_SIZES = OrderedDict()
 
 
-def _summary_scope(plan, calendar, include_higher_lows=False, boll_configs_by_period=None):
+def _summary_scope(plan, calendar, include_higher_lows=False, boll_configs_by_period=None, trend_fields=None):
     """All immutable input scopes, plus the local derived-algorithm contract."""
+    from app.analytics.strategy_trendlines import VERSION as trend_version
     return {'contract': SUMMARY_CONTRACT, 'evaluator': EVALUATOR_VERSION,
         'indicators': INDICATOR_VERSION, 'normalization': charts.NORMALIZATION_VERSION,
         'source_root': str(charts._root().resolve()), 'snapshot_id': plan['snapshot_id'],
@@ -43,6 +44,7 @@ def _summary_scope(plan, calendar, include_higher_lows=False, boll_configs_by_pe
         'catalog_identity': plan['instrument'], 'request_signature': plan['request_signature'],
         'calendar_sha256': digest(calendar),
         **({'higher_lows_version':'higher-lows-v1'} if include_higher_lows else {}),
+        **({'trendline_contract':trend_version,'trendline_fields':{p:sorted(fields) for p,fields in trend_fields.items()}} if trend_fields else {}),
         **({'boll_contract':_boll_scope(boll_configs_by_period)} if boll_configs_by_period else {})}
 
 
@@ -235,6 +237,8 @@ def _version(connection, sid, version, value):
 def _evaluator(value):
     from app.domain.conditions import names
     trees=[value['definition']]+value.get('policy',{}).get('alerts',[])+value.get('policy',{}).get('exits',[])
+    from app.analytics import strategy_trendlines as trend
+    if names(value['definition']) & trend.FIELDS.keys():return trend.VERSION
     if any('boll_signal' in names(tree) for tree in trees):return 'sector-index-dwm-boll-signal-v3'
     return 'sector-index-dwm-higher-lows-v2' if any('higher_lows' in names(tree) for tree in trees) else EVALUATOR_VERSION
 
@@ -399,7 +403,7 @@ def _indicators(record, calendar, day, include_higher_lows=False, boll_configs_b
 
 
 def _entry_from_record(record, pointer, plan, calendar, include_higher_lows=False,
-                       boll_configs_by_period=None, proofs=None):
+                       boll_configs_by_period=None, proofs=None, trend_fields=None):
     """One canonical indicator projection; private entry may also keep two rows."""
     day = plan['as_of']; code = plan['topic_code']
     proofs = {**(_proofs(pointer, code, day) if proofs is None else proofs),
@@ -407,6 +411,13 @@ def _entry_from_record(record, pointer, plan, calendar, include_higher_lows=Fals
         'source_request': record.get('cache_source_request', record.get('source_request')),
         'cache_as_of': record.get('cache_as_of', day), 'raw_lineage': record.get('raw_lineage')}
     metrics, current_row = _indicators(record, calendar, day, include_higher_lows, boll_configs_by_period)
+    if trend_fields:
+        from app.analytics import strategy_trendlines as trend
+        rows = [{**row,'corporate_action':False,'corporate_action_coverage_known':True}
+                for row in record['bars'] if row['date'] <= day]
+        states = trend.summaries(rows,trend.windows_for(calendar,day,trend_fields),trend_fields)
+        for period,state in states.items():
+            metrics[period]['trendline_state']=state
     value = {'metrics_by_period': metrics, 'close_price': finite(current_row.get('close')) if current_row else None,
         'cache_refs': proofs, 'coverage': {**record['coverage'], 'available': True,
             'observation_date': day, 'price_basis': 'none', 'membership_independent': True,
@@ -469,7 +480,7 @@ def verified_recent_pair(market, topic_code, day, previous):
         return None  # Recompute from original raw chain; never hide source damage.
 
 
-def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_higher_lows=False, boll_configs_by_period=None):
+def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_higher_lows=False, boll_configs_by_period=None, trend_fields=None):
     """One verified daily input, all-period summaries, bounded warm reuse.
 
     Warm calls hash every frozen normalized/raw input again, never merely trust
@@ -480,7 +491,7 @@ def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_highe
     identity = {'target_type': 'sector', 'target_id': plan['topic_code'], 'topic_code': plan['topic_code'],
         'topic_id': plan['instrument']['topic_id'], 'name': plan['instrument']['name'],
         'sector_kind': plan['instrument']['sector_kind']}
-    scope = _summary_scope(plan, market.calendar(),include_higher_lows,boll_configs_by_period)
+    scope = _summary_scope(plan, market.calendar(),include_higher_lows,boll_configs_by_period,trend_fields)
     key = (str(work_dir().resolve()), digest(scope))
     with _SUMMARY_LOCK: entry = _SUMMARIES.get(key)
     if entry:
@@ -499,7 +510,7 @@ def metrics_for_sector(market, topic_code, day, periods=('D',), *, include_highe
         cached = charts._read_chart_cache(market, plan, market.calendar())
         if cached is None: raise ValueError('板块所选日日K尚未留存，请先在数据中心补齐')
         record, pointer = cached
-        entry = _entry_from_record(record, pointer, plan, market.calendar(), include_higher_lows, boll_configs_by_period)
+        entry = _entry_from_record(record, pointer, plan, market.calendar(), include_higher_lows, boll_configs_by_period, trend_fields=trend_fields)
         _remember_summary(key, entry)
         _save_summary(scope, entry)
         return {**deepcopy(entry['value']), **identity}
@@ -647,12 +658,15 @@ def run_strategy(sid, payload=None, *, queued_job=None, response_decision=None):
         periods = periods_for(st['definition'], st['period'])
         from app.analytics.boll_conditions import configs_for
         boll_by_period=configs_for(st['definition'],st['period'])
+        from app.analytics.strategy_trendlines import requested_fields
+        trend_fields=requested_fields(st['definition'],st['period'])
         for index, (code, item) in enumerate(sorted(selected.items()), 1):
             check_task()
             from app.domain.conditions import names
             structured='higher_lows' in names(st['definition'])
             prepared = metrics_for_sector(market, code, day, periods,
                 **({'include_higher_lows':True} if structured else {}),
+                **({'trend_fields':trend_fields} if trend_fields else {}),
                 **({'boll_configs_by_period':boll_by_period} if any(boll_by_period.values()) else {}))
             check = evaluate(st['definition'], prepared['metrics_by_period'], st['period'])
             decision = 'matched' if check['result'] is True else 'unmatched' if check['result'] is False else 'unknown'

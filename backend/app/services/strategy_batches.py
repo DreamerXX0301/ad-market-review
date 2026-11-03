@@ -123,10 +123,10 @@ def create_batch(payload):
                                        prepared_inputs=prepared_inputs)
             read_strategy = lambda identifier: ensure_evaluator_version(connection, identifier, run_context=eligibility)
         else:
-            from .sector_strategies import _view as sector_view, _version, EVALUATOR_VERSION
+            from .sector_strategies import _view as sector_view, _version, _evaluator
             def read_strategy(identifier):
                 strategy = sector_view(connection, identifier)
-                if strategy['evaluator_version'] != EVALUATOR_VERSION:
+                if strategy['evaluator_version'] != _evaluator(strategy):
                     _version(connection, identifier, strategy['version']+1, strategy)
                     strategy = sector_view(connection, identifier)
                 return strategy

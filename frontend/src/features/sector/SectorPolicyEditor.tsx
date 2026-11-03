@@ -117,7 +117,7 @@ export default function SectorPolicyEditor({
           <SectorRuleBuilder
             value={alerts}
             onChange={setAlerts}
-            fields={alertFields}
+            fields={alertFields.filter((field) => !field.selection_only)}
             period={period}
           />
         </section>
@@ -128,7 +128,7 @@ export default function SectorPolicyEditor({
           <SectorRuleBuilder
             value={exits}
             onChange={setExits}
-            fields={exitFields}
+            fields={exitFields.filter((field) => !field.selection_only)}
             period={period}
           />
         </section>

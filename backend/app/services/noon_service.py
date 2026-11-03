@@ -98,6 +98,56 @@ def _snapshot_view(row):
     return value
 
 
+def read_stock_quote(snapshot_id, instrument_id):
+    """Read a single unadjusted stock quote from an immutable noon capture."""
+    if not re.fullmatch(r'noon_[0-9a-f]{32}', snapshot_id):
+        raise HTTPException(422, '午评快照身份无效')
+    if not STOCK_CODE.fullmatch(instrument_id):
+        raise HTTPException(422, '股票代码无效')
+    with connect() as connection:
+        row = connection.execute('''SELECT trade_date,collected_start_at,collected_end_at,
+            content_sha256,payload_json FROM market_noon_snapshot WHERE snapshot_id=?''',
+            (snapshot_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, '午评正文未留存或已清理')
+    encoded = row['payload_json'].encode()
+    if len(encoded) > 8 * 1024 * 1024 or sha256(encoded).hexdigest() != row['content_sha256']:
+        raise HTTPException(409, '午评内容SHA核验失败，原记录保留')
+    try:
+        payload = json.loads(encoded)
+    except (ValueError, RecursionError) as error:
+        raise HTTPException(409, '午评正文无法读取') from error
+    if (not isinstance(payload, dict) or payload.get('version') != VERSION
+            or payload.get('date') != row['trade_date']
+            or any(payload.get(key) != row[key] for key in ('collected_start_at', 'collected_end_at'))):
+        raise HTTPException(409, '午评日期或采集时间核验失败')
+    calendar = payload.get('calendar')
+    previous_day = calendar.get('previous_day') if isinstance(calendar, dict) and calendar.get('verified') is True else None
+    result = {key: row[key] for key in ('trade_date', 'collected_start_at', 'collected_end_at')}
+    result.update(snapshot_id=snapshot_id, previous_trade_date=previous_day, quote=None, reason=None)
+    stocks = payload.get('stocks')
+    matches = [quote for quote in stocks if isinstance(quote, dict)
+               and quote.get('instrument_id') == instrument_id] if isinstance(stocks, list) else []
+    if len(matches) != 1:
+        return {**result, 'reason': '午评未留存该股票的唯一报价'}
+    quote = matches[0]
+    fields = ('open', 'high', 'low', 'latest_price')
+    if (quote.get('price_basis') != 'none' or any(quote.get(key) != row['trade_date']
+            for key in ('trade_date', 'quote_date', 'date') if key in quote)
+            or any(not finite(quote.get(key)) or quote[key] <= 0 for key in fields)):
+        return {**result, 'reason': '午间开盘、最高、最低或最新价未能核验'}
+    if not quote['low'] <= min(quote['open'], quote['latest_price']) <= max(
+            quote['open'], quote['latest_price']) <= quote['high']:
+        return {**result, 'reason': '午间报价超出该快照记录的最高和最低价'}
+    vetted = {key: quote[key] for key in ('instrument_id', 'price_basis', *fields)}
+    for key in ('prev_close', 'volume', 'amount', 'change_pct'):
+        value = quote.get(key)
+        vetted[key] = value if finite(value) and (
+            key == 'change_pct' or value > 0 or key in ('volume', 'amount') and value == 0
+        ) else None
+    return {**result, 'quote': vetted}
+
+
 def _dates(connection):
     rows = connection.execute('''SELECT c.trade_date,c.job_id,j.status,
        s.snapshot_id,p.status AS purge_status,p.finished_at_ms AS purged_at_ms

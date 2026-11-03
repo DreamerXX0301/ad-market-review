@@ -168,6 +168,13 @@
 .entry-header-board:empty {
   display: none;
 }
+.entry-header-period {
+  flex: none;
+}
+.entry-header-period > button {
+  padding: 4px 6px;
+  white-space: nowrap;
+}
 
 /* Keep useful context visible while the original full summary remains above. */
 .entry-page-bar {
@@ -192,7 +199,7 @@
 .entry-page-bar > .entry-header-metrics {
   grid-area: metrics;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: start;
   min-width: 0;
   gap: 10px;
@@ -246,9 +253,6 @@
   .entry-page-bar {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas: "identity actions" "metrics metrics";
-  }
-  .entry-header-identity {
-    flex-wrap: nowrap;
   }
   .entry-header-board {
     gap: 4px;

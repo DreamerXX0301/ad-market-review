@@ -32,10 +32,15 @@ def market_topic_members(date:str|None=None,topic_id:str|None=Query(None,max_len
 
 @router.get('/market/sector-chart')
 def sector_chart(topic_code:str=Query(...,max_length=30),date:str|None=None,period:str=Query('D',pattern='^(D|W|M)$'),encoding:str=Query('rows',pattern='^(rows|columns-v1)$')):
+    from app.analytics.chart_trendlines import automatic_trendlines
     from app.services.sector_chart_jobs import chart_view
-    market,_,day=market_service.context(date)
     from app.services.chart_transport import chart_payload
-    return JSONResponse(chart_payload(chart_view(market,topic_code,day,period),encoding))
+    market,status,day=market_service.context(date)
+    result=chart_view(market,topic_code,day,period)
+    if result['available']:
+        result['automatic_trendlines'] = automatic_trendlines(
+            result, market.calendar(), expected_snapshot=status.get('snapshot_id'))
+    return JSONResponse(chart_payload(result,encoding))
 
 @router.post('/market/sector-chart/jobs')
 def sector_chart_create(payload:dict=Body(...)):
@@ -81,10 +86,13 @@ def topic_hotspots(limit:int=Query(8,ge=1,le=20)):
 
 @router.get('/instruments/{instrument_id}/chart')
 def chart(instrument_id:str,period:str='D',as_of:str|None=None,price_basis:str='none',indicator_continuity:str=Query('quotes',pattern='^(quotes|market_sessions)$'),encoding:str=Query('rows',pattern='^(rows|columns-v1)$')):
+    from app.analytics.chart_trendlines import automatic_trendlines
     from app.services.chart_limits import enrich_chart_limits
-    market,_,_=market_service.context(as_of)
+    market,status,_=market_service.context(as_of)
     result=market.chart(instrument_id,period,as_of,price_basis,indicator_continuity=indicator_continuity)
     if not result['bars']:raise HTTPException(404,'该标的没有已留存K线')
+    expected_snapshot = market.status().get('snapshot_id') if status.get('snapshot_id') else None
+    result['automatic_trendlines'] = automatic_trendlines(result, market.calendar(), expected_snapshot=expected_snapshot)
     from app.services.chart_transport import chart_payload
     return JSONResponse(chart_payload(enrich_chart_limits(market,result),encoding))
 

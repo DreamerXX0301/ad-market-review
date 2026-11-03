@@ -343,7 +343,11 @@ function TechnicalPresetControls({
 }
 
 function conditionFields(fields: Row[], context: NodeProps["context"]) {
-  fields = fields.filter((field) => !isHiddenConditionField(field.field));
+  fields = fields.filter(
+    (field) =>
+      !isHiddenConditionField(field.field) &&
+      (context === "current" || !field.selection_only),
+  );
   if (context !== "where") return fields;
   const hasMetadata = fields.some(
     (field) => "historical_event_supported" in field,

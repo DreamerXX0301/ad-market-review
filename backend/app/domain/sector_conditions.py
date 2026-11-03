@@ -1,6 +1,7 @@
 """Independent, three-valued board-index rules with explicit period scopes."""
 from copy import deepcopy
 from math import isfinite
+from app.analytics import strategy_trendlines
 from app.analytics.boll_conditions import field_spec as boll_field_spec
 
 EVALUATOR_VERSION = 'sector-index-dwm-v1'
@@ -23,6 +24,7 @@ FIELDS['higher_lows'] = {'type': 'number', 'operators': ['confirmed_rising_lows'
     'constant_only': True, 'parameter_kind': 'lookback_periods',
     'structure_version': 'higher-lows-v1', 'left_bars': 2, 'right_bars': 2}
 FIELDS['boll_signal'] = boll_field_spec()
+FIELDS.update(strategy_trendlines.FIELDS)
 FIELDS['intraday_high_change_pct'] = {'type': 'number', 'operators': ['>=', '>', '<=', '<', '==', '!='],
                                       'fixed_period': 'D', 'default': 3}
 for key in ('tracking_change_pct', 'trading_age'):
@@ -46,6 +48,7 @@ LABELS = {'open': '开盘点位', 'high': '最高点位', 'low': '最低点位',
     'close_above_entry_high': '收盘高于本轮事件日最高点位',
     'close_below_entry_low': '收盘跌破本轮事件日最低点位'}
 
+LABELS.update(strategy_trendlines.LABELS)
 
 def specs():
     result = []
@@ -89,6 +92,10 @@ def validate(node, default_period='D', scope='selection', _depth=0, _counter=Non
     if period not in PERIODS or spec.get('fixed_period') and period != spec['fixed_period']:
         raise ValueError('该条件只能使用日K市场交易日窗口' if spec.get('fixed_period') else '板块条件只支持日/周/月周期')
     result = {'field': field, 'op': op, **({'period': period} if 'period' in node or spec.get('fixed_period') else {})}
+    if field in strategy_trendlines.FIELDS:
+        if scope != 'selection' or 'right_field' in node:
+            raise ValueError('趋势线只支持选板条件和百分数阈值')
+        return {**result,'value':strategy_trendlines.validate_threshold(node.get('value'))}
     if field=='boll_signal':
         if 'right_field' in node:raise ValueError('BOLL信号只接受可调参数，不支持字段比较')
         from app.analytics.boll_conditions import validate_config
@@ -135,6 +142,8 @@ def evaluate(node, metrics_by_period, default_period='D'):
         from app.analytics.higher_lows import evaluate as evaluate_structure
         return {**evaluate_structure(node,metrics), 'period':period,
                 'observation_date':metrics.get('observed_date'), 'price_basis':'none'}
+    if field in strategy_trendlines.FIELDS:
+        return {**strategy_trendlines.evaluate(node,metrics), 'period':period, 'price_basis':'none'}
     if field == 'boll_signal':
         from app.analytics.boll_conditions import evaluate as evaluate_boll
         check=evaluate_boll(node,metrics)

@@ -63,6 +63,15 @@ export default function SectorEvidence({
                     check.evidence?.observed_date}
                 </span>
               )}
+              {check.evidence?.line && (
+                <div>
+                  投影线价 {num(check.evidence.line.projected_price, 4)} · 锚点{" "}
+                  {check.evidence.line.start_date}、
+                  {check.evidence.line.anchors?.[1]?.date}
+                  {" · 确认日 "}
+                  {check.evidence.line.confirmed_on}
+                </div>
+              )}
               {check.reason && <div>{check.reason}</div>}
             </li>
           ),

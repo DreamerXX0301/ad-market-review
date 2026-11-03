@@ -159,15 +159,17 @@ const StockCompactMetrics = new Function(
   "_jsxs",
   "stockExtraMetrics",
   "stockHeaderQuote",
+  "num",
   "percent",
   "tone",
   compactComponent + ";return StockCompactMetrics;",
-)(jsx, jsxs, stockExtraMetrics, stockHeaderQuote, percent, tone);
+)(jsx, jsxs, stockExtraMetrics, stockHeaderQuote, num, percent, tone);
 const { stockNavigationPosition } = await import(
   module(await readTs("./stockNavigation.ts"))
 );
 let loaded = null,
   headerBoard = null,
+  periodSelection = null,
   stateIndex = 0;
 const requests = [];
 const scopeValues = {
@@ -175,9 +177,9 @@ const scopeValues = {
   _jsx: jsx,
   _jsxs: jsxs,
   ...React,
-  // The drawer has separate chart and header-board states.
+  // Provide saved chart and header-board state, then use defaults for controls.
   useState: (initial) => [
-    stateIndex++ === 0 ? loaded : (headerBoard ?? initial),
+    [loaded, headerBoard, periodSelection][stateIndex++] ?? initial,
     () => {},
   ],
   useRef: (current) => ({ current }),
@@ -192,6 +194,8 @@ const scopeValues = {
   stockNavigationPosition,
   useStockEventBaseline: () => ({}),
   StockHeaderQuote,
+  CandleChart: ({ controlledPeriod }) =>
+    jsx("div", { "data-test-chart-period": controlledPeriod }),
   StockCompactMetrics,
   CopyStockCode: ({ code }) =>
     jsx("button", { "data-copy-wired": true, children: code }),
@@ -306,6 +310,16 @@ assert.match(currentHeader, /首板/);
 assert.match(currentHeader, /5天3板/);
 assert.match(currentHeader, /data-copy-wired="true">601900/);
 assert.match(currentHeader, /观察日行情摘要/);
+assert.match(currentHeader, /aria-label="K线周期"/);
+assert.match(currentHeader, /aria-pressed="true">日 K/);
+assert.match(currentHeader, /aria-pressed="false">周 K/);
+assert.match(currentHeader, /aria-pressed="false">月 K/);
+periodSelection = { id, value: "W" };
+assert.match(renderHeader({ row: boardRow, date: asOf }), /aria-pressed="true">周 K/);
+stateIndex = 0;
+assert.match(renderToStaticMarkup(jsx(Drawer, { id, asOf, onClose: () => {} })),
+  /data-test-chart-period="W"/);
+periodSelection = null;
 assert.match(currentHeader, /今日涨幅/);
 assert.match(currentHeader, /近30交易日/);
 assert.match(currentHeader, /年内涨停/);
@@ -381,7 +395,7 @@ for (const invalid of [
 }
 
 assert.deepEqual(
-  [...new Set(requests)],
+  [...new Set(requests.filter(Boolean))],
   [`/instruments/${id}?as_of=${asOf}`],
   "header uses existing daily detail request only",
 );

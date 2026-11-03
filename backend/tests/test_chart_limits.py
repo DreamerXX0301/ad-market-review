@@ -212,6 +212,11 @@ def test_router_chart_response_contains_overlay_without_analytics_coupling(monke
     assert response.status_code==200,response.text
     assert response.json()['bars'][0]['limit_up_state'] is True
     assert response.json()['limit_events'][0]['basis']=='verified-source-close-pool'
+    assert response.json()['automatic_trendlines']['snapshot_id']=='fixture-generation'
+    assert response.json()['automatic_trendlines']['instrument_id']==SYMBOL
+    columnar=TestClient(app).get('/api/v1/instruments/'+SYMBOL+'/chart?encoding=columns-v1')
+    assert columnar.status_code==200 and 'bars_columnar' in columnar.json()
+    assert columnar.json()['automatic_trendlines']==response.json()['automatic_trendlines']
 
 
 def flat_quote(market, index, price=11):

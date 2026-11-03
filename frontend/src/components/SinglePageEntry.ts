@@ -129,16 +129,26 @@ export function useSinglePageEntry(
 export function singlePagePaneLayout(
   height: number,
   chosen: readonly string[],
+  fitToWindow = false,
 ) {
-  const actualHeight = Math.max(480, Math.floor(height));
   const gap = 22;
-  const minimums = chosen.map((key) =>
-    key === "boll" ? 70 : key === "volume" ? 32 : key === "kdj" ? 38 : 42,
-  );
+  const minimumMainHeight = fitToWindow ? 135 : 300;
+  const minimums = chosen.map((key) => {
+    if (fitToWindow) return key === "boll" ? 70 : key === "volume" ? 32 : 40;
+    return key === "boll" ? 145 : key === "volume" ? 96 : 104;
+  });
   const paneMinimum = minimums.reduce((sum, value) => sum + value, 0);
+  const actualHeight = Math.max(
+    480,
+    Math.floor(height),
+    75 + gap * chosen.length + paneMinimum + minimumMainHeight,
+  );
   const available = actualHeight - 75 - gap * chosen.length;
   const mainHeight = chosen.length
-    ? Math.min(available - paneMinimum, Math.max(140, available * 0.55))
+    ? Math.min(
+        available - paneMinimum,
+        Math.max(minimumMainHeight, available * (fitToWindow ? 0.55 : 0.62)),
+      )
     : available;
   const extra = Math.max(0, available - mainHeight - paneMinimum);
   const weights = chosen.map((key) => (key === "boll" ? 2 : 1));

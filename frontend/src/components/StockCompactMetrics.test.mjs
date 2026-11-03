@@ -79,6 +79,8 @@ const render = (s = summary, d = detail, extra = {}) =>
   );
 const html = render();
 for (const text of [
+  "今日收盘",
+  "16.22 元",
   "今日涨幅",
   "+9.99%",
   "近30交易日",
@@ -89,7 +91,7 @@ for (const text of [
   "6 次",
 ])
   assert.ok(html.includes(text), text);
-assert.equal((html.match(/class="entry-header-metric"/g) || []).length, 4);
+assert.equal((html.match(/class="entry-header-metric"/g) || []).length, 5);
 for (const s of [
   null,
   { ...summary, instrument_id: "600519.SH" },
@@ -110,6 +112,7 @@ assert.ok(
   "older daily return never masquerades as today's",
 );
 assert.match(stale, /今日涨幅/);
+assert.ok(!stale.includes("16.22 元"));
 assert.match(stale, /待核验/);
 const partial = render({
   ...summary,
@@ -122,7 +125,8 @@ assert.ok(partial.includes("已确认≥3次"));
 assert.ok(partial.includes("最近已确认涨停"));
 const index = render(null, detail, { isIndex: true });
 assert.ok(index.includes("指数无涨停统计"));
+assert.ok(index.includes("16.22 点"));
 assert.ok(!index.includes("年内涨停"));
 console.log(
-  "compact fixed metrics: four dated values, independent daily quote, same-snapshot gate, partial bounds and index scope passed",
+  "compact fixed metrics: dated close and returns, independent daily quote, same-snapshot gate, partial bounds and index scope passed",
 );

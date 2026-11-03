@@ -281,3 +281,24 @@ def test_summary_lru_is_bounded_by_small_results(workspace, monkeypatch):
         strategies.metrics_for_sector(workspace.market, CODE, day)
     assert len(strategies._SUMMARIES) == 2
     assert all('bars' not in entry['value'] for entry in strategies._SUMMARIES.values())
+
+
+def test_sector_trendline_checks_verified_index_without_members(workspace):
+    pattern = [19, 20, 21, 23, 21, 19, 18, 19, 21, 19, 18, 21]
+
+    def transform(payload):
+        rows = payload['data']['item']
+        for row in rows:
+            row.update(open_price=15, close_price=15, high_price=17, low_price=14)
+        for row, high in zip(rows[-len(pattern):], pattern):
+            row['high_price'] = high
+        rows[-1]['close_price'] = 20
+        return payload
+
+    workspace.market.ref['topics'] = []
+    cached(workspace, transform=transform)
+    definition = {'all': [leaf(), leaf('trendline_breakout', 'matches', 0.5, period='D')]}
+    run = strategies.run_strategy(create(definition=definition)['strategy_id'])
+    assert run['matched_count'] == 1 and run['unknown_count'] == 1
+    item = next(row for row in run['items'] if row['topic_code'] == CODE)
+    assert item['checks']['checks'][1]['evidence']['line']['projected_price'] == pytest.approx(19.8)

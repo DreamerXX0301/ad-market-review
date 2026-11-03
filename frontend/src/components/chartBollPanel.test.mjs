@@ -149,7 +149,7 @@ const build = new Function(
   "ix",
   "boll",
   "pal",
-  "bars",
+  "completedBars",
   "bollCandleValues",
   transpile(bollBlocks[0].getText(ast)),
 );

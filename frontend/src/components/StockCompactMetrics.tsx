@@ -1,6 +1,6 @@
 import { stockExtraMetrics } from "./stockExtraMetrics";
 import { stockHeaderQuote } from "./stockQuotePresentation";
-import { percent, tone } from "../lib/format";
+import { num, percent, tone } from "../lib/format";
 
 /** The fixed header reuses the existing dated summary request, independently of hover. */
 export default function StockCompactMetrics({
@@ -25,6 +25,7 @@ export default function StockCompactMetrics({
     asOf,
   );
   const quote = stockHeaderQuote(detail, instrumentId, asOf);
+  const close = quote.quoteDate === quote.observed ? quote.price : null;
   const dailyChange = quote.quoteDate === quote.observed ? quote.change : null;
   const daily = view.daily.known
     ? view.daily
@@ -37,6 +38,14 @@ export default function StockCompactMetrics({
         known: dailyChange != null,
       };
   const items = [
+    {
+      label: "今日收盘",
+      value:
+        close == null ? "待核验" : `${num(close)} ${isIndex ? "点" : "元"}`,
+      tone: "",
+      reason: quote.stale ? "观察日缺少收盘报价" : quote.reason,
+      known: close != null,
+    },
     { label: "今日涨幅", ...daily },
     { label: "近30交易日", ...view.thirty },
     {
@@ -46,7 +55,7 @@ export default function StockCompactMetrics({
     },
     { label: "年内涨停", ...view.annual, tone: "muted" },
   ];
-  const displayed = isIndex ? items.slice(0, 1) : items;
+  const displayed = isIndex ? items.slice(0, 2) : items;
   return (
     <div className="entry-header-metrics" aria-label="观察日行情摘要">
       {displayed.map((item) => (
