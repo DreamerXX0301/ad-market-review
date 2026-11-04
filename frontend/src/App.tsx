@@ -33,6 +33,9 @@ const MarketPage = lazyView(() =>
   import("./features/market/Market").then((m) => ({ default: m.MarketPage })),
 );
 const DragonTiger = lazyView(() => import("./features/market/DragonTiger"));
+const IntradayObservation = lazyView(
+  () => import("./features/market/IntradayObservation"),
+);
 const NoonReview = lazyView(() => import("./features/market/NoonReview"));
 const AuctionReview = lazyView(() => import("./features/market/AuctionReview"));
 import { auctionInitialDate } from "./features/market/auctionPresentation";
@@ -123,13 +126,15 @@ export default function App() {
     [visited, setVisited] = useState<string[]>([currentRoute()]),
     [dateChoice, setDateChoice] = useState<MarketDateChoice>(() => {
       const day =
-        auctionInitialDate(location.hash) || noonInitialDate(location.hash);
+        auctionInitialDate(location.hash) ||
+        noonInitialDate(location.hash.replace(/^#intraday(?=\?|$)/, "#noon"));
       return day ? { date: day, mode: "manual" } : null;
     }),
     [stock, setStock] = useState<{
       id: string;
       asOf?: string;
       noonSnapshotId?: string;
+      intradaySnapshotId?: string;
       eventBaseline?: ChartEventBaseline;
       navigation?: StockNavigation;
     } | null>(null),
@@ -179,7 +184,7 @@ export default function App() {
   );
   const reloadBootstrap = bootstrap.reload;
   useEffect(() => {
-    if (route === "noon" && visible) reloadBootstrap();
+    if ((route === "noon" || route === "intraday") && visible) reloadBootstrap();
   }, [route, visible, reloadBootstrap]);
   const setDate = useCallback((day: string) => {
     if (!isCalendarDate(day)) return;
@@ -224,7 +229,8 @@ export default function App() {
       window.dispatchEvent(new Event("workbench-before-route"));
       const next = currentRoute();
       const day =
-        auctionInitialDate(location.hash) || noonInitialDate(location.hash);
+        auctionInitialDate(location.hash) ||
+        noonInitialDate(location.hash.replace(/^#intraday(?=\?|$)/, "#noon"));
       if (day) setDate(day);
       setRoute(next);
       setVisited((v) => (v.includes(next) ? v : [...v, next]));
@@ -253,7 +259,7 @@ export default function App() {
     );
   }, [route]);
   const shellDates =
-    route === "noon"
+    route === "noon" || route === "intraday"
       ? noonCalendarDates(dates, { ...noonDates.data, today })
       : route === "auction"
         ? noonCalendarDates(dates, { ...auctionDates.data, today })
@@ -261,7 +267,7 @@ export default function App() {
   const noonChartAsOf = noonChartDate(dates, date);
   const openStock = useCallback(
     (id: string, navigation?: StockNavigation) => {
-      if (["noon", "auction"].includes(route) && !noonChartAsOf) {
+      if (isIntradayReview(route) && !noonChartAsOf) {
         notify("该观察日期之前没有已发布收盘行情，不能打开历史图表。", "error");
         return;
       }
@@ -269,7 +275,7 @@ export default function App() {
         stockSelectionForOpen(
           id,
           navigation,
-          ["noon", "auction"].includes(route)
+          isIntradayReview(route)
             ? noonChartAsOf || undefined
             : marketRoutes.has(route)
               ? date || undefined
@@ -377,7 +383,7 @@ export default function App() {
             )}
           </Panel>
         );
-      if (key !== "noon" && key !== "auction" && date && !dates.includes(date))
+      if (!isIntradayReview(key) && date && !dates.includes(date))
         return (
           <Panel title="该日盘后行情尚未发布">
             <Empty
@@ -411,6 +417,35 @@ export default function App() {
             chartDate={noonChartAsOf || undefined}
           />
         );
+      case "intraday": {
+        return (
+          <IntradayObservation
+            key={date}
+            date={date}
+            today={today}
+            dateFixed={dateChoice !== null}
+            onResetDate={resetDate}
+            onStock={(id, selection) => {
+              const slot = selection?.slot;
+              // The close anchor confirms publication even if the global date
+              // directory has not refreshed yet.
+              const asOf = slot === "close" ? date : noonChartAsOf;
+              if (!asOf) {
+                notify("该时点之前没有已发布收盘行情。", "error");
+                return;
+              }
+              const snapshotId = selection?.snapshotId;
+              setStock({
+                ...stockSelectionForOpen(id, undefined, asOf),
+                noonSnapshotId: slot === "noon" ? snapshotId : undefined,
+                intradaySnapshotId: snapshotId?.startsWith("intraday_")
+                  ? snapshotId
+                  : undefined,
+              });
+            }}
+          />
+        );
+      }
       case "noon":
         return (
           <NoonReview
@@ -688,6 +723,7 @@ export default function App() {
             id={stock.id}
             asOf={stock.asOf}
             noonSnapshotId={stock.noonSnapshotId}
+            intradaySnapshotId={stock.intradaySnapshotId}
             eventBaseline={stock.eventBaseline}
             navigation={stock.navigation}
             onStep={(direction) =>

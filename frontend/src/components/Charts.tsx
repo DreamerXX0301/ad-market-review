@@ -1221,6 +1221,7 @@ export function CandleChart({
               bars[candle?.dataIndex ?? entries[0]?.dataIndex];
           if (!b) return "";
           if (b.noon_provisional) {
+            const snapshotLabel = b.intraday_provisional ? "盘中" : "午间";
             const changeColor =
               b.change_pct > 0
                 ? pal.up
@@ -1228,10 +1229,10 @@ export function CandleChart({
                   ? pal.down
                   : pal.tooltipText;
             return (
-              `<div style="color:${pal.tooltipText}"><strong>${b.date}</strong> <strong style="color:${pal.provisional}">· 午间未收盘</strong>` +
-              `<div>开 ${num(b.open)}　午间价 <strong>${num(b.close)}</strong></div>` +
+              `<div style="color:${pal.tooltipText}"><strong>${b.date}</strong> <strong style="color:${pal.provisional}">· ${snapshotLabel}未收盘</strong>` +
+              `<div>开 ${num(b.open)}　${snapshotLabel}价 <strong>${num(b.close)}</strong></div>` +
               `<div>高 ${num(b.high)}　低 ${num(b.low)}</div>` +
-              `<div>午间涨跌幅 <strong style="color:${changeColor}">${percent(b.change_pct)}</strong></div></div>`
+              `<div>${snapshotLabel}涨跌幅 <strong style="color:${changeColor}">${percent(b.change_pct)}</strong></div></div>`
             );
           }
           const change = candleChange(b, period);
@@ -1894,12 +1895,12 @@ export function CandleChart({
           <div
             className="ohlc-strip noon-chart-summary"
             role="region"
-            aria-label="午间快照"
+            aria-label={noonPreview.slot_label ? "盘中快照" : "午间快照"}
           >
-            <strong>{noonPreview.trade_date} 午间快照</strong>
+            <strong>{noonPreview.trade_date} {noonPreview.slot_label || "午间快照"}</strong>
             {noonPreview.quote && (
               <span>
-                午间{isIndex ? "点位" : "价"}{" "}
+                {noonPreview.slot_label ? "盘中" : "午间"}{isIndex ? "点位" : "价"}{" "}
                 <b>{num(noonPreview.quote.latest_price)}</b>
               </span>
             )}
@@ -1908,11 +1909,11 @@ export function CandleChart({
             )}
             <span>
               {period !== "D"
-                ? "周K、月K仅显示午评日前已发布的行情"
+                ? "周K、月K显示观察日前已发布的行情"
                 : noonBar
-                  ? "末根日 K 为午间临时柱，趋势线基于已发布日 K"
+                  ? "末根日 K 为快照临时柱，趋势线基于已发布日 K"
                   : noonPreview.reason ||
-                    "前收或价格口径未能核对，午间报价单独显示"}
+                    "前收或价格口径未能核对，快照报价单独显示"}
             </span>
           </div>
         )}
@@ -1931,7 +1932,7 @@ export function CandleChart({
             <div className="ohlc-strip">
               <span>
                 {activeBar.date}
-                {activeBar.noon_provisional ? " · 午间未收盘" : ""}
+                {activeBar.noon_provisional ? activeBar.intraday_provisional ? " · 盘中未收盘" : " · 午间未收盘" : ""}
               </span>
               {!activeBar.noon_provisional && (
                 <span title={activeSessionDistance.reason}>
@@ -2717,6 +2718,7 @@ export function StockDrawer({
   id,
   asOf,
   noonSnapshotId,
+  intradaySnapshotId,
   onClose,
   onResearch,
   eventBaseline,
@@ -2726,6 +2728,7 @@ export function StockDrawer({
   id: string;
   asOf?: string;
   noonSnapshotId?: string;
+  intradaySnapshotId?: string;
   onClose: () => void;
   onResearch?: (id: string) => void;
   eventBaseline?: ChartEventBaseline;
@@ -2761,13 +2764,17 @@ export function StockDrawer({
     `/instruments/${encodeURIComponent(id)}${asOf ? "?as_of=" + encodeURIComponent(asOf) : ""}`,
   );
   const noon = useApi<NoonChartPreview>(
-    noonSnapshotId
+    intradaySnapshotId
+      ? `/market/intraday/quotes/${encodeURIComponent(intradaySnapshotId)}/${encodeURIComponent(id)}`
+      : noonSnapshotId
       ? `/market/noon/${encodeURIComponent(noonSnapshotId)}/stocks/${encodeURIComponent(id)}/quote`
       : null,
   );
+  const selectedSnapshot = intradaySnapshotId || noonSnapshotId;
+  const snapshotLabel = intradaySnapshotId ? "盘中" : "午间";
   const noonPreview =
     noon.data &&
-    noon.data.snapshot_id === noonSnapshotId &&
+    noon.data.snapshot_id === selectedSnapshot &&
     (!noon.data.quote || noon.data.quote.instrument_id === id)
       ? noon.data
       : undefined;
@@ -2913,10 +2920,10 @@ export function StockDrawer({
               ))}
             </div>
           </div>
-          {noonSnapshotId ? (
+          {selectedSnapshot ? (
             <div className="entry-header-metrics">
               <div className="entry-header-metric">
-                <span>午间价</span>
+                <span>{snapshotLabel}价</span>
                 <b>
                   {noonPreview?.quote
                     ? `${num(noonPreview.quote.latest_price)} 元`
@@ -2924,7 +2931,7 @@ export function StockDrawer({
                 </b>
               </div>
               <div className="entry-header-metric">
-                <span>午间涨幅</span>
+                <span>{snapshotLabel}涨幅</span>
                 <b className={tone(noonPreview?.quote?.change_pct)}>
                   {percent(noonPreview?.quote?.change_pct)}
                 </b>
@@ -3097,14 +3104,14 @@ export function StockDrawer({
           </div>
           <div className="drawer-body">
             <StockEventBaseline state={eventReference} />
-            {noonSnapshotId && !noonPreview && (
+            {selectedSnapshot && !noonPreview && (
               <p className="muted">
-                {noon.loading ? "正在读取午间快照…" : "午间快照暂不可用。"}
+                {noon.loading ? `正在读取${snapshotLabel}快照…` : `${snapshotLabel}快照暂不可用。`}
               </p>
             )}
             <CandleChart
               noonPreview={noonPreview}
-              noonMode={Boolean(noonSnapshotId)}
+              noonMode={Boolean(selectedSnapshot)}
               key={id}
               instrumentId={id}
               instrumentKind={meta.kind}

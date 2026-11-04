@@ -103,6 +103,7 @@ const routes = [
   "market",
   "auction",
   "noon",
+  "intraday",
   "indices",
   "emotion",
   "sectors",
@@ -280,6 +281,13 @@ assert.equal(
   "2026-10-29",
   "automatic result does not drag a missing close date into base data",
 );
+reset("#intraday?date=2026-10-28");
+assert.equal(shell().date, "2026-10-28");
+shell().onResetDate();
+render();
+assert.equal(location.hash, "#intraday");
+assert.equal(shell().date, "2026-10-30");
+assert.ok(elements(tree).some((node) => node.type === "page" && node.props.date === "2026-10-30"), "intraday loads before the daily close is published");
 reset("#noon?date=2026-10-28");
 assert.equal(shell().date, "2026-10-28");
 shell().onDate("2026-10-29");
@@ -334,7 +342,7 @@ const currentNotice = () => {
       date: state.date,
       today: state.today,
       latest: state.dataDate,
-      intraday: ["auction", "noon"].includes(state.route),
+      intraday: ["auction", "noon", "intraday"].includes(state.route),
       fixed: state.dateFixed,
       published: state.datePublished,
       onReset: state.onResetDate,

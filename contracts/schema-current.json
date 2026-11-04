@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 36,
+  "migration_version": 38,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -142,15 +142,23 @@
     {
       "name": "036_ai_stream_events.sql",
       "sha256": "68e7eb01c7a1efe5759986c186941bdecd732c7f427097ee97df51b245817437"
+    },
+    {
+      "name": "037_intraday_snapshots.sql",
+      "sha256": "3ddf75650bf2a5dee777e984d0edc8c35206ffbb59dc1c84a04c27451b98b659"
+    },
+    {
+      "name": "038_intraday_briefs.sql",
+      "sha256": "e84574f5190c92ea2716d829e057d1c0718e3550b430a4e870bcedb339177bd0"
     }
   ],
   "counts": {
-    "table": 77,
+    "table": 79,
     "index": 53,
     "view": 1,
     "trigger": 146
   },
-  "schema_sha256": "9105abc95bf029da1b91b0b048079d48fb51d7e7fa45e9e3c069d6a9e7129ef1",
+  "schema_sha256": "cfd1aa30f73da8c19d5f197fbbb5ff861d592975dec3ae84234e359a4d9b6408",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -2990,6 +2998,125 @@
         "retain_auction_snapshot_replace",
         "retain_auction_snapshot_update"
       ]
+    },
+    "market_intraday_brief": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "slot",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "source_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "body_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "generated_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "model_attempted",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": "0",
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [],
+      "triggers": []
+    },
+    "market_intraday_capture": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "slot",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "snapshot_id",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "payload_json",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "content_sha256",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "job",
+          "from": "job_id",
+          "to": "job_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": []
     },
     "market_mainline_revision": {
       "columns": [

@@ -37,6 +37,8 @@
 -- 034_strategy_run_read_index.sql sha256=5f3d81b290d66a80e000933b40393250ea9dfc46edd4f177a5f4cdbeb8a8c99f
 -- 035_ai_sessions.sql sha256=e1ca2aef1fc945d5a803fe9b8ba1824894f18de3e40a5bdc89802e39b2be480f
 -- 036_ai_stream_events.sql sha256=68e7eb01c7a1efe5759986c186941bdecd732c7f427097ee97df51b245817437
+-- 037_intraday_snapshots.sql sha256=3ddf75650bf2a5dee777e984d0edc8c35206ffbb59dc1c84a04c27451b98b659
+-- 038_intraday_briefs.sql sha256=e84574f5190c92ea2716d829e057d1c0718e3550b430a4e870bcedb339177bd0
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -375,6 +377,28 @@ CREATE TABLE market_auction_snapshot (
  CHECK(json_extract(payload_json,'$.date') IS trade_date),
  CHECK(json_extract(payload_json,'$.version') IS 'auction-snapshot-v1')
 ) STRICT;
+
+CREATE TABLE market_intraday_brief (
+    trade_date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),
+    body_json TEXT NOT NULL CHECK(json_valid(body_json) AND length(body_json) <= 393216),
+    generated_at_ms INTEGER NOT NULL,
+    model_attempted INTEGER NOT NULL DEFAULT 0 CHECK(model_attempted IN (0, 1)),
+    PRIMARY KEY(trade_date, slot)
+) STRICT;
+
+CREATE TABLE market_intraday_capture (
+    trade_date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    job_id TEXT NOT NULL UNIQUE REFERENCES job(job_id),
+    snapshot_id TEXT UNIQUE,
+    payload_json TEXT,
+    content_sha256 TEXT,
+    PRIMARY KEY (trade_date, slot),
+    CHECK ((snapshot_id IS NULL AND payload_json IS NULL AND content_sha256 IS NULL)
+        OR (snapshot_id IS NOT NULL AND payload_json IS NOT NULL AND content_sha256 IS NOT NULL))
+);
 
 CREATE TABLE market_mainline_revision (
  revision_id TEXT PRIMARY KEY,

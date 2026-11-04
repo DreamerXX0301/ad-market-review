@@ -211,10 +211,10 @@ def _preflight(connection, kind, day, now):
     return True
 
 
-def _calendar(kind, day, observed):
+def _calendar(kind, day, observed, *, setting_key=CALENDAR_KEY):
     """Reserve today's one request before I/O; a crash/failure cannot repeat it."""
     with connect() as connection:
-        saved = _json(connection, CALENDAR_KEY, {})
+        saved = _json(connection, setting_key, {})
         if saved.get('date') == day:
             return saved
     from . import source_service
@@ -223,10 +223,10 @@ def _calendar(kind, day, observed):
         raise ValueError('请先配置扶摇数据源')
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
-        saved = _json(connection, CALENDAR_KEY, {})
+        saved = _json(connection, setting_key, {})
         if saved.get('date') == day:
             return saved
-        _save(connection, CALENDAR_KEY, {'date': day, 'state': 'checking', 'source_id': 'fuyao', 'days': []})
+        _save(connection, setting_key, {'date': day, 'state': 'checking', 'source_id': 'fuyao', 'days': []})
     attempts = 0
     def before_attempt():
         nonlocal attempts
@@ -247,7 +247,7 @@ def _calendar(kind, day, observed):
         saved = {'date': day, 'state': 'failed', 'days': [], 'source_id': 'fuyao', 'reason': '正式交易日历核验失败，当天不自动重试；可使用手动入口核验'}
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
-        _save(connection, CALENDAR_KEY, saved)
+        _save(connection, setting_key, saved)
     return saved
 
 

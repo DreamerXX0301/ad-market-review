@@ -5,6 +5,7 @@ export type NoonChartPreview = {
   trade_date: string;
   previous_trade_date?: string | null;
   collected_end_at?: string | null;
+  slot_label?: string | null;
   quote: {
     instrument_id?: string;
     open: number;
@@ -79,6 +80,7 @@ export function provisionalNoonBar(
     change_pct: quote.change_pct ?? null,
     complete: false,
     noon_provisional: true,
+    intraday_provisional: Boolean(preview.slot_label),
   };
 }
 

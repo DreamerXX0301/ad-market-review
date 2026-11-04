@@ -47,6 +47,7 @@ export const navigation = [
         description: "昨日预期 × 竞价强弱",
         icon: Sunrise,
       },
+      { id: "intraday", name: "盘中观察", icon: TrendingUp },
       { id: "noon", name: "午评快照", icon: Sun },
       { id: "indices", name: "指数行情", icon: ChartCandlestick },
       { id: "emotion", name: "市场情绪", icon: Activity },
@@ -321,7 +322,7 @@ export default function AppShell({
         )}
         <div className="page-container">
           <ActiveTaskBanner onNavigate={onNavigate} />
-          {isMarket && (
+          {isMarket && route !== "intraday" && (
             <MarketDateNotice
               date={date}
               today={today}

@@ -6,7 +6,7 @@ export type MarketDateChoice = {
 } | null;
 
 export const isIntradayReview = (route: string) =>
-  route === "auction" || route === "noon";
+  route === "auction" || route === "noon" || route === "intraday";
 
 /** An explicit selection is shared; automatic defaults follow each page's data scope. */
 export function marketViewDate(

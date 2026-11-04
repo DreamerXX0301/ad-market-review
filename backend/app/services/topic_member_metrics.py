@@ -318,7 +318,7 @@ def limit_metrics(market, day, symbols, supplement, reference=None):
     return result
 
 
-def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, baseline, thirty, month, month_proof):
+def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, baseline, thirty, month, month_proof, rolling_start=None):
     histories=market.history_for_instruments(symbols,start=_history_start(calendar,sources,baseline,thirty,month),end=day)
     actions=market.actions_for_instruments(symbols) if callable(getattr(market,'actions_for_instruments',None)) else None
     daily={};cleaned={}
@@ -350,14 +350,23 @@ def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, 
             mtd_coverage['reason']=mtd_reason
         result[symbol]={'return_ytd_pct':ytd,'return_ytd_reason':ytd_reason,'return_ytd_coverage':ytd_coverage,'change_30d_pct':change,'change_30d_reason':change_reason,'change_30d_coverage':change_coverage,**_limit_values(symbol,daily,calendar,day,annual)}
         result[symbol].update(return_mtd_pct=mtd,return_mtd_reason=mtd_reason,return_mtd_coverage=mtd_coverage)
+        if rolling_start is not None:
+            states = [state['state'] for observed, state in daily[symbol].items() if observed >= rolling_start]
+            observed_count = sum(state is True for state in states)
+            complete = calendar[0] <= rolling_start and all(state is not None for state in states)
+            result[symbol].update(limit_up_1y=observed_count if complete else None,
+                                  limit_up_1y_observed=observed_count,
+                                  limit_up_1y_complete=complete)
     return result
 
 
-def member_metrics(market, day, symbols, master, quotes, supplement, *, supplement_fingerprint=None):
+def member_metrics(market, day, symbols, master, quotes, supplement, *, supplement_fingerprint=None, rolling_start=None):
     """Return lightweight metrics; at most 256 securities' history live at once."""
     symbols=sorted(set(symbols))
     if not symbols:return {}
     cache_key=_cache_key(market,day,symbols,quotes,supplement,supplement_fingerprint=supplement_fingerprint)
+    if rolling_start is not None and cache_key is not None:
+        cache_key = (cache_key, rolling_start)
     if cache_key is not None:
         with _CACHE_LOCK:
             if cache_key in _METRIC_CACHE:
@@ -376,7 +385,7 @@ def member_metrics(market, day, symbols, master, quotes, supplement, *, suppleme
     sources=_sources(reference,supplement,calendar)
     result={}
     for offset in range(0,len(symbols),BATCH_SIZE):
-        result.update(_batch(market,day,symbols[offset:offset+BATCH_SIZE],master,quotes,supplement,calendar,sources,baseline,thirty,month,month_proof))
+        result.update(_batch(market,day,symbols[offset:offset+BATCH_SIZE],master,quotes,supplement,calendar,sources,baseline,thirty,month,month_proof,rolling_start))
     if cache_key is not None:
         with _CACHE_LOCK:
             _METRIC_CACHE[cache_key]=deepcopy(result);_METRIC_CACHE.move_to_end(cache_key)
