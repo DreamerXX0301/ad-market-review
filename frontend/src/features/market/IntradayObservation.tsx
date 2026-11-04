@@ -7,6 +7,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { Empty, ErrorBox, Loading, Panel, Warning } from "../../components/UI";
+import CopyStockCode from "../../components/CopyStockCode";
 import { post, requestKey, useApi, usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { amount, integer, num, percent, tone } from "../../lib/format";
@@ -179,6 +180,7 @@ function StockSamples({
           ) : (
             <span>{row.name || row.instrument_id}</span>
           )}
+          <CopyStockCode instrumentId={row.instrument_id} />
           <span className={tone(row.change_pct)}>
             {percent(row.change_pct)}
           </span>
@@ -658,7 +660,11 @@ function Ranking({
                           row.name || row.instrument_id
                         )}
                         <div className="intraday-stock-meta">
-                          {row.instrument_id}
+                          {sector ? (
+                            row.instrument_id
+                          ) : (
+                            <CopyStockCode instrumentId={row.instrument_id} />
+                          )}
                           {!sector && (
                             <span
                               className="intraday-stock-state"
@@ -1828,16 +1834,13 @@ export default function IntradayObservation({
                 <p className="intraday-intro">{summary.reason}</p>
               )}
               {summary?.recent_listing_count > 0 && (
-                <p className="intraday-intro">
-                  新股单列（上市前 5 个交易日，共{" "}
-                  {integer(summary.recent_listing_count)} 只可排名） ·{" "}
-                  {(summary.recent_listings || [])
-                    .map(
-                      (row: Row) =>
-                        `${row.name || row.instrument_id} ${percent(row.change_pct)}`,
-                    )
-                    .join("、")}
-                </p>
+                <>
+                  <p className="intraday-intro">
+                    新股单列（上市前 5 个交易日，共{" "}
+                    {integer(summary.recent_listing_count)} 只可排名）
+                  </p>
+                  <StockSamples rows={summary.recent_listings || []} onStock={openStock} />
+                </>
               )}
               <p className="intraday-intro">
                 排名基于已取得的报价。区间成交额是两次累计值之差，不代表净流入。快照之间没有连续分时记录。

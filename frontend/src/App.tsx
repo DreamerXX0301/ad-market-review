@@ -600,7 +600,7 @@ export default function App() {
           dataError={!!bootstrap.error}
           theme={theme}
           onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          onStock={openStock}
+          onStock={(id) => setStock(stockSelectionForOpen(id))}
           onSector={(row) => {
             const next = globalSectorSelection(
               row,

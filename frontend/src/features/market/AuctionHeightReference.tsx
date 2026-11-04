@@ -1,4 +1,5 @@
 import { useState } from "react";
+import CopyStockCode from "../../components/CopyStockCode";
 import { Empty, ErrorBox, Loading } from "../../components/UI";
 import { useApi } from "../../lib/api";
 import { integer, num, percent, tone } from "../../lib/format";
@@ -41,7 +42,7 @@ type Reference = {
 };
 
 function HeightThemes({ stock }: { stock: ReferenceStock }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const themes = stock.themes ?? [];
   if (!themes.length) {
     return (
@@ -128,11 +129,11 @@ export default function AuctionHeightReference({
             按前一交易日收盘板数分组，涨跌幅来自本次竞价。题材取自竞价时已留存的成员名单。触及常规涨停参考价只表示价格匹配，封板状态待盘中核验。
           </p>
           <div className="intraday-feedback-grid">
-            {reference.groups.map((group, index) => (
+            {reference.groups.map((group) => (
               <details
                 key={group.board_count}
                 className="intraday-feedback-card"
-                open={index === 0}
+                open
               >
                 <summary>
                   <strong>
@@ -160,7 +161,7 @@ export default function AuctionHeightReference({
                         ) : (
                           <span>{stock.name}</span>
                         )}
-                        <small>{stock.instrument_id}</small>
+                        <CopyStockCode instrumentId={stock.instrument_id} />
                         <span className={tone(stock.auction_pct)}>
                           {stock.auction_pct === null
                             ? "竞价报价未知"

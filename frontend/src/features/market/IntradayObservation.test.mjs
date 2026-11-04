@@ -106,6 +106,7 @@ assert.match(
 );
 assert.match(broken, /前日收盘炸板样本待核验/);
 assert.match(broken, /本轮未入池 0/);
+assert.match(broken, /aria-label="复制六位代码 000001"/);
 
 const stages = timelineSlots({
   slots: [{ key: "1000", label: "开盘首轮", start: "10:00" }],
