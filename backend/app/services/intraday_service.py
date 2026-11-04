@@ -138,7 +138,8 @@ def read_view(day=None):
         value = decode_snapshot(row)
         if value:
             snapshots.append({k: v for k, v in value.items()
-                              if k not in ('version', 'comparison_input', 'source_checks', 'sealed_pool_input')})
+                              if k not in ('version', 'comparison_input', 'source_checks', 'sealed_pool_input',
+                                           'member_reference')})
     retained_slots = {row['slot'] for row in rows}
     return dict(date=day, today=today, state=latest['status'] if latest and latest['status'] in ('queued', 'running')
                 else 'available' if snapshots else latest['status'] if latest else 'not_collected',
@@ -582,6 +583,10 @@ def execute_capture(job, progress=None):
                                  gaps=capture.gaps,
                                  reason='部分行情未取得，结果按已核验样本展示' if quality == 'partial' else None))
     if version == VERSION:
+        original = market.status()
+        original_day = original.get('data_end')
+        if isinstance(original_day, str) and original_day < day and original.get('snapshot_id'):
+            snapshot['member_reference'] = {'generation': original['snapshot_id'], 'date': original_day}
         snapshot['scheduled_at'] = datetime.combine(date.fromisoformat(day),
                                                     time.fromisoformat(slot['scheduled_at']), CHINA).isoformat()
         if previous:

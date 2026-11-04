@@ -265,7 +265,7 @@ def build_feedback(payload):
     return result
 
 
-def read_view(day):
+def read_view(day, *, include_topics=False):
     if not _day(day):
         raise HTTPException(422, '竞价对照日期须为YYYY-MM-DD')
     with connect() as connection:
@@ -283,4 +283,9 @@ def read_view(day):
         payload = validate_snapshot(dict(row))
     except ValueError:
         raise HTTPException(409, '原竞价正文或来源原件未通过SHA核验，未派生前日事件对照') from None
-    return build_feedback(payload)
+    result = build_feedback(payload)
+    if include_topics:
+        from app.services.auction_topic_summary import build_topic_summary
+
+        result['stock_classifications'] = build_topic_summary(payload)['stock_classifications']
+    return result

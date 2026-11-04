@@ -18,6 +18,7 @@ import {
 } from "./noonBoardPresentation";
 import type { NoonBoardFilterValue } from "./noonBoardPresentation";
 import IntradayAutomation from "./IntradayAutomation";
+import AuctionHeightReference from "./AuctionHeightReference";
 import "./IntradayObservation.css";
 
 const activeStatus = (value: unknown) =>
@@ -37,6 +38,7 @@ type OpenStock = (
   context?: { slot: string; snapshotId?: string },
 ) => void;
 type StockHistoryScope = { date: string; slot: string };
+type MemberScope = StockHistoryScope & { snapshotId: string; topicCode: string };
 
 const stockHistoryQuery = ({ date, slot }: StockHistoryScope, rows: Row[]) =>
   `/market/intraday/history?${new URLSearchParams({ date, slot, symbols: rows.map((row) => row.instrument_id).join(",") })}`;
@@ -455,6 +457,7 @@ function Ranking({
   emptyTitle,
   onStock,
   historyScope,
+  memberScope,
 }: {
   rows: Row[];
   sector?: boolean;
@@ -465,21 +468,55 @@ function Ranking({
   emptyTitle?: string;
   onStock?: (id: string) => void;
   historyScope?: StockHistoryScope;
+  memberScope?: MemberScope;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [page, setPage] = useState(0);
   const [boardFilter, setBoardFilter] = useState<NoonBoardFilterValue>("all");
+  const memberLimit = 20;
+  const memberQuery = memberScope
+    ? new URLSearchParams({
+        date: memberScope.date,
+        slot: memberScope.slot,
+        snapshot_id: memberScope.snapshotId,
+        topic_code: memberScope.topicCode,
+        board: boardFilter,
+        page: String(page + 1),
+        limit: String(memberLimit),
+      })
+    : null;
+  const members = useApi<Row>(
+    memberQuery ? `/market/intraday/members?${memberQuery}` : null,
+  );
+  const loaded = members.data;
+  const memberPage =
+    memberScope &&
+    loaded?.date === memberScope.date &&
+    loaded.slot === memberScope.slot &&
+    loaded.snapshot_id === memberScope.snapshotId &&
+    loaded.topic_code === memberScope.topicCode &&
+    loaded.board === boardFilter &&
+    loaded.page === page + 1
+      ? loaded
+      : null;
+  const useFrozenSample = memberPage?.state === "unknown";
+  const displayRows: Row[] = memberScope
+    ? useFrozenSample
+      ? rows
+      : memberPage?.items || []
+    : rows;
   const filteredRows =
-    !sector && historyScope ? filterRows(rows, boardFilter) : rows;
+    !sector && historyScope && (!memberScope || useFrozenSample)
+      ? filterRows(displayRows, boardFilter)
+      : displayRows;
   const pageSize = expanded ? 30 : 10;
   const currentPage = Math.min(
     page,
     Math.max(0, Math.ceil(filteredRows.length / pageSize) - 1),
   );
-  const visibleRows = filteredRows.slice(
-    currentPage * pageSize,
-    (currentPage + 1) * pageSize,
-  );
+  const visibleRows = memberScope
+    ? filteredRows
+    : filteredRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const history = useApi<Row>(
     historyScope && !sector && visibleRows.length
       ? stockHistoryQuery(historyScope, visibleRows)
@@ -492,10 +529,10 @@ function Ranking({
       : undefined;
   const broken = stockMode === "broken_stocks";
   const compact = stockMode != null;
-  const hasOpenTimes = broken && rows.some((row) => row.open_times != null);
-  const hasOpenPrice = rows.some((row) => row.open_change_pct != null);
-  const hasAmount = rows.some((row) => row.amount != null);
-  const hasComparison = rows.some(
+  const hasOpenTimes = broken && displayRows.some((row) => row.open_times != null);
+  const hasOpenPrice = displayRows.some((row) => row.open_change_pct != null);
+  const hasAmount = displayRows.some((row) => row.amount != null);
+  const hasComparison = displayRows.some(
     (row) => row.change_pp != null || row.amount_delta != null,
   );
   return (
@@ -509,7 +546,7 @@ function Ranking({
       }
       className={`intraday-ranking${compact ? " intraday-stock-ranking" : ""}`}
     >
-      {!sector && historyScope && rows.length > 0 && (
+      {!sector && historyScope && (memberScope || rows.length > 0) && (
         <div
           className="intraday-stock-toolbar intraday-filters"
           role="group"
@@ -531,9 +568,29 @@ function Ranking({
           ))}
         </div>
       )}
-      {filteredRows.length ? (
+      {memberPage && (
+        <p className="intraday-stock-note">
+          {useFrozenSample
+            ? displayRows.length
+              ? `该时点仅留存 ${integer(displayRows.length)} 只个股样本。`
+              : "该时点暂无个股明细。"
+            : [
+                memberPage.membership_as_of && `名单留存日 ${memberPage.membership_as_of}`,
+                memberPage.total != null && `留存名单 ${integer(memberPage.total)} 只`,
+                memberPage.quote_coverage && `匹配本时点报价 ${integer(memberPage.quote_coverage.valid)} 只`,
+                boardFilter !== "all" && memberPage.matched != null &&
+                  `当前筛选 ${integer(memberPage.matched)} 只`,
+              ].filter(Boolean).join(" · ")}
+          {memberPage.unavailable_reason && ` ${memberPage.unavailable_reason}`}
+        </p>
+      )}
+      {memberScope && members.error ? (
+        <ErrorBox message={members.error} retry={members.reload} />
+      ) : memberScope && !memberPage ? (
+        <Loading />
+      ) : filteredRows.length ? (
         <>
-          {compact && (
+          {compact && !memberScope && (
             <p className="intraday-stock-note">
               {subtitle} · 留存样本 {integer(filteredRows.length)} 只
             </p>
@@ -575,7 +632,7 @@ function Ranking({
                   return (
                     <tr key={row.instrument_id}>
                       <td>
-                        {row.rank ?? currentPage * pageSize + index + 1}
+                        {row.rank ?? (memberScope ? page * memberLimit : currentPage * pageSize) + index + 1}
                         {showRankChange &&
                           row.previous_rank != null &&
                           row.rank != null &&
@@ -734,7 +791,7 @@ function Ranking({
                   : `历史指标截至 ${history.data?.as_of || "已发布可核验交易日"} · — 表示资料缺失，≥ 表示可核验下界`}
             </p>
           )}
-          {filteredRows.length > 10 && (
+          {!memberScope && filteredRows.length > 10 && (
             <div className="intraday-expand">
               <button
                 className="btn small"
@@ -767,13 +824,26 @@ function Ranking({
               )}
             </div>
           )}
+          {memberPage && memberPage.pages > 1 && (
+            <div className="intraday-expand">
+              <button className="btn small" disabled={page === 0} onClick={() => setPage(page - 1)}>
+                上一页
+              </button>
+              <span>第 {page + 1} / {memberPage.pages} 页</span>
+              <button className="btn small" disabled={page + 1 >= memberPage.pages} onClick={() => setPage(page + 1)}>
+                下一页
+              </button>
+            </div>
+          )}
         </>
       ) : (
         <Empty
           title={
-            (rows.length ? "该上市板块暂无留存个股" : emptyTitle) ||
+            (rows.length || (memberScope && boardFilter !== "all")
+              ? "该上市板块暂无留存个股" : emptyTitle) ||
             (sector ? "本轮没有可核验的板块排名" : "本轮没有可核验的个股排名")
           }
+          description={memberScope ? "" : "仅展示该时点有记录的数据。"}
         />
       )}
     </Panel>
@@ -1062,6 +1132,9 @@ function AnchorDetails({
         }}
         onStock={onStock}
       />
+      {snapshot.slot === "auction" && (
+        <AuctionHeightReference date={historyScope.date} onStock={onStock} />
+      )}
       {!!boards.length && (
         <div className="intraday-direction-workspace">
           <Panel title="方向观察" className="intraday-direction-list">
@@ -1090,10 +1163,19 @@ function AnchorDetails({
               key={board.instrument_id}
               rows={stocks}
               title={`${board.name || board.instrument_id} · 个股`}
-              subtitle="当前时点已留存个股样本"
+              subtitle={
+                snapshot.slot === "auction"
+                  ? "只统计该题材中纳入竞价观察的候选"
+                  : "按所选时点的成员名单和报价展示"
+              }
               onStock={onStock}
               historyScope={historyScope}
-              emptyTitle="该方向暂无可核验个股样本"
+              memberScope={{
+                ...historyScope,
+                snapshotId: snapshot.id,
+                topicCode: board.instrument_id,
+              }}
+              emptyTitle="该时点暂无可核验个股"
             />
           )}
         </div>
@@ -1134,17 +1216,9 @@ function StrengthView({
     initialBoard?.instrument_id || null,
   );
   const [stockMode, setStockMode] = useState<StockMode>(
-    initialBoard && snapshot.board_stocks?.[initialBoard.instrument_id]
+    initialBoard
       ? "members"
-      : initialBoard &&
-          !initialBoard.candidates?.length &&
-          initialBoard.sealed_stocks?.length
-        ? "sealed_stocks"
-        : initialBoard &&
-            !initialBoard.candidates?.length &&
-            initialBoard.broken?.length
-          ? "broken_stocks"
-          : "candidates",
+      : "candidates",
   );
   const boards = ((snapshot[mode] || []) as Row[]).filter(
     (board) => kind === "all" || board.kind === kind,
@@ -1154,7 +1228,7 @@ function StrengthView({
     ? snapshot.board_stocks?.[board.instrument_id]
     : undefined;
   const displayedMode =
-    stockMode === "members" && !members ? "candidates" : stockMode;
+    stockMode === "members" && !board ? "candidates" : stockMode;
   const poolComplete = snapshot.strength_coverage?.pool_complete === true;
   const breakout = snapshot.ladder?.broken_board;
   const rowsFor = (value: StockMode): Row[] =>
@@ -1168,7 +1242,7 @@ function StrengthView({
             : breakout?.items || []
         : (board || snapshot)[value] || [];
   const stockModes: [StockMode, string][] = [
-    ...(members ? [["members", "留存成员"] as [StockMode, string]] : []),
+    ...(board ? [["members", "成分个股"] as [StockMode, string]] : []),
     ["candidates", "走强"],
     ["sealed_stocks", "封板"],
     ...(breakout ? [["broken_stocks", "炸板"] as [StockMode, string]] : []),
@@ -1256,6 +1330,8 @@ function StrengthView({
                         className="stock-link"
                         aria-pressed={row.instrument_id === selectedBoard}
                         onClick={() => {
+                          if (row.instrument_id !== selectedBoard)
+                            setStockMode("members");
                           setSelectedBoard(
                             row.instrument_id === selectedBoard
                               ? null
@@ -1305,7 +1381,10 @@ function StrengthView({
             </table>
           </div>
         ) : (
-          <Empty title="当前口径没有可核验板块" />
+          <Empty
+            title="当前口径没有可核验板块"
+            description="可以切换榜单口径或板块类型。"
+          />
         )}
         <details className="intraday-scope">
           <summary>榜单口径</summary>
@@ -1418,9 +1497,18 @@ function StrengthView({
           onStock={onStock}
           stockMode={displayedMode}
           historyScope={historyScope}
+          memberScope={
+            displayedMode === "members" && board
+              ? {
+                  ...historyScope,
+                  snapshotId: snapshot.id,
+                  topicCode: board.instrument_id,
+                }
+              : undefined
+          }
           subtitle={
             displayedMode === "members"
-              ? `成员报价匹配 ${integer(members.matched_count)} / ${integer(members.sample_count)} 只`
+              ? "按所选时点的成员名单和报价展示"
               : displayedMode === "candidates"
                 ? "价格走强、未列入本轮已核验封板池"
                 : displayedMode === "sealed_stocks"
@@ -1565,7 +1653,9 @@ export default function IntradayObservation({
             {snapshot && (
               <span className="intraday-snapshot-time">
                 <Clock3 size={13} />
-                {snapshot.label || snapshot.slot_label || snapshot.slot} ·{" "}
+                {snapshot.label ||
+                  snapshot.slot_label ||
+                  slots.find((slot) => slot.key === snapshot.slot)?.label} ·{" "}
                 {clock(snapshot.collected_end_at)}
               </span>
             )}
@@ -1762,12 +1852,31 @@ export default function IntradayObservation({
               title={
                 running && view?.current_slot?.key === selectedSlot
                   ? "正在采集盘中报价"
-                  : "所选时点暂无留存数据"
+                  : `${slots.find((slot) => slot.key === selectedSlot)?.start || "所选时点"} 暂无快照`
               }
               description={
                 selectedSlot === "close"
                   ? "收盘行情正式发布后更新全天复盘。"
-                  : "可切换到当天其他已留存时点。"
+                  : `${date} 的这个时点没有留存报价，因此无法显示该时点的个股与板块。`
+              }
+              action={
+                samples.size > 0 && (
+                  <div className="intraday-expand">
+                    {slots.filter((slot) => samples.has(slot.key)).map((slot) => (
+                      <button
+                        type="button"
+                        className="btn small"
+                        key={slot.key}
+                        onClick={() => {
+                          setSelected(slot.key);
+                          setRotationBoard(undefined);
+                        }}
+                      >
+                        查看 {slot.start} {slot.label}
+                      </button>
+                    ))}
+                  </div>
+                )
               }
             />
           </Panel>

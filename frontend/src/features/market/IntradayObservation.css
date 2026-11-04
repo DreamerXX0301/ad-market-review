@@ -620,6 +620,22 @@
   color: var(--muted);
 }
 
+.intraday-feedback-stocks .intraday-height-themes {
+  flex-basis: 100%;
+  max-width: 100%;
+  margin-top: 0;
+}
+
+.intraday-height-themes-more {
+  padding: 0 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  color: var(--subtle);
+  background: var(--surface2);
+  font: inherit;
+  cursor: pointer;
+}
+
 .intraday-feedback-table table {
   width: 100%;
   border-collapse: collapse;

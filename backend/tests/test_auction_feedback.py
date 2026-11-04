@@ -6,6 +6,7 @@ import pytest
 
 from app import core, worker
 from app.services import auction_feedback as feedback, source_service
+from app.services.intraday_auction_reference import build_reference
 from test_auction_snapshots import DAY, PREVIOUS, claim, isolated as auction_environment
 
 
@@ -62,6 +63,32 @@ def test_all_fact_groups_are_disjoint_dated_and_keep_original_payload():
     assert len(identities) == len(set(identities)) == 9
     assert indexed['repair']['items'][0]['previous_board_count'] is None
     assert indexed['continuation']['items'][0]['previous_board_count'] == 3
+
+
+def test_intraday_auction_height_distinguishes_prior_heights_from_quote_status():
+    value = packet()
+    prior = value['previous_review']['event_cohorts']['limit_up']['items']
+    for row, height in zip(prior, (4, 4, None, 2, 99)):
+        row['previous_board_count'] = height
+    value['quotes']['items'][2].update(
+        auction_pct=10, auction_price=11, pre_close_price=10, auction_volume=100,
+        unit_check={'state': 'verified'},
+    )
+
+    reference = build_reference(feedback.build_feedback(value))
+    assert reference['previous_date'] == PREVIOUS
+    assert reference['highest_board'] == 4
+    assert reference['candidate_count'] == 9
+    assert reference['verified_height_count'] == 3
+    assert reference['unknown_height_count'] == 1
+    top, lower = reference['groups']
+    assert (top['up'], top['down'], top['flat'], top['unknown']) == (1, 1, 0, 0)
+    assert top['items'][0] == {
+        'instrument_id': CODES[2], 'name': '合成竞价2', 'auction_pct': 10,
+        'opening_reference_price': 11,
+    }
+    assert lower['board_count'] == 2 and lower['unknown'] == 1
+    assert lower['items'][0]['auction_pct'] is None
 
 
 @pytest.mark.parametrize('change', [5, 9.98, 10, 10.07, 20, 30])
@@ -185,7 +212,7 @@ def test_invalid_scope_dates_or_identity_do_not_expand_or_invent_classification(
     assert result['coverage']['classified'] == 0 and result['gaps']
 
 
-def test_reader_validates_sha_and_never_changes_immutable_capture(auction_environment):
+def test_reader_validates_sha_and_never_changes_immutable_capture(auction_environment, monkeypatch):
     environment = auction_environment
     for pool in environment.previous['event_cohorts'].values():
         for item in pool.get('items', []): item['date'] = PREVIOUS
@@ -195,12 +222,31 @@ def test_reader_validates_sha_and_never_changes_immutable_capture(auction_enviro
         before = tuple(connection.execute('SELECT payload_json,content_sha256 FROM market_auction_snapshot').fetchone())
     result = feedback.read_view(DAY)
     assert result['coverage']['requested'] == result['coverage']['classified'] == 2
+    assert 'stock_classifications' not in result
+    from app.services import auction_topic_summary
+    from app.services.intraday_auction_reference import read_auction_reference
+
+    prior_symbol = next(item['instrument_id'] for group in result['groups'] for item in group['items']
+                        if item['previous_state'] == 'limit_up')
+    tag = {'topic_code': '885001.TI', 'name': '合成概念', 'kind': 'concept',
+           'source': 'fuyao', 'members_observed_date': PREVIOUS}
+
+    def classify(frozen):
+        from json import loads
+        assert frozen == loads(before[0])
+        return {'stock_classifications': {prior_symbol: {'industries': [], 'topics': [tag]}}}
+
+    monkeypatch.setattr(auction_topic_summary, 'build_topic_summary', classify)
+    reference = read_auction_reference(DAY)
+    quote = next(item for group in reference['groups'] for item in group['items']
+                 if item['instrument_id'] == prior_symbol)
+    assert quote['themes'] == [tag]
     with core.connect() as connection:
         assert tuple(connection.execute('SELECT payload_json,content_sha256 FROM market_auction_snapshot').fetchone()) == before
         connection.execute('DROP TRIGGER retain_auction_snapshot_update')
         connection.execute('UPDATE market_auction_snapshot SET content_sha256=?', ('0' * 64,))
     with pytest.raises(HTTPException) as error:
-        feedback.read_view(DAY)
+        read_auction_reference(DAY)
     assert error.value.status_code == 409
 
 

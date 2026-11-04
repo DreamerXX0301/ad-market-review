@@ -76,7 +76,7 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
         'master': {'000002.SZ': {'list_date': DAY}},
         'topics': [{'topic_code': '884045.TI', 'observed_date': '2026-10-27', 'source': 'fuyao', 'kind': 'industry',
                     'members_complete': True, 'instrument_ids': ['000001.SZ', '000002.SZ', '000003.SZ']}],
-    }, status=lambda: {'snapshot_id': GENERATION},
+    }, status=lambda: {'snapshot_id': GENERATION, 'data_end': PRIOR},
        instruments=lambda **_: [{'instrument_id': '000001.SZ', 'name': '测试股票'}])
     monkeypatch.setattr(service, 'get_market', lambda: market)
     requests = []
@@ -151,6 +151,36 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert {item['instrument_id']: item.get('limit_up_state') for item in sector_stocks['items']} == {
         '000001.SZ': 'sealed', '000002.SZ': None, '000003.SZ': 'broken',
     }
+    from app.services import intraday_members
+
+    def member_proof(generation, expected_end, code, *, observed, reference_sha):
+        assert (generation, expected_end, code, observed) == (GENERATION, PRIOR, '884045.TI', PRIOR)
+        assert reference_sha is None
+        return ['000001.SZ', '000002.SZ', '000003.SZ', '688001.SH'], observed, True
+
+    monkeypatch.setattr(intraday_members, '_topic_members', member_proof)
+    monkeypatch.setattr(intraday_members, 'get_market', lambda: market)
+    lookup = {'date': DAY, 'slot': '1000', 'snapshot_id': first['snapshots'][0]['id'],
+              'topic_code': '884045.TI', 'limit': 2}
+    members = api.get(url + '/members', params=lookup).json()
+    assert members['state'] == 'partial' and members['pages'] == 2
+    assert members['quote_coverage'] == {'valid': 3, 'total': 4}
+    assert [item['instrument_id'] for item in members['items']] == ['000002.SZ', '000001.SZ']
+    assert members['items'][1]['continue_day_cnt'] == 2
+    second_page = api.get(url + '/members', params={**lookup, 'page': 2}).json()
+    assert second_page['items'][0]['limit_up_state'] == 'broken'
+    assert second_page['items'][1]['change_pct'] is None and second_page['items'][1]['missing_reason']
+    only_star = api.get(url + '/members', params={**lookup, 'board': 'star'}).json()
+    assert only_star['matched'] == 1 and only_star['items'][0]['instrument_id'] == '688001.SH'
+    assert api.get(url + '/members', params={**lookup, 'slot': '1030'}).json()['state'] == 'missing'
+    assert api.get(url + '/members', params={**lookup, 'snapshot_id': 'intraday_' + 'a' * 32}).json()['state'] == 'unknown'
+    legacy = {key: value for key, value in saved.items() if key != 'member_reference'}
+    original_proof = next(item for item in legacy['source_checks'] if item['domain'] == 'prior_session')
+    assert intraday_members._member_provenance(legacy) == (GENERATION, PRIOR, original_proof['reference_sha256'])
+    assert intraday_members._member_provenance({**legacy, 'source_checks': [original_proof, original_proof]}) is None
+    assert intraday_members._member_provenance({
+        **legacy, 'source_checks': [{**original_proof, 'reference_sha256': 'unverified'}],
+    }) is None
     assert [row['instrument_id'] for row in first['snapshots'][0]['sealed_stocks']] == ['000001.SZ']
     assert not first['snapshots'][0]['candidates']
     assert len(requests) == 6
