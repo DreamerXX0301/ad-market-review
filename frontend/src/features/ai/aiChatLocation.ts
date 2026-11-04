@@ -53,7 +53,10 @@ export function chatLocation(hash: string, page: ChatPage, id: string) {
     params.delete(key);
   if (page.pageRoute === "ai") params.set("ai_kind", page.kind);
   if (id || page.pageRoute === "ai") {
-    if (id) params.set("ai_chat", id);
+    if (id) {
+      params.set("ai_chat", id);
+      params.delete("ai_stage");
+    }
     if (page.asOf || saved.asOf) params.set("ai_day", page.asOf || saved.asOf!);
     if (page.instrumentId || saved.instrumentId)
       params.set("ai_stock", page.instrumentId || saved.instrumentId!);

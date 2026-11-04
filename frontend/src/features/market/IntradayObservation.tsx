@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { Empty, ErrorBox, Loading, Panel, Warning } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
+import AIEntry from "../ai/AIEntry";
+import { aiMarketStage } from "../ai/aiNavigation";
 import { post, requestKey, useApi, usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { amount, integer, num, percent, tone } from "../../lib/format";
@@ -20,6 +22,7 @@ import {
 import type { NoonBoardFilterValue } from "./noonBoardPresentation";
 import IntradayAutomation from "./IntradayAutomation";
 import AuctionHeightReference from "./AuctionHeightReference";
+import AuctionDiscovery, { DiscoveryWorkspace } from "./AuctionDiscovery";
 import "./IntradayObservation.css";
 
 const activeStatus = (value: unknown) =>
@@ -39,7 +42,10 @@ type OpenStock = (
   context?: { slot: string; snapshotId?: string },
 ) => void;
 type StockHistoryScope = { date: string; slot: string };
-type MemberScope = StockHistoryScope & { snapshotId: string; topicCode: string };
+type MemberScope = StockHistoryScope & {
+  snapshotId: string;
+  topicCode: string;
+};
 
 const stockHistoryQuery = ({ date, slot }: StockHistoryScope, rows: Row[]) =>
   `/market/intraday/history?${new URLSearchParams({ date, slot, symbols: rows.map((row) => row.instrument_id).join(",") })}`;
@@ -531,7 +537,8 @@ function Ranking({
       : undefined;
   const broken = stockMode === "broken_stocks";
   const compact = stockMode != null;
-  const hasOpenTimes = broken && displayRows.some((row) => row.open_times != null);
+  const hasOpenTimes =
+    broken && displayRows.some((row) => row.open_times != null);
   const hasOpenPrice = displayRows.some((row) => row.open_change_pct != null);
   const hasAmount = displayRows.some((row) => row.amount != null);
   const hasComparison = displayRows.some(
@@ -577,12 +584,18 @@ function Ranking({
               ? `该时点仅留存 ${integer(displayRows.length)} 只个股样本。`
               : "该时点暂无个股明细。"
             : [
-                memberPage.membership_as_of && `名单留存日 ${memberPage.membership_as_of}`,
-                memberPage.total != null && `留存名单 ${integer(memberPage.total)} 只`,
-                memberPage.quote_coverage && `匹配本时点报价 ${integer(memberPage.quote_coverage.valid)} 只`,
-                boardFilter !== "all" && memberPage.matched != null &&
+                memberPage.membership_as_of &&
+                  `名单留存日 ${memberPage.membership_as_of}`,
+                memberPage.total != null &&
+                  `留存名单 ${integer(memberPage.total)} 只`,
+                memberPage.quote_coverage &&
+                  `匹配本时点报价 ${integer(memberPage.quote_coverage.valid)} 只`,
+                boardFilter !== "all" &&
+                  memberPage.matched != null &&
                   `当前筛选 ${integer(memberPage.matched)} 只`,
-              ].filter(Boolean).join(" · ")}
+              ]
+                .filter(Boolean)
+                .join(" · ")}
           {memberPage.unavailable_reason && ` ${memberPage.unavailable_reason}`}
         </p>
       )}
@@ -634,7 +647,12 @@ function Ranking({
                   return (
                     <tr key={row.instrument_id}>
                       <td>
-                        {row.rank ?? (memberScope ? page * memberLimit : currentPage * pageSize) + index + 1}
+                        {row.rank ??
+                          (memberScope
+                            ? page * memberLimit
+                            : currentPage * pageSize) +
+                            index +
+                            1}
                         {showRankChange &&
                           row.previous_rank != null &&
                           row.rank != null &&
@@ -832,11 +850,21 @@ function Ranking({
           )}
           {memberPage && memberPage.pages > 1 && (
             <div className="intraday-expand">
-              <button className="btn small" disabled={page === 0} onClick={() => setPage(page - 1)}>
+              <button
+                className="btn small"
+                disabled={page === 0}
+                onClick={() => setPage(page - 1)}
+              >
                 上一页
               </button>
-              <span>第 {page + 1} / {memberPage.pages} 页</span>
-              <button className="btn small" disabled={page + 1 >= memberPage.pages} onClick={() => setPage(page + 1)}>
+              <span>
+                第 {page + 1} / {memberPage.pages} 页
+              </span>
+              <button
+                className="btn small"
+                disabled={page + 1 >= memberPage.pages}
+                onClick={() => setPage(page + 1)}
+              >
                 下一页
               </button>
             </div>
@@ -846,7 +874,8 @@ function Ranking({
         <Empty
           title={
             (rows.length || (memberScope && boardFilter !== "all")
-              ? "该上市板块暂无留存个股" : emptyTitle) ||
+              ? "该上市板块暂无留存个股"
+              : emptyTitle) ||
             (sector ? "本轮没有可核验的板块排名" : "本轮没有可核验的个股排名")
           }
           description={memberScope ? "" : "仅展示该时点有记录的数据。"}
@@ -954,6 +983,77 @@ function BriefCard({ brief }: { brief: Row }) {
         </details>
       )}
     </section>
+  );
+}
+
+const DISCOVERY_SIGNALS: Record<string, string> = {
+  new: "由弱转强",
+  accelerating: "涨幅扩大",
+  fading: "涨幅回落",
+  leading: "当前领涨",
+};
+
+function IntradayDiscovery({
+  snapshot,
+  historyScope,
+  onStock,
+}: {
+  snapshot: Row;
+  historyScope: StockHistoryScope;
+  onStock?: (id: string) => void;
+}) {
+  const discovery = snapshot.discovery;
+  const directions =
+    discovery?.date === historyScope.date &&
+    discovery.slot === historyScope.slot
+      ? (discovery.directions as Row[])
+      : [];
+  return (
+    <Panel
+      title="盘中发现"
+      subtitle="查看本时点新走强、涨幅扩大和回落的方向"
+      className="auction-discovery"
+    >
+      {directions?.length ? (
+        <DiscoveryWorkspace
+          directions={directions}
+          changeLabel="今日涨跌幅"
+          amountLabel="较上一时点增量成交额"
+          getChange={(row) => row.change_pct ?? null}
+          getAmount={(row) => row.amount_delta ?? null}
+          getCount={(row) => row.stocks?.length ?? null}
+          getMemberDate={(row) => row.member_date}
+          getSignal={(row) => DISCOVERY_SIGNALS[row.signal]}
+          renderStocks={(row) => (
+            <>
+              <p className="intraday-stage-scope">
+                {DISCOVERY_SIGNALS[row.signal]}
+                {row.change_pp != null &&
+                  ` · 涨幅变化 ${delta(row.change_pp, "个百分点")}`}
+                {" · 封板 "}
+                {evidenceCount(row.limit_up_count, row.limit_up_count_state)}
+                {" · 炸板 "}
+                {evidenceCount(row.broken_count, row.broken_count_state)}
+              </p>
+              <Ranking
+                key={row.instrument_id}
+                rows={row.stocks || []}
+                subtitle="已核验成员样本，可按上市板块筛选"
+                historyScope={historyScope}
+                onStock={onStock}
+                emptyTitle="当前方向暂无可核验个股"
+                stockMode="candidates"
+              />
+            </>
+          )}
+        />
+      ) : (
+        <Empty title="此时点暂无发现" description={discovery?.reason} />
+      )}
+      {discovery?.scope && (
+        <p className="intraday-stage-scope">{discovery.scope}</p>
+      )}
+    </Panel>
   );
 }
 
@@ -1222,9 +1322,7 @@ function StrengthView({
     initialBoard?.instrument_id || null,
   );
   const [stockMode, setStockMode] = useState<StockMode>(
-    initialBoard
-      ? "members"
-      : "candidates",
+    initialBoard ? "members" : "candidates",
   );
   const boards = ((snapshot[mode] || []) as Row[]).filter(
     (board) => kind === "all" || board.kind === kind,
@@ -1643,6 +1741,7 @@ export default function IntradayObservation({
 
   const summary = snapshot?.summary;
   const historical = !!today && !!date && date < today;
+  const aiStage = aiMarketStage(selectedSlot);
   return (
     <div className="intraday-workbench">
       <section className="panel intraday-header" aria-label="盘中观察">
@@ -1661,12 +1760,15 @@ export default function IntradayObservation({
                 <Clock3 size={13} />
                 {snapshot.label ||
                   snapshot.slot_label ||
-                  slots.find((slot) => slot.key === snapshot.slot)?.label} ·{" "}
-                {clock(snapshot.collected_end_at)}
+                  slots.find((slot) => slot.key === snapshot.slot)?.label}{" "}
+                · {clock(snapshot.collected_end_at)}
               </span>
             )}
           </div>
           <div className="intraday-actions">
+            {date && aiStage && (
+              <AIEntry kind="market" asOf={date} marketStage={aiStage} />
+            )}
             <IntradayAutomation />
             {(historical || dateFixed) && (
               <button
@@ -1757,6 +1859,22 @@ export default function IntradayObservation({
         )}
       </section>
       {brief && <BriefCard brief={brief} />}
+      {anchor?.slot === "auction" && (
+        <AuctionDiscovery
+          date={date}
+          active={active}
+          chartDate={date}
+          onStock={openStock}
+        />
+      )}
+      {!anchor && snapshot && (
+        <IntradayDiscovery
+          key={snapshot.id}
+          snapshot={snapshot}
+          historyScope={historyScope}
+          onStock={openStock}
+        />
+      )}
       <div className="intraday-stage-details" ref={details} tabIndex={-1}>
         {anchor ? (
           <AnchorDetails
@@ -1839,7 +1957,10 @@ export default function IntradayObservation({
                     新股单列（上市前 5 个交易日，共{" "}
                     {integer(summary.recent_listing_count)} 只可排名）
                   </p>
-                  <StockSamples rows={summary.recent_listings || []} onStock={openStock} />
+                  <StockSamples
+                    rows={summary.recent_listings || []}
+                    onStock={openStock}
+                  />
                 </>
               )}
               <p className="intraday-intro">
@@ -1865,19 +1986,21 @@ export default function IntradayObservation({
               action={
                 samples.size > 0 && (
                   <div className="intraday-expand">
-                    {slots.filter((slot) => samples.has(slot.key)).map((slot) => (
-                      <button
-                        type="button"
-                        className="btn small"
-                        key={slot.key}
-                        onClick={() => {
-                          setSelected(slot.key);
-                          setRotationBoard(undefined);
-                        }}
-                      >
-                        查看 {slot.start} {slot.label}
-                      </button>
-                    ))}
+                    {slots
+                      .filter((slot) => samples.has(slot.key))
+                      .map((slot) => (
+                        <button
+                          type="button"
+                          className="btn small"
+                          key={slot.key}
+                          onClick={() => {
+                            setSelected(slot.key);
+                            setRotationBoard(undefined);
+                          }}
+                        >
+                          查看 {slot.start} {slot.label}
+                        </button>
+                      ))}
                   </div>
                 )
               }

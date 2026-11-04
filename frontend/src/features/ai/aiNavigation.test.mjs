@@ -15,8 +15,12 @@ const load = async (file) => {
     "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
   );
 };
-const { aiLaunchLocation, readAILaunch, upgradeChatLocation } =
-  await load("./aiNavigation.ts");
+const {
+  aiLaunchLocation,
+  aiMarketQuestion,
+  readAILaunch,
+  upgradeChatLocation,
+} = await load("./aiNavigation.ts");
 const { chatLocation, readChatLocation } = await load("./aiChatLocation.ts");
 const anchor = {
   kind: "stock",
@@ -121,6 +125,35 @@ const untrusted = readAILaunch(
 assert.equal(untrusted.instrumentId, undefined);
 assert.equal(untrusted.reportId, undefined);
 assert.equal(untrusted.asOf, undefined);
+for (const [marketStage, clock, phrase] of [
+  ["auction", "09:25", /重点名单之外/],
+  ["1000", "10:00", /盘中观察快照/],
+  ["1430", "14:30", /盘中观察快照/],
+  ["noon", "11:30", /午评/],
+  ["close", "15:00", /收盘复盘/],
+]) {
+  const context = { kind: "market", asOf: "2026-10-30", marketStage };
+  const link = aiLaunchLocation(context);
+  const launch = readAILaunch(link);
+  assert.equal(launch.marketStage, marketStage);
+  assert.match(aiMarketQuestion(launch), new RegExp(`2026-10-30 ${clock}`));
+  assert.match(aiMarketQuestion(launch), phrase);
+  assert.doesNotMatch(link, /ai_chat/);
+  assert.doesNotMatch(
+    chatLocation(link, { ...context, pageRoute: "ai" }, "sample_chat"),
+    /ai_stage/,
+  );
+}
+assert.notEqual(
+  readAILaunch("#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=1000").key,
+  readAILaunch("#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=1430").key,
+);
+for (const hash of [
+  "#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=__proto__",
+  "#ai?ai_kind=market&ai_day=2026-02-30&ai_stage=auction",
+  "#ai?ai_kind=stock&ai_day=2026-10-30&ai_stage=1000",
+])
+  assert.equal(aiMarketQuestion(readAILaunch(hash)), "");
 assert.equal(
   readChatLocation("#ai?ai_chat=%2Ftmp", { kind: "stock", pageRoute: "ai" }),
   "",

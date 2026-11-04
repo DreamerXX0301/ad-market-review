@@ -19,7 +19,11 @@ export default function AIEntry(props: AILaunchContext) {
       >
         <Sparkles size={16} />
         <span>
-          {props.kind === "stock" ? "与 AI 研究这只股票" : "与 AI 聊聊这天行情"}
+          {props.kind === "stock"
+            ? "与 AI 研究这只股票"
+            : props.marketStage
+              ? "AI 解读当前时点"
+              : "与 AI 聊聊这天行情"}
         </span>
         <ArrowUpRight size={15} />
       </a>

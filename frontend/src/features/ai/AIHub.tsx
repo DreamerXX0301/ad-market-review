@@ -8,7 +8,11 @@ import {
 } from "react";
 import { Loading } from "../../components/UI";
 import { usePageActive } from "../../lib/api";
-import { readAILaunch, upgradeChatLocation } from "./aiNavigation";
+import {
+  aiMarketQuestion,
+  readAILaunch,
+  upgradeChatLocation,
+} from "./aiNavigation";
 import "./AIHub.css";
 
 const AIWorkspace = lazy(() => import("./AIWorkspace"));
@@ -73,6 +77,7 @@ export default function AIHub({ onConfigure }: { onConfigure?: () => void }) {
             instrumentId={launch.instrumentId}
             reportId={launch.reportId}
             asOf={launch.asOf}
+            initialQuestion={aiMarketQuestion(launch)}
             onConfigure={onConfigure}
             allHistory
             pageRoute="ai"

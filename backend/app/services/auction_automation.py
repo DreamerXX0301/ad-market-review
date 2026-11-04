@@ -17,6 +17,8 @@ from app.services import task_service as tasks
 from app.services.auction_collection import CHINA, VERSION as SOURCE_VERSION
 
 VERSION = 'auction-automation-v1'
+DISCOVERY_VERSION = 'auction-discovery-v1'
+DISCOVERY_CONFIG_KEY = 'auction-discovery-automation-v1'
 # Operational delay after the 09:25 auction close; independent of source-time
 # validation and historical snapshot evidence. Existing daily switches use it
 # directly, without rewriting configuration revisions or frozen jobs.
@@ -174,6 +176,37 @@ def settings_view(connection):
         'fixed_time': START.isoformat(), 'window_end': END.isoformat(), 'legacy_instrument_count': len(view['instrument_ids'])}
 
 
+def discovery_settings(connection):
+    from .automatic_tasks import _json
+    value = _json(connection, DISCOVERY_CONFIG_KEY, {'enabled': False, 'revision': 0})
+    if (not isinstance(value, dict) or type(value.get('enabled')) is not bool
+            or type(value.get('revision')) is not int or value['revision'] < 0):
+        raise ValueError('竞价发现自动计划配置无效')
+    return value
+
+
+def configure_discovery(connection, *, enabled, expected_revision):
+    from .automatic_tasks import _save
+    current = discovery_settings(connection)
+    if expected_revision != current['revision']:
+        raise HTTPException(409, '竞价发现设置已在其他窗口修改，请重新读取后保存')
+    if enabled and not current['enabled']:
+        config = _config(connection)
+        if config['mode'] != 'daily' or _legacy_configuration(config):
+            raise HTTPException(409, '请先开启自动盘前竞价')
+    if enabled != current['enabled']:
+        _save(connection, DISCOVERY_CONFIG_KEY, {'enabled': enabled, 'revision': current['revision'] + 1})
+
+
+def discovery_authorized(connection, proof):
+    if not isinstance(proof, dict) or proof.get('version') != DISCOVERY_VERSION or type(proof.get('revision')) is not int:
+        return False
+    current = discovery_settings(connection)
+    config = _config(connection)
+    return (current['enabled'] and current['revision'] == proof['revision']
+            and config['mode'] == 'daily' and not _legacy_configuration(config))
+
+
 def update_config(payload):
     if not isinstance(payload, dict) or set(payload) != {'mode', 'expected_revision'}:
         raise HTTPException(422, '自动竞价只接受off/daily模式与当前配置版本，时间固定且名单自动生成')
@@ -234,8 +267,15 @@ def creation_authorization(connection, context, day):
         raise HTTPException(409, '当天自动竞价已登记，沿用原任务或回执')
     row = connection.execute("SELECT value_json FROM platform_setting WHERE key='source-credential-revision:fuyao'").fetchone()
     revision = json.loads(row[0]) if row else 'legacy'
-    return {'version': VERSION, 'revision': config['revision'], 'mode': config['mode'], 'date': day,
-            'source_version': SOURCE_VERSION, 'credential_revision': revision, 'manual_takeover': False}
+    authorization = {'version': VERSION, 'revision': config['revision'], 'mode': config['mode'], 'date': day,
+                     'source_version': SOURCE_VERSION, 'credential_revision': revision, 'manual_takeover': False}
+    try:
+        discovery = discovery_settings(connection)
+    except ValueError:
+        discovery = {'enabled': False}
+    if discovery['enabled']:
+        authorization['discovery'] = {'version': DISCOVERY_VERSION, 'revision': discovery['revision']}
+    return authorization
 
 
 def bind_created(connection, job_id, context, day):

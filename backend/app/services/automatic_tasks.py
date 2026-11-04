@@ -61,7 +61,8 @@ def _settings(connection):
 
 
 def _validate(payload):
-    if not isinstance(payload, dict) or set(payload) - {*KINDS, 'expected_revision', 'auction', 'expected_auction_revision'} or not set(KINDS) <= set(payload):
+    optional = {'expected_revision', 'auction', 'expected_auction_revision', 'auction_discovery'}
+    if not isinstance(payload, dict) or set(payload) - {*KINDS, *optional} or not set(KINDS) <= set(payload):
         raise HTTPException(422, '请提供午评和盘后两项完整配置')
     result = {}
     for kind in KINDS:
@@ -88,6 +89,12 @@ def _validate(payload):
             raise HTTPException(422, '保存竞价开关须提供当前expected_auction_revision')
     elif 'expected_auction_revision' in payload:
         raise HTTPException(422, '竞价配置版本须与竞价开关一起提供')
+    if 'auction_discovery' in payload:
+        discovery = payload['auction_discovery']
+        if (not isinstance(discovery, dict) or set(discovery) != {'enabled', 'expected_revision'}
+                or type(discovery['enabled']) is not bool or type(discovery['expected_revision']) is not int
+                or discovery['expected_revision'] < 0):
+            raise HTTPException(422, '竞价发现设置须提供enabled布尔开关及当前expected_revision')
     return result
 
 
@@ -106,10 +113,12 @@ def read_settings():
             job = connection.execute('SELECT status FROM job WHERE job_id=?', (item.get('task_id'),)).fetchone() if item.get('task_id') else None
             visible['task_status'] = job[0] if job else None
             checks[kind] = visible
-        from .auction_automation import settings_view
+        from .auction_automation import discovery_settings, settings_view
         auction = settings_view(connection)
+        auction_discovery = discovery_settings(connection)
     return {**settings, 'timezone': 'Asia/Shanghai', 'now': local_now().isoformat(),
-            'last_checks': checks, 'policy': dict(POLICY), 'auction': auction}
+            'last_checks': checks, 'policy': dict(POLICY), 'auction': auction,
+            'auction_discovery': auction_discovery}
 
 
 def configure(payload):
@@ -125,6 +134,9 @@ def configure(payload):
             from .auction_automation import configure_in_transaction
             configure_in_transaction(connection, enabled=payload['auction']['enabled'],
                                      expected_revision=payload['expected_auction_revision'])
+        if 'auction_discovery' in payload:
+            from .auction_automation import configure_discovery
+            configure_discovery(connection, **payload['auction_discovery'])
         if any(values[key] != current[key] for key in KINDS):
             _save(connection, CONFIG_KEY, {'revision': current['revision'] + 1, **values})
     return read_settings()

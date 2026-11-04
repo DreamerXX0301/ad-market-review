@@ -97,12 +97,101 @@ def validate_snapshot(row):
         raise ValueError('Auction snapshot or source evidence is invalid') from error
 
 
+
+def validate_discovery(row):
+    try:
+        encoded, day = row['payload_json'], row['trade_date']
+        if len(encoded.encode()) > 3 * 1024 * 1024 or sha256(encoded.encode()).hexdigest() != row['content_sha256']:
+            raise ValueError('Auction discovery SHA or size differs')
+        payload = json.loads(encoded)
+        if (date.fromisoformat(day).isoformat() != day or payload.get('date') != day
+                or payload.get('version') != 'auction-discovery-v1'
+                or payload.get('state') not in ('available', 'partial', 'unavailable')):
+            raise ValueError('Auction discovery date or version differs')
+        sources, evidence, codes = (payload[key] for key in ('sources', 'evidence', 'requested'))
+        if (any(not isinstance(value, list) for value in (sources, evidence, codes))
+                or len(sources) > 4 or len(evidence) > 4 or len(codes) > 100
+                or any(not isinstance(code, str) or not SYMBOL.fullmatch(code) for code in codes)
+                or len(set(codes)) != len(codes)):
+            raise ValueError('Auction discovery exceeds bounded scope')
+        expected = {f'opportunities:{page}': ('/api/a-share/special-data/auction-stock-opportunities',
+            {'market': 'a_share', 'sort_by': 'warn_time', 'sort_order': 'desc', 'page': page, 'size': 20})
+            for page in range(1, 4)}
+        expected['final_quotes'] = ('/api/a-share/auction/snapshot', {'thscodes': ','.join(codes), 'stage': 'final'})
+        received, originals = {}, {}
+        seen = set()
+        keys = ('name', 'source', 'endpoint', 'params', 'requested_at', 'received_at', 'state', 'bytes', 'sha256')
+        for item in sources:
+            name = item['name']
+            if (name in seen or expected.get(name) != (item.get('endpoint'), item.get('params'))
+                    or item.get('source') != 'fuyao' or not _window(item.get('requested_at'), day)):
+                raise ValueError('Auction discovery source request differs')
+            seen.add(name)
+            if item.get('state') == 'received':
+                received[name] = {key: item.get(key) for key in keys}
+        total = 0
+        for item in evidence:
+            name = item['name']
+            body = item['body']
+            raw = _canonical(body)
+            total += len(raw)
+            if (name in originals or not isinstance(body, dict) or len(raw) > 1024 * 1024
+                    or item.get('bytes') != len(raw) or item.get('sha256') != sha256(raw).hexdigest()
+                    or not _window(item.get('received_at'), day)):
+                raise ValueError('Auction discovery source evidence differs')
+            originals[name] = {key: item.get(key) for key in keys}
+        if total > 2 * 1024 * 1024 or received != originals:
+            raise ValueError('Auction discovery evidence closure differs')
+        captured = payload.get('captured_at_ms')
+        last_received = max((int(datetime.fromisoformat(item['received_at']).timestamp() * 1000)
+                             for item in originals.values()), default=None)
+        if captured != last_received or (captured is not None and captured > row['recorded_at_ms']):
+            raise ValueError('Auction discovery capture time differs')
+        stocks = payload['stocks']
+        supplement = payload['supplement']
+        coverage = payload['coverage']
+        if (len(stocks) != coverage['valid'] or len(supplement['items']) != supplement['valid']
+                or not 0 <= supplement['valid'] <= supplement['requested'] <= 40
+                or not 0 <= coverage['valid'] <= coverage['candidates'] <= coverage['events'] <= 60
+                or not 0 <= coverage['pages'] <= 3 or len(payload['directions']) > 12):
+            raise ValueError('Auction discovery row counts differ')
+        found = {item['instrument_id']: item for item in stocks}
+        reported = [item['instrument_id'] for item in [*stocks, *supplement['items']]]
+        if (len(set(reported)) != len(reported) or not set(reported) <= set(codes)
+                or reported and 'final_quotes' not in originals):
+            raise ValueError('Auction discovery stocks differ from quote evidence')
+        for direction in payload['directions']:
+            members = direction['stocks']
+            if (len(members) != direction['stock_count'] or len(members) < 2
+                    or len({item['instrument_id'] for item in members}) != len(members)
+                    or any(found.get(item['instrument_id']) != item or item['auction_pct'] <= 0 for item in members)):
+                raise ValueError('Auction discovery direction membership differs')
+        return payload
+    except (KeyError, TypeError, AttributeError, OverflowError, json.JSONDecodeError) as error:
+        raise ValueError('Auction discovery snapshot or source evidence is invalid') from error
+
+
+def validate_discoveries(connection):
+    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_discovery'").fetchone():
+        return
+    cursor = connection.execute('''SELECT d.*, s.snapshot_id AS parent_id FROM market_auction_discovery d
+        LEFT JOIN market_auction_snapshot s ON s.snapshot_id=d.primary_snapshot_id
+        AND s.job_id=d.job_id AND s.trade_date=d.trade_date''')
+    columns = [item[0] for item in cursor.description]
+    for values in cursor:
+        row = dict(zip(columns, values))
+        if not row['parent_id']:
+            raise ValueError('Auction discovery does not match a primary snapshot')
+        validate_discovery(row)
+
+
 def validate_snapshots(connection):
     if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_snapshot'").fetchone():
         cursor = connection.execute('SELECT * FROM market_auction_snapshot')
         columns = [item[0] for item in cursor.description]
         for row in cursor:
             validate_snapshot(dict(zip(columns, row)))
+    validate_discoveries(connection)
     validate_purges(connection)
 
 

@@ -39,11 +39,14 @@ class Collector:
         if item not in self.gaps:
             self.gaps.append(item)
 
+    max_requests = 3
+    request_options = {}
+
     def request(self, name, endpoint, params=None):
         self.guard()
         if not in_window(self.day, self.now()):
             raise WindowExpired('竞价采集窗口已结束，不请求或补造盘前数据')
-        if len(self.sources) >= 3:
+        if len(self.sources) >= self.max_requests:
             raise ValueError('竞价逻辑请求超过冻结预算')
         params = params or {}
         record = {'name': name, 'source': 'fuyao', 'endpoint': endpoint, 'params': params,
@@ -54,7 +57,7 @@ class Collector:
                 self.guard()
                 if not in_window(self.day, self.now()):
                     raise WindowExpired('竞价采集已过09:30，不再请求或重试来源')
-            body = self.adapter.request(endpoint, params, before_attempt=before_attempt)
+            body = self.adapter.request(endpoint, params, before_attempt=before_attempt, **self.request_options)
             self.guard()
             received = self.now()
             record['received_at'] = received.isoformat()

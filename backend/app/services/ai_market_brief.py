@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from app.core import dumps
 from app.infrastructure.config import sqlite_path
+from app.services import auction_followup
 from app.services.auction_integrity import validate_snapshot
 from app.services.auction_topic_summary import build_topic_summary
 
@@ -68,6 +69,11 @@ def _metadata(connection, day):
                 'content_sha256,length(CAST(payload_json AS BLOB)) AS payload_bytes FROM ' + table +
                 ' WHERE trade_date=?', (day,)).fetchone()
         result[kind] = dict(row) if row else None
+    if result['auction'] and (discovery := auction_followup.discovery_metadata(connection, day)):
+        if discovery['primary_snapshot_id'] == result['auction']['snapshot_id']:
+            result['auction_discovery'] = discovery
+            if opening := auction_followup.opening_metadata(connection, day):
+                result['auction_opening'] = opening
     return result
 
 
@@ -107,7 +113,8 @@ def _block(kind, day, metadata, data, metric_rows):
     dates = {'trade_date': day}
     dates.update(_pick(metadata, 'collected_start_at', 'collected_end_at', 'generated_at_ms',
                        'noon_collected_start_at', 'noon_collected_end_at'))
-    labels = {'auction': '盘前竞价候选摘要', 'noon': '午间行情摘要', 'noon_close': '午间至收盘变化'}
+    labels = {'auction': '盘前竞价候选摘要', 'auction_discovery': '竞价发现与开盘验证',
+              'noon': '午间行情摘要', 'noon_close': '午间至收盘变化'}
     # Preserve the entire direction row or omit it with an explicit scope note;
     # never trim a date/unit/counter-example field to make the body fit.
     while len(dumps(data).encode()) > MAX_BRIEF_DATA_BYTES:
@@ -146,6 +153,52 @@ def _auction(payload, metadata, day):
         ('up', '候选高开', '家'), ('down', '候选低开', '家'),
         ('median_pct', '候选竞价涨幅中位数', '%'), ('amount', '候选竞价成交额', 'CNY'))]
     return _block('auction', day, metadata, data, metric_rows)
+
+
+def _discovery(connection, day, metadata, opening_metadata):
+    from app.services.auction_discovery import read_view
+
+    view = read_view(day, connection=connection)
+    if (view.get('date') != day or any(view.get(key) != value for key, value in metadata.items())
+            or not auction_followup.model_input_allowed(view)):
+        raise ValueError('竞价发现与所选日冻结来源不符')
+    stock_fields = ('instrument_id', 'name', 'auction_pct', 'auction_amount', 'previous_board_count')
+    directions = _directions([
+        {**row, 'topic_code': row['instrument_id'],
+         'stocks': [_pick(stock, *stock_fields) for stock in row['stocks'][:2]]}
+        for row in view.get('directions', ())
+    ], order='stock_count', fields=('stock_count', 'median_auction_pct', 'total_auction_amount', 'stocks'))
+    data = {'state': view['state'],
+            'scope': '供应商竞价异动中已核验终态的样本，行业与题材可能重叠。成交额单位为元，涨幅单位为%。',
+            'coverage': _pick(view.get('coverage') or {}, 'pages', 'events', 'candidates', 'valid', 'has_more'),
+            'directions': directions, 'reason': view.get('reason'), 'captured_at_ms': view.get('captured_at_ms')}
+    if not any(directions.values()):
+        data['stock_examples'] = [_pick(stock, *stock_fields) for stock in view.get('stocks', ())[:3]]
+    metric_rows = [('valid', '竞价发现已核验终态样本', data['coverage'].get('valid'), '家')]
+    if opening_metadata:
+        try:
+            opening = auction_followup.read_opening(connection, day, opening_metadata)
+            comparison = auction_followup.compare(view, opening)
+        except (ValueError, TypeError, KeyError, HTTPException):
+            comparison = None
+        if comparison:
+            compare_by_code = {row['instrument_id']: row for row in comparison['directions']}
+            for group in directions.values():
+                for row in group:
+                    if compare := compare_by_code.get(row['topic_code']):
+                        row['opening_comparison'] = _pick(compare, 'comparable', 'median_change_pp')
+            data['opening_comparison'] = _pick(
+                comparison, 'sample_count', 'comparable', 'strengthened', 'faded',
+                'turned_positive', 'opening_at', 'examples', 'scope')
+            metadata = {**metadata, 'opening': opening_metadata}
+            metric_rows.extend((key, label, comparison[key], '家') for key, label in (
+                ('comparable', '竞价与开盘首轮同股可比样本'), ('strengthened', '开盘首轮较竞价涨幅扩大'),
+                ('faded', '开盘首轮较竞价涨幅回落'), ('turned_positive', '竞价未涨且开盘首轮转涨')))
+        else:
+            data['opening_state'] = 'unknown'
+    else:
+        data['opening_state'] = 'not_saved'
+    return _block('auction_discovery', day, metadata, data, metric_rows)
 
 
 def _noon(payload, metadata, day):
@@ -223,7 +276,8 @@ def build_briefs(day, *, source_path=None):
                                    'reason': '所选日未留存此时点资料，不能倒造或称为今日数据'})
         return result
     try:
-        for kind, metadata in before.items():
+        for kind in TABLES:
+            metadata = before[kind]
             reason = None
             if metadata is None:
                 reason = '所选日未采集或已清理此时点资料，不以更早日期替代'
@@ -267,8 +321,14 @@ def build_briefs(day, *, source_path=None):
             if reason:
                 result['gaps'].append({'capability': kind + '_brief', 'source': 'saved_' + kind,
                                        'state': 'unknown', 'date': day, 'reason': reason})
+            elif kind == 'auction' and (discovery := before.get('auction_discovery')):
+                try:
+                    result['blocks'].append(_discovery(connection, day, discovery, before.get('auction_opening')))
+                except (ValueError, TypeError, KeyError, HTTPException):
+                    result['gaps'].append({'capability': 'auction_discovery_brief', 'source': 'saved_auction_discovery',
+                                           'state': 'unknown', 'date': day, 'reason': '竞价发现来源未通过核验'})
     finally:
         connection.close()
     if before != observe():
-        raise HTTPException(409, '构建期间竞价、午评或收盘回看版本变化，请重新预览')
+        raise HTTPException(409, '构建期间时点资料版本变化，请重新预览')
     return result

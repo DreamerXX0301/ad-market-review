@@ -245,6 +245,37 @@ export default function AutomaticReviewSettings({
               北京时间{" "}
               <strong className="automatic-review-fixed-time">09:25:30</strong>
             </div>
+            {value?.auction_discovery && (
+              <label className="automatic-review-toggle">
+                <input
+                  type="checkbox"
+                  checked={value.auction_discovery.enabled}
+                  disabled={
+                    pending ||
+                    !active ||
+                    unavailable ||
+                    (!value.auction.enabled && !value.auction_discovery.enabled)
+                  }
+                  onChange={(event) => {
+                    setDraft({
+                      ...value,
+                      auction_discovery: {
+                        revision: value.auction_discovery!.revision,
+                        enabled: event.target.checked,
+                      },
+                    });
+                    setError("");
+                    setNotice("");
+                  }}
+                />
+                <span>
+                  <strong>今日竞价发现</strong>
+                  <small>
+                    重点名单保存后，查找市场异动并补查部分昨日重点股
+                  </small>
+                </span>
+              </label>
+            )}
             <div className="automatic-review-check">
               {saved?.auction.reason ? (
                 <p>{automaticStatusText(saved.auction.reason)}</p>

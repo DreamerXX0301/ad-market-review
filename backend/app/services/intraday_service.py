@@ -10,6 +10,7 @@ from app.adapters.providers import ProviderError
 from app.core import connect, digest, dumps, get_market, new_id, published_dir
 from app.services import task_service as tasks
 from app.services.increment_access import require_business_unlocked
+from app.services.intraday_discovery import build_intraday_discovery
 from app.services.noon_analysis import INDEX_NAMES, normalize_pool, normalize_quotes, number
 from app.services.noon_collection import (CHINA, WindowExpired, canonical, contains_secret,
     STOCK_CODE, items, paged, source_time, trading_days)
@@ -139,7 +140,7 @@ def read_view(day=None):
         if value:
             snapshots.append({k: v for k, v in value.items()
                               if k not in ('version', 'comparison_input', 'source_checks', 'sealed_pool_input',
-                                           'member_reference')})
+                                           'member_reference')} | {'discovery': build_intraday_discovery(value)})
     retained_slots = {row['slot'] for row in rows}
     return dict(date=day, today=today, state=latest['status'] if latest and latest['status'] in ('queued', 'running')
                 else 'available' if snapshots else latest['status'] if latest else 'not_collected',

@@ -280,7 +280,7 @@ def _previous_context(market, day, previous, known_at):
                 'gaps': ['严格前日材料未通过核验，未读取更早日期或今天题材替代。']}
 
 
-def _universe(market, explicit, previous, known_at):
+def _universe(market, explicit, previous, known_at, *, discovery_overflow=False):
     try:
         names = {row['instrument_id']: row.get('name') or row['instrument_id']
                  for row in market.instruments(limit=10000) if isinstance(row, dict) and isinstance(row.get('instrument_id'), str)}
@@ -333,10 +333,23 @@ def _universe(market, explicit, previous, known_at):
             if not explicit or symbol in candidates:
                 add(symbol, label, row.get('name'), row.get('previous_board_count') if key == 'limit_up' else None)
     values = list(candidates.values())
-    return {'mode': 'explicit' if explicit else 'watchlist_previous_events', 'items': values[:MAX_SYMBOLS],
+    selected = values[:MAX_SYMBOLS]
+    if not explicit and len(values) > MAX_SYMBOLS:
+        # Reserve up to 20 places for yesterday's highest verified multi-board stocks.
+        leaders = sorted((row for row in values if (row['previous_board_count'] or 0) >= 2),
+                         key=lambda row: (-row['previous_board_count'], row['instrument_id']))[:20]
+        reserved = {row['instrument_id'] for row in leaders}
+        remaining = [row for row in values if row['instrument_id'] not in reserved][:MAX_SYMBOLS - len(reserved)]
+        included = reserved | {row['instrument_id'] for row in remaining}
+        selected = [row for row in values if row['instrument_id'] in included]
+    result = {'mode': 'explicit' if explicit else 'watchlist_previous_events', 'items': selected,
             'requested': min(len(values), MAX_SYMBOLS), 'total_candidates': len(values),
             'omitted': max(0, len(values) - MAX_SYMBOLS),
-            'scope': '显式名单只使用所列代码；默认按前日留存复盘关注、前日观察及逐股主线、自选、前日涨停高度、前日炸板顺序冻结，最多100只。未纳入部分不请求、不推断。'}
+            'scope': '显式名单只使用所列代码；默认按前日复盘与主线、自选、前日涨停及炸板顺序冻结，最多100只。超额时给最多20只已核验前日高标和连板股保留名额；这里的统计只覆盖原名单。'}
+    if discovery_overflow and not explicit:
+        selected_codes = {row['instrument_id'] for row in selected}
+        result['discovery_overflow'] = [row for row in values if row['instrument_id'] not in selected_codes][:40]
+    return result
 
 
 def _compact_previous(previous, universe):
@@ -372,9 +385,27 @@ def _freeze_inputs(job, market, previous, known_at, adapter):
             raise ValueError('原竞价冻结输入与严格前日不符')
         return frozen
     context = _previous_context(market, job['target_date'], previous, known_at)
-    universe = _universe(market, params.get('instrument_ids', []), context, known_at)
+    proof = (params.get('automation') or {}).get('discovery')
+    discovery = False
+    if isinstance(proof, dict):
+        from app.services.auction_automation import discovery_authorized
+        try:
+            with connect() as connection:
+                discovery = discovery_authorized(connection, proof)
+        except ValueError:
+            discovery = False
+    universe = _universe(market, params.get('instrument_ids', []), context, known_at, discovery_overflow=discovery)
     frozen = {'previous_date': previous, 'known_at_ms': known_at, 'universe': universe,
               'previous_review': _compact_previous(context, universe)}
+    if discovery:
+        frozen['discovery_overflow'] = universe.pop('discovery_overflow', [])
+        cohort = (context.get('event_cohorts') or {}).get('limit_up') or {}
+        frozen['discovery_previous_heights'] = {
+            item['instrument_id']: item['previous_board_count'] for item in cohort.get('items', [])
+            if cohort.get('date') == previous and isinstance(item, dict)
+            and type(item.get('previous_board_count')) is int and item['previous_board_count'] > 0
+            and isinstance(item.get('instrument_id'), str) and STOCK_CODE.fullmatch(item['instrument_id'])
+        }
     status_reader = getattr(market, 'status', None)
     status = status_reader() if callable(status_reader) else {}
     if isinstance(status, dict) and isinstance(status.get('snapshot_id'), str):
@@ -432,6 +463,20 @@ def execute_capture(job, callback=None):
         raise
     if enabled:
         automatic.record_outcome(job, 'available')
+        authorization = json.loads(job['parameters_json']).get('automation') or {}
+        if isinstance(authorization.get('discovery'), dict):
+            from app.services.auction_discovery import collect_after_primary
+            try:
+                collect_after_primary(job, result['snapshot_id'], authorization, callback)
+            except Exception:
+                # The observation snapshot already committed. A failure of the
+                # independent stage cannot turn that successful job into a retry.
+                try:
+                    with connect() as connection:
+                        tasks.append_event(connection, job['job_id'], 'auction_discovery_failed',
+                                           '竞价发现未独立留存，原观察结果已保存', 'warning')
+                except Exception:
+                    pass
     return result
 
 

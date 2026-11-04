@@ -22,7 +22,7 @@ from app.core import digest, dumps
 from app.infrastructure.config import data_dir, sqlite_path
 from app.services import ai_contexts as contexts
 from app.services import ai_market_brief as briefs
-from app.services.ai_tool_budget import DETAIL_SECTIONS, GAINERS_LOOKUP_MODES, TREND_PERIODS, TREND_WINDOWS, classify_tool
+from app.services.ai_tool_budget import DETAIL_SECTIONS, GAINERS_LOOKUP_MODES, INTRADAY_SLOTS, TREND_PERIODS, TREND_WINDOWS, classify_tool
 from app.services.sync_clock import CHINA, local_now
 
 MAX_RESULT_BYTES = 24 * 1024
@@ -36,9 +36,14 @@ MAX_DETAIL_ROWS = 30
 def tool_schemas():
     """Responses function tools; names/arguments never accept filesystem/SQL."""
     specs = [
-        ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。未到时点与已到但未采集分开；成交额不是净流入。',
+        ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。auction包含已核验竞价发现和10:00同股开盘对照（如已保存），覆盖只限异动样本。未到时点与已到但未采集分开；成交额不是净流入。',
          {'date': {'type': 'string', 'description': '用户明确日期YYYY-MM-DD，或today；今天不沿用旧页面日期'},
           'section': {'type': 'string', 'enum': list(SECTIONS)}}, ['date', 'section']),
+        ('read_intraday_data', '读取所选日期盘中观察的已保存快照，包含盘中新方向、延续、走弱、板块指数和个股样本、封炸板与成交额。研究盘中情况或盘中轮动且未指定时段用all，一次返回六个时点的有界摘要。指定时点用对应键；北京时间10:00用1000，10:30用1030，11:00用1100，13:30用1330，14:00用1400，14:30用1430。竞价、午评和收盘用read_market_data。',
+         {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'},
+          'slot': {'type': 'string', 'enum': list(INTRADAY_SLOTS)},
+          'query': {'type': 'string', 'description': '题材或股票名称、代码，最多80字；整体研究传空串'}},
+         ['date', 'slot', 'query']),
         ('read_stock_research', '读取当前实例已保存且未过期的公司研究，包括已核验的主营、财报与现金流、估值市值、股东户数和公告线索。不联网、不延长缓存。instrument_id空串沿用当前页面个股；仅无当前报告时可读同股旧会话材料并明确旧日期。',
          {'instrument_id': {'type': 'string', 'description': '完整六位代码加.SH/.SZ/.BJ；空串沿用页面个股'}}, ['instrument_id']),
         ('check_data_availability', '只检查指定日已保存资料及北京时间观察阶段，不取新数据、不把工作日猜作已核验交易日。',
@@ -229,6 +234,8 @@ def _add_blocks(result, day, selected, kinds):
             continue
         data = briefs.build_briefs(day, source_path=path)
         mapping = {_BRIEF_KIND[phase]: phase for phase in wanted}
+        if 'auction' in wanted:
+            mapping['auction_discovery'] = 'auction'
         for block in data['blocks']:
             key = block['evidence']['evidence_id'].split(':')[-1]
             if key not in mapping:
@@ -929,6 +936,12 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
             from app.services.supplement_access import supplement_access
             with supplement_access():
                 _stock_trend(result, args, day, page_context or {}, now)
+        elif name == 'read_intraday_data':
+            classify_tool(name, args)
+            day = _day(args['date'], now)
+            result['date'] = day
+            from app.services.ai_intraday_read import fill_intraday
+            fill_intraday(result, day, args['slot'], args['query'].strip(), now)
         elif name in ('read_stock_quote', 'read_limit_up_data', 'read_market_detail'):
             permitted = ({'date', 'instrument_id'} if name == 'read_stock_quote' else
                          {'date', 'section', 'query'} if name == 'read_market_detail' else {'date'})

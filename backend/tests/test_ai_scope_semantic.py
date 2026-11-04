@@ -98,7 +98,7 @@ def test_plan_schema_uses_strict_declared_tool_arguments():
     assert set(params['required']) == semantic.ARGUMENT_KEYS
     branches = params['properties']['reads']['items']['anyOf']
     assert {branch['properties']['name']['enum'][0] for branch in branches} == {
-        'read_market_data', 'read_stock_research', 'check_data_availability',
+        'read_market_data', 'read_intraday_data', 'read_stock_research', 'check_data_availability',
         'read_stock_quote', 'read_stock_trend', 'read_limit_up_data', 'read_market_detail',
     }
     assert all(branch['additionalProperties'] is False

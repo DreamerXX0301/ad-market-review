@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 38,
+  "migration_version": 39,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -150,15 +150,19 @@
     {
       "name": "038_intraday_briefs.sql",
       "sha256": "e84574f5190c92ea2716d829e057d1c0718e3550b430a4e870bcedb339177bd0"
+    },
+    {
+      "name": "039_auction_discovery.sql",
+      "sha256": "01681f2b4b20912a050e37256bb792c2482c15a0f46cd3622f3373b97ddd17da"
     }
   ],
   "counts": {
-    "table": 79,
+    "table": 80,
     "index": 53,
     "view": 1,
-    "trigger": 146
+    "trigger": 149
   },
-  "schema_sha256": "cfd1aa30f73da8c19d5f197fbbb5ff861d592975dec3ae84234e359a4d9b6408",
+  "schema_sha256": "a59956721f111f1d9e0428e19d8f88bee94676fb99333524fb83145b75fe23ba",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -2738,6 +2742,95 @@
         "retain_auction_capture_delete",
         "retain_auction_capture_replace",
         "retain_auction_capture_update"
+      ]
+    },
+    "market_auction_discovery": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "job_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "primary_snapshot_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "recorded_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "content_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "payload_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "market_auction_snapshot",
+          "from": "primary_snapshot_id",
+          "to": "snapshot_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "job",
+          "from": "job_id",
+          "to": "job_id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "market_auction_capture",
+          "from": "trade_date",
+          "to": "trade_date",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "triggers": [
+        "guard_auction_discovery_identity",
+        "retain_auction_discovery_delete",
+        "retain_auction_discovery_update"
       ]
     },
     "market_auction_purge": {

@@ -45,11 +45,29 @@ def test_get_is_local_and_preserves_three_default_off_settings(configured, monke
     view = response.json()
     assert view['revision'] == 0 and view['policy']['after_close_not_before'] == '17:00'
     assert view['after_close'] == {'enabled': False, 'time': '17:00'}
+    assert view['auction_discovery'] == {'enabled': False, 'revision': 0}
     assert view['auction'] == {'enabled': False, 'revision': 0, 'mode': 'off',
         'fixed_time': '09:25:30', 'window_end': '09:30:00', 'can_enable': True, 'reason': None,
         'next_run_at': None, 'last_run': None, 'worker': {'alive': False, 'last_heartbeat_at_ms': None},
         'legacy_configuration': False, 'legacy_instrument_count': 0}
     assert facts() == before
+
+
+def test_discovery_uses_independent_opt_in_and_revokes_frozen_authority(configured):
+    request = {**payload(), 'auction_discovery': {'enabled': True, 'expected_revision': 0}}
+    assert settings.configure(request)['auction_discovery'] == {'enabled': True, 'revision': 1}
+    auction.tick()
+    with core.connect() as connection:
+        params = json.loads(connection.execute('SELECT parameters_json FROM job').fetchone()[0])
+        proof = params['automation']['discovery']
+        assert auction.discovery_authorized(connection, proof)
+        assert not auction.discovery_authorized(connection, None)
+    request = {**payload(expected=1, auction_revision=1),
+               'auction_discovery': {'enabled': False, 'expected_revision': 1}}
+    assert settings.configure(request)['auction_discovery'] == {'enabled': False, 'revision': 2}
+    with core.connect() as connection:
+        assert not auction.discovery_authorized(connection, proof)
+        assert connection.execute('SELECT status FROM job').fetchone()[0] == 'queued'
 
 
 def test_combined_put_is_atomic_and_repeated_save_is_idempotent(configured):

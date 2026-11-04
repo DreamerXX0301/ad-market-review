@@ -105,7 +105,7 @@ export default function AuctionFeedback({
   );
   return (
     <Panel
-      title="昨日 → 今日：强弱对照"
+      title="昨日重点反馈"
       subtitle="保留强弱分类；组内先按昨日板高、再按竞价涨幅降序。板高与行业概念可组合筛选。"
     >
       {onHeightSelect && (

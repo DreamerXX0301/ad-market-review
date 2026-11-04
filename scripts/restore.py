@@ -34,21 +34,24 @@ def disable_automatic_review(connection, now):
                        (json.dumps(config,ensure_ascii=False,sort_keys=True,separators=(',',':')),now,key))
     return True
 
-def disable_intraday_automation(connection, now):
+def disable_switch_automation(connection, now, key):
     if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='platform_setting'").fetchone():
         return False
-    key = 'intraday-automation-v1'
     row = connection.execute('SELECT value_json FROM platform_setting WHERE key=?', (key,)).fetchone()
     if row is None:
         return False
     config = json.loads(row[0])
     if (not isinstance(config, dict) or type(config.get('enabled')) is not bool
             or type(config.get('revision')) is not int or config['revision'] < 0):
-        raise ValueError('Invalid automatic intraday configuration in backup')
+        raise ValueError(f'Invalid automation configuration in backup: {key}')
     config.update(enabled=False, revision=config['revision'] + 1)
     connection.execute('UPDATE platform_setting SET value_json=?,updated_at_ms=? WHERE key=?',
                        (json.dumps(config, ensure_ascii=False, separators=(',', ':')), now, key))
     return True
+
+
+def disable_intraday_automation(connection, now):
+    return disable_switch_automation(connection, now, 'intraday-automation-v1')
 
 
 def disable_ai(connection, now):
@@ -157,6 +160,7 @@ def perform_restore(bundle,target):
             c.execute("DELETE FROM retention_pin WHERE owner_kind='request' OR (owner_kind='backup' AND owner_id=?)",(manifest['backup_id'],))
             automatic_review_disabled=disable_automatic_review(c,now)
             intraday_automation_disabled=disable_intraday_automation(c,now)
+            auction_discovery_disabled=disable_switch_automation(c,now,'auction-discovery-automation-v1')
             ai=disable_ai(c,now)
             automation_disabled=False
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_automation'").fetchone():
@@ -175,6 +179,8 @@ def perform_restore(bundle,target):
         result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts')),'auction_automation_disabled':automation_disabled,'automatic_review_disabled':automatic_review_disabled,'ai_disabled':ai['disabled'],'ai_interrupted_tasks':ai['interrupted_tasks'],'ai_cancelled_tasks':ai['cancelled_tasks']}
         if intraday_automation_disabled:
             result['intraday_automation_disabled'] = True
+        if auction_discovery_disabled:
+            result['auction_discovery_disabled'] = True
         (stage/'restore-report.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
         os.replace(stage,target)
         return {**result,'target':str(target)}

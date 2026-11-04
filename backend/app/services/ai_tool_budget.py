@@ -21,6 +21,7 @@ GAINERS_LOOKUP_MODES = {'gainers_topic': 'topic_id', 'gainers_related': 'related
 TREND_PERIODS = ('D', 'W', 'M')
 TREND_WINDOWS = ('5', '10', '12', '20', '30', '40', '60')
 DETAIL_SECTIONS = ('indices', 'sectors', 'emotion', 'gainers', 'abnormal', 'broken_boards', *GAINERS_LOOKUP_MODES)
+INTRADAY_SLOTS = ('all', '1000', '1030', '1100', '1330', '1400', '1430')
 
 
 def _day(value):
@@ -50,6 +51,13 @@ def classify_tool(name, args):
             raise ValueError('invalid_tool_arguments')
         _day(args['date'])
         return 'availability'
+    if name == 'read_intraday_data':
+        if (set(args) != {'date', 'slot', 'query'} or args['slot'] not in INTRADAY_SLOTS
+                or not isinstance(args['query'], str) or len(args['query']) > 80
+                or any(ord(char) < 32 for char in args['query'])):
+            raise ValueError('invalid_tool_arguments')
+        _day(args['date'])
+        return 'data'
     if name == 'read_stock_research':
         if (set(args) != {'instrument_id'} or not isinstance(args['instrument_id'], str)
                 or (args['instrument_id'] != ''

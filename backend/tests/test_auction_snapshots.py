@@ -251,6 +251,21 @@ def test_default_universe_freezes_top100_and_reports_omitted(isolated):
     assert len(isolated.source.calls[1][1]['thscodes'].split(',')) == 100
 
 
+def test_yesterday_leader_is_reserved_even_when_watchlist_fills_first_batch(isolated):
+    leader = '600001.SH'
+    with core.connect() as connection:
+        for index in range(130):
+            connection.execute('''INSERT INTO watchlist_item(instrument_id,source_kind,source_name,
+                added_business_date,event_basis_json,created_at_ms) VALUES(?,'stock','合成测试',?,'{}',?)''',
+                (f'{index:06d}.SZ', PREVIOUS, int(NOW.timestamp() * 1000) - index))
+    universe = service._universe(isolated.market, [], isolated.previous, int(NOW.timestamp() * 1000),
+                                 discovery_overflow=True)
+    assert universe['requested'] == 100 and universe['omitted'] == 31
+    selected = {row['instrument_id'] for row in universe['items']}
+    overflow = {row['instrument_id'] for row in universe['discovery_overflow']}
+    assert leader in selected and '000099.SZ' in overflow and not selected & overflow
+
+
 def test_not_ready_numeric_fields_fail_without_success_then_retry_same_job_keeps_frozen_inputs(isolated):
     def not_ready(path, _params):
         if path.endswith('/auction/snapshot'):

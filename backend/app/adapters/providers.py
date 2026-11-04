@@ -164,7 +164,7 @@ class ProviderClient:
         self.source_id, self.key = source_id, key
         self.last_request = 0.0
 
-    def request(self, path, params=None, *, before_attempt=None):
+    def request(self, path, params=None, *, before_attempt=None, max_attempts=3, timeout=None):
         if self.source_id != "tickflow-public" and not self.key:
             raise ProviderError("请先配置该来源的Key；注册免费Key不等于付费会员", 401)
         headers = {"User-Agent": "ShixuWorkbench/0.1", "Accept": "application/json"}
@@ -173,7 +173,8 @@ class ProviderClient:
         params = {k: str(v).lower() if isinstance(v, bool) else v for k, v in (params or {}).items()}
         pacing = _SECTOR_TAIL_PACING.get() if self.source_id == 'fuyao' and path == '/api/a-share-index/prices/historical' else None
         with _request_connection(self) as (client, state):
-            for attempt in range(3):
+            for attempt in range(max_attempts):
+                can_retry = attempt + 1 < max_attempts
                 if pacing is not None:
                     pacing.before_request()
                 else:
@@ -186,7 +187,8 @@ class ProviderClient:
                     before_attempt()
                 try:
                     try:
-                        response = client.get(self.BASES[self.source_id] + path, params=params, headers=headers)
+                        options = {'timeout': timeout} if timeout is not None else {}
+                        response = client.get(self.BASES[self.source_id] + path, params=params, headers=headers, **options)
                     finally:
                         # Transport failures also consume the request interval.
                         self.last_request = state['last_request'] = time.monotonic()
@@ -194,7 +196,7 @@ class ProviderClient:
                         pacing.blocked = ProviderError('来源拒绝本次板块尾部请求，已停止新增请求', status=response.status_code)
                         raise pacing.blocked
                     if response.status_code == 429 or response.status_code >= 500:
-                        if attempt < 2:
+                        if can_retry:
                             (pacing.wait if pacing is not None else time.sleep)(2 ** attempt * 2)
                             continue
                     if response.status_code != 200:
@@ -207,7 +209,7 @@ class ProviderClient:
                         if pacing is not None and code in (2001, 2003, 4001):
                             pacing.blocked = ProviderError('来源认证、权限或限流拒绝，已停止新增板块尾部请求', code=code)
                             raise pacing.blocked
-                        if (code == 4001 or str(code).startswith("5")) and attempt < 2:
+                        if (code == 4001 or str(code).startswith("5")) and can_retry:
                             (pacing.wait if pacing is not None else time.sleep)(2 ** attempt * 2)
                             continue
                         raise ProviderError("来源业务响应未通过（code=" + str(code) + "）", code=code)
@@ -217,7 +219,7 @@ class ProviderClient:
                 except (httpx.HTTPError, ValueError) as error:
                     if isinstance(error, ProviderError):
                         raise
-                    if attempt == 2:
+                    if not can_retry:
                         raise ProviderError("来源连接或数据格式异常，已有限重试；请稍后再试") from None
                     (pacing.wait if pacing is not None else time.sleep)(2 ** attempt)
         raise ProviderError("来源请求未完成")

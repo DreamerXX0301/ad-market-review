@@ -5,10 +5,11 @@ from datetime import date, timedelta
 import json
 
 from app.core import connect, now_ms
-from app.services.auction_integrity import LIMIT, validate_snapshot
+from app.services.auction_integrity import LIMIT, validate_discovery, validate_snapshot
 from app.services.supplement_access import supplement_access
 
 VERSION = 'auction-retention-28d-v1'
+DISCOVERY_POLICY = 'auction-discovery-retention-v1'
 WINDOW_DAYS = 28
 MAX_SNAPSHOTS = 32
 MAX_BYTES = 128 * 1024 * 1024
@@ -16,7 +17,7 @@ MAX_REFERENCE_BYTES = 256 * 1024 * 1024
 MAX_REFERENCE_ROWS = 100000
 NOTICE = '保留28个自然日，到期随成功盘后增量自动清理快照正文及内嵌原件；未运行增量时暂留。小型采集日账与清理回执继续保留。'
 _INTERNAL = {'_schema_migration', 'market_auction_capture', 'market_auction_purge',
-             'market_auction_automation_run', 'job_event', 'sync_batch', 'snapshot_gc',
+             'market_auction_automation_run', 'market_auction_discovery', 'job_event', 'sync_batch', 'snapshot_gc',
              'market_storage_collection', 'market_storage_collection_file',
              'supplement_retention_run', 'supplement_retention_file',
              'workspace_purge', 'workspace_purge_file', 'workspace_purge_audit'}
@@ -123,6 +124,11 @@ def _protection_snapshot(connection, snapshots):
     return protected, reason, after
 
 
+def _discovery_authorized(connection, job_id):
+    saved = connection.execute('SELECT parameters_json FROM job WHERE job_id=?', (job_id,)).fetchone()
+    return bool(saved and json.loads(saved[0]).get('auction_discovery_retention_policy') == DISCOVERY_POLICY)
+
+
 def _receipt(connection, snapshot, job_id, anchor, cutoff, status, reason, sequence, evidence_count, *, in_transaction=False):
     if not in_transaction:
         connection.execute('BEGIN IMMEDIATE')
@@ -169,8 +175,22 @@ def _collect(job_id, result):
                 except ValueError:
                     raise ValueError('竞价正文或内嵌来源未通过完整性核验，保留原记录') from None
                 evidence_count = len(payload['evidence'])
-                size = len(snapshot['payload_json'].encode())
-                if size > LIMIT or total_bytes + size > MAX_BYTES:
+                primary_size = len(snapshot['payload_json'].encode())
+                discovery = ledger.execute('SELECT * FROM market_auction_discovery WHERE primary_snapshot_id=?',
+                                           (identifier,)).fetchone()
+                size = primary_size
+                if discovery:
+                    if not _discovery_authorized(ledger, job_id):
+                        report['protected_snapshots'] += 1
+                        _receipt(ledger, snapshot, job_id, anchor, cutoff, 'protected',
+                                 '旧冻结任务未授权清理竞价发现，保留竞价及发现资料', sequence, evidence_count)
+                        continue
+                    try:
+                        validate_discovery(dict(discovery))
+                    except ValueError:
+                        raise ValueError('竞价发现记录未通过完整性核验，保留原记录') from None
+                    size += len(discovery['payload_json'].encode())
+                if primary_size > LIMIT or total_bytes + size > MAX_BYTES:
                     report['warnings'].append('本轮竞价清理达到有界容量，剩余下次增量处理')
                     break
                 total_bytes += size
@@ -192,8 +212,14 @@ def _collect(job_id, result):
                 current_anchor, stopped = _anchor(ledger, job_id, result)
                 if stopped or current_anchor != anchor or ledger.execute("SELECT 1 FROM retention_pin WHERE owner_kind='backup' LIMIT 1").fetchone():
                     raise ValueError('竞价清理边界的授权或备份保护已变化')
+                if discovery and not _discovery_authorized(ledger, job_id):
+                    raise ValueError('竞价发现的清理授权已变化')
                 ledger.create_function('auction_purge_allowed', 1, lambda value: int(value == identifier))
                 try:
+                    if discovery and ledger.execute('''DELETE FROM market_auction_discovery
+                            WHERE primary_snapshot_id=? AND content_sha256=?''',
+                            (identifier, discovery['content_sha256'])).rowcount != 1:
+                        raise ValueError('竞价发现身份已变化，未确认删除')
                     deleted = ledger.execute('DELETE FROM market_auction_snapshot WHERE snapshot_id=? AND content_sha256=?',
                                              (identifier, snapshot['content_sha256'])).rowcount
                 finally:

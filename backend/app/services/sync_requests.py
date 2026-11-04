@@ -40,5 +40,7 @@ def create_sync_request(payload: dict):
         parameters['line_alert_retention_version']=line_retention_version
         parameters['noon_retention_policy']='noon-retention-28d-v1'
         parameters['auction_retention_policy']='auction-retention-28d-v1'
+        from app.services.auction_retention import DISCOVERY_POLICY
+        parameters['auction_discovery_retention_policy']=DISCOVERY_POLICY
         parameters['noon_close_policy']='noon-close-v1'
     return task_service.create_task(mode,parameters,request_key=payload.get('request_key'))

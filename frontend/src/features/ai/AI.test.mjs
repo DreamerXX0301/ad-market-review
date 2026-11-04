@@ -391,6 +391,18 @@ const shortcut = renderToStaticMarkup(
 );
 assert.match(shortcut, /href="#ai\?ai_kind=market&amp;ai_day=2026-10-30"/);
 assert.ok(!shortcut.includes("textarea") && !shortcut.includes("ai-workspace"));
+const stageShortcut = renderToStaticMarkup(
+  createElement(AIEntry, {
+    kind: "market",
+    asOf: "2026-10-30",
+    marketStage: "1430",
+  }),
+);
+assert.match(stageShortcut, /AI 解读当前时点/);
+assert.match(
+  stageShortcut,
+  /href="#ai\?ai_kind=market&amp;ai_day=2026-10-30&amp;ai_stage=1430"/,
+);
 const noApi = encode(
   'export function useApi(){throw Error("hook not expected")} export function usePageActive(){return false}',
 );

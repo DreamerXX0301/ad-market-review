@@ -36,6 +36,7 @@ export interface AIWorkspaceProps {
   reportId?: string;
   instrumentId?: string;
   asOf?: string;
+  initialQuestion?: string;
   onConfigure?: () => void;
   onBusyChange?: (busy: boolean) => void;
   allHistory?: boolean;
@@ -48,6 +49,7 @@ export default function AIWorkspace({
   reportId,
   instrumentId,
   asOf,
+  initialQuestion,
   onConfigure,
   onBusyChange,
   allHistory = false,
@@ -70,7 +72,9 @@ export default function AIWorkspace({
       : "",
   );
   const [taskId, setTaskId] = useState("");
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() =>
+    sessionId ? "" : initialQuestion || "",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState("");

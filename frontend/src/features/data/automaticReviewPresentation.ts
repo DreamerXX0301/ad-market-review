@@ -21,6 +21,7 @@ export type AutomaticReviewSettingsValue = {
   noon: AutomaticPlan;
   after_close: AutomaticPlan;
   auction: AutomaticAuctionPlan;
+  auction_discovery?: { enabled: boolean; revision: number };
   now?: string;
   last_checks?: { noon?: Row | null; after_close?: Row | null };
   policy?: Row;
@@ -83,6 +84,14 @@ export function automaticReviewSettings(
     !revision(auction.legacy_instrument_count)
   )
     return null;
+  const discovery = value.auction_discovery;
+  if (
+    discovery !== undefined &&
+    (!record(discovery) ||
+      typeof discovery.enabled !== "boolean" ||
+      !revision(discovery.revision))
+  )
+    return null;
   return value as AutomaticReviewSettingsValue;
 }
 
@@ -92,6 +101,7 @@ export function automaticSettingsChanged(
 ): boolean {
   return (
     a.auction.enabled !== b.auction.enabled ||
+    a.auction_discovery?.enabled !== b.auction_discovery?.enabled ||
     (["noon", "after_close"] as const).some(
       (kind) =>
         a[kind].enabled !== b[kind].enabled || a[kind].time !== b[kind].time,
@@ -105,7 +115,8 @@ export function automaticSettingsStale(
 ): boolean {
   return (
     draft.revision !== saved.revision ||
-    draft.auction.revision !== saved.auction.revision
+    draft.auction.revision !== saved.auction.revision ||
+    draft.auction_discovery?.revision !== saved.auction_discovery?.revision
   );
 }
 
@@ -120,6 +131,12 @@ export function automaticSettingsRequest(value: AutomaticReviewSettingsValue) {
       time: value.after_close.time,
     },
     auction: { enabled: value.auction.enabled },
+    ...(value.auction_discovery && {
+      auction_discovery: {
+        enabled: value.auction_discovery.enabled,
+        expected_revision: value.auction_discovery.revision,
+      },
+    }),
   };
 }
 
@@ -144,6 +161,17 @@ export function automaticSavedResponse(
       baseline[kind].time !== submitted[kind].time,
   );
   if (reviewChanged && saved.revision !== baseline.revision + 1) return null;
+  if (
+    baseline.auction_discovery &&
+    submitted.auction_discovery &&
+    saved.auction_discovery?.revision !==
+      baseline.auction_discovery.revision +
+        Number(
+          baseline.auction_discovery.enabled !==
+            submitted.auction_discovery.enabled,
+        )
+  )
+    return null;
   if (
     baseline.auction.enabled !== submitted.auction.enabled &&
     saved.auction.revision !== baseline.auction.revision + 1

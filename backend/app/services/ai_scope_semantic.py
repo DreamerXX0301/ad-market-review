@@ -228,7 +228,7 @@ def classify_frozen_read(request, name, args, *, diagnostic=None):
         invalid('argument_fields', 'arguments')
     for key, rule in declared[name]['properties'].items():
         value = args[key]
-        path = 'arguments.' + key if key in ('date', 'section', 'instrument_id', 'query', 'period', 'count') else 'arguments'
+        path = 'arguments.' + key if key in ('date', 'section', 'instrument_id', 'query', 'period', 'count', 'slot') else 'arguments'
         if not isinstance(value, str):invalid('argument_type', path)
         if 'enum' in rule and value not in rule['enum']:invalid('argument_enum', path)
         if ('minLength' in rule and len(value) < rule['minLength']

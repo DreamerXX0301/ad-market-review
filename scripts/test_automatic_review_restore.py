@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = 'automatic-review-config-v1'
 STATE = 'automatic-review-state-v1'
 CALENDAR = 'automatic-review-calendar-v1'
+DISCOVERY = 'auction-discovery-automation-v1'
 
 
 def _settings(connection):
@@ -40,7 +41,8 @@ def test_restore_disables_both_automatic_systems_without_rewriting_originals(sou
         connection.execute("""INSERT INTO market_auction_automation_run(trade_date,job_id,schedule_revision,
             state,attempts,automatic_control,retry_after_at_ms,created_at_ms,updated_at_ms)
             VALUES('2026-10-19','active',1,'waiting_retry',1,1,100,1,1)""")
-        for key, value in ((CONFIG, config), (STATE, state), (CALENDAR, calendar)):
+        for key, value in ((CONFIG, config), (STATE, state), (CALENDAR, calendar),
+                           (DISCOVERY, {'enabled': True, 'revision': 4})):
             connection.execute('INSERT INTO platform_setting VALUES(?,?,1)',
                                (key, json.dumps(value, ensure_ascii=False)))
         original = _settings(connection)
@@ -50,6 +52,7 @@ def test_restore_disables_both_automatic_systems_without_rewriting_originals(sou
     manifest = verify_backup(bundle); original_bundle = _bundle_sha(bundle)
     report = perform_restore(bundle, tmp_path / 'restored')
     assert report['automatic_review_disabled'] is True and report['auction_automation_disabled'] is True
+    assert report['auction_discovery_disabled'] is True
     assert {'active', 'queued'} <= set(report['paused_jobs'])
     assert _bundle_sha(bundle) == original_bundle
     assert verify_backup(bundle) == manifest
@@ -58,7 +61,8 @@ def test_restore_disables_both_automatic_systems_without_rewriting_originals(sou
         expected = deepcopy(config); expected['revision'] += 1
         expected['noon']['enabled'] = expected['after_close']['enabled'] = False
         assert json.loads(restored.pop(CONFIG)) == expected
-        assert restored == {key: value for key, value in original.items() if key != CONFIG}
+        assert json.loads(restored.pop(DISCOVERY)) == {'enabled': False, 'revision': 5}
+        assert restored == {key: value for key, value in original.items() if key not in (CONFIG, DISCOVERY)}
         assert connection.execute("SELECT mode,revision FROM market_auction_automation").fetchone()[:] == ('off', 2)
         run = connection.execute('SELECT * FROM market_auction_automation_run').fetchone()
         assert run['trade_date'] == '2026-10-19' and run['job_id'] == 'active'

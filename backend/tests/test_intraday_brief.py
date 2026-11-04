@@ -1,10 +1,38 @@
 import json
+from datetime import datetime
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from app.services import intraday_brief as brief, market_service, noon_close_service
+
+DAY = '2026-11-04'
+
+
+def _clock(value, day=DAY):
+    return int(datetime.fromisoformat(f'{day}T{value}+08:00').timestamp() * 1000)
+
+
+def _auction_opening_inputs(day=DAY):
+    stocks = [{'instrument_id': code, 'name': name, 'pre_close_price': 10, 'auction_pct': pct}
+              for code, name, pct in [('600001.SH', '样本甲', 2), ('600002.SH', '样本乙', 4),
+                                      ('600003.SH', '样本丙', -1), ('600004.SH', '昨收不符', 3)]]
+    discovery = {'date': day, 'state': 'partial', 'captured_at_ms': _clock('09:26:00', day),
+                 'recorded_at_ms': _clock('09:26:01', day), 'content_sha256': 'a' * 64,
+                 'coverage': {'valid': 4, 'candidates': 6},
+                 'stocks': stocks, 'directions': [
+                     {'instrument_id': '884229.TI', 'name': '半导体设备', 'stock_count': 3,
+                      'members_observed_date': '2026-11-03', 'stocks': [stocks[i] for i in (0, 1, 3)]}]}
+    opening = {'id': 'verified-opening', 'slot': '1000', 'date': day,
+               'collected_start_at': day + 'T10:00:00+08:00', 'collected_end_at': day + 'T10:01:12+08:00',
+               'comparison_input': {'stocks': [
+                   {'instrument_id': code, 'price_basis': 'none', 'currency': 'CNY',
+                    'prev_close': close, 'change_pct': change}
+                   for code, close, change in [('600001.SH', 10, 6), ('600002.SH', 10, 3),
+                                                ('600003.SH', 10, 1), ('600004.SH', 11, 10),
+                                                ('600005.SH', 10, 8)]]}}
+    return discovery, opening
 
 
 def _projection(slot, up, percent=None):
@@ -26,6 +54,35 @@ def test_cumulative_cutoff_excludes_future_and_late_published_earlier_slots():
     assert [row['status'] for row in output['context']] == ['complete', 'missing', 'complete']
     assert '11:00' not in output['body'] and '15:00' not in output['body']
     assert '10:00 开盘首轮' in output['body']
+
+
+def test_auction_discovery_compares_exact_stocks_and_keeps_evidence_in_cumulative_brief():
+    from app.services.auction_followup import compare
+
+    discovery, opening = _auction_opening_inputs()
+    result = compare(discovery, opening)
+    assert (result['sample_count'], result['comparable'], result['strengthened'],
+            result['faded'], result['turned_positive']) == (4, 3, 2, 1, 1)
+    assert result['directions'][0]['comparable'] == 2
+    assert result['directions'][0]['median_change_pp'] == 1.5
+    assert {row['instrument_id'] for row in result['examples']} == {'600001.SH', '600002.SH', '600003.SH'}
+    auction = {**_projection('auction', 10), 'auction_discovery': discovery}
+    early = {**_projection('1000', 15), 'opening_quotes': opening}
+    first = brief._brief('auction', [('auction', auction)])
+    assert '竞价异动样本核验 4/6 只' in first['body']
+    assert '首轮转涨' not in first['body']
+    subsequent = brief._brief('1030', [('auction', auction), ('1000', early), ('1030', _projection('1030', 18))])
+    assert '较竞价涨幅扩大 2 只，回落 1 只，竞价未涨、首轮转涨 1 只' in subsequent['body']
+    assert '半导体设备 2/3 只可比，同股涨幅变化中位数 +1.50 个百分点' in subsequent['body']
+    assert '昨收不符' not in subsequent['body']
+    evidence = {row['id']: row for row in subsequent['evidence']}
+    assert evidence['1000.auction_followup']['auction_discovery_sha256'] == discovery['content_sha256']
+    assert compare({**discovery, 'recorded_at_ms': _clock('10:01:00')}, opening) is None
+    assert compare(discovery, {**opening, 'date': '2026-11-05'}) is None
+    records = {'auction': {'time': 10, 'ready': 20, 'discovery': {'recorded_at_ms': 40}},
+               '1000': {'time': 35, 'ready': 36}, '1030': {'time': 50, 'ready': 51}}
+    assert 'discovery' not in dict(brief._preceding(records, '1000'))['auction']
+    assert 'discovery' in dict(brief._preceding(records, '1030'))['auction']
 
 
 def test_model_must_reference_verified_ids_from_each_observed_stage(monkeypatch):

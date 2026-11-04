@@ -11,6 +11,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.core import connect, dumps, get_market, now_ms
+from app.services import auction_followup
 from app.services.noon_collection import CHINA
 
 LOGGER = logging.getLogger('shixu.worker')
@@ -290,6 +291,10 @@ def _metadata(connection, day, now):
             observed = _stamp(row['collected_end_at'], day)
             output[slot] = {'id': row['snapshot_id'], 'sha': row['content_sha256'], 'time': observed,
                             'ready': max(observed, row['recorded_at_ms'])}
+    if 'auction' in output and (discovery := auction_followup.discovery_metadata(connection, day)):
+        if (discovery['primary_snapshot_id'] == output['auction']['id']
+                and discovery['recorded_at_ms'] <= now):
+            output['auction']['discovery'] = discovery
     live_rows = connection.execute('''SELECT c.slot,c.snapshot_id,c.content_sha256,
             json_extract(c.payload_json, '$.collected_end_at') AS collected_end_at,j.finished_at_ms
         FROM market_intraday_capture c JOIN job j USING(job_id)
@@ -319,8 +324,16 @@ def _metadata(connection, day, now):
 
 def _preceding(records, slot):
     cutoff = records[slot]['time']
-    return [(key, row) for key, _ in TIMELINE if (row := records.get(key))
-            and (key == slot or ORDER[key] < ORDER[slot] and row['ready'] <= cutoff)]
+    result = []
+    for key, _ in TIMELINE:
+        row = records.get(key)
+        if not row or (key != slot and (ORDER[key] >= ORDER[slot] or row['ready'] > cutoff)):
+            continue
+        if key == 'auction' and key != slot and (discovery := row.get('discovery')):
+            if discovery['recorded_at_ms'] > cutoff:
+                row = {k: v for k, v in row.items() if k != 'discovery'}
+        result.append((key, row))
+    return result
 
 
 def _read_projection(slot, day, record):
@@ -335,19 +348,34 @@ def _read_projection(slot, day, record):
     if not row:
         raise ValueError('盘中简报来源已变化')
     if slot == 'auction':
-        return _auction_anchor(row)
+        anchor = _auction_anchor(row)
+        if identity := record.get('discovery'):
+            from app.services.auction_discovery import read_view
+            try:
+                discovery = read_view(day)
+                if (discovery.get('state') in ('available', 'partial') and discovery.get('stocks')
+                        and auction_followup.model_input_allowed(discovery)
+                        and all(discovery.get(key) == val for key, val in identity.items())):
+                    anchor['auction_discovery'] = discovery
+            except (ValueError, KeyError, TypeError, OSError, HTTPException) as error:
+                LOGGER.warning('竞价发现来源核验未通过 %s', type(error).__name__)
+        return anchor
     if slot == 'noon':
         return _noon_anchor(row)
     from app.services.intraday_service import decode_snapshot
     value = decode_snapshot(row)
     if value['slot'] != slot or _stamp(value['collected_end_at'], day) != record['time']:
         raise ValueError('盘中简报时点身份不符')
-    return _compact_live(value)
+    projection = _compact_live(value)
+    if slot == '1000' and auction_followup.model_input_allowed(value):
+        projection['opening_quotes'] = value
+    return projection
 
 
 def _evidence(projections):
     lines = []
     previous = None
+    discovery = None
     for slot, projection in projections:
         def add(key, label, text):
             lines.append({'id': f'{slot}.{key}', 'slot': slot, 'label': label, 'text': text,
@@ -392,6 +420,39 @@ def _evidence(projections):
                                     for row in projection['sectors'][:3] if _number(row.get('change_pct'))):
             label = '题材候选竞价均值前列' if slot == 'auction' else '方向涨幅前列'
             add('sectors', label, sector_changes + '。')
+        if slot == 'auction' and (discovery := projection.get('auction_discovery')):
+            coverage = discovery['coverage']
+            directions = '、'.join(
+                f'{row["name"]} {row["stock_count"]} 只竞价上涨'
+                for row in discovery['directions'][:3])
+            text = f'竞价异动样本核验 {coverage["valid"]}/{coverage["candidates"]} 只'
+            if directions:
+                text += '，' + directions
+            add('discovery', '今日竞价发现样本', text + '。')
+            lines[-1].update(source_id=discovery['content_sha256'],
+                             collected_end_at=datetime.fromtimestamp(discovery['captured_at_ms'] / 1000, CHINA).isoformat())
+        if slot == '1000' and (followup := auction_followup.compare(discovery, projection.get('opening_quotes'))):
+            size = followup['comparable']
+            if size:
+                text = (f'竞价发现中有 {size}/{followup["sample_count"]} 只同股可比。'
+                        f'较竞价涨幅扩大 {followup["strengthened"]} 只，回落 {followup["faded"]} 只，'
+                        f'竞价未涨、首轮转涨 {followup["turned_positive"]} 只。')
+                examples = '、'.join(
+                    f'{row["name"]} {row["auction_pct"]:+.2f}% → {row["opening_pct"]:+.2f}%'
+                    for row in followup['examples'])
+                if examples:
+                    text += '代表个股 ' + examples + '。'
+            else:
+                text = '竞价发现样本与开盘首轮暂无同代码、同昨收的可比报价。'
+            add('auction_followup', '竞价发现 · 同股开盘验证', text)
+            lines[-1].update(auction_discovery_sha256=discovery['content_sha256'], scope=followup['scope'])
+            if followup['directions']:
+                direction_changes = '、'.join(
+                    f'{row["name"]} {row["comparable"]}/{row["sample_count"]} 只可比，'
+                    f'同股涨幅变化中位数 {row["median_change_pp"]:+.2f} 个百分点'
+                    for row in followup['directions'][:3])
+                add('auction_direction_followup', '竞价发现 · 同题材样本验证', direction_changes + '。')
+                lines[-1]['auction_discovery_sha256'] = discovery['content_sha256']
         if previous:
             previous_slot, previous_projection = previous
             prior_sector_changes = previous_projection.get('sector_index') or {
@@ -427,11 +488,18 @@ def _brief(slot, projections):
         options = [row for row in evidence if row['slot'] == key]
         if options:
             chosen.append(options[0])
-    if final_facts := [row for row in evidence if row['slot'] == slot][1:]:
+    followup_facts = _followup_facts(evidence)
+    if final_facts := [row for row in evidence if row['slot'] == slot and row not in followup_facts][1:]:
         most_useful = ('rotation', 'noon_to_close', 'ladder', 'interval')
         final_facts.sort(key=lambda row: row['id'].rsplit('.', 1)[1] not in most_useful)
         chosen.extend(final_facts[:3])
+    chosen = sorted(chosen + [row for row in followup_facts if row not in chosen], key=lambda row: ORDER[row['slot']])
     return _render_brief(slot, context, evidence, chosen, origin='deterministic')
+
+
+def _followup_facts(evidence):
+    return [row for row in evidence if row['id'] in ('auction.discovery', '1000.auction_followup',
+                                                       '1000.auction_direction_followup')]
 
 
 def _render_brief(slot, context, evidence, chosen, *, origin, lens=None):
@@ -486,8 +554,9 @@ def _model_selection(brief):
         raise ValueError('本机模型的事实选择遗漏时点或引用未知编号')
     # Keep deterministic cross-stage facts visible even if the model favored a
     # single snapshot's index or breadth facts. All numbers are rendered here.
-    for suffix in ('rotation', 'noon_to_close', 'interval'):
-        key = f'{brief["slot"]}.{suffix}'
+    keep = [f'{brief["slot"]}.{suffix}' for suffix in ('rotation', 'noon_to_close', 'interval')]
+    keep.extend(row['id'] for row in _followup_facts(evidence))
+    for key in keep:
         if key in catalog and key not in ids:
             ids.append(key)
     chosen = sorted((catalog[item] for item in ids), key=lambda row: ORDER[row['slot']])
@@ -524,18 +593,21 @@ def _tick(now, stopping):
         previous = existing.get(slot)
         if previous and previous['source_sha256'] == source_sha and previous['model_attempted']:
             continue
-        for key, record in records:
-            if key not in projections:
+        keys = [(key, _digest(record)) for key, record in records]
+        for cache_key, (key, record) in zip(keys, records):
+            if cache_key not in projections:
                 try:
-                    projections[key] = _read_projection(key, day, record)
+                    projections[cache_key] = _read_projection(key, day, record)
                 except (ValueError, KeyError, TypeError, OSError, HTTPException) as error:
                     LOGGER.warning('盘中简报来源核验稍后重试 %s %s', key, type(error).__name__)
-                    projections[key] = None
-        if any(projections[key] is None for key, _ in records):
+                    projections[cache_key] = None
+        if any(projections[key] is None for key in keys):
             # A source failing integrity is not equivalent to a confirmed missing slot.
             continue
-        brief = _brief(slot, [(key, projections[key]) for key, _ in records])
-        anchor = projections[slot] if slot in ('auction', 'noon', 'close') else None
+        observed = {key[0]: projections[key] for key in keys}
+        brief = _brief(slot, list(observed.items()))
+        anchor = ({key: val for key, val in observed[slot].items() if key != 'auction_discovery'}
+                  if slot in ('auction', 'noon', 'close') else None)
         stored = {'brief': brief, 'anchor': anchor}
         encoded = dumps(stored)
         if len(encoded.encode()) > MAX_BRIEF_BYTES:

@@ -1,10 +1,31 @@
 import type { AIKind } from "./aiTypes";
 
+const marketStages = {
+  auction: "09:25",
+  "1000": "10:00",
+  "1030": "10:30",
+  "1100": "11:00",
+  noon: "11:30",
+  "1330": "13:30",
+  "1400": "14:00",
+  "1430": "14:30",
+  close: "15:00",
+} as const;
+
+export type AIMarketStage = keyof typeof marketStages;
+
+export function aiMarketStage(value: unknown): AIMarketStage | undefined {
+  return typeof value === "string" && Object.hasOwn(marketStages, value)
+    ? (value as AIMarketStage)
+    : undefined;
+}
+
 export interface AILaunchContext {
   kind: AIKind;
   instrumentId?: string;
   reportId?: string;
   asOf?: string;
+  marketStage?: AIMarketStage;
 }
 export interface AILaunch extends AILaunchContext {
   launchId?: string;
@@ -21,6 +42,19 @@ const safeDay = (value: string | null) => {
     ? value
     : undefined;
 };
+
+export function aiMarketQuestion({ kind, asOf, marketStage }: AILaunchContext) {
+  const day = safeDay(asOf ?? null);
+  if (kind !== "market" || !day || !marketStage) return "";
+  const at = `${day} ${marketStages[marketStage]}`;
+  if (marketStage === "auction")
+    return `解读 ${at} 的早盘竞价。昨日高标反馈怎么样？重点名单之外，哪些行业或题材出现多股同步走强？请列出代表股和已核验的竞价涨幅、成交额。`;
+  if (marketStage === "noon")
+    return `解读 ${at} 的午评。对照同日竞价，哪些题材走强或走弱？请结合成交和涨停梯队，区分已经核验的数字与缺档。`;
+  if (marketStage === "close")
+    return `解读 ${at} 的收盘复盘。结合当天竞价、盘中和正式收盘，梳理题材轮动、成交和涨停梯队变化。`;
+  return `解读 ${at} 的盘中观察快照。这个时点哪些方向走强、哪些走弱？结合该时点成交和涨停梯队，有同股报价时再与早盘竞价对照。`;
+}
 
 /** Old shared links keep their conversation when the chat moves to its own page. */
 export function upgradeChatLocation(hash: string) {
@@ -43,6 +77,12 @@ export function aiLaunchLocation(context: AILaunchContext, launchId?: string) {
   if (context.instrumentId) params.set("ai_stock", context.instrumentId);
   if (context.reportId) params.set("ai_report", context.reportId);
   if (context.asOf) params.set("ai_day", context.asOf);
+  if (
+    context.kind === "market" &&
+    context.marketStage &&
+    safeDay(context.asOf ?? null)
+  )
+    params.set("ai_stage", context.marketStage);
   if (launchId) params.set("ai_launch", launchId);
   return `#ai?${params}`;
 }
@@ -64,6 +104,10 @@ export function readAILaunch(hash: string): AILaunch {
   const launchId = safeId(params.get("ai_launch"));
   const kind: AIKind =
     params.get("ai_kind") === "stock" || instrumentId ? "stock" : "market";
+  const marketStage =
+    kind === "market" && asOf
+      ? aiMarketStage(params.get("ai_stage"))
+      : undefined;
   const explicit =
     route === "ai" &&
     !!(
@@ -79,10 +123,18 @@ export function readAILaunch(hash: string): AILaunch {
     instrumentId,
     reportId,
     asOf,
+    marketStage,
     explicit,
     launchId,
     key:
       launchId ||
-      JSON.stringify([kind, instrumentId, reportId, asOf, sessionId]),
+      JSON.stringify([
+        kind,
+        instrumentId,
+        reportId,
+        asOf,
+        sessionId,
+        marketStage,
+      ]),
   };
 }

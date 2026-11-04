@@ -109,6 +109,56 @@ def test_snapshot_dates_sha_and_real_zero_amount_are_preserved(database):
     assert metrics['day_brief:noon:amount']['value'] == 0
 
 
+def test_discovery_and_opening_comparison_are_bound_to_same_day_read_only_sources(database, monkeypatch):
+    from datetime import datetime
+    from app.services import ai_read_tools
+    from app.services import auction_discovery, intraday_service
+    from test_intraday_brief import _auction_opening_inputs, _clock
+
+    save(database, 'market_auction_snapshot', 'auction', auction_payload())
+    discovery, opening = _auction_opening_inputs(DAY)
+    discovery['primary_snapshot_id'] = 'auction'
+    discovery['directions'][0].update(kind='industry', median_auction_pct=3, total_auction_amount=11000)
+    opening.update(version=intraday_service.VERSION)
+    database.executescript("""
+        CREATE TABLE market_auction_discovery(trade_date TEXT PRIMARY KEY, primary_snapshot_id TEXT,
+          content_sha256 TEXT, recorded_at_ms INTEGER);
+        CREATE TABLE job(job_id TEXT PRIMARY KEY, status TEXT, finished_at_ms INTEGER);
+        CREATE TABLE market_intraday_capture(job_id TEXT, slot TEXT, trade_date TEXT,
+          snapshot_id TEXT, content_sha256 TEXT, payload_json TEXT);
+    """)
+    database.execute('INSERT INTO market_auction_discovery VALUES (?,?,?,?)',
+                     (DAY, 'auction', discovery['content_sha256'], discovery['recorded_at_ms']))
+    database.execute('INSERT INTO job VALUES (?,?,?)', ('test', 'succeeded', _clock('10:01:13', DAY)))
+    database.execute('INSERT INTO market_intraday_capture VALUES (?,?,?,?,?,?)',
+                     ('test', '1000', DAY, opening['id'], digest(opening), dumps(opening)))
+    database.commit()
+
+    def view(day, *, connection):
+        assert day == DAY and connection.execute('PRAGMA query_only').fetchone()[0] == 1
+        return deepcopy(discovery)
+
+    monkeypatch.setattr(auction_discovery, 'read_view', view)
+    output = brief.build_briefs(DAY)
+    assert output['fingerprints']['auction_opening']['content_sha256'] == digest(opening)
+    block = next(row for row in output['blocks'] if row['evidence']['kind'] == 'auction_discovery_brief')
+    data = block['evidence']['data']
+    assert data['opening_comparison']['comparable'] == 3
+    assert data['directions']['industries'][0]['opening_comparison'] == {'comparable': 2, 'median_change_pp': 1.5}
+    assert all(row['value'] is not None for row in block['metrics'])
+    monkeypatch.delenv('SHIXU_AI_READ_SQLITE_PATH', raising=False)
+    monkeypatch.setattr(ai_read_tools, 'local_now', lambda: datetime.fromisoformat(DAY + 'T11:00:00+08:00'))
+    actual_tool = ai_read_tools.execute_read_tool('read_market_data', {'date': DAY, 'section': 'auction'})
+    assert actual_tool['ok']
+    assert any(evidence['kind'] == 'auction_discovery_brief' for evidence in actual_tool['evidence'])
+    assert brief.build_briefs('2026-10-29')['blocks'] == []
+    database.execute("UPDATE market_intraday_capture SET content_sha256='invalid'")
+    database.commit()
+    after = brief.build_briefs(DAY)
+    updated = next(row for row in after['blocks'] if row['evidence']['kind'] == 'auction_discovery_brief')
+    assert updated['evidence']['data']['opening_state'] == 'unknown'
+
+
 def test_latest_close_revision_has_exact_parent_sha_and_amount_is_never_net_flow(database):
     save(database, 'market_noon_snapshot', 'noon', noon_payload())
     save_close(database)

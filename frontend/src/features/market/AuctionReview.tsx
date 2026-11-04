@@ -19,6 +19,7 @@ import {
   useToast,
 } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
+import AIEntry from "../ai/AIEntry";
 import { amount, integer, num, percent, tone } from "../../lib/format";
 import { noonClock, noonLines, noonRows } from "./noonPresentation";
 import {
@@ -35,6 +36,7 @@ import {
   auctionStates,
 } from "./auctionPresentation";
 import AuctionAutomation from "./AuctionAutomation";
+import AuctionDiscovery from "./AuctionDiscovery";
 import AuctionFeedback from "./AuctionFeedback";
 import AuctionBoardExplorer from "./AuctionBoardExplorer";
 import AuctionClassifications from "./AuctionClassifications";
@@ -67,8 +69,13 @@ const AUCTION_PAGE_SECTIONS = [
   },
   {
     id: "auction-feedback",
-    label: "强弱对照",
+    label: "昨日重点反馈",
     description: "昨日涨停炸板与今日高低开的反馈",
+  },
+  {
+    id: "auction-discovery",
+    label: "今日竞价发现",
+    description: "从市场竞价异动中找重点名单外的新方向",
   },
   {
     id: "auction-previous",
@@ -426,9 +433,12 @@ export default function AuctionReview({
                 : "开盘前五分钟 · 终态观察"}
             </div>
             <h1>盘前竞价</h1>
-            <p>昨天怎么看，今天竞价怎样，开盘后继续核对什么。</p>
+            <p>核对昨日重点股的竞价表现，也看重点名单外有哪些新方向。</p>
           </div>
           <div className="auction-head-actions">
+            {selected && (
+              <AIEntry kind="market" asOf={selected} marketStage="auction" />
+            )}
             {view?.today && (
               <button
                 className="btn"
@@ -690,6 +700,20 @@ export default function AuctionReview({
                 heightRows={sourceRows}
                 selectedHeight={selectedHeight}
                 onHeightSelect={selectHeight}
+                onStock={onStock}
+                chartDate={chartDate}
+              />
+            </section>
+            <section id="auction-discovery" tabIndex={-1}>
+              <AuctionDiscovery
+                key={selected}
+                date={selected}
+                collecting={
+                  view?.task?.status === "running" &&
+                  view.task.parameters?.automation?.discovery?.version ===
+                    "auction-discovery-v1"
+                }
+                active={active}
                 onStock={onStock}
                 chartDate={chartDate}
               />
