@@ -285,7 +285,8 @@ def test_stock_quote_reads_only_the_retained_noon_snapshot(noon, monkeypatch):
     assert body['reason'] is None
     assert body['quote'] == {'instrument_id': '600001.SH', 'price_basis': 'none',
                              'open': 10, 'high': 11, 'low': 10, 'latest_price': 11,
-                             'prev_close': 10, 'volume': 100, 'amount': 1100, 'change_pct': 10}
+                             'prev_close': 10, 'volume': 100, 'amount': 1100, 'change_pct': 10,
+                             'limit_up_state': 'unknown', 'limit_down_state': 'unknown', 'pattern_events': []}
     for code in ('301001.SZ', '600002.SH'):
         missing = client.get(endpoint + code + '/quote')
         assert missing.status_code == 200

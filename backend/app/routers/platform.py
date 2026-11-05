@@ -21,7 +21,8 @@ def quote_gap_source_check(payload:dict=Body(...)):
 def health(): return {'status':'ok','application':APP_ID,'app_name':APP_NAME}
 
 @router.get('/bootstrap')
-def bootstrap():return JSONResponse(json_clean(platform_service.bootstrap()))
+def bootstrap(scope:str=Query('full',pattern='^(full|navigation)$')):
+    return JSONResponse(json_clean(platform_service.bootstrap(scope=scope)))
 
 @router.get('/overview')
 def overview(date:str|None=None):return JSONResponse(market_service.overview(date))

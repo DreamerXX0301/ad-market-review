@@ -31,7 +31,7 @@ async function compile(path,jsx=false){return ts.transpileModule(await fs.readFi
 const visibility=encoded(await compile("../../lib/indicatorVisibility.ts"));
 const format=encoded((await compile("../../lib/format.ts")).replaceAll(JSON.stringify("./indicatorVisibility"),JSON.stringify(visibility))), helper=encoded(await compile("./noonClosePresentation.ts"));
 let source=await compile("./NoonCloseReview.tsx",true);
-for(const [from,to] of Object.entries({"react/jsx-runtime":jsx,react,"lucide-react":icons,"../../lib/api":api,"../../components/UI":ui,"../../components/CopyStockCode":encoded("export default 'stock-code';"),"../../lib/format":format,"./NoonBoardFilter":board,"./noonClosePresentation":helper,"./NoonStockChange":encoded("export default 'stock-change';"),"./NoonCloseFocusTable":encoded("export default 'focus-table';")}))source=source.replaceAll(JSON.stringify(from),JSON.stringify(to));
+for(const [from,to] of Object.entries({"react/jsx-runtime":jsx,react,"lucide-react":icons,"../../lib/api":api,"../../components/UI":ui,"../../components/CopyStockCode":encoded("export default 'stock-code';"),"../../components/FloatingScrollControls":encoded("export default 'floating-scroll-controls';"),"../../lib/format":format,"./NoonBoardFilter":board,"./noonClosePresentation":helper,"./NoonStockChange":encoded("export default 'stock-change';"),"./NoonCloseFocusTable":encoded("export default 'focus-table';")}))source=source.replaceAll(JSON.stringify(from),JSON.stringify(to));
 source=source.replace('import "./NoonCloseReview.css";',"");
 const {default:CloseReview}=await import(encoded(source));
 const render=(date=day)=>{cursor=0;const result=CloseReview({date});scheduled.splice(0).forEach(fn=>fn());return result;};

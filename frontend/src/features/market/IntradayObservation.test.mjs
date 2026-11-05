@@ -30,10 +30,19 @@ const {
   IntradaySnapshotFeedback,
   IntradayBoardChanges,
   Rotation,
+  rotationChangesForBoards,
   rotationCellChange,
   rotationStageBoards,
   StrengthView,
+  mergeIntradayBoards,
+  intradayReturnLabel,
+  intradayClosingChange,
+  showIntradayClosingComparison,
+  AnchorDetails,
+  intradayAnchorGroups,
   timelineSlots,
+  intradaySelectedSlot,
+  boardChangeThemeDistribution,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(code).toString("base64")
 );
@@ -121,7 +130,9 @@ const themeChangesMarkup = renderToStaticMarkup(
     },
   }),
 );
-assert.match(themeChangesMarkup, /新增封板集中方向/);
+assert.match(themeChangesMarkup, /新增封板主要方向 · 各取前三/);
+assert.match(themeChangesMarkup, /已列 2 只股票的归属分布/);
+assert.match(themeChangesMarkup, /同股可属多个概念，各方向家数不相加/);
 assert.match(themeChangesMarkup, /半导体<\/span><b>2 只/);
 assert.match(themeChangesMarkup, /芯片<\/span><b>2 只/);
 
@@ -204,7 +215,7 @@ assert.match(sample, /样本 <b>≥1<\/b>.*本轮封板 <b>0<\/b>.*晋级 <b>—
 assert.match(sample, /前一交易日 2026-11-02 收盘涨停样本/);
 assert.match(sample, /等待同日两份快照/);
 assert.equal(
-  (sample.match(/<details class="intraday-feedback-card" open="">/g) || [])
+  (sample.match(/<details class="intraday-feedback-card" open=""[^>]*>/g) || [])
     .length,
   3,
 );
@@ -237,7 +248,7 @@ const broken = render({
 });
 assert.match(broken, /炸板 <b>≥1<\/b>/);
 assert.equal(
-  (broken.match(/<details class="intraday-feedback-card" open="">/g) || [])
+  (broken.match(/<details class="intraday-feedback-card" open=""[^>]*>/g) || [])
     .length,
   4,
 );
@@ -377,7 +388,7 @@ const denseFeedback = render({
   },
 });
 const [sealCard, breakCard] = denseFeedback
-  .split('<details class="intraday-feedback-card" open="">')
+  .split(/<details class="intraday-feedback-card" open=""[^>]*>/)
   .slice(1);
 assert.match(sealCard, /盘中封板梯队.*封板 <b>60<\/b>.*核验样本59/);
 assert.doesNotMatch(sealCard, /盘中炸板|核验样本100/);
@@ -537,7 +548,7 @@ const stages = timelineSlots({
 assert.deepEqual(
   stages.map(({ key }) => key),
   [
-    "auction",
+    "0935",
     "1000",
     "1030",
     "1100",
@@ -550,6 +561,12 @@ assert.deepEqual(
   ],
 );
 assert.equal(stages.at(-1).legacy, true);
+assert.equal(stages[0].label, "开盘观察");
+assert.equal(stages[0].start, "09:35");
+assert.ok(!timelineSlots({snapshots:[{slot:"auction",label:"早盘竞价"}]}).some(row=>row.key==="auction"), "legacy auction samples never resurrect the removed timeline tab");
+assert.equal(intradaySelectedSlot("auction", stages, new Map([["auction",{id:"a"}]]), "auction"), "0935", "missing opening data is not substituted with auction data");
+assert.equal(intradaySelectedSlot(null, stages, new Map([["1000",{id:"b"}],["auction",{id:"a"}]]), "auction"), "1000");
+assert.equal(intradaySelectedSlot("0935", stages, new Map([["1000",{id:"b"}]]), "1000"), "0935");
 assert.equal(
   timelineSlots({ noon_scheduled_at: "11:35" }).find(
     ({ key }) => key === "noon",
@@ -817,3 +834,265 @@ assert.match(
   /合成AI应用/,
   "selecting a rotation-only quote opens the original member scope",
 );
+
+const retainedDirection = {
+  instrument_id: "885001.TI",
+  name: "保留完整指标的题材",
+  kind: "concept",
+  change_pct: 4.2,
+  up_ratio: 75,
+  limit_up_count: 3,
+  broken_count: 2,
+  member_count: 8,
+  member_priced_count: 8,
+  rankable_members: 8,
+  quote_source: "fuyao",
+  quote_basis: "provider_index",
+  candidates: [{ instrument_id: "000001.SZ", name: "走强个股", change_pct: 7 }],
+  sealed_stocks: [
+    { instrument_id: "000002.SZ", name: "封板个股", change_pct: 10 },
+  ],
+  broken: [{ instrument_id: "000003.SZ", name: "炸板个股", change_pct: 6 }],
+};
+const compactRotation = {
+  instrument_id: retainedDirection.instrument_id,
+  kind: "concept",
+  change_pct: 4.3,
+  limit_up_count: 4,
+};
+const merged = mergeIntradayBoards([retainedDirection], [compactRotation]);
+assert.equal(merged[0].up_ratio, 75);
+assert.equal(merged[0].broken_count, 2);
+assert.equal(merged[0].change_pct, 4.3);
+assert.equal(merged[0].limit_up_count, 4);
+for (const key of ["candidates", "sealed_stocks", "broken"])
+  assert.deepEqual(merged[0][key], retainedDirection[key]);
+assert.equal(
+  retainedDirection.change_pct,
+  4.2,
+  "display merge cannot mutate the frozen source row",
+);
+assert.equal(
+  mergeIntradayBoards(
+    [retainedDirection],
+    [{ ...compactRotation, up_ratio: null }],
+  )[0].up_ratio,
+  null,
+  "explicit unknown must not reuse a previous non-null metric",
+);
+assert.equal(
+  mergeIntradayBoards(
+    [retainedDirection],
+    [{ ...compactRotation, kind: "industry" }],
+  )[0].up_ratio,
+  undefined,
+  "different classification identity cannot inherit stock coverage",
+);
+const mergedDirectionHtml = renderToStaticMarkup(
+  createElement(StrengthView, {
+    snapshot: {
+      id: "same-frozen-slot",
+      date: "2026-11-05",
+      slot: "1400",
+      strength_coverage: { pool_complete: true },
+      strong_sectors: [retainedDirection],
+      rotation_sectors: [compactRotation],
+      discovery: {
+        date: "2026-11-05",
+        slot: "1400",
+        directions: [{ ...compactRotation, signal: "accelerating" }],
+      },
+    },
+    historyScope: { date: "2026-11-05", slot: "1400" },
+    onStock() {},
+  }),
+);
+assert.match(mergedDirectionHtml, /75\.00%/);
+assert.match(
+  mergedDirectionHtml,
+  /炸板<span class="intraday-break-count">2<\/span>/,
+);
+assert.match(mergedDirectionHtml, /覆盖.*8.*8/);
+assert.match(mergedDirectionHtml, /data-intraday-reading="directions"/);
+
+const manyDirections = Array.from({ length: 710 }, (_, index) => ({
+  ...theme,
+  instrument_id: `theme-${index}`,
+}));
+const slotDirections = new Map([
+  ["1000", new Map(manyDirections.map((row) => [row.instrument_id, row]))],
+  ["1030", new Map(manyDirections.map((row) => [row.instrument_id, row]))],
+]);
+const visibleChanges = rotationChangesForBoards(
+  stages.slice(0, 2),
+  slotDirections,
+  new Map(),
+  manyDirections.slice(0, 12),
+);
+assert.equal(visibleChanges[0].size, 0);
+assert.equal(
+  visibleChanges[1].size,
+  12,
+  "adjacent-slot checks are bounded to the 12 visible directions before expansion",
+);
+assert.equal(visibleChanges[1].has("theme-12"), false);
+assert.equal(
+  rotationChangesForBoards(
+    stages.slice(0, 2),
+    slotDirections,
+    new Map(),
+    manyDirections,
+  )[1].size,
+  710,
+  "explicit expansion retains every saved direction",
+);
+
+assert.deepEqual(
+  ["auction", "noon", "1000", "1430", "close"].map(intradayReturnLabel),
+  ["竞价涨跌幅", "午间涨跌幅", "盘中涨跌幅", "盘中涨跌幅", "收盘涨跌幅"],
+);
+const closingDate = "2026-11-05";
+const closingHistory = {
+  date: closingDate,
+  slot: "1400",
+  closing_date: closingDate,
+  closing_snapshot_id: "formal_close",
+};
+assert.equal(
+  showIntradayClosingComparison(
+    { date: closingDate, slot: "1400" },
+    closingHistory,
+  ),
+  true,
+);
+assert.equal(showIntradayClosingComparison(undefined, undefined), false);
+assert.equal(
+  showIntradayClosingComparison(
+    { date: closingDate, slot: "close" },
+    { ...closingHistory, slot: "close" },
+  ),
+  false,
+  "the close slot already displays closing change and does not duplicate it",
+);
+assert.equal(
+  showIntradayClosingComparison(
+    { date: closingDate, slot: "1400" },
+    { ...closingHistory, closing_date: "2026-11-04" },
+  ),
+  false,
+);
+assert.equal(
+  showIntradayClosingComparison(
+    { date: closingDate, slot: "1400" },
+    closingHistory,
+    true,
+  ),
+  false,
+  "sector index tables do not inherit stock closing columns",
+);
+assert.equal(
+  intradayClosingChange(
+    {
+      closing_quote_date: closingDate,
+      closing_snapshot_id: "formal_close",
+      closing_change_pct: 0,
+    },
+    closingDate,
+  ),
+  0,
+);
+assert.equal(
+  intradayClosingChange(
+    {
+      closing_quote_date: "2026-11-04",
+      closing_snapshot_id: "formal_close",
+      closing_change_pct: 8,
+    },
+    closingDate,
+  ),
+  null,
+);
+assert.equal(
+  intradayClosingChange(
+    { closing_quote_date: closingDate, closing_change_pct: 8 },
+    closingDate,
+  ),
+  null,
+  "a percentage without a formal snapshot binding is not displayed as the close",
+);
+assert.equal(
+  intradayClosingChange(
+    {
+      closing_quote_date: closingDate,
+      closing_snapshot_id: "another_generation",
+      closing_change_pct: 8,
+    },
+    closingDate,
+    "formal_close",
+  ),
+  null,
+);
+
+const anchorDirections = [
+  {
+    instrument_id: "industry-A",
+    name: "名字很长也应该保持单行的行业方向",
+    kind: "industry",
+    change_pct: 2.8,
+    stocks: [],
+  },
+  {
+    instrument_id: "concept-A",
+    name: "名字很长的人工智能应用题材",
+    kind: "concept",
+    change_pct: 4.2,
+    stocks: [],
+  },
+  {
+    instrument_id: "industry-B",
+    name: "行业乙",
+    kind: "industry",
+    change_pct: -1,
+    stocks: [],
+  },
+];
+const groupedAnchors = intradayAnchorGroups(anchorDirections);
+assert.deepEqual(
+  groupedAnchors.map((group) => [
+    group.label,
+    group.rows.map((row) => row.instrument_id),
+  ]),
+  [
+    ["行业", ["industry-A", "industry-B"]],
+    ["概念", ["concept-A"]],
+  ],
+);
+const anchorHtml = renderToStaticMarkup(
+  createElement(AnchorDetails, {
+    snapshot: { slot: "noon", id: "noon-anchor", sectors: anchorDirections },
+    requestedBoard: "concept-A",
+    historyScope: { date: "2026-11-05", slot: "noon" },
+  }),
+);
+assert.match(anchorHtml, /data-kind="industry" aria-label="行业"/);
+assert.match(anchorHtml, /data-kind="concept" aria-label="概念"/);
+assert.match(anchorHtml, /title="名字很长的人工智能应用题材"/);
+assert.match(
+  anchorHtml,
+  /class="intraday-anchor-row"[^>]*aria-pressed="true"[^>]*>.*?名字很长的人工智能应用题材/,
+);
+assert.doesNotMatch(anchorHtml, /class="intraday-anchor-board"/);
+assert.equal(
+  [...anchorHtml.matchAll(/class="intraday-anchor-items" role="region"/g)].length,
+  2,
+  "industry and concept expose separate keyboard-scrollable lists",
+);
+for (const label of ["行业", "概念"]) {
+  assert.match(
+    anchorHtml,
+    new RegExp(
+      `<h3><span>${label}</span>.*?</h3><div class="intraday-anchor-items" role="region" aria-label="${label}方向名单" tabindex="0">`,
+    ),
+    "each permanent group heading stays outside its own scrolling member list",
+  );
+}

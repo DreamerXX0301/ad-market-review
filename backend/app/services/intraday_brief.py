@@ -18,7 +18,7 @@ LOGGER = logging.getLogger('shixu.worker')
 MODEL = 'qwen3.5:latest'
 MODEL_URL = 'http://127.0.0.1:11434/api/chat'
 TIMELINE = (
-    ('auction', '09:25 竞价'), ('1000', '10:00 开盘首轮'),
+    ('auction', '09:25 竞价'), ('0935', '09:35 开盘观察'), ('1000', '10:00 开盘首轮'),
     ('1030', '10:30 早盘一小时'), ('1100', '11:00 上午观察'),
     ('noon', '11:30 午评'), ('1330', '13:30 午后首轮'),
     ('1400', '14:00 午后观察'), ('1430', '14:30 尾盘观察'),
@@ -751,7 +751,7 @@ def start_brief_worker():
     return close
 
 
-def read_brief_view(day, *, snapshots=None, include_sections=True):
+def read_brief_view(day, *, snapshots=None, include_sections=True, read_context=None):
     with connect() as connection:
         rows = connection.execute('SELECT slot,body_json FROM market_intraday_brief WHERE trade_date=?', (day,)).fetchall()
     result = {'briefs': [], 'anchors': []}
@@ -763,16 +763,44 @@ def read_brief_view(day, *, snapshots=None, include_sections=True):
             if row['slot'] == 'noon':
                 _restore_noon_details(anchor, day)
             elif row['slot'] == 'close':
+                closing_context = _restore_close_details(anchor, day)
                 from app.services.intraday_rotation import close_rotation_sectors
                 try:
-                    anchor['rotation_sectors'] = close_rotation_sectors(day, anchor['id'])
+                    anchor['rotation_sectors'] = close_rotation_sectors(day, anchor['id'], closing_context=closing_context)
                 except (ValueError, TypeError, KeyError, OSError, HTTPException):
                     anchor['rotation_sectors'] = []
             result['anchors'].append(anchor)
     if include_sections:
         from app.services.intraday_narrative import attach_sections
-        attach_sections(day, result['briefs'], result['anchors'], snapshots)
+        attach_sections(day, result['briefs'], result['anchors'], snapshots, read_context=read_context)
     return result
+
+
+def _restore_close_details(anchor, day):
+    """Read original closing evidence only; never rewrite the archived brief body."""
+    from app.services.intraday_close import closing_data, restore_close_details
+    from app.services.intraday_service import decode_snapshot
+
+    try:
+        context = closing_data(day, anchor['id'])
+        previous = previous_row = None
+        with connect() as connection:
+            tables = {row[0] for row in connection.execute('SELECT name FROM sqlite_master WHERE type=\'table\'')}
+            if {'market_intraday_capture', 'job'} <= tables:
+                previous_row = connection.execute('''SELECT c.*,j.finished_at_ms FROM market_intraday_capture c
+                    JOIN job j USING(job_id) WHERE c.trade_date=? AND c.slot='1430'
+                    AND j.status IN ('succeeded','partial') AND length(CAST(c.payload_json AS BLOB))<=?
+                    AND j.finished_at_ms<=?''',
+                    (day, 2 * 1024 * 1024, _stamp(context['published_at'], day))).fetchone()
+        if previous_row is not None:
+            try:
+                previous = decode_snapshot(previous_row)
+            except (ValueError, TypeError, KeyError, HTTPException):
+                previous_row = None
+        restore_close_details(anchor, context, previous=previous, previous_row=previous_row)
+        return context
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, HTTPException):
+        return None
 
 
 def _restore_noon_details(anchor, day):

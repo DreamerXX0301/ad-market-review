@@ -65,8 +65,10 @@ def _metadata(connection, day):
                 'length(CAST(result_json AS BLOB)) AS payload_bytes FROM ' + table +
                 ' WHERE trade_date=? ORDER BY revision DESC LIMIT 1', (day,)).fetchone()
         else:
+            columns = {row[1] for row in connection.execute('PRAGMA table_info(' + table + ')')}
+            recorded = ',recorded_at_ms' if 'recorded_at_ms' in columns else ''
             row = connection.execute('SELECT snapshot_id,trade_date,collected_start_at,collected_end_at,'
-                'content_sha256,length(CAST(payload_json AS BLOB)) AS payload_bytes FROM ' + table +
+                'content_sha256,length(CAST(payload_json AS BLOB)) AS payload_bytes' + recorded + ' FROM ' + table +
                 ' WHERE trade_date=?', (day,)).fetchone()
         result[kind] = dict(row) if row else None
     if result['auction'] and (discovery := auction_followup.discovery_metadata(connection, day)):
@@ -74,6 +76,9 @@ def _metadata(connection, day):
             result['auction_discovery'] = discovery
             if opening := auction_followup.opening_metadata(connection, day):
                 result['auction_opening'] = opening
+    from app.services.ai_closing_read import metadata as closing_metadata
+    if closing := closing_metadata(connection, day):
+        result['closing_pools'] = closing
     return result
 
 
@@ -114,14 +119,22 @@ def _block(kind, day, metadata, data, metric_rows):
     dates.update(_pick(metadata, 'collected_start_at', 'collected_end_at', 'generated_at_ms',
                        'noon_collected_start_at', 'noon_collected_end_at'))
     labels = {'auction': '盘前竞价候选摘要', 'auction_discovery': '竞价发现与开盘验证',
-              'noon': '午间行情摘要', 'noon_close': '午间至收盘变化'}
+              'noon': '午间行情摘要', 'noon_close': '午间至收盘变化', 'closing_pools': '原正式收盘封板与炸板明细'}
     # Preserve the entire direction row or omit it with an explicit scope note;
     # never trim a date/unit/counter-example field to make the body fit.
     while len(dumps(data).encode()) > MAX_BRIEF_DATA_BYTES:
         directions = data.get('directions', {})
         choices = [key for key in ('concepts', 'industries') if directions.get(key)]
         if not choices:
-            raise ValueError('单日时点必要摘要超过容量，未截断来源、单位或缺口')
+            carryover = data.get('carryover', {})
+            samples = [carryover.get(key, {}).get('stocks', []) for key in ('highest_candidates', 'price_reference')]
+            samples.extend(row.get('stocks', []) for row in carryover.get('directions', []))
+            samples = [rows for rows in samples if rows]
+            if not samples:
+                raise ValueError('单日时点必要摘要超过容量，未截断来源、单位或缺口')
+            max(samples, key=lambda rows: len(dumps(rows).encode())).pop()
+            data['carryover_samples_omitted_for_budget'] = data.get('carryover_samples_omitted_for_budget', 0) + 1
+            continue
         key = max(choices, key=lambda value: len(dumps(directions[value]).encode()))
         directions[key].pop()
         data['directions_omitted_for_budget'] = True
@@ -137,6 +150,7 @@ def _block(kind, day, metadata, data, metric_rows):
 def _auction(payload, metadata, day):
     summary = (payload.get('quotes') or {}).get('summary') or {}
     topics = build_topic_summary(payload)
+    from app.services.auction_carryover_narrative import auction_carryover
     groups = topics.get('groups', [])
     directions = _directions(groups, order='average_auction_pct',
                              fields=('sample_count', 'valid_count', 'average_auction_pct', 'state'))
@@ -148,6 +162,21 @@ def _auction(payload, metadata, day):
             'direction_scope': '原代际平均竞价涨幅各前3；valid_count=1是单股样本，不推全市场；行业/概念重叠不加总',
             'source_gaps': payload.get('gaps', []),
             'binding': _pick(metadata, 'snapshot_id', 'content_sha256')}
+    carryover = auction_carryover(payload, topics)
+    stats = ('state', 'sample_count', 'valid_count', 'unknown_count', 'high_open', 'low_open', 'flat_open',
+             'average_auction_pct', 'reference_checked_count', 'reference_count')
+    compact = _pick(carryover, 'state', 'previous_date', 'scope', 'reason')
+    for key, fields in (('prior_limit_up', stats), ('highest_candidates', (*stats, 'previous_board_count')),
+                        ('price_reference', ('state', 'count', 'checked_count', 'unknown_count', 'confirmed_limit_price'))):
+        if key in carryover:
+            compact[key] = _pick(carryover[key], *fields)
+            if key != 'prior_limit_up':
+                compact[key]['stocks'] = [_pick(row, 'instrument_id', 'name', 'change_pct', 'previous_board_count')
+                                           for row in carryover[key].get('stocks', ())[:2]]
+    compact['directions'] = [{**_pick(row, 'topic_code', 'name', 'kind', 'members_observed_date', *stats),
+        'stocks': [_pick(stock, 'instrument_id', 'name', 'change_pct', 'previous_board_count')
+                   for stock in row.get('stocks', ())[:2]]} for row in carryover.get('directions', ())[:2]]
+    data['carryover'] = compact
     metric_rows = [(key, label, summary.get(key), unit) for key, label, unit in (
         ('valid', '竞价有效候选', '家'), ('missing', '竞价缺报候选', '家'),
         ('up', '候选高开', '家'), ('down', '候选低开', '家'),
@@ -264,25 +293,36 @@ def _close(payload, metadata, day):
     return block
 
 
-def build_briefs(day, *, source_path=None):
+def build_briefs(day, *, source_path=None, kinds=None, cutoff=None):
     _day(day)
     observe = lambda: fingerprints(day) if source_path is None else fingerprints(day, source_path=source_path)
     before = observe()
     result = {'fingerprints': before, 'blocks': [], 'gaps': []}
+    wanted = set(kinds) if kinds is not None else {*TABLES, 'closing_pools'}
     connection = _connect(source_path)
     if connection is None:
         for kind in TABLES:
+            if kind not in wanted:
+                continue
             result['gaps'].append({'capability': kind + '_brief', 'state': 'unknown', 'date': day,
                                    'reason': '所选日未留存此时点资料，不能倒造或称为今日数据'})
         return result
     try:
         for kind in TABLES:
+            if kind not in wanted:
+                continue
             metadata = before[kind]
             reason = None
             if metadata is None:
                 reason = '所选日未采集或已清理此时点资料，不以更早日期替代'
             else:
                 try:
+                    if cutoff is not None and kind == 'auction':
+                        from datetime import datetime
+                        ready = max(int(datetime.fromisoformat(metadata['collected_end_at']).timestamp() * 1000),
+                                    metadata.get('recorded_at_ms') or 0)
+                        if ready > int(cutoff.timestamp() * 1000):
+                            raise ValueError('竞价在午评截止之后才留存')
                     limit = MAX_REVIEW_BYTES if kind == 'noon_close' else MAX_PAYLOAD_BYTES
                     if not 0 < metadata['payload_bytes'] <= limit:
                         raise ValueError('已保存正文超出单日有界读取范围')
@@ -323,10 +363,22 @@ def build_briefs(day, *, source_path=None):
                                        'state': 'unknown', 'date': day, 'reason': reason})
             elif kind == 'auction' and (discovery := before.get('auction_discovery')):
                 try:
-                    result['blocks'].append(_discovery(connection, day, discovery, before.get('auction_opening')))
+                    if cutoff is not None and discovery['recorded_at_ms'] > int(cutoff.timestamp() * 1000):
+                        continue
+                    opening = before.get('auction_opening')
+                    if cutoff is not None and opening and opening.get('finished_at_ms', 0) > int(cutoff.timestamp() * 1000):
+                        opening = None
+                    result['blocks'].append(_discovery(connection, day, discovery, opening))
                 except (ValueError, TypeError, KeyError, HTTPException):
                     result['gaps'].append({'capability': 'auction_discovery_brief', 'source': 'saved_auction_discovery',
                                            'state': 'unknown', 'date': day, 'reason': '竞价发现来源未通过核验'})
+        if 'closing_pools' in wanted and (closing := before.get('closing_pools')):
+            from app.services.ai_closing_read import build_block
+            try:
+                result['blocks'].append(build_block(connection, day, closing))
+            except (OSError, ValueError, TypeError, KeyError, AttributeError, HTTPException):
+                result['gaps'].append({'capability': 'closing_pools_brief', 'source': 'saved_closing_pools',
+                    'state': 'unknown', 'date': day, 'reason': '原收盘锚点、同日正式代际或来源SHA未通过核验'})
     finally:
         connection.close()
     if before != observe():

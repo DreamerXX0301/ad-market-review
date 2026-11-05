@@ -36,6 +36,7 @@ type BriefSection = {
 
 const order = [
   "auction",
+  "0935",
   "1000",
   "1030",
   "1100",
@@ -47,6 +48,7 @@ const order = [
 ];
 const slotLabels: Record<string, string> = {
   auction: "09:25 竞价",
+  "0935": "09:35 开盘观察",
   "1000": "10:00 开盘首轮",
   "1030": "10:30 早盘一小时",
   "1100": "11:00 上午观察",
@@ -273,19 +275,6 @@ export function briefSectionScrollTop(
   );
 }
 
-/** Reveal one horizontal chip without scrolling its ancestors or the document. */
-export function briefSlotScrollLeft(nav: HTMLElement, chip: HTMLElement) {
-  const left =
-    nav.scrollLeft +
-    chip.getBoundingClientRect().left -
-    nav.getBoundingClientRect().left;
-  const right = left + chip.getBoundingClientRect().width;
-  if (left < nav.scrollLeft + 6) return Math.max(0, left - 6);
-  if (right > nav.scrollLeft + nav.clientWidth - 6)
-    return Math.max(0, right - nav.clientWidth + 6);
-  return nav.scrollLeft;
-}
-
 function statusLabel(status: string) {
   return status === "missing"
     ? "未留存"
@@ -296,12 +285,104 @@ function statusLabel(status: string) {
         : "";
 }
 
+/** Only explicit source bindings can become links; wording never resolves a stock or sector. */
+export function briefDirectionBindings(
+  item: Row,
+): Array<{ id: string; name: string }> {
+  const supplied = [
+    { sector_id: item.sector_id, name: item.sector_name },
+    ...(Array.isArray(item.current_sector_counts)
+      ? item.current_sector_counts.slice(0, 3)
+      : []),
+  ];
+  const byId = new Map<string, { id: string; name: string }>();
+  for (const row of supplied) {
+    if (
+      !row ||
+      typeof row.sector_id !== "string" ||
+      typeof row.name !== "string" ||
+      !row.sector_id.trim() ||
+      !row.name.trim() ||
+      row.sector_id.length > 120 ||
+      row.name.length > 100
+    )
+      continue;
+    byId.set(row.sector_id, { id: row.sector_id, name: row.name });
+  }
+  const names = new Map<string, number>();
+  for (const row of byId.values())
+    names.set(row.name, (names.get(row.name) || 0) + 1);
+  return [...byId.values()].filter((row) => names.get(row.name) === 1);
+}
+
+export function BriefDirectionText({
+  item,
+  slot,
+  label,
+  onSelectDirection,
+}: {
+  item: Row;
+  slot: string;
+  label: string;
+  onSelectDirection?: (slot: string, instrumentId: string) => void;
+}) {
+  const text = string(item.text);
+  if (!onSelectDirection || !order.includes(slot))
+    return <BriefText text={text} />;
+  const bindings = briefDirectionBindings(item);
+  const matches = bindings
+    .flatMap((binding) => {
+      const found: Array<{
+        start: number;
+        end: number;
+        id: string;
+        name: string;
+      }> = [];
+      let start = text.indexOf(binding.name);
+      while (start >= 0 && found.length < 8) {
+        found.push({ ...binding, start, end: start + binding.name.length });
+        start = text.indexOf(binding.name, start + binding.name.length);
+      }
+      return found;
+    })
+    .sort((a, b) => a.start - b.start || b.end - a.end);
+  const nodes: ReactNode[] = [];
+  let offset = 0;
+  for (const match of matches) {
+    if (match.start < offset) continue;
+    nodes.push(
+      <BriefText
+        key={`text-${offset}`}
+        text={text.slice(offset, match.start)}
+      />,
+    );
+    nodes.push(
+      <button
+        type="button"
+        className="ibt-direction-link"
+        key={`${match.id}:${match.start}`}
+        title={`查看 ${label} 的${match.name}个股`}
+        aria-label={`查看 ${label} ${match.name}个股`}
+        onClick={() => onSelectDirection(slot, match.id)}
+      >
+        {match.name}
+        <ArrowUpRight size={11} aria-hidden="true" />
+      </button>,
+    );
+    offset = match.end;
+  }
+  nodes.push(<BriefText key={`text-${offset}`} text={text.slice(offset)} />);
+  return <>{nodes}</>;
+}
+
 export default function BriefCard({
   brief,
   selectedSlot,
+  onSelectDirection,
 }: {
   brief: Row;
   selectedSlot?: string;
+  onSelectDirection?: (slot: string, instrumentId: string) => void;
 }) {
   const sections = briefSections(brief);
   const preferred = selectedSlot || string(brief.slot);
@@ -321,8 +402,6 @@ export default function BriefCard({
   const [active, setActive] = useState(initial);
   const viewport = useRef<HTMLDivElement>(null);
   const targets = useRef(new Map<string, HTMLLIElement>());
-  const slots = useRef<HTMLElement>(null);
-  const slotButtons = useRef(new Map<string, HTMLButtonElement>());
   const id = useId();
   const signature = sections
     .map((section) => `${section.slot}:${section.status}:${section.label}`)
@@ -346,25 +425,6 @@ export default function BriefCard({
     const frame = window.requestAnimationFrame(() => navigate(initial, "auto"));
     return () => window.cancelAnimationFrame(frame);
   }, [preferred, brief.slot, brief.id, brief.date, signature]);
-
-  useEffect(() => {
-    const nav = slots.current;
-    if (!nav) return;
-    const reveal = () => {
-      const chip = slotButtons.current.get(active);
-      if (chip)
-        nav.scrollTo({
-          left: briefSlotScrollLeft(nav, chip),
-          top: nav.scrollTop,
-          behavior: "auto",
-        });
-    };
-    const resize =
-      typeof ResizeObserver === "function" ? new ResizeObserver(reveal) : null;
-    resize?.observe(nav);
-    reveal();
-    return () => resize?.disconnect();
-  }, [active, signature]);
 
   const evidence: Row[] = Array.isArray(brief.evidence) ? brief.evidence : [];
   const currentSection =
@@ -391,15 +451,11 @@ export default function BriefCard({
           <BriefText text={headline} />
         </h2>
         {sections.length > 0 && (
-          <nav className="ibt-slots" aria-label="简报时段" ref={slots}>
+          <nav className="ibt-slots" aria-label="简报时段">
             {sections.map((section, index) => (
               <button
                 type="button"
                 key={section.slot}
-                ref={(node) => {
-                  if (node) slotButtons.current.set(section.slot, node);
-                  else slotButtons.current.delete(section.slot);
-                }}
                 aria-current={active === section.slot ? "step" : undefined}
                 aria-controls={`${id}-section-${index}`}
                 data-status={section.status}
@@ -462,7 +518,7 @@ export default function BriefCard({
                       const kind: HighlightKind =
                         typeof item.kind === "string" &&
                         Object.hasOwn(kinds, item.kind)
-                            ? (item.kind as HighlightKind)
+                          ? (item.kind as HighlightKind)
                           : "market";
                       const { icon: Icon, label } = kinds[kind];
                       return (
@@ -475,7 +531,12 @@ export default function BriefCard({
                             {label}
                           </span>
                           <p>
-                            <BriefText text={item.text} />
+                            <BriefDirectionText
+                              item={item}
+                              slot={section.slot}
+                              label={section.label}
+                              onSelectDirection={onSelectDirection}
+                            />
                           </p>
                         </li>
                       );

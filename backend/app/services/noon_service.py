@@ -227,6 +227,9 @@ def read_stock_quote(snapshot_id, instrument_id):
         vetted[key] = value if finite(value) and (
             key == 'change_pct' or value > 0 or key in ('volume', 'amount') and value == 0
         ) else None
+    from app.services.chart_patterns import attach_intraday_board_patterns
+    attach_intraday_board_patterns(vetted, {**payload, 'id': snapshot_id, 'slot': 'noon'},
+                                   content_sha256=row['content_sha256'])
     return {**result, 'quote': vetted}
 
 

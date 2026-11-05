@@ -4,6 +4,17 @@
   padding: 16px 20px;
   font-size: 12px;
 }
+.intraday-automatic-settings {
+  min-width: 0;
+  scroll-margin-top: 105px;
+}
+.intraday-automatic-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
 .automatic-review-plans {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

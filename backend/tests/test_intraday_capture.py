@@ -47,7 +47,7 @@ def test_break_pool_rejects_stale_source_and_third_page(monkeypatch):
         calls.append(endpoint)
         return {'data': {'item': [], 'timestamp': int(clock.timestamp() * 1000) - 86_400_000}}
 
-    capture = service.Capture({}, DAY, service.LEGACY_SLOTS[0], SimpleNamespace(request=stale), None, 30)
+    capture = service.Capture({'parameters_json': json.dumps({'version': service.LEGACY_VERSION})}, DAY, service.LEGACY_SLOTS[0], SimpleNamespace(request=stale), None, 30)
     endpoint = '/api/a-share/special-data/limit-break-pool'
     assert capture.request('limit_break_page_1', endpoint, dated=True) is None
     assert capture.request('limit_break_page_3', endpoint, dated=True) is None
@@ -113,7 +113,7 @@ def test_intraday_zero_requires_success_and_timestamp_in_exact_window(monkeypatc
         assert params == {'date_ms': int(clock.replace(hour=0, second=0).timestamp() * 1000), 'page': 1, 'size': 200}
         return response
     adapter = SimpleNamespace(request=request)
-    capture = service.Capture(params, DAY, service.SLOTS[0], adapter, None, 30)
+    capture = service.Capture(params, DAY, next(slot for slot in service.SLOTS if slot['key'] == '1000'), adapter, None, 30)
     assert capture.pool('limit_break', '/api/a-share/special-data/limit-break-pool') == ([], 0, complete)
     assert bool(capture.gaps) is not complete
 
@@ -311,7 +311,7 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     # Successful new-flag captures use the same 28-natural-day retention boundary.
     with core.connect() as connection:
         for older_day, key in (('2026-09-30', 'expired-intraday'), ('2026-10-01', 'retained-boundary')):
-            identifier = service._enqueue(connection, key, older_day, service.SLOTS[0], clock)
+            identifier = service._enqueue(connection, key, older_day, next(slot for slot in service.SLOTS if slot['key'] == '1000'), clock)
             connection.execute("UPDATE job SET status='succeeded' WHERE job_id=?", (identifier,))
             raw = core.dumps({'retained': key})
             connection.execute('''UPDATE market_intraday_capture SET snapshot_id=?,payload_json=?,content_sha256=?
@@ -373,7 +373,7 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     # An already frozen v5 task without the marker keeps the original network plan.
     clock = clock.replace(hour=14, minute=0)
     with core.connect() as connection:
-        identifier = service._enqueue(connection, 'old-v5', DAY, service.SLOTS[4], clock)
+        identifier = service._enqueue(connection, 'old-v5', DAY, service.V5_SLOTS[4], clock, version=service.SIX_SLOT_VERSION)
         frozen = json.loads(connection.execute('SELECT parameters_json FROM job WHERE job_id=?', (identifier,)).fetchone()[0])
         frozen.pop('board_change_evidence'); frozen.pop('request_budget')
         connection.execute('UPDATE job SET parameters_json=?,parameters_hash=? WHERE job_id=?',
@@ -434,7 +434,7 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert not api.get(url).json()['can_capture']
 
 
-def test_automation_creates_only_during_six_verified_windows(tmp_path, monkeypatch):
+def test_automation_creates_only_during_seven_verified_windows(tmp_path, monkeypatch):
     from app.services import automatic_tasks, sync_progress
 
     monkeypatch.setenv('SHIXU_DATA_DIR', str(tmp_path))

@@ -1,4 +1,4 @@
-"""Worker-owned snapshots for the six scheduled intraday observations."""
+"""Worker-owned snapshots for the seven scheduled intraday observations."""
 from datetime import date, datetime, time, timedelta
 from hashlib import sha256
 import json
@@ -26,9 +26,11 @@ LEGACY_VERSION = 'intraday-snapshot-v1'
 STRENGTH_VERSION = 'intraday-snapshot-v2'
 FEEDBACK_VERSION = 'intraday-snapshot-v3'
 POOL_VERSION = 'intraday-snapshot-v4'
-VERSION = 'intraday-snapshot-v5'
+SIX_SLOT_VERSION = 'intraday-snapshot-v5'
+VERSION = 'intraday-snapshot-v6'
+MODERN_VERSIONS = (SIX_SLOT_VERSION, VERSION)
 MAX_BOARDS = 800
-REQUEST_BUDGETS = {LEGACY_VERSION: 25, STRENGTH_VERSION: 27, FEEDBACK_VERSION: 28, POOL_VERSION: 30, VERSION: 30}
+REQUEST_BUDGETS = {LEGACY_VERSION: 25, STRENGTH_VERSION: 27, FEEDBACK_VERSION: 28, POOL_VERSION: 30, SIX_SLOT_VERSION: 30, VERSION: 30}
 MAX_PAYLOAD = 2 * 1024 * 1024
 AUTOMATION_KEY = 'intraday-automation-v1'
 AUTOMATION_CALENDAR_KEY = 'intraday-automation-calendar-v1'
@@ -38,7 +40,7 @@ LEGACY_SLOTS = tuple(dict(key=key, label=label, start=start, end=end) for key, l
     ('afternoon', '午后观察', '13:00', '14:30'),
     ('late', '尾盘观察', '14:30', '14:57'),
 ))
-SLOTS = tuple(dict(key=key, label=label, start=start, end=end, scheduled_at=start, create_until=create_until)
+V5_SLOTS = tuple(dict(key=key, label=label, start=start, end=end, scheduled_at=start, create_until=create_until)
               for key, label, start, create_until, end in (
     ('1000', '开盘首轮', '10:00', '10:01', '10:03'),
     ('1030', '早盘一小时', '10:30', '10:31', '10:33'),
@@ -47,7 +49,20 @@ SLOTS = tuple(dict(key=key, label=label, start=start, end=end, scheduled_at=star
     ('1400', '午后观察', '14:00', '14:01', '14:03'),
     ('1430', '尾盘观察', '14:30', '14:31', '14:33'),
 ))
+SLOTS = (dict(key='0935', label='开盘观察', start='09:35', end='09:38', scheduled_at='09:35', create_until='09:36'), *V5_SLOTS)
 V5_BASELINES = {'1030': '1000', '1100': '1030', '1330': 'noon', '1400': '1330', '1430': '1400'}
+
+V6_BASELINES = {'1000': '0935', **V5_BASELINES}
+
+
+def slots_for_version(version):
+    if version == VERSION:
+        return SLOTS
+    if version == SIX_SLOT_VERSION:
+        return V5_SLOTS
+    if version in (LEGACY_VERSION, STRENGTH_VERSION, FEEDBACK_VERSION, POOL_VERSION):
+        return LEGACY_SLOTS
+    return ()
 
 
 def now_china():
@@ -68,7 +83,7 @@ def slot_for(day, now, *, version=VERSION, creation=False):
     if day != now.date().isoformat() or now.weekday() >= 5:
         return None
     clock = now.strftime('%H:%M')
-    slots = SLOTS if version == VERSION else LEGACY_SLOTS
+    slots = slots_for_version(version)
     return next((slot for slot in slots if slot['start'] <= clock <
                  (slot.get('create_until', slot['end']) if creation else slot['end'])), None)
 
@@ -115,6 +130,7 @@ def decode_snapshot(row):
         raise HTTPException(409, '盘中快照校验失败')
     value = json.loads(raw)
     if (value.get('version') not in tuple(REQUEST_BUDGETS)
+            or value.get('slot') not in {slot['key'] for slot in slots_for_version(value.get('version'))}
             or (value.get('id'), value.get('date'), value.get('slot')) != (
                 row['snapshot_id'], row['trade_date'], row['slot'])):
         raise HTTPException(409, '盘中快照身份校验失败')
@@ -149,13 +165,15 @@ def _noon_schedule(connection, day, today):
     return None, None
 
 
-def read_view(day=None):
+def read_view(day=None, *, read_context=None):
     now = now_china()
     today = now.date().isoformat()
     day = day_value(day) if day is not None else today
+    if read_context is not None:
+        read_context.clear()
     slot = slot_for(day, now, creation=True)
     with connect() as conn:
-        rows = conn.execute('''SELECT c.*,j.status,j.created_at_ms FROM market_intraday_capture c
+        rows = conn.execute('''SELECT c.*,j.status,j.created_at_ms,j.finished_at_ms FROM market_intraday_capture c
             JOIN job j USING(job_id) WHERE c.trade_date=? ORDER BY j.created_at_ms''', (day,)).fetchall()
         configured = bool(slot and _configured(conn) and tasks.initialization_state(conn)['main_published'])
         busy = configured and conn.execute("SELECT 1 FROM job WHERE status IN ('queued','running') LIMIT 1").fetchone()
@@ -169,11 +187,21 @@ def read_view(day=None):
               '请先初始化行情并配置扶摇数据源' if not configured else
               '已有任务运行或排队，请等工作进程空闲' if busy else None)
     saved = [value for row in rows if (value := decode_snapshot(row))]
+    # The response enriches current pool samples in place. Narrative sources
+    # retain the original small ladder arrays while sharing immutable quote inputs.
+    if read_context is not None:
+        from copy import deepcopy
+        narrative_sources = {value['id']: {**value, 'ladder': deepcopy(value.get('ladder', {}))}
+                             for value in saved}
     _restore_legacy_turnover(saved)
-    attach_changes(saved, rows, noon_row)
+    attach_changes(saved, rows, noon_row, read_cache=read_context)
     for value in saved:
         attach_current_states(value)
-    _attach_saved_stock_references(saved)
+    references = _attach_saved_stock_references(saved, read_context=read_context)
+    if read_context is not None:
+        read_context.update(date=day, rows=rows, snapshots=narrative_sources,
+                            noon_row=noon_row, noon_clock=noon_scheduled_at if noon_schedule_source == 'recorded' else None,
+                            references=references or {})
     snapshots = [{k: v for k, v in value.items()
                   if k not in ('version', 'comparison_input', 'source_checks', 'sealed_pool_input',
                                'member_reference', 'board_pool_evidence')} | {'discovery': build_intraday_discovery(value)}
@@ -197,9 +225,11 @@ def read_view(day=None):
 def _enqueue(connection, key, day, slot, now, *, version=VERSION, authorization=None):
     from app.services.market_suspensions import VERSION as SUSPENSION_VERSION
 
+    if slot not in slots_for_version(version):
+        raise ValueError('盘中任务版本与冻结时段不符')
     identifier = new_id('job')
     parameters = dict(operation=OPERATION, version=version, date=day, slot=slot['key'], source_id='fuyao')
-    if version == VERSION:
+    if version in MODERN_VERSIONS:
         parameters['suspension_evidence'] = SUSPENSION_VERSION
         parameters.update(board_change_evidence=BOARD_CHANGE_EVIDENCE, request_budget=REQUEST_BUDGETS[version] + 2)
     if authorization:
@@ -324,7 +354,7 @@ class Capture:
 
         midnight = int(datetime.combine(date.fromisoformat(self.day), time(), CHINA).timestamp() * 1000)
         return paged(self, name, endpoint, {'date_ms': midnight},
-                     verify_empty=verified_empty if self.version == VERSION else None)
+                     verify_empty=verified_empty if self.version in MODERN_VERSIONS else None)
 
     def request(self, name, endpoint, params=None, *, dated=False):
         self.guard_window()
@@ -364,7 +394,7 @@ class Capture:
                 if stamp['state'] != 'observed':
                     self.gap(name, '响应总时间未能核验为当日，数据未入榜')
                     return None
-                if self.version == VERSION:
+                if self.version in MODERN_VERSIONS:
                     anchor = datetime.combine(date.fromisoformat(self.day),
                                               time.fromisoformat(self.slot['scheduled_at']), CHINA)
                     if datetime.fromisoformat(stamp['time']) < anchor - timedelta(seconds=60):
@@ -563,18 +593,19 @@ def _reconcile_board_pools(*pools):
     return conflicts
 
 
-def _attach_saved_stock_references(snapshots):
+def _attach_saved_stock_references(snapshots, *, read_context=None):
     from app.analytics.market import MarketData
     from app.services.intraday_brief import sector_membership_fingerprint
     from app.services.noon_membership_context import GENERATION, _day
-    from app.services.intraday_rotation import live_rotation_sectors
+    from app.services.intraday_rotation import live_rotation_sectors, attach_sector_metrics
+    from app.services.intraday_board_changes import frame_quotes
 
-    references, classifications, member_fingerprints = {}, {}, {}
+    references, classifications, member_fingerprints, rotation_members, inputs = {}, {}, {}, {}, {}
     for snapshot in snapshots:
-        snapshot['rotation_sectors'] = live_rotation_sectors(snapshot, reference={}, identity=('', ''))
         identity = snapshot.get('member_reference') or {}
         generation, end = identity.get('generation'), identity.get('date')
         if (not GENERATION.fullmatch(str(generation)) or not _day(end) or end >= snapshot['date']):
+            snapshot['rotation_sectors'] = live_rotation_sectors(snapshot, reference={}, identity=('', ''))
             continue
         source = (generation, end)
         if source not in references:
@@ -588,7 +619,10 @@ def _attach_saved_stock_references(snapshots):
             except (OSError, ValueError, KeyError, TypeError):
                 references[source] = {}
         reference = references[source]
-        snapshot['rotation_sectors'] = live_rotation_sectors(snapshot, reference=reference, identity=source)
+        snapshot['rotation_sectors'] = live_rotation_sectors(snapshot, reference=reference, identity=source,
+                                                           member_cache=rotation_members, input_cache=inputs,
+                                                           quote_index=frame_quotes(snapshot, read_context))
+        attach_sector_metrics(snapshot)
         displayed = [*snapshot.get('stocks', ()), *snapshot.get('candidates', ())]
         displayed.extend(row for key in SECTOR_LISTS for board in snapshot.get(key, ())
                          for row in board.get('candidates', ()))
@@ -631,13 +665,16 @@ def _attach_saved_stock_references(snapshots):
                     member_fingerprints[fingerprint_key] = sector_membership_fingerprint(
                         generation, end, code, kinds[code], proof['date'], symbols)
                 board['member_reference_sha256'] = member_fingerprints[fingerprint_key]
+    if read_context is not None:
+        read_context['frame_inputs'] = inputs
+    return references
 
 
 def _restore_legacy_turnover(snapshots):
     """Use the capture's calendar and exact slot to compare retained stock samples only."""
     old = []
     for snapshot in snapshots:
-        if (snapshot['version'] != VERSION
+        if (snapshot['version'] not in MODERN_VERSIONS
                 or 'amount_comparison' in snapshot.get('market_pulse', {}).get('turnover', {})):
             continue
         prior = snapshot.get('relay_feedback', {}).get('prior_session', {}).get('date')
@@ -679,19 +716,19 @@ def execute_capture(job, progress=None):
     params = json.loads(job['parameters_json'])
     day = day_value(job['target_date'])
     version = params.get('version')
-    slots = SLOTS if version == VERSION else LEGACY_SLOTS
+    slots = slots_for_version(version)
     slot = next((value for value in slots if value['key'] == params.get('slot')), None)
     authorization = params.get('automation')
     expected = dict(operation=OPERATION, version=version, date=day, slot=params.get('slot'), source_id='fuyao')
-    if version == VERSION and params.get('suspension_evidence') == SUSPENSION_VERSION:
+    if version in MODERN_VERSIONS and params.get('suspension_evidence') == SUSPENSION_VERSION:
         expected['suspension_evidence'] = SUSPENSION_VERSION
-    extended_pools = version == VERSION and params.get('board_change_evidence') == BOARD_CHANGE_EVIDENCE
+    extended_pools = version in MODERN_VERSIONS and params.get('board_change_evidence') == BOARD_CHANGE_EVIDENCE
     if extended_pools and type(params.get('request_budget')) is not int:
         raise ValueError('盘中板况采集预算冻结参数无效')
     if extended_pools:
         expected.update(board_change_evidence=BOARD_CHANGE_EVIDENCE, request_budget=REQUEST_BUDGETS[version] + 2)
     if authorization is not None:
-        if (version != VERSION or not isinstance(authorization, dict)
+        if (version not in MODERN_VERSIONS or not isinstance(authorization, dict)
                 or set(authorization) != {'revision', 'calendar_sha256'}
                 or type(authorization['revision']) is not int or authorization['revision'] < 1
                 or not isinstance(authorization['calendar_sha256'], str)
@@ -700,9 +737,9 @@ def execute_capture(job, progress=None):
         expected['automation'] = authorization
     if not slot or version not in tuple(REQUEST_BUDGETS) or params != expected:
         raise ValueError('盘中任务冻结参数无效')
-    has_feedback = version in (FEEDBACK_VERSION, POOL_VERSION, VERSION)
-    has_break_pool = version in (POOL_VERSION, VERSION)
-    baseline_slot = V5_BASELINES.get(slot['key'])
+    has_feedback = version in (FEEDBACK_VERSION, POOL_VERSION, *MODERN_VERSIONS)
+    has_break_pool = version in (POOL_VERSION, *MODERN_VERSIONS)
+    baseline_slot = (V6_BASELINES if version == VERSION else V5_BASELINES).get(slot['key'])
     calendar_receipt = None
     with connect() as conn:
         ledger = conn.execute('SELECT * FROM market_intraday_capture WHERE job_id=?', (job['job_id'],)).fetchone()
@@ -711,7 +748,7 @@ def execute_capture(job, progress=None):
         if ledger['snapshot_id']:
             return {'snapshot_id': ledger['snapshot_id'], 'quality': decode_snapshot(ledger)['quality'],
                     'message': '盘中快照已留存'}
-        if version == VERSION:
+        if version in MODERN_VERSIONS:
             previous = _saved_slot(conn, day, baseline_slot) if baseline_slot else None
         else:
             prior = conn.execute('''SELECT * FROM market_intraday_capture
@@ -810,11 +847,11 @@ def execute_capture(job, progress=None):
         and sector_coverage['rankable'] == len(codes) == len(catalog) and not capture.gaps) else 'partial'
     snapshot_id = new_id('intraday')
     keep = ('instrument_id', 'name', 'kind', 'latest_price', 'open', 'prev_close', 'change_pct', 'amount', 'price_basis', 'currency')
-    if version == VERSION:
+    if version in MODERN_VERSIONS:
         keep = tuple(key for key in keep if key != 'name') + ('high', 'low')
-    inputs = {kind: [{k: row[k] for k in keep if k in row and (version != VERSION or row[k] is not None)} for row in rows]
+    inputs = {kind: [{k: row[k] for k in keep if k in row and (version not in MODERN_VERSIONS or row[k] is not None)} for row in rows]
               for kind, rows in (('stocks', stocks), ('sectors', sectors))}
-    if version == VERSION:
+    if version in MODERN_VERSIONS:
         inputs['indices'] = [{key: row[key] for key in
                               ('instrument_id', 'latest_price', 'prev_close', 'amount', 'currency', 'price_basis')}
                              for row in indices]
@@ -829,7 +866,7 @@ def execute_capture(job, progress=None):
                                  comparison_slot=previous['slot'] if previous else None,
                                  gaps=capture.gaps,
                                  reason='部分行情未取得，结果按已核验样本展示' if quality == 'partial' else None))
-    if version == VERSION:
+    if version in MODERN_VERSIONS:
         original = market.status()
         original_day = original.get('data_end')
         if isinstance(original_day, str) and original_day < day and original.get('snapshot_id'):
@@ -866,7 +903,7 @@ def execute_capture(job, progress=None):
             previous_stocks=prev.get('stocks', ()), previous_sectors=prev.get('sectors', ()),
             break_pool=break_pool,
             sealed_rows=pool['items'] if break_pool is not None else (),
-            observed_sectors=ranked['sectors'] if version == VERSION else (),
+            observed_sectors=ranked['sectors'] if version in MODERN_VERSIONS else (),
         )
         snapshot.update(strength)
         snapshot['summary']['limit_up_pool_state'] = pool['state']
@@ -885,7 +922,7 @@ def execute_capture(job, progress=None):
             break_pool=break_pool, prior_broken_session=prior_session.get('broken'),
             sectors=topic_rows, members=members if has_break_pool else None,
         ))
-        if version == VERSION:
+        if version in MODERN_VERSIONS:
             _attach_turnover(snapshot, previous, prior_stage, prior_baseline, prior_day)
         comparable_pool = [{'instrument_id': row['instrument_id']} for row in pool['items']
                            if row['instrument_id'] not in conflicts]

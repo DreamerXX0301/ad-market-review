@@ -2,6 +2,7 @@ import type { AIKind } from "./aiTypes";
 
 const marketStages = {
   auction: "09:25",
+  "0935": "09:35",
   "1000": "10:00",
   "1030": "10:30",
   "1100": "11:00",
@@ -50,7 +51,7 @@ export function aiMarketQuestion({ kind, asOf, marketStage }: AILaunchContext) {
   if (marketStage === "auction")
     return `解读 ${at} 的早盘竞价。昨日高标反馈怎么样？重点名单之外，哪些行业或题材出现多股同步走强？请列出代表股和已核验的竞价涨幅、成交额。`;
   if (marketStage === "noon")
-    return `解读 ${at} 的午评。对照同日竞价，哪些题材走强或走弱？请结合成交和涨停梯队，区分已经核验的数字与缺档。`;
+    return `解读 ${day} 的午评快照。请串联当天竞价、截至午评实际采集时点的全部已存上午盘中观察和午评本身，分析题材走强或走弱、成交变化及涨停梯队反馈。只使用该时点之前的数据，未采到的时段说明缺档。`;
   if (marketStage === "close")
     return `解读 ${at} 的收盘复盘。结合当天竞价、盘中和正式收盘，梳理题材轮动、成交和涨停梯队变化。`;
   return `解读 ${at} 的盘中观察快照。这个时点哪些方向走强、哪些走弱？结合该时点成交和涨停梯队，有同股报价时再与早盘竞价对照。`;

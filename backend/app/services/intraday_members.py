@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app.core import connect, data_dir, get_market, published_dir
 from app.services import intraday_service as intraday
 from app.services import noon_membership_context as membership
-from app.services.intraday_stock_detail import history_for_symbols
+from app.services.intraday_stock_detail import history_for_symbols, closing_for_symbols
 from app.services.market_suspensions import suspensions_for_date
 from app.services.noon_analysis import number
 from app.services.strategy_limits import quote_index
@@ -18,7 +18,7 @@ from app.services.supplement_access import supplement_reader
 ANCHOR_TABLES = {'auction': 'market_auction_snapshot', 'noon': 'market_noon_snapshot'}
 MEMBER_BOARDS = {'all', 'unknown', *membership.BOARDS}
 HISTORY_SORTS = {'change_30d_pct', 'return_ytd_pct', 'last_limit_up_date', 'limit_up_1y'}
-MEMBER_SORTS = {'rank', 'name', 'change_pct', 'amount', *HISTORY_SORTS}
+MEMBER_SORTS = {'rank', 'name', 'change_pct', 'amount', 'closing_change_pct', *HISTORY_SORTS}
 AUCTION_BASIS = '与题材名单匹配的本次竞价冻结候选'
 CLOSE_BASIS = '正式收盘代际的已留存成分与当日收盘行情'
 LIVE_BASIS = '采集时冻结代际的已留存成分与该时点报价'
@@ -39,10 +39,12 @@ def _page(base, rows, *, complete, observed, basis, limited=False):
     filtered = [{**row, 'rank': rank} for rank, row in enumerate(filtered, 1)]
     field = base['sort']
     history = history_for_symbols(base['date'], base['slot'], [row['instrument_id'] for row in filtered]) if filtered and field in HISTORY_SORTS else None
+    market = get_market() if filtered and field == 'closing_change_pct' else None
+    closing = closing_for_symbols(base['date'], [row['instrument_id'] for row in filtered], market=market) if market is not None else None
     if field != 'change_pct' or base['direction'] != 'desc':
         known, unknown = [], []
         for row in filtered:
-            values = history['items'].get(row['instrument_id'], {}) if history else row
+            values = (history or closing)['items'].get(row['instrument_id'], {}) if history or closing else row
             value = values.get(field)
             if field == 'limit_up_1y' and value is None:
                 value = values.get('limit_up_1y_observed') or None
@@ -56,6 +58,13 @@ def _page(base, rows, *, complete, observed, basis, limited=False):
     pages = max(1, (len(filtered) + size - 1) // size)
     page = min(base['page'], pages)
     items = filtered[(page - 1) * size:page * size]
+    # Closing sort evaluates the entire original member set before slicing.
+    # Annual/history metrics are still fetched only for this visible page.
+    if closing is not None:
+        history = history_for_symbols(base['date'], base['slot'], [row['instrument_id'] for row in items],
+                                      market=market, closing=closing)
+        if history.get('reason') == '行情发布代际变化，请刷新':
+            return _result(base, reason=history['reason'])
     suspension = suspensions_for_date(base['date'])
     for row in items:
         if not row['quote_available'] and (evidence := suspension.get(row['instrument_id'])):
@@ -191,21 +200,53 @@ def _bound_market(generation):
     return MarketData(data_dir(), snapshot_id=generation)
 
 
-def _closing_quotes(market, symbols, day, previous):
+def _closing_quotes(market, symbols, day, previous, *, strict=False):
     """Read two trading days for just the requested symbols."""
     history = market.history_for_instruments(symbols, start=previous or day, end=day)
-    actions = market.actions_for_instruments(symbols)
+    actions_known = True
+    if strict and hasattr(market, 'data_dir'):
+        # The generic market action reader is deliberately lightweight. This
+        # new comparison column additionally checks its immutable descriptor.
+        from app.analytics.market_storage import safe_object, verify_immutable_file
+        try:
+            status = market.status()
+            generation = status['snapshot_id']
+            entries = [row for row in status.get('files', ()) if row.get('role') == 'corporate-actions.parquet']
+            if (len(entries) != 1 or entries[0].get('path') != f'published/{generation}/corporate-actions.parquet'
+                    or type(entries[0].get('bytes')) is not int or not 0 < entries[0]['bytes'] <= 8 * 1024 * 1024):
+                raise ValueError('公司行动来源清单不完整')
+            path = safe_object(market.data_dir / 'published', generation + '/corporate-actions.parquet')
+            verify_immutable_file(path, entries[0]['sha256'], entries[0]['bytes'])
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            actions_known = False
+    actions = market.actions_for_instruments(symbols) if actions_known else None
+
+    def valid(row, symbol, at):
+        return (_raw_close(row) and (not strict or (
+            row.get('date') == at and number(row.get('volume'), positive=True) is not None
+            and any(row.get(key) == symbol for key in ('instrument_id', 'thscode'))
+            and all(row.get(key) == symbol for key in ('instrument_id', 'thscode') if key in row))))
     quotes = {}
-    for symbol, rows in history.items():
+    for symbol in symbols:
+        rows = history.get(symbol, ())
         indexed = quote_index(rows)
         current = indexed.get(day)
-        if not _raw_close(current):
+        if not valid(current, symbol, day):
             continue
         prior = indexed.get(previous)
         change = None
-        if (_raw_close(prior) and actions is not None
-                and not any(action.get('date') in (None, day) for action in actions[symbol])):
-            change = (current['close'] / prior['close'] - 1) * 100
+        action_rows = actions.get(symbol) if actions is not None else None
+        if strict and action_rows is not None:
+            from app.services.noon_prior_events import _day
+
+            if (not isinstance(action_rows, list)
+                    or any(not isinstance(action, dict) or not _day(action.get('date'))
+                           or any(action.get(key) != symbol for key in ('instrument_id', 'thscode') if key in action)
+                           for action in action_rows)):
+                action_rows = None
+        if (valid(prior, symbol, previous) and action_rows is not None
+                and not any(action.get('date') in (None, day) for action in action_rows)):
+            change = number((current['close'] / prior['close'] - 1) * 100)
         quotes[symbol] = {**current, 'change_pct': change}
     return quotes
 
@@ -261,7 +302,7 @@ def _member_provenance(snapshot):
             return None
         generation, end = source.get('generation'), source.get('date')
         reference_sha = None
-    elif snapshot['version'] == intraday.VERSION:
+    elif snapshot['version'] in intraday.MODERN_VERSIONS:
         # The v5 collector used a fixed market object for both membership
         # discovery and its accepted prior-session source check.
         checks = [row for row in snapshot.get('source_checks', ())

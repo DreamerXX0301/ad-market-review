@@ -60,6 +60,39 @@ def test_section_explains_improving_and_fading_directions_and_zero_counts_withou
     assert (before, current) == frozen and len(section['highlights']) <= 8
 
 
+@pytest.mark.parametrize('old,current', [
+    (9.58, 9.580000000000002), (9.58, 9.579999999999998), (9.58, 9.58),
+    (2, 1.996), (-2, -1.996), (-2, -2.004), (0.001, -0.001),
+])
+def test_direction_changes_below_display_precision_are_flat_without_changing_raw_facts(old, current):
+    before = frame('1400', [sector('884001.TI', '行业甲', old)])
+    after = frame('1430', [sector('884001.TI', '行业甲', current)])
+    frozen = deepcopy((before, after))
+    section = narrative.build_section(after, before, members=Members())
+    leaders = [row for row in section['highlights'] if row['kind'] == 'leading']
+    assert len(leaders) == 1 and '较14:00持平' in leaders[0]['text']
+    assert not any(row['kind'] in ('strengthening', 'weakening') for row in section['highlights'])
+    assert '抬升0.00' not in leaders[0]['text'] and '收窄0.00' not in leaders[0]['text']
+    assert '回落0.00' not in leaders[0]['text'] and '0.00个百分点' not in leaders[0]['text']
+    assert leaders[0]['change_pp'] == current - old
+    assert leaders[0]['change_pct'] == current and (before, after) == frozen
+
+
+@pytest.mark.parametrize('old,current,kind,words', [
+    (2, 2.006, 'strengthening', '小幅抬升0.01个百分点'),
+    (2, 1.994, 'weakening', '涨幅小幅收窄0.01个百分点'),
+    (-2, -1.994, 'strengthening', '跌幅小幅收窄0.01个百分点'),
+    (-2, -2.006, 'weakening', '小幅回落0.01个百分点'),
+])
+def test_visible_direction_change_keeps_its_sign_and_original_precision(old, current, kind, words):
+    before = frame('1400', [sector('884001.TI', '行业甲', old)])
+    after = frame('1430', [sector('884001.TI', '行业甲', current)])
+    section = narrative.build_section(after, before, members=Members())
+    changed = next(row for row in section['highlights'] if row['kind'] == kind)
+    assert words in changed['text'] and '较14:00持平' not in changed['text']
+    assert changed['change_pp'] == current - old and changed['change_pct'] == current
+
+
 @pytest.mark.parametrize('damage', ['previous_price', 'source', 'kind', 'currency', 'gap'])
 def test_changed_basis_or_missing_adjacent_frame_is_not_called_rotation(damage):
     before = frame('1400', [sector('884001.TI', '行业甲', 2)])

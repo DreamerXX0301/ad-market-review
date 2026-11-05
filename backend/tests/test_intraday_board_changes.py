@@ -186,7 +186,7 @@ def test_new_down_pool_has_only_two_no_retry_pages_and_old_tasks_cannot_request_
         before_attempt(); calls.append((endpoint, params, options))
         return {'data': {'item': [], 'timestamp': int(clock.timestamp() * 1000)}}
     params = {'version': service.VERSION, 'board_change_evidence': changes.EVIDENCE_VERSION}
-    capture = service.Capture({'parameters_json': json.dumps(params)}, DAY, service.SLOTS[4],
+    capture = service.Capture({'parameters_json': json.dumps(params)}, DAY, next(slot for slot in service.SLOTS if slot['key'] == '1400'),
                               SimpleNamespace(request=request), None, 32)
     endpoint = '/api/a-share/special-data/limit-down-pool'
     assert capture.request('limit_down_page_1', endpoint, dated=True)
@@ -194,7 +194,7 @@ def test_new_down_pool_has_only_two_no_retry_pages_and_old_tasks_cannot_request_
     assert capture.request('limit_down_page_3', endpoint, dated=True) is None
     assert len(calls) == 2 and all(call[2] == {'max_attempts': 1, 'timeout': 8.} for call in calls)
     legacy = service.Capture({'parameters_json': json.dumps({'version': service.VERSION})}, DAY,
-                             service.SLOTS[4], SimpleNamespace(request=request), None, 30)
+                             next(slot for slot in service.SLOTS if slot['key'] == '1400'), SimpleNamespace(request=request), None, 30)
     assert legacy.request('limit_down_page_1', endpoint, dated=True) is None and len(calls) == 2
 
 

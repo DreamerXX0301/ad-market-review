@@ -84,7 +84,7 @@ globalThis.window = {
 };
 const days = ["2026-10-27", "2026-10-28", "2026-10-29"];
 const packets = {
-  "/bootstrap": { data_date: days.at(-1), market_dates: days },
+  "/bootstrap?scope=navigation": { data_date: days.at(-1), market_dates: days },
   "/market/auction/dates": null,
   "/market/noon/dates": null,
 };
@@ -254,7 +254,7 @@ assert.equal(navigate("indices").date, "2026-10-29");
 // Even manually pinning the current latest day must survive a new publication.
 shell().onDate("2026-10-29");
 render();
-packets["/bootstrap"] = {
+packets["/bootstrap?scope=navigation"] = {
   data_date: "2026-10-30",
   market_dates: [...days, "2026-10-30"],
 };
@@ -272,7 +272,7 @@ assert.ok(
 );
 shell().onResetDate();
 render();
-packets["/bootstrap"] = { data_date: "2026-10-29", market_dates: days };
+packets["/bootstrap?scope=navigation"] = { data_date: "2026-10-29", market_dates: days };
 progress().onAuctionFinished({ target_date: "2026-10-30" });
 render();
 assert.equal(shell().date, "2026-10-30");
@@ -350,7 +350,7 @@ const currentNotice = () => {
   );
 };
 const beforePublication = () => {
-  packets["/bootstrap"] = { data_date: "2026-10-29", market_dates: days };
+  packets["/bootstrap?scope=navigation"] = { data_date: "2026-10-29", market_dates: days };
   packets["/market/auction/dates"] = {
     today: "2026-10-30",
     dates: ["2026-10-29"],
@@ -367,14 +367,14 @@ const beforeAcknowledgement = reloads.length;
 progress().onFinished();
 render();
 assert.equal(
-  reloads.slice(beforeAcknowledgement).filter((path) => path === "/bootstrap").length,
+  reloads.slice(beforeAcknowledgement).filter((path) => path === "/bootstrap?scope=navigation").length,
   1,
   "acknowledging an increment triggers one bootstrap reread",
 );
 assert.equal(shell().date, "2026-10-29");
 assert.match(currentNotice(), /非今日/,
   "acknowledgement alone cannot fabricate today's published date");
-packets["/bootstrap"] = publishedToday;
+packets["/bootstrap?scope=navigation"] = publishedToday;
 render();
 assert.equal(shell().date, "2026-10-30");
 assert.match(currentNotice(), /最新已发布行情/);
@@ -387,7 +387,7 @@ beforePublication();
 shell().onDate("2026-10-29");
 render();
 progress().onFinished();
-packets["/bootstrap"] = publishedToday;
+packets["/bootstrap?scope=navigation"] = publishedToday;
 render();
 for (const route of [...routes, "strategy", "data", "noon", "indices"]) {
   assert.equal(navigate(route).date, "2026-10-29", `publication retains manual history on ${route}`);
@@ -402,7 +402,7 @@ assert.doesNotMatch(currentNotice(), /非今日|is-history/);
 // newer published date may clear the warning; task status is not a date.
 beforePublication();
 progress().onFinished();
-packets["/bootstrap"] = { data_date: "2026-10-29", market_dates: days };
+packets["/bootstrap?scope=navigation"] = { data_date: "2026-10-29", market_dates: days };
 render();
 assert.equal(shell().date, "2026-10-29");
 assert.match(currentNotice(), /非今日/);

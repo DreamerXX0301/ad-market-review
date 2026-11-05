@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Clock3,
@@ -14,11 +14,13 @@ import type { ReactNode } from "react";
 import { Empty, ErrorBox, Loading, Panel, Warning } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
 import BriefCard from "./IntradayBriefCard";
+import IntradayPageNavigation from "./IntradayPageNavigation";
+import { intradayReadingProps } from "./intradayReadingNavigation";
+import type { IntradayReadingKey } from "./intradayReadingNavigation";
 export { default as BriefCard } from "./IntradayBriefCard";
 import IntradayStockStateBadge, {
   intradayStockStateBadges,
 } from "./IntradayStockStateBadge";
-import PageScrollEdges from "../../components/PageScrollEdges";
 import AIEntry from "../ai/AIEntry";
 import { aiMarketStage } from "../ai/aiNavigation";
 import { post, requestKey, useApi, usePageActive } from "../../lib/api";
@@ -36,7 +38,6 @@ import { sortMarketRows } from "./marketPresentation";
 import type { MarketSort } from "./marketPresentation";
 import IntradayAutomation from "./IntradayAutomation";
 import AuctionHeightReference from "./AuctionHeightReference";
-import AuctionDiscovery from "./AuctionDiscovery";
 import { isStructuralLadderTopic } from "./ladderBoardPresentation";
 import "./IntradayObservation.css";
 
@@ -54,7 +55,7 @@ const evidenceCount = (value: number | null | undefined, state: unknown) =>
 
 type OpenStock = (
   id: string,
-  context?: { slot: string; snapshotId?: string },
+  context?: { slot: string; snapshotId?: string; closingDate?: string },
 ) => void;
 type StockHistoryScope = { date: string; slot: string };
 type MemberScope = StockHistoryScope & {
@@ -73,11 +74,53 @@ const stockHistoryQuery = ({ date, slot }: StockHistoryScope, rows: Row[]) =>
   })}`;
 
 const historySortFields = [
+  "closing_change_pct",
   "change_30d_pct",
   "return_ytd_pct",
   "last_limit_up_date",
   "limit_up_1y",
 ];
+
+export function intradayReturnLabel(slot?: string) {
+  return slot === "auction"
+    ? "竞价涨跌幅"
+    : slot === "noon"
+      ? "午间涨跌幅"
+      : slot === "close"
+        ? "收盘涨跌幅"
+        : "盘中涨跌幅";
+}
+
+export function intradayClosingChange(
+  row: Row | undefined,
+  date: string,
+  snapshotId?: string,
+) {
+  return row?.closing_quote_date === date &&
+    typeof row.closing_snapshot_id === "string" &&
+    row.closing_snapshot_id &&
+    (!snapshotId || row.closing_snapshot_id === snapshotId) &&
+    Number.isFinite(row.closing_change_pct)
+    ? (row.closing_change_pct as number)
+    : null;
+}
+
+export function showIntradayClosingComparison(
+  scope?: StockHistoryScope,
+  history?: Row,
+  sector = false,
+) {
+  return (
+    !!scope?.date &&
+    !sector &&
+    scope.slot !== "close" &&
+    history?.date === scope.date &&
+    history.slot === scope.slot &&
+    history.closing_date === scope.date &&
+    typeof history.closing_snapshot_id === "string" &&
+    history.closing_snapshot_id.length > 0
+  );
+}
 
 function ThemeChips({
   row,
@@ -157,7 +200,11 @@ function MarketPulse({ pulse, interval }: { pulse: Row; interval?: Row }) {
   const breadth = pulse.breadth;
   const turnover = pulse.turnover;
   return (
-    <section className="intraday-pulse-panel" aria-label="市场背景">
+    <section
+      className="intraday-pulse-panel"
+      aria-label="市场背景"
+      {...intradayReadingProps("market")}
+    >
       <div className="intraday-market-pulse">
         {(pulse.indices || []).map((row: Row) => (
           <div key={row.instrument_id} className="intraday-metric">
@@ -533,6 +580,7 @@ function FeedbackCard({
   empty,
   themeLeaders,
   children,
+  reading,
 }: {
   title: string;
   icon: ReactNode;
@@ -540,9 +588,14 @@ function FeedbackCard({
   empty?: string;
   themeLeaders?: ReactNode;
   children: ReactNode;
+  reading?: IntradayReadingKey;
 }) {
   return (
-    <details className="intraday-feedback-card" open>
+    <details
+      className="intraday-feedback-card"
+      open
+      {...(reading ? intradayReadingProps(reading) : {})}
+    >
       <summary>
         <span className="intraday-feedback-title">
           {icon}
@@ -608,6 +661,7 @@ function BrokenBoardDetails({
   return (
     <FeedbackCard
       title="盘中炸板"
+      reading="broken"
       icon={<CircleAlert size={16} aria-hidden="true" />}
       stats={[
         {
@@ -732,6 +786,7 @@ function LadderCard({
   return (
     <FeedbackCard
       title="盘中封板梯队"
+      reading="ladder"
       icon={<Layers3 size={16} aria-hidden="true" />}
       themeLeaders={
         <FeedbackThemeLeaders
@@ -825,6 +880,7 @@ function PriorSessionCard({
   return (
     <FeedbackCard
       title="前日涨停反馈"
+      reading="prior"
       icon={<TrendingUp size={16} aria-hidden="true" />}
       themeLeaders={
         <FeedbackThemeLeaders
@@ -953,6 +1009,7 @@ function SameDayCard({
   return (
     <FeedbackCard
       title="同日封板变化"
+      reading="sameDay"
       icon={<GitCompareArrows size={16} aria-hidden="true" />}
       themeLeaders={
         <FeedbackThemeLeaders
@@ -1054,6 +1111,121 @@ function boardChangeReason(group?: Row) {
   return "这两档的对应板况记录不足，暂不能确认变化。";
 }
 
+export function boardChangeThemeDistribution(rows: Row[]) {
+  const seen = new Set<string>();
+  const stocks = rows.filter((row) => {
+    if (!row.instrument_id || seen.has(row.instrument_id)) return false;
+    seen.add(row.instrument_id);
+    return true;
+  });
+  return {
+    stocks,
+    industry: feedbackThemeGroups(stocks, "industry"),
+    concept: feedbackThemeGroups(stocks, "concept"),
+  };
+}
+
+function BoardChangeThemes({
+  label,
+  group,
+  rows,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  group: Row;
+  rows: Row[];
+  selected: { kind: FeedbackThemeKind; name: string } | null;
+  onSelect: (value: { kind: FeedbackThemeKind; name: string } | null) => void;
+}) {
+  const distribution = boardChangeThemeDistribution(rows);
+  const chip = (kind: FeedbackThemeKind, [name, items]: [string, Row[]]) => (
+    <button
+      type="button"
+      key={name}
+      className="intraday-feedback-leader"
+      aria-pressed={selected?.kind === kind && selected.name === name}
+      onClick={() =>
+        onSelect(
+          selected?.kind === kind && selected.name === name
+            ? null
+            : { kind, name },
+        )
+      }
+    >
+      <Filter size={11} aria-hidden="true" />
+      <span>{name}</span>
+      <b>{integer(items.length)} 只</b>
+    </button>
+  );
+  return (
+    <div
+      className="intraday-change-theme-summary"
+      aria-label={`${label}行业题材分布`}
+    >
+      <div className="intraday-change-theme-heading">
+        <strong>{label}主要方向 · 各取前三</strong>
+        <button
+          className="btn small intraday-change-clear"
+          type="button"
+          disabled={!selected}
+          aria-hidden={!selected || undefined}
+          tabIndex={selected ? 0 : -1}
+          data-empty={!selected || undefined}
+          onClick={() => onSelect(null)}
+        >
+          清除筛选
+        </button>
+      </div>
+      <p className="intraday-change-scope">
+        本类 {evidenceCount(group.count, group.state)} 只 · 已列{" "}
+        {integer(distribution.stocks.length)} 只股票的归属分布
+        {group.omitted_count > 0 &&
+          ` · 另有 ${integer(group.omitted_count)} 只已确认记录未列入分布`}
+        。 同股可属多个概念，各方向家数不相加。
+      </p>
+      {(["industry", "concept"] as const).map((kind) => {
+        const values = distribution[kind];
+        const name = kind === "industry" ? "行业" : "概念";
+        return (
+          <div className="intraday-change-theme-category" key={kind}>
+            <div className="intraday-change-theme-row">
+              <span>
+                {name}前 {Math.min(3, values.ordered.length)}
+              </span>
+              {values.ordered.slice(0, 3).map((entry) => chip(kind, entry))}
+              {!values.ordered.length && <small>暂无可核验{name}归属</small>}
+            </div>
+            {values.ordered.length > 3 && (
+              <details className="intraday-change-theme-all">
+                <summary>
+                  全部{name} · {integer(values.ordered.length)} 个
+                </summary>
+                <div className="intraday-change-theme-row">
+                  {values.ordered.map((entry) => chip(kind, entry))}
+                </div>
+              </details>
+            )}
+            {kind === "concept" && values.attributes.length > 0 && (
+              <details className="intraday-change-theme-all">
+                <summary>
+                  交易与成分属性 · {integer(values.attributes.length)} 项
+                </summary>
+                <div className="intraday-change-theme-row">
+                  {values.attributes.map((entry) => chip(kind, entry))}
+                </div>
+              </details>
+            )}
+            <small className="intraday-change-missing">
+              {name}归属未核验 {integer(values.missing.length)} 只股票
+            </small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function IntradayBoardChanges({
   snapshot,
   onStock,
@@ -1065,7 +1237,7 @@ export function IntradayBoardChanges({
   const availableKinds = boardChangeKinds.filter(
     ({ key }) => changes?.groups?.[key]?.count != null,
   );
-  const [selected, setSelected] = useState<string>(
+  const [selected, setSelected] = useState<string | null>(
     () =>
       boardChangeKinds.find(({ key }) => changes?.groups?.[key]?.items?.length)
         ?.key || "new_sealed",
@@ -1074,20 +1246,18 @@ export function IntradayBoardChanges({
     kind: FeedbackThemeKind;
     name: string;
   } | null>(null);
+  useEffect(() => {
+    setSelected(
+      boardChangeKinds.find(({ key }) => changes?.groups?.[key]?.items?.length)
+        ?.key || "new_sealed",
+    );
+    setTheme(null);
+  }, [snapshot.id, snapshot.date, snapshot.slot]);
   if (!changes?.baseline_slot || !availableKinds.length) return null;
-  const activeKind =
-    availableKinds.find(({ key }) => key === selected) || availableKinds[0];
-  const group = changes.groups?.[activeKind.key];
+  const activeKind = availableKinds.find(({ key }) => key === selected);
+  const group = activeKind ? changes.groups?.[activeKind.key] : null;
   const choice = activeKind;
   const groupItems = (group?.items || []) as Row[];
-  const industryLeaders = feedbackThemeGroups(
-    groupItems,
-    "industry",
-  ).ordered.slice(0, 3);
-  const conceptLeaders = feedbackThemeGroups(
-    groupItems,
-    "concept",
-  ).featured.slice(0, 3);
   const selectedRows = theme
     ? filterFeedbackTheme(groupItems, theme.kind, theme.name)
     : groupItems;
@@ -1121,9 +1291,9 @@ export function IntradayBoardChanges({
               key={key}
               data-kind={kind}
               data-state={item?.state || "unknown"}
-              aria-pressed={activeKind.key === key}
+              aria-pressed={activeKind?.key === key}
               onClick={() => {
-                setSelected(key);
+                setSelected(selected === key ? null : key);
                 setTheme(null);
               }}
             >
@@ -1139,95 +1309,50 @@ export function IntradayBoardChanges({
           );
         })}
       </div>
-      <div className="intraday-change-content">
-        <p className="intraday-change-note" role="status">
-          {boardChangeReason(group)}
-        </p>
-        {groupItems.length > 0 &&
-          (industryLeaders.length > 0 || conceptLeaders.length > 0) && (
-            <div
-              className="intraday-change-theme-summary"
-              aria-label={`${choice.label}行业题材分布`}
-            >
-              <div className="intraday-change-theme-heading">
-                <strong>{choice.label}集中方向</strong>
-                <small>
-                  按下方 {integer(groupItems.length)} 只已列股票统计，概念可重叠
-                </small>
-                {theme && (
-                  <button
-                    className="btn small"
-                    type="button"
-                    onClick={() => setTheme(null)}
-                  >
-                    清除筛选
-                  </button>
-                )}
-              </div>
-              {(
-                [
-                  ["industry", "行业", industryLeaders],
-                  ["concept", "题材", conceptLeaders],
-                ] as const
-              ).map(
-                ([kind, label, leaders]) =>
-                  leaders.length > 0 && (
-                    <div className="intraday-change-theme-row" key={kind}>
-                      <span>{label}</span>
-                      {leaders.map(([name, items]) => (
-                        <button
-                          type="button"
-                          key={name}
-                          className="intraday-feedback-leader"
-                          aria-pressed={
-                            theme?.kind === kind && theme.name === name
-                          }
-                          onClick={() =>
-                            setTheme(
-                              theme?.kind === kind && theme.name === name
-                                ? null
-                                : { kind, name },
-                            )
-                          }
-                        >
-                          <Filter size={11} aria-hidden="true" />
-                          <span>{name}</span>
-                          <b>{integer(items.length)} 只</b>
-                        </button>
-                      ))}
-                    </div>
-                  ),
-              )}
+      {activeKind && choice && (
+        <div className="intraday-change-content">
+          <p className="intraday-change-note" role="status">
+            {boardChangeReason(group)}
+          </p>
+          {groupItems.length > 0 && (
+            <BoardChangeThemes
+              label={choice.label}
+              group={group}
+              rows={groupItems}
+              selected={theme}
+              onSelect={setTheme}
+            />
+          )}
+          {group?.items?.length > 0 ? (
+            <Ranking
+              key={`${snapshot.id}:${activeKind.key}:${theme?.kind || ""}:${theme?.name || ""}`}
+              rows={selectedRows}
+              columnRows={groupItems}
+              stockMode={choice.mode}
+              title={choice.label}
+              subtitle={`${choice.label} · ${period}${theme ? ` · ${theme.name}` : ""}`}
+              historyScope={
+                snapshot.date && snapshot.slot
+                  ? { date: snapshot.date, slot: snapshot.slot }
+                  : undefined
+              }
+              onStock={onStock}
+            />
+          ) : (
+            <div className="intraday-change-empty">
+              {group?.state === "observed"
+                ? "本段没有该类变化"
+                : "暂无可确认名单"}
             </div>
           )}
-        {group?.items?.length > 0 ? (
-          <Ranking
-            key={`${snapshot.id}:${activeKind.key}:${theme?.kind || ""}:${theme?.name || ""}`}
-            rows={selectedRows}
-            stockMode={choice.mode}
-            title={choice.label}
-            subtitle={`${choice.label} · ${period}${theme ? ` · ${theme.name}` : ""}`}
-            historyScope={
-              snapshot.date && snapshot.slot
-                ? { date: snapshot.date, slot: snapshot.slot }
-                : undefined
-            }
-            onStock={onStock}
-          />
-        ) : (
-          <div className="intraday-change-empty">
-            {group?.state === "observed"
-              ? "本段没有该类变化"
-              : "暂无可确认名单"}
-          </div>
-        )}
-        {group?.omitted_count > 0 && (
-          <p className="intraday-change-note">
-            当前列出前 {integer(group.items.length)} 只，另有{" "}
-            {integer(group.omitted_count)} 只已确认记录未展开。
-          </p>
-        )}
-      </div>
+          {group?.omitted_count > 0 && (
+            <p className="intraday-change-note">
+              当前列出前 {integer(group.items.length)} 只，另有{" "}
+              {integer(group.omitted_count)} 只已确认记录未展开。
+            </p>
+          )}
+        </div>
+      )}
       <p className="intraday-change-footnote">
         新入封板池不等于首次涨停；开板、回封需两档状态确认。各类可重叠，不相加为总数。
       </p>
@@ -1251,11 +1376,13 @@ export function IntradaySnapshotFeedback({
         />
       )}
       {snapshot.board_changes && (
-        <IntradayBoardChanges
-          key={`changes:${snapshot.id}`}
-          snapshot={snapshot}
-          onStock={onStock}
-        />
+        <div {...intradayReadingProps("changes")}>
+          <IntradayBoardChanges
+            key={`changes:${snapshot.id}`}
+            snapshot={snapshot}
+            onStock={onStock}
+          />
+        </div>
       )}
       {(snapshot.ladder || snapshot.relay_feedback) && (
         <div className="intraday-feedback-grid" key={snapshot.id}>
@@ -1303,7 +1430,7 @@ function HistoricalPriceDates({ coverage }: { coverage?: Row }) {
   );
 }
 
-function Ranking({
+export function Ranking({
   rows,
   sector = false,
   title,
@@ -1314,6 +1441,7 @@ function Ranking({
   onStock,
   historyScope,
   memberScope,
+  columnRows,
 }: {
   rows: Row[];
   sector?: boolean;
@@ -1325,15 +1453,16 @@ function Ranking({
   onStock?: (id: string) => void;
   historyScope?: StockHistoryScope;
   memberScope?: MemberScope;
+  columnRows?: Row[];
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<MarketSort>({
     key: "change_pct",
     order: "desc",
   });
   const [boardFilter, setBoardFilter] = useState<NoonBoardFilterValue>("all");
-  const memberLimit = 20;
+  const memberLimit = pageSize;
   const memberQuery = memberScope
     ? new URLSearchParams({
         date: memberScope.date,
@@ -1360,6 +1489,7 @@ function Ranking({
     loaded.board === boardFilter &&
     loaded.sort === sort.key &&
     loaded.direction === sort.order &&
+    loaded.limit === memberLimit &&
     loaded.page === page + 1
       ? loaded
       : null;
@@ -1379,14 +1509,13 @@ function Ranking({
     !sector && historyScope && (!memberScope || useFrozenSample)
       ? filterRows(displayRows, boardFilter)
       : displayRows;
-  const pageSize = expanded ? 30 : 10;
+  const serverSorted = !!memberScope && !useFrozenSample;
   const currentPage = Math.min(
     page,
     Math.max(0, Math.ceil(filteredRows.length / pageSize) - 1),
   );
-  const serverSorted = memberScope && !useFrozenSample;
   const usesHistory = historySortFields.includes(sort.key);
-  // Snapshot-only lists retain at most 30 rows. Load the whole retained list
+  // Snapshot-only lists retain at most 32 rows. Load the whole retained list
   // only when the selected sort actually needs those historical values.
   const sortHistory = useApi<Row>(
     historyScope && !serverSorted && usesHistory && filteredRows.length
@@ -1418,7 +1547,7 @@ function Ranking({
         }),
         sort,
       );
-  const visibleRows = memberScope
+  const visibleRows = serverSorted
     ? orderedRows
     : orderedRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const history = useApi<Row>(
@@ -1436,6 +1565,11 @@ function Ranking({
     historyData?.slot === historyScope?.slot
       ? historyData?.items
       : undefined;
+  const showClosingComparison = showIntradayClosingComparison(
+    historyScope,
+    historyData,
+    sector,
+  );
   const historyRequest = usesHistory
     ? serverSorted
       ? null
@@ -1443,13 +1577,29 @@ function Ranking({
     : history;
   const broken = stockMode === "broken_stocks";
   const compact = stockMode != null;
-  const hasOpenTimes =
-    broken && displayRows.some((row) => row.open_times != null);
-  const hasOpenPrice = displayRows.some((row) => row.open_change_pct != null);
-  const hasAmount = displayRows.some((row) => row.amount != null);
-  const hasComparison = displayRows.some(
+  const fields = columnRows || (memberScope ? rows : displayRows);
+  const hasOpenTimes = broken && fields.some((row) => row.open_times != null);
+  const hasOpenPrice = fields.some((row) => row.open_change_pct != null);
+  const hasAmount = fields.some((row) => row.amount != null);
+  const hasComparison = fields.some(
     (row) => row.change_pp != null || row.amount_delta != null,
   );
+  const columnWidths = [
+    56,
+    260,
+    132,
+    ...(showClosingComparison ? [132] : []),
+    ...(!sector && historyScope ? [155, 120, 172, 150] : []),
+    ...(hasOpenPrice ? [120] : []),
+    ...(hasAmount || serverSorted ? [155] : []),
+    ...(hasOpenTimes ? [105] : []),
+    ...(hasComparison ? [145, 170] : []),
+  ];
+  const totalRows = serverSorted
+    ? (memberPage?.matched ?? 0)
+    : filteredRows.length;
+  const pages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const shownPage = serverSorted ? page : currentPage;
   const sortHeader = (field: string, caption: string) => (
     <th
       scope="col"
@@ -1484,7 +1634,7 @@ function Ranking({
           ? "按涨跌幅排序 · 仅覆盖本轮观察板块"
           : "按涨跌幅排序 · 基于本轮已核验的个股报价")
       }
-      className={`intraday-ranking${compact ? " intraday-stock-ranking" : ""}`}
+      className={`intraday-ranking${!sector ? " intraday-member-ranking" : ""}${compact ? " intraday-stock-ranking" : ""}`}
     >
       {!sector && historyScope && (memberScope || rows.length > 0) && (
         <div
@@ -1532,9 +1682,7 @@ function Ranking({
       )}
       {memberScope && members.error ? (
         <ErrorBox message={members.error} retry={members.reload} />
-      ) : memberScope && !memberPage ? (
-        <Loading />
-      ) : filteredRows.length ? (
+      ) : filteredRows.length || rows.length || memberScope ? (
         <>
           {compact && !memberScope && (
             <p className="intraday-stock-note">
@@ -1542,7 +1690,17 @@ function Ranking({
             </p>
           )}
           <div className="intraday-table-scroll">
-            <table>
+            <table
+              className="intraday-fixed-table"
+              style={{
+                minWidth: columnWidths.reduce((sum, width) => sum + width, 0),
+              }}
+            >
+              <colgroup>
+                {columnWidths.map((width, index) => (
+                  <col key={index} style={{ width }} />
+                ))}
+              </colgroup>
               <thead>
                 <tr>
                   {sortHeader("rank", "排名")}
@@ -1551,10 +1709,10 @@ function Ranking({
                     "change_pct",
                     sector
                       ? "指数涨跌幅"
-                      : historyScope?.slot === "auction"
-                        ? "竞价涨跌幅"
-                        : "今日涨跌幅",
+                      : intradayReturnLabel(historyScope?.slot),
                   )}
+                  {showClosingComparison &&
+                    sortHeader("closing_change_pct", "收盘涨跌幅")}
                   {!sector && historyScope && (
                     <>
                       {sortHeader("change_30d_pct", "近30交易日涨幅")}
@@ -1573,6 +1731,20 @@ function Ranking({
                 </tr>
               </thead>
               <tbody>
+                {!visibleRows.length && (
+                  <tr>
+                    <td
+                      colSpan={columnWidths.length}
+                      className="intraday-ranking-empty"
+                    >
+                      {memberScope && !memberPage
+                        ? "正在读取本页名单…"
+                        : boardFilter !== "all"
+                          ? "该上市板块暂无留存个股"
+                          : "本次筛选暂无留存个股"}
+                    </td>
+                  </tr>
+                )}
                 {visibleRows.map((row, index) => {
                   const stockHistory = historyRows?.[row.instrument_id];
                   const previousHeight =
@@ -1590,7 +1762,7 @@ function Ranking({
                     <tr key={row.instrument_id}>
                       <td>
                         {row.rank ??
-                          (memberScope
+                          (serverSorted
                             ? page * memberLimit
                             : currentPage * pageSize) +
                             index +
@@ -1701,6 +1873,26 @@ function Ranking({
                       <td className={tone(row.change_pct)}>
                         {percent(row.change_pct)}
                       </td>
+                      {showClosingComparison && (
+                        <td
+                          className={tone(
+                            intradayClosingChange(
+                              stockHistory,
+                              historyScope!.date,
+                              historyData?.closing_snapshot_id,
+                            ),
+                          )}
+                          title={`${historyScope!.date} 正式收盘`}
+                        >
+                          {percent(
+                            intradayClosingChange(
+                              stockHistory,
+                              historyScope!.date,
+                              historyData?.closing_snapshot_id,
+                            ),
+                          )}
+                        </td>
+                      )}
                       {!sector && historyScope && (
                         <>
                           <td className={tone(stockHistory?.change_30d_pct)}>
@@ -1767,60 +1959,72 @@ function Ranking({
                   : `历史指标截至 ${historyData?.as_of || "已发布可核验交易日"} · — 表示资料缺失，≥ 表示可核验下界`}
             </p>
           )}
-          {!memberScope && filteredRows.length > 10 && (
-            <div className="intraday-expand">
-              <button
-                className="btn small"
-                onClick={() => {
-                  setExpanded(!expanded);
-                  setPage(0);
+          <div
+            className="intraday-pagination"
+            aria-label={sector ? "板块名单分页" : "个股名单分页"}
+          >
+            <label>
+              每页
+              <select
+                aria-label={sector ? "每页显示板块数" : "每页显示股票数"}
+                value={pageSize}
+                onChange={(event) => {
+                  const size = Number(event.target.value);
+                  if ([10, 20, 30].includes(size)) {
+                    setPageSize(size);
+                    setPage(0);
+                  }
                 }}
               >
-                {expanded ? "收起" : `查看已留存的 ${filteredRows.length} 项`}
-              </button>
-              {expanded && filteredRows.length > pageSize && (
+                {[10, 20, 30].map((size) => (
+                  <option key={size} value={size}>
+                    {size} 条
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="intraday-pagination-range">
+              {serverSorted && !memberPage ? (
+                "名单读取中"
+              ) : (
                 <>
-                  <button
-                    className="btn small"
-                    disabled={currentPage === 0}
-                    onClick={() => setPage(currentPage - 1)}
-                  >
-                    上一页
-                  </button>
-                  <button
-                    className="btn small"
-                    disabled={
-                      (currentPage + 1) * pageSize >= filteredRows.length
-                    }
-                    onClick={() => setPage(currentPage + 1)}
-                  >
-                    下一页
-                  </button>
+                  {totalRows
+                    ? `${shownPage * pageSize + 1}–${Math.min((shownPage + 1) * pageSize, totalRows)}`
+                    : "0"}{" "}
+                  / 共 {integer(totalRows)} 条
                 </>
               )}
-            </div>
-          )}
-          {memberPage && memberPage.pages > 1 && (
-            <div className="intraday-expand">
+            </span>
+            <div>
               <button
                 className="btn small"
-                disabled={page === 0}
-                onClick={() => setPage(page - 1)}
+                type="button"
+                disabled={shownPage === 0 || (serverSorted && !memberPage)}
+                onClick={() => setPage(shownPage - 1)}
               >
                 上一页
               </button>
               <span>
-                第 {page + 1} / {memberPage.pages} 页
+                {serverSorted && !memberPage ? (
+                  "页数待核验"
+                ) : (
+                  <>
+                    第 {shownPage + 1} / {pages} 页
+                  </>
+                )}
               </span>
               <button
                 className="btn small"
-                disabled={page + 1 >= memberPage.pages}
-                onClick={() => setPage(page + 1)}
+                type="button"
+                disabled={
+                  shownPage + 1 >= pages || (serverSorted && !memberPage)
+                }
+                onClick={() => setPage(shownPage + 1)}
               >
                 下一页
               </button>
             </div>
-          )}
+          </div>
         </>
       ) : (
         <Empty
@@ -1860,6 +2064,7 @@ const anchorSlots = {
 };
 
 const currentCaptureSlots = [
+  { key: "0935", label: "开盘观察", start: "09:35" },
   { key: "1000", label: "开盘首轮", start: "10:00" },
   { key: "1030", label: "早盘一小时", start: "10:30" },
   { key: "1100", label: "上午观察", start: "11:00" },
@@ -1878,13 +2083,15 @@ export function timelineSlots(view: Row) {
       ? { ...anchorSlots.noon, start: view.noon_scheduled_at }
       : anchorSlots.noon;
   const slots: Row[] = [
-    anchorSlots.auction,
     noon,
     anchorSlots.close,
     ...currentCaptureSlots.map((slot) => source.get(slot.key) || slot),
   ].sort((a, b) => a.start.localeCompare(b.start));
   for (const row of (view.snapshots || []) as Row[]) {
-    if (!slots.some((slot) => slot.key === row.slot)) {
+    if (
+      row.slot !== "auction" &&
+      !slots.some((slot) => slot.key === row.slot)
+    ) {
       slots.push({
         key: row.slot,
         label: row.label || row.slot_label || row.slot,
@@ -1896,6 +2103,23 @@ export function timelineSlots(view: Row) {
     }
   }
   return slots;
+}
+
+export function intradaySelectedSlot(
+  selected: string | null,
+  slots: Row[],
+  samples: Map<string, Row>,
+  current?: string,
+) {
+  if (selected && slots.some((slot) => slot.key === selected)) return selected;
+  const latest = slots
+    .filter((slot) => samples.has(slot.key))
+    .sort((a, b) => a.start.localeCompare(b.start))
+    .at(-1);
+  return (
+    latest?.key ||
+    (slots.some((slot) => slot.key === current) ? current : slots[0]?.key)
+  );
 }
 
 const DISCOVERY_SIGNALS: Record<string, string> = {
@@ -1916,19 +2140,37 @@ function discoveryDirections(snapshot: Row, date: string, slot: string): Row[] {
     : [];
 }
 
+/** These lists belong to one frozen observation, not different dates or sources. */
+export function mergeIntradayBoards(...lists: Row[][]): Row[] {
+  const combined = new Map<string, Row>();
+  for (const row of lists.flat()) {
+    if (typeof row.instrument_id !== "string" || !row.instrument_id) continue;
+    const previous = combined.get(row.instrument_id);
+    const sameIdentity =
+      previous &&
+      ["kind", "quote_source", "quote_basis"].every(
+        (key) =>
+          previous[key] == null ||
+          row[key] == null ||
+          previous[key] === row[key],
+      );
+    // Omitted fields in a compact rotation row must not erase retained members,
+    // candidates or pool metrics. Explicit null and [] still mean unknown/empty.
+    const supplied = Object.fromEntries(
+      Object.entries(row).filter(([, value]) => value !== undefined),
+    );
+    combined.set(row.instrument_id, {
+      ...(sameIdentity ? previous : {}),
+      ...supplied,
+    });
+  }
+  return [...combined.values()];
+}
+
 function stageBoards(snapshot?: Row): Row[] {
   if (!snapshot) return [];
   if (!snapshot.strength_coverage) return snapshot.sectors || [];
-  return Array.from(
-    new Map<string, Row>(
-      boardModes.flatMap(([key]) =>
-        ((snapshot[key] || []) as Row[]).map((row): [string, Row] => [
-          row.instrument_id,
-          row,
-        ]),
-      ),
-    ).values(),
-  );
+  return mergeIntradayBoards(...boardModes.map(([key]) => snapshot[key] || []));
 }
 
 /** Rotation follows every retained quote, independently of the short ranking. */
@@ -2038,6 +2280,41 @@ export function rotationCellChange({
   };
 }
 
+export function rotationChangesForBoards(
+  columns: Row[],
+  bySlot: Map<string, Map<string, Row>>,
+  samples: Map<string, Row>,
+  boards: Row[],
+) {
+  return columns.map(
+    (slot, index) =>
+      new Map(
+        index === 0
+          ? []
+          : boards.flatMap((board) => {
+              const current = bySlot.get(slot.key)?.get(board.instrument_id);
+              return current
+                ? [
+                    [
+                      board.instrument_id,
+                      rotationCellChange({
+                        current,
+                        previous: bySlot
+                          .get(columns[index - 1].key)
+                          ?.get(board.instrument_id),
+                        snapshot: samples.get(slot.key),
+                        previousSnapshot: samples.get(columns[index - 1].key),
+                        slot: slot.key,
+                        previousSlot: columns[index - 1].key,
+                      }),
+                    ] as const,
+                  ]
+                : [];
+            }),
+      ),
+  );
+}
+
 export function Rotation({
   stages,
   samples,
@@ -2070,24 +2347,6 @@ export function Rotation({
     .reverse()
     .find((slot) => bySlot.get(slot.key)?.size);
   if (columns.length < 2 || !available) return null;
-  const changes = columns.map(
-    (slot, index) =>
-      new Map(
-        index === 0
-          ? []
-          : [...(bySlot.get(slot.key) || [])].map(([id, current]) => [
-              id,
-              rotationCellChange({
-                current,
-                previous: bySlot.get(columns[index - 1].key)?.get(id),
-                snapshot: samples.get(slot.key),
-                previousSnapshot: samples.get(columns[index - 1].key),
-                slot: slot.key,
-                previousSlot: columns[index - 1].key,
-              }),
-            ]),
-      ),
-  );
   const activeSort = sort || { key: available.key, order: "desc" };
   const byName = activeSort.key === "name";
   const rankedRows = [
@@ -2117,6 +2376,9 @@ export function Rotation({
       ? sortMarketRows(byChange, { ...bySealed, order: activeSort.order })
       : byChange;
   const featured = expanded ? ordered : ordered.slice(0, 12);
+  // Sorting still considers every saved direction. Only visible cells need
+  // adjacent-slot provenance checks; expanding the grid checks the full list.
+  const changes = rotationChangesForBoards(columns, bySlot, samples, featured);
   const hasComparable = changes.some((rows) =>
     featured.some((board) => rows.get(board.instrument_id)?.changePP != null),
   );
@@ -2334,7 +2596,27 @@ function Retrospective({ view }: { view: Row }) {
   );
 }
 
-function AnchorDetails({
+export function intradayAnchorGroups(boards: Row[]) {
+  return [
+    {
+      key: "industry",
+      label: "行业",
+      rows: boards.filter((row) => row.kind === "industry"),
+    },
+    {
+      key: "concept",
+      label: "概念",
+      rows: boards.filter((row) => row.kind === "concept"),
+    },
+    {
+      key: "other",
+      label: "其他已留存方向",
+      rows: boards.filter((row) => !["industry", "concept"].includes(row.kind)),
+    },
+  ].filter((group) => group.rows.length);
+}
+
+export function AnchorDetails({
   snapshot,
   onStock,
   requestedBoard,
@@ -2375,28 +2657,59 @@ function AnchorDetails({
         onStock={onStock}
       />
       {snapshot.slot === "auction" && (
-        <AuctionHeightReference date={historyScope.date} onStock={onStock} />
+        <div {...intradayReadingProps("height")}>
+          <AuctionHeightReference date={historyScope.date} onStock={onStock} />
+        </div>
       )}
       {!!boards.length && (
-        <div className="intraday-direction-workspace">
-          <Panel title="方向观察" className="intraday-direction-list">
-            <div className="intraday-anchor-boards">
-              {boards.map((row) => (
-                <button
-                  key={row.instrument_id}
-                  className="intraday-anchor-board"
-                  type="button"
-                  aria-pressed={row.instrument_id === selected}
-                  onClick={() => setSelected(row.instrument_id)}
+        <div
+          className="intraday-direction-workspace"
+          {...intradayReadingProps("directions")}
+        >
+          <Panel
+            title="方向观察"
+            subtitle="行业、概念分别列出，选择后查看对应个股。"
+            className="intraday-direction-list intraday-anchor-direction-list"
+          >
+            <div className="intraday-anchor-groups">
+              {intradayAnchorGroups(boards).map((group) => (
+                <section
+                  className="intraday-anchor-group"
+                  key={group.key}
+                  data-kind={group.key}
+                  aria-label={group.label}
                 >
-                  <span>
-                    {row.name || row.instrument_id}
-                    <small>{row.kind === "industry" ? "行业" : "概念"}</small>
-                  </span>
-                  <strong className={tone(row.change_pct)}>
-                    {percent(row.change_pct)}
-                  </strong>
-                </button>
+                  <h3>
+                    <span>{group.label}</span>
+                    <small>{integer(group.rows.length)} 个方向</small>
+                  </h3>
+                  <div
+                    className="intraday-anchor-items"
+                    role="region"
+                    aria-label={`${group.label}方向名单`}
+                    tabIndex={0}
+                  >
+                    {group.rows.map((row) => (
+                      <button
+                        key={row.instrument_id}
+                        className="intraday-anchor-row"
+                        type="button"
+                        aria-pressed={row.instrument_id === selected}
+                        onClick={() => setSelected(row.instrument_id)}
+                      >
+                        <span className="intraday-anchor-name">
+                          <i aria-hidden="true" />
+                          <span title={row.name || row.instrument_id}>
+                            {row.name || row.instrument_id}
+                          </span>
+                        </span>
+                        <strong className={tone(row.change_pct)}>
+                          {percent(row.change_pct)}
+                        </strong>
+                      </button>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           </Panel>
@@ -2423,7 +2736,9 @@ function AnchorDetails({
         </div>
       )}
       {snapshot.slot === "close" && snapshot.retrospective && (
-        <Retrospective view={snapshot.retrospective} />
+        <div {...intradayReadingProps("retrospective")}>
+          <Retrospective view={snapshot.retrospective} />
+        </div>
       )}
     </>
   );
@@ -2458,10 +2773,10 @@ export function StrengthView({
     discoveries.map((row) => [row.instrument_id, row]),
   );
   const fullBoardsById = new Map(
-    [...stageBoards(snapshot), ...rotationStageBoards(snapshot)].map((row) => [
-      row.instrument_id,
-      row,
-    ]),
+    mergeIntradayBoards(
+      stageBoards(snapshot),
+      rotationStageBoards(snapshot),
+    ).map((row) => [row.instrument_id, row]),
   );
   const overview = Array.from(
     new Map<string, Row>(
@@ -2504,7 +2819,9 @@ export function StrengthView({
       ? overview
       : mode === "discovery"
         ? discoveries.map((row) => fullBoardsById.get(row.instrument_id) || row)
-        : snapshot[mode] || [];
+        : ((snapshot[mode] || []) as Row[]).map(
+            (row) => fullBoardsById.get(row.instrument_id) || row,
+          );
   const filtered = source.filter(
     (row) =>
       (kind === "all" || row.kind === kind) &&
@@ -2580,7 +2897,10 @@ export function StrengthView({
     ["concept", "概念"],
   ];
   return (
-    <div className="intraday-direction-workspace">
+    <div
+      className="intraday-direction-workspace"
+      {...intradayReadingProps("directions")}
+    >
       <Panel
         title="盘中方向"
         subtitle="默认按涨停家数排序，同家数按板块涨幅排列。点板块查看个股。"
@@ -2997,34 +3317,53 @@ export default function IntradayObservation({
     date ? `/market/intraday?date=${encodeURIComponent(date)}` : null,
   );
   const view = result.data?.date === date ? result.data : null;
-  const snapshots: Row[] = view?.snapshots || [];
   const anchors: Row[] = view?.anchors || [];
-  const slots = view ? timelineSlots(view) : [];
-  const samples = new Map<string, Row>(
-    [...snapshots, ...anchors].map((row) => [row.slot, row]),
+  const slots = useMemo(() => (view ? timelineSlots(view) : []), [view]);
+  const samples = useMemo(
+    () =>
+      new Map<string, Row>(
+        [...(view?.snapshots || []), ...(view?.anchors || [])].map(
+          (row: Row) => [row.slot, row],
+        ),
+      ),
+    [view],
   );
   const [selected, setSelected] = useState<string | null>(null);
   const [rotationBoard, setRotationBoard] = useState<string>();
   const pendingDrill = useRef(false);
   const details = useRef<HTMLDivElement>(null);
-  const latest = slots
-    .filter((slot) => samples.has(slot.key))
-    .sort((a, b) => a.start.localeCompare(b.start))
-    .at(-1);
-  const selectedSlot =
-    selected && slots.some((slot) => slot.key === selected)
-      ? selected
-      : latest?.key || view?.current_slot?.key || slots[0]?.key;
+  const selectedSlot = intradaySelectedSlot(
+    selected,
+    slots,
+    samples,
+    view?.current_slot?.key,
+  );
   const snapshot = samples.get(selectedSlot);
   const anchor = anchors.find((row) => row.slot === selectedSlot);
   const brief = ((view?.briefs || []) as Row[]).find(
     (row) => row.slot === selectedSlot,
   );
-  const historyScope = { date, slot: selectedSlot };
+  const historyScope = useMemo(
+    () => ({ date, slot: selectedSlot }),
+    [date, selectedSlot],
+  );
+  const closingDate = anchors.some(
+    (row) =>
+      row.slot === "close" &&
+      (row.date ?? row.trade_date) === date &&
+      typeof row.id === "string" &&
+      row.id.length > 0,
+  )
+    ? date
+    : undefined;
   const openStock =
     onStock && snapshot
       ? (id: string) =>
-          onStock(id, { slot: selectedSlot, snapshotId: snapshot.id })
+          onStock(id, {
+            slot: selectedSlot,
+            snapshotId: snapshot.id,
+            closingDate,
+          })
       : undefined;
   const [pending, setPending] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
@@ -3033,11 +3372,33 @@ export default function IntradayObservation({
   const reload = result.reload;
   const job = view?.latest_job;
   const running = activeStatus(job?.status) || activeStatus(view?.state);
+  function focusDirection() {
+    const target =
+      details.current?.querySelector<HTMLElement>(
+        "[data-intraday-reading='directions']",
+      ) || details.current;
+    target?.setAttribute("tabindex", "-1");
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "start", inline: "nearest" });
+  }
+  function selectDirection(slot: string, board: string) {
+    if (slot === "auction") {
+      window.location.hash = `#auction?date=${encodeURIComponent(date)}`;
+      return;
+    }
+    if (!slots.some((item) => item.key === slot)) return;
+    if (selectedSlot === slot && rotationBoard === board) {
+      focusDirection();
+      return;
+    }
+    pendingDrill.current = true;
+    setSelected(slot);
+    setRotationBoard(board);
+  }
   useEffect(() => {
     if (!pendingDrill.current) return;
     pendingDrill.current = false;
-    details.current?.focus({ preventScroll: true });
-    details.current?.scrollIntoView({ block: "start" });
+    focusDirection();
   }, [selectedSlot, rotationBoard]);
   useEffect(() => {
     if (!active || date !== view?.today) return;
@@ -3086,7 +3447,6 @@ export default function IntradayObservation({
   const aiStage = aiMarketStage(selectedSlot);
   return (
     <div className="intraday-workbench">
-      {active && <PageScrollEdges label="盘中观察" />}
       <section className="panel intraday-header" aria-label="盘中观察">
         <div className="intraday-hero">
           <div className="intraday-hero-meta" role="status">
@@ -3208,166 +3568,177 @@ export default function IntradayObservation({
           </div>
         )}
       </section>
-      {brief && <BriefCard brief={brief} selectedSlot={selectedSlot} />}
-      {anchor?.slot === "auction" && (
-        <AuctionDiscovery
-          date={date}
-          active={active}
-          chartDate={date}
-          onStock={openStock}
-        />
-      )}
-      <div className="intraday-stage-details" ref={details} tabIndex={-1}>
-        {anchor ? (
-          <AnchorDetails
-            key={`${anchor.id}:${rotationBoard || ""}`}
-            snapshot={anchor}
-            requestedBoard={rotationBoard}
-            onStock={openStock}
-            historyScope={historyScope}
-          />
-        ) : snapshot ? (
-          <>
-            <IntradaySnapshotFeedback snapshot={snapshot} onStock={openStock} />
-            {snapshot.strength_coverage ||
-            discoveryDirections(snapshot, historyScope.date, historyScope.slot)
-              .length > 0 ? (
-              <StrengthView
-                key={`${snapshot.id}:${rotationBoard || ""}`}
+      <IntradayPageNavigation
+        scopeKey={`${date}:${selectedSlot}`}
+        label={
+          snapshot?.label ||
+          slots.find((slot) => slot.key === selectedSlot)?.label
+        }
+      >
+        {brief && (
+          <div {...intradayReadingProps("brief")}>
+            <BriefCard
+              brief={brief}
+              selectedSlot={selectedSlot}
+              onSelectDirection={selectDirection}
+            />
+          </div>
+        )}
+        <div className="intraday-stage-details" ref={details} tabIndex={-1}>
+          {anchor ? (
+            <AnchorDetails
+              key={`${anchor.id}:${rotationBoard || ""}`}
+              snapshot={anchor}
+              requestedBoard={rotationBoard}
+              onStock={openStock}
+              historyScope={historyScope}
+            />
+          ) : snapshot ? (
+            <>
+              <IntradaySnapshotFeedback
                 snapshot={snapshot}
                 onStock={openStock}
-                requestedBoard={rotationBoard}
-                historyScope={historyScope}
               />
-            ) : (
-              <div className="intraday-rankings" key={snapshot.id}>
-                <Ranking
-                  rows={snapshot.sectors || []}
-                  sector
-                  title="板块指数涨幅"
-                  subtitle="旧快照未留存板块成员与封板证据"
-                  showRankChange
-                />
-                <Ranking
-                  rows={snapshot.stocks || []}
+              {snapshot.strength_coverage ||
+              discoveryDirections(
+                snapshot,
+                historyScope.date,
+                historyScope.slot,
+              ).length > 0 ? (
+                <StrengthView
+                  key={`${snapshot.id}:${rotationBoard || ""}`}
+                  snapshot={snapshot}
                   onStock={openStock}
+                  requestedBoard={rotationBoard}
                   historyScope={historyScope}
-                  title="个股涨幅"
-                  subtitle="旧快照未留存封板证据"
-                  showRankChange
                 />
-              </div>
-            )}
-            <details className="intraday-scope intraday-snapshot-scope">
-              <summary>
-                快照采集范围 · {clock(snapshot.collected_start_at)}–
-                {clock(snapshot.collected_end_at)}（北京时间）
-                {snapshot.quality === "partial" && " · 有待核验项"}
-              </summary>
-              <div className="intraday-facts">
-                {summary?.stock_declared != null && (
-                  <span>
-                    来源声明{" "}
-                    <strong>{integer(summary.stock_declared)} 只股票</strong>
-                  </span>
-                )}
-                {summary?.coverage?.stocks?.rankable != null && (
-                  <span>
-                    可排名{" "}
-                    <strong>
-                      {integer(summary.coverage.stocks.rankable)} 只股票
-                    </strong>
-                  </span>
-                )}
-                {summary?.board_planned != null && (
-                  <span>
-                    板块报价{" "}
-                    <strong>
-                      {integer(summary.board_returned)} /{" "}
-                      {integer(summary.board_planned)}
-                    </strong>
-                  </span>
-                )}
-                {summary?.comparison_slot && (
-                  <span>与同日上一份可比快照比较</span>
-                )}
-              </div>
-              {summary?.reason && (
-                <p className="intraday-intro">{summary.reason}</p>
-              )}
-              {summary?.recent_listing_count > 0 && (
-                <>
-                  <p className="intraday-intro">
-                    新股单列（上市前 5 个交易日，共{" "}
-                    {integer(summary.recent_listing_count)} 只可排名）
-                  </p>
-                  <StockSamples
-                    rows={summary.recent_listings || []}
-                    onStock={openStock}
+              ) : (
+                <div
+                  className="intraday-rankings"
+                  key={snapshot.id}
+                  {...intradayReadingProps("legacyRankings")}
+                >
+                  <Ranking
+                    rows={snapshot.sectors || []}
+                    sector
+                    title="板块指数涨幅"
+                    subtitle="旧快照未留存板块成员与封板证据"
+                    showRankChange
                   />
-                </>
+                  <Ranking
+                    rows={snapshot.stocks || []}
+                    onStock={openStock}
+                    historyScope={historyScope}
+                    title="个股涨幅"
+                    subtitle="旧快照未留存封板证据"
+                    showRankChange
+                  />
+                </div>
               )}
-              <p className="intraday-intro">
-                排名基于已取得的报价。区间成交额是两次累计值之差，不代表净流入。快照之间没有连续分时记录。
-              </p>
-            </details>
-          </>
-        ) : result.loading && !view ? (
-          <Loading />
-        ) : (
-          <Panel>
-            <Empty
-              title={
-                running && view?.current_slot?.key === selectedSlot
-                  ? "正在采集盘中报价"
-                  : `${slots.find((slot) => slot.key === selectedSlot)?.start || "所选时点"} 暂无快照`
-              }
-              description={
-                selectedSlot === "close"
-                  ? "收盘行情正式发布后更新全天复盘。"
-                  : `${date} 的这个时点没有留存报价，因此无法显示该时点的个股与板块。`
-              }
-              action={
-                samples.size > 0 && (
-                  <div className="intraday-expand">
-                    {slots
-                      .filter((slot) => samples.has(slot.key))
-                      .map((slot) => (
-                        <button
-                          type="button"
-                          className="btn small"
-                          key={slot.key}
-                          onClick={() => {
-                            setSelected(slot.key);
-                            setRotationBoard(undefined);
-                          }}
-                        >
-                          查看 {slot.start} {slot.label}
-                        </button>
-                      ))}
-                  </div>
-                )
-              }
-            />
-          </Panel>
-        )}
-      </div>
-      <Rotation
-        key={`${date}:${selectedSlot}`}
-        stages={slots}
-        samples={samples}
-        activeStage={selectedSlot}
-        onSelect={(slot, board) => {
-          if (selectedSlot === slot && rotationBoard === board) {
-            details.current?.focus({ preventScroll: true });
-            details.current?.scrollIntoView({ block: "start" });
-            return;
-          }
-          pendingDrill.current = true;
-          setSelected(slot);
-          setRotationBoard(board);
-        }}
-      />
+              <details className="intraday-scope intraday-snapshot-scope">
+                <summary>
+                  快照采集范围 · {clock(snapshot.collected_start_at)}–
+                  {clock(snapshot.collected_end_at)}（北京时间）
+                  {snapshot.quality === "partial" && " · 有待核验项"}
+                </summary>
+                <div className="intraday-facts">
+                  {summary?.stock_declared != null && (
+                    <span>
+                      来源声明{" "}
+                      <strong>{integer(summary.stock_declared)} 只股票</strong>
+                    </span>
+                  )}
+                  {summary?.coverage?.stocks?.rankable != null && (
+                    <span>
+                      可排名{" "}
+                      <strong>
+                        {integer(summary.coverage.stocks.rankable)} 只股票
+                      </strong>
+                    </span>
+                  )}
+                  {summary?.board_planned != null && (
+                    <span>
+                      板块报价{" "}
+                      <strong>
+                        {integer(summary.board_returned)} /{" "}
+                        {integer(summary.board_planned)}
+                      </strong>
+                    </span>
+                  )}
+                  {summary?.comparison_slot && (
+                    <span>与同日上一份可比快照比较</span>
+                  )}
+                </div>
+                {summary?.reason && (
+                  <p className="intraday-intro">{summary.reason}</p>
+                )}
+                {summary?.recent_listing_count > 0 && (
+                  <>
+                    <p className="intraday-intro">
+                      新股单列（上市前 5 个交易日，共{" "}
+                      {integer(summary.recent_listing_count)} 只可排名）
+                    </p>
+                    <StockSamples
+                      rows={summary.recent_listings || []}
+                      onStock={openStock}
+                    />
+                  </>
+                )}
+                <p className="intraday-intro">
+                  排名基于已取得的报价。区间成交额是两次累计值之差，不代表净流入。快照之间没有连续分时记录。
+                </p>
+              </details>
+            </>
+          ) : result.loading && !view ? (
+            <Loading />
+          ) : (
+            <Panel>
+              <Empty
+                title={
+                  running && view?.current_slot?.key === selectedSlot
+                    ? "正在采集盘中报价"
+                    : `${slots.find((slot) => slot.key === selectedSlot)?.start || "所选时点"} 暂无快照`
+                }
+                description={
+                  selectedSlot === "close"
+                    ? "收盘行情正式发布后更新全天复盘。"
+                    : `${date} 的这个时点没有留存报价，因此无法显示该时点的个股与板块。`
+                }
+                action={
+                  samples.size > 0 && (
+                    <div className="intraday-expand">
+                      {slots
+                        .filter((slot) => samples.has(slot.key))
+                        .map((slot) => (
+                          <button
+                            type="button"
+                            className="btn small"
+                            key={slot.key}
+                            onClick={() => {
+                              setSelected(slot.key);
+                              setRotationBoard(undefined);
+                            }}
+                          >
+                            查看 {slot.start} {slot.label}
+                          </button>
+                        ))}
+                    </div>
+                  )
+                }
+              />
+            </Panel>
+          )}
+        </div>
+        <div {...intradayReadingProps("rotation")}>
+          <Rotation
+            key={`${date}:${selectedSlot}`}
+            stages={slots}
+            samples={samples}
+            activeStage={selectedSlot}
+            onSelect={selectDirection}
+          />
+        </div>
+      </IntradayPageNavigation>
     </div>
   );
 }

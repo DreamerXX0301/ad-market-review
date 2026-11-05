@@ -37,7 +37,7 @@ export default function Topics({
   // Keep the complete stable-ID directory: visual filtering must never erase a
   // selection that was made under another search or classification type.
   const result = useApi<Row>("/topics?include_archived=true");
-  const bootstrap = useApi<Row>("/bootstrap");
+  const bootstrap = useApi<Row>("/bootstrap?scope=navigation");
   const catalog = list(result.data);
   const singleId = selectedIds.length === 1 ? selectedIds[0] : "";
   const detail = useApi<Row>(singleId ? `/topics/${singleId}` : null);

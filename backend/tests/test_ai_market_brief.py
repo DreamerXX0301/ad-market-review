@@ -85,6 +85,23 @@ def save_close(c, revision=1, **changes):
     return row
 
 
+def test_auction_carryover_keeps_counts_and_reference_boundary_under_dense_sample_budget(monkeypatch):
+    from test_auction_carryover_narrative import packet
+    payload, topics = packet()
+    for row in payload['quotes']['items']:
+        row['name'] = '合成较长候选名称预算验证' * 5
+    monkeypatch.setattr(brief, 'build_topic_summary', lambda _: topics)
+    block = brief._auction(payload, {'snapshot_id': 'original-auction', 'content_sha256': 'a' * 64}, payload['date'])
+    context = block['evidence']['data']['carryover']
+    assert context['prior_limit_up']['sample_count'] == 4
+    assert context['highest_candidates']['previous_board_count'] == 4
+    assert context['highest_candidates']['high_open'] == context['highest_candidates']['low_open'] == 1
+    assert context['price_reference']['count'] == 1
+    assert context['price_reference']['confirmed_limit_price'] is False
+    assert context['directions'][0]['sample_count'] == 3
+    assert len(dumps(block['evidence']['data']).encode()) <= brief.MAX_BRIEF_DATA_BYTES
+
+
 def test_missing_snapshots_are_unknown_not_zero_and_never_fall_back_to_old_day(database):
     result = brief.build_briefs(DAY)
     assert result['blocks'] == [] and len(result['gaps']) == 3

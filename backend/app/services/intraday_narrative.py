@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from app.services.noon_analysis import number
 
-ADJACENT = {'1030': '1000', '1100': '1030', 'noon': '1100', '1330': 'noon',
+ADJACENT = {'1000': '0935', '1030': '1000', '1100': '1030', 'noon': '1100', '1330': 'noon',
             '1400': '1330', '1430': '1400', 'close': '1430'}
 
 
@@ -21,6 +21,11 @@ def _count(value, state):
 def _count_text(value, state):
     value = _count(value, state)
     return None if value is None else ('至少' if state == 'partial' else '') + str(value) + '只'
+
+
+def _display_change_pp(value):
+    """Match the displayed 0.01pp precision without changing source facts."""
+    return float(f'{value:.2f}')
 
 
 def _index(rows):
@@ -51,8 +56,10 @@ def _member_change(current, previous):
 
 
 class _Members:
-    def __init__(self):
+    def __init__(self, references=None, frame_inputs=None):
         self.references = {}
+        self.original_references = references or {}
+        self.frame_inputs = frame_inputs or {}
         self.samples = {}
         self.quote_indices = {}
         self.pool_indices = {}
@@ -66,9 +73,12 @@ class _Members:
             return {}
         generation, end, _ = identity
         if identity not in self.references:
-            market = _bound_market(generation)
-            self.references[identity] = (market.reference() if
-                (market.status().get('snapshot_id'), market.status().get('data_end')) == (generation, end) else {})
+            if (generation, end) in self.original_references:
+                self.references[identity] = self.original_references[generation, end]
+            else:
+                market = _bound_market(generation)
+                self.references[identity] = (market.reference() if
+                    (market.status().get('snapshot_id'), market.status().get('data_end')) == (generation, end) else {})
         return self.references[identity]
 
     def stocks(self, frame, sector, *, weakest=False, sealed_only=False):
@@ -116,9 +126,14 @@ class _Members:
                 quote_frame = raw
             frame_key = (frame['slot'], frame['id'])
             if frame_key not in self.quote_indices:
-                self.quote_indices[frame_key] = _quotes(quote_frame)
                 pool_frame = {**raw, 'slot': frame['slot']}
-                self.pool_indices[frame_key] = _pools(pool_frame)
+                prepared = self.frame_inputs.get(frame['id'])
+                if (prepared and prepared[:3] == (frame['date'], frame['slot'], frame.get('collected_end_at'))
+                        and prepared[3] is raw.get('comparison_input')):
+                    self.quote_indices[frame_key], self.pool_indices[frame_key], _ = prepared[4]
+                else:
+                    self.quote_indices[frame_key] = _quotes(quote_frame)
+                    self.pool_indices[frame_key] = _pools(pool_frame)
                 self.pool_conflicts[frame_key] = _conflicts(pool_frame)
             quotes, pools = self.quote_indices[frame_key], self.pool_indices[frame_key]
             sealed, broken = pools['limit_up'][0], pools['limit_break'][0]
@@ -269,6 +284,13 @@ def build_section(frame, previous, *, members=None):
               'source_bindings': {'current': frame.get('source_binding', {})}}
     if previous:
         result['source_bindings']['previous'] = previous.get('source_binding', {})
+    if slot == 'auction':
+        from app.services.auction_carryover_narrative import auction_highlights
+
+        context = frame.get('_auction_carryover', {})
+        result['highlights'].extend(auction_highlights(context))
+        if context.get('member_source_binding'):
+            result['source_bindings']['auction_members'] = context['member_source_binding']
     sectors = _index(frame.get('rotation_sectors', frame.get('sectors', ())))
     prior = _index(previous.get('rotation_sectors', previous.get('sectors', ()))) if previous else {}
     comparable = (previous is not None and previous['slot'] == ADJACENT.get(slot)
@@ -283,13 +305,18 @@ def build_section(frame, previous, *, members=None):
         if slot == 'auction':
             text += '（竞价候选均值）'
         if delta is not None:
-            verb = '走强' if delta >= .3 else '回落' if delta <= -.3 else '小幅抬升' if delta >= 0 else '小幅回落'
-            if delta < 0 and row['change_pct'] > 0 and old['change_pct'] > 0:
-                verb = '涨幅收窄' if delta <= -.3 else '涨幅小幅收窄'
-            elif delta > 0 and row['change_pct'] < 0 and old['change_pct'] < 0:
-                verb = '跌幅收窄' if delta >= .3 else '跌幅小幅收窄'
+            shown_delta = _display_change_pp(delta)
             previous_label = previous.get('display_label', LABELS[previous['slot']]).split()[0]
-            text += f'，较{previous_label}{verb}{abs(delta):.2f}个百分点（{old["change_pct"]:+.2f}% → {row["change_pct"]:+.2f}%）'
+            if shown_delta == 0:
+                text += f'，较{previous_label}持平'
+            else:
+                verb = '走强' if shown_delta >= .3 else '回落' if shown_delta <= -.3 else '小幅抬升' if shown_delta > 0 else '小幅回落'
+                if shown_delta < 0 and row['change_pct'] > 0 and old['change_pct'] > 0:
+                    verb = '涨幅收窄' if shown_delta <= -.3 else '涨幅小幅收窄'
+                elif shown_delta > 0 and row['change_pct'] < 0 and old['change_pct'] < 0:
+                    verb = '跌幅收窄' if shown_delta >= .3 else '跌幅小幅收窄'
+                text += f'，较{previous_label}{verb}{abs(shown_delta):.2f}个百分点'
+            text += f'（{old["change_pct"]:+.2f}% → {row["change_pct"]:+.2f}%）'
         state = row.get('limit_up_count_state', 'unknown')
         count = _count_text(row.get('limit_up_count'), state)
         if count is not None:
@@ -300,6 +327,7 @@ def build_section(frame, previous, *, members=None):
                      f'，同成员封板较前档{"增加" if count_delta > 0 else "减少"}{abs(count_delta)}只')
         entry = {'id': f'{slot}.{kind}.{row["instrument_id"]}', 'kind': kind,
                  'text': text + _stock_text(samples) + '。', 'sector_id': row['instrument_id'],
+                 'sector_name': row['name'],
                  'stock_ids': [row['instrument_id'] for row in samples], 'stocks': samples,
                  'change_pct': row['change_pct'], 'change_pp': delta,
                  'limit_up_count': _count(row.get('limit_up_count'), state),
@@ -311,8 +339,8 @@ def build_section(frame, previous, *, members=None):
         direction(row, 'auction' if slot == 'auction' else 'leading')
     changes = [(row['change_pct'] - prior[row['instrument_id']]['change_pct'], row) for row in ranked
                if comparable and row['instrument_id'] in prior and _comparable(row, prior[row['instrument_id']])]
-    for kind, selected in (('strengthening', sorted((v for v in changes if v[0] > .001), key=lambda v: (-v[0], v[1]['instrument_id']))),
-                           ('weakening', sorted((v for v in changes if v[0] < -.001), key=lambda v: (v[0], v[1]['instrument_id'])))):
+    for kind, selected in (('strengthening', sorted((v for v in changes if _display_change_pp(v[0]) > 0), key=lambda v: (-v[0], v[1]['instrument_id']))),
+                           ('weakening', sorted((v for v in changes if _display_change_pp(v[0]) < 0), key=lambda v: (v[0], v[1]['instrument_id'])))):
         for _, row in selected[:2]:
             direction(row, kind)
     if slot != 'auction' and not comparable:
@@ -367,27 +395,34 @@ def build_section(frame, previous, *, members=None):
     return result
 
 
-def load_frames(day, anchors, displayed_snapshots=None):
+def load_frames(day, anchors, displayed_snapshots=None, *, read_context=None):
     """Read bounded original bodies once. Never re-fetch or use current names as fallback."""
     from app.services import intraday_brief as brief, intraday_service as live
     from app.services.intraday_board_changes import attach_changes, read_noon_row, noon_frame
     from app.services.intraday_rotation import noon_rotation_sectors
 
     frames, snapshots, records = {}, [], []
+    shared = read_context if read_context and read_context.get('date') == day else None
     with brief.connect() as connection:
         tables = {row[0] for row in connection.execute('SELECT name FROM sqlite_master WHERE type=\'table\'')}
-        if {'market_intraday_capture', 'job'} <= tables:
+        if shared is not None:
+            records = [row for row in shared['rows'] if row['status'] in ('succeeded', 'partial')
+                       and isinstance(row['payload_json'], str)
+                       and len(row['payload_json'].encode()) <= live.MAX_PAYLOAD]
+        elif {'market_intraday_capture', 'job'} <= tables:
             records = connection.execute('''SELECT c.*,j.status,j.finished_at_ms FROM market_intraday_capture c
                 JOIN job j USING(job_id) WHERE c.trade_date=? AND j.status IN ('succeeded','partial')
                 AND length(CAST(c.payload_json AS BLOB))<=?''', (day, live.MAX_PAYLOAD)).fetchall()
-        noon_row = read_noon_row(connection, day)
-        noon_clock = live._noon_schedule(connection, day, None)[0] if {'market_noon_capture', 'job_event'} <= tables else None
+        noon_row = shared['noon_row'] if shared is not None else read_noon_row(connection, day)
+        noon_clock = (shared.get('noon_clock') if shared is not None else
+                      live._noon_schedule(connection, day, None)[0] if {'market_noon_capture', 'job_event'} <= tables else None)
         auction = connection.execute('''SELECT * FROM market_auction_snapshot WHERE trade_date=?
             AND length(CAST(payload_json AS BLOB))<=?''', (day, brief.MAX_NOON_BYTES)).fetchone() if 'market_auction_snapshot' in tables else None
     for row in records:
         try:
-            value = live.decode_snapshot(row)
-            window = next((item for item in live.SLOTS if item['key'] == value['slot']), None)
+            value = shared['snapshots'].get(row['snapshot_id']) if shared is not None else None
+            value = value if value is not None else live.decode_snapshot(row)
+            window = next((item for item in live.slots_for_version(value['version']) if item['key'] == value['slot']), None)
             start, end = (datetime.fromisoformat(value[field]) for field in ('collected_start_at', 'collected_end_at'))
             if (not window or start.tzinfo is None or end.tzinfo is None or not row['finished_at_ms']
                     or not window['start'] <= start.astimezone(brief.CHINA).strftime('%H:%M') <= end.astimezone(brief.CHINA).strftime('%H:%M') < window['end']
@@ -440,7 +475,13 @@ def load_frames(day, anchors, displayed_snapshots=None):
             pass
     if auction is not None:
         try:
+            from app.services.auction_integrity import validate_snapshot
+            from app.services.auction_topic_summary import build_topic_summary
+            from app.services.auction_carryover_narrative import auction_carryover
+
+            payload = validate_snapshot(auction)
             frames['auction'] = {**brief._auction_anchor(auction), 'date': day,
+                '_auction_carryover': auction_carryover(payload, build_topic_summary(payload)),
                 '_ready': max(brief._stamp(auction['collected_end_at'], day), auction['recorded_at_ms']),
                 'source_binding': {'source_id': 'fuyao', 'snapshot_id': auction['snapshot_id'], 'content_sha256': auction['content_sha256']}}
         except (ValueError, TypeError, KeyError, AttributeError):
@@ -448,16 +489,20 @@ def load_frames(day, anchors, displayed_snapshots=None):
     for anchor in anchors:
         if anchor['slot'] == 'close' and anchor.get('rotation_sectors'):
             frames['close'] = {**anchor, 'date': day, '_ready': brief._stamp(anchor.get('published_at', anchor['collected_end_at']), day),
-                               'source_binding': {'source_id': 'fuyao', 'snapshot_id': anchor['id'], 'basis': 'verified_closing_generation'}}
+                               'source_binding': anchor.get('source_binding') or {
+                                   'source_id': 'fuyao', 'snapshot_id': anchor['id'], 'basis': 'verified_closing_generation'}}
     return frames
 
 
-def attach_sections(day, briefs, anchors, snapshots=None):
+def attach_sections(day, briefs, anchors, snapshots=None, *, read_context=None):
     from app.services.intraday_brief import ORDER, TIMELINE, _stamp
 
     if not briefs:
         return
-    frames, members = load_frames(day, anchors, snapshots), _Members()
+    frames = (load_frames(day, anchors, snapshots, read_context=read_context) if read_context is not None
+              else load_frames(day, anchors, snapshots))
+    shared = read_context if read_context and read_context.get('date') == day else None
+    members = _Members(shared.get('references'), shared.get('frame_inputs')) if shared is not None else _Members()
     sections = {}
     def matches(item, slot):
         frame = frames.get(slot)

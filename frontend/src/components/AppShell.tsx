@@ -44,7 +44,6 @@ export const navigation = [
       {
         id: "auction",
         name: "盘前竞价",
-        description: "昨日预期 × 竞价强弱",
         icon: Sunrise,
       },
       { id: "intraday", name: "盘中观察", icon: TrendingUp },
@@ -189,9 +188,8 @@ export default function AppShell({
               <div className="nav-group-title">{group.label}</div>
               {group.items.map((item) => (
                 <button
-                  className={`${route === item.id ? "nav-item active" : "nav-item"}${"description" in item ? " nav-item-described" : ""}`}
+                  className={route === item.id ? "nav-item active" : "nav-item"}
                   key={item.id}
-                  title={"description" in item ? item.description : undefined}
                   aria-current={route === item.id ? "page" : undefined}
                   onClick={() => {
                     onNavigate(item.id);
@@ -199,14 +197,7 @@ export default function AppShell({
                   }}
                 >
                   <item.icon size={16} />
-                  <span
-                    className={
-                      "description" in item ? "nav-item-copy" : undefined
-                    }
-                  >
-                    {item.name}
-                    {"description" in item && <small>{item.description}</small>}
-                  </span>
+                  <span>{item.name}</span>
                   {item.id === "backtest" && (
                     <span className="nav-new">研究</span>
                   )}

@@ -1,9 +1,9 @@
-import { ArrowDownToLine, ArrowUpToLine } from "lucide-react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { pageScrollOwner, pageScrollState, scrollPageEdge } from "./pageScroll";
-import type { PageEdge } from "./pageScroll";
-import "./PageScrollEdges.css";
+import FloatingScrollControls from "./FloatingScrollControls";
+import { sectionNavigation } from "./sectionNavigation";
+import type { ReadingSection } from "./sectionNavigation";
 
 function pageHasModal(document: Document): boolean {
   return [
@@ -13,19 +13,22 @@ function pageHasModal(document: Document): boolean {
   ].some((node) => node.getClientRects().length > 0);
 }
 
-/** Place this marker inside a page; the controls follow its real scroll owner. */
+/** Controlled by the page directory, including its actual scroll-spy selection. */
 export default function PageScrollEdges({
   label = "页面",
+  sections,
+  activeId,
+  onNavigate,
 }: {
   label?: string;
+  sections: ReadingSection[];
+  activeId: string;
+  onNavigate: (id: string) => void;
 }) {
   const marker = useRef<HTMLSpanElement>(null);
   const [document, setDocument] = useState<Document | null>(null);
-  const [position, setPosition] = useState({
-    visible: false,
-    atTop: true,
-    atBottom: false,
-  });
+  const [visible, setVisible] = useState(false);
+  const navigation = sectionNavigation(sections, activeId);
 
   useEffect(() => {
     const node = marker.current;
@@ -37,36 +40,14 @@ export default function PageScrollEdges({
     let frame = 0;
     const update = () => {
       frame = 0;
-      const owner = pageScrollOwner(node);
-      const documentOwner = doc.scrollingElement || doc.documentElement;
-      const state = owner
-        ? pageScrollState(
-            owner.scrollTop,
-            owner.scrollHeight,
-            owner.clientHeight,
-          )
-        : pageScrollState(
-            view.scrollY,
-            documentOwner.scrollHeight,
-            view.innerHeight,
-          );
-      const next = {
-        visible: state.visible && !pageHasModal(doc),
-        atTop: state.atTop,
-        atBottom: state.atBottom,
-      };
-      setPosition((previous) =>
-        previous.visible === next.visible &&
-        previous.atTop === next.atTop &&
-        previous.atBottom === next.atBottom
-          ? previous
-          : next,
+      setVisible(
+        !!node.parentElement?.getClientRects().length && !pageHasModal(doc),
       );
     };
     const schedule = () => {
       if (!frame) frame = view.requestAnimationFrame(update);
     };
-    // Capture nested scroll events without taking over their wheel/keyboard input.
+    // Visibility only; section position comes exclusively from the directory.
     doc.addEventListener("scroll", schedule, true);
     doc.addEventListener("toggle", schedule, true);
     view.addEventListener("resize", schedule);
@@ -74,11 +55,7 @@ export default function PageScrollEdges({
       typeof ResizeObserver === "function"
         ? new ResizeObserver(schedule)
         : null;
-    for (const ancestor of [
-      node.parentElement,
-      pageScrollOwner(node),
-      doc.body,
-    ])
+    for (const ancestor of [node.parentElement, doc.body])
       if (ancestor) resize?.observe(ancestor);
     const mutations = new MutationObserver(schedule);
     mutations.observe(doc.body, {
@@ -98,39 +75,46 @@ export default function PageScrollEdges({
     };
   }, []);
 
-  function jump(edge: PageEdge) {
+  function jump(id?: string) {
     const node = marker.current;
-    if (node && !pageHasModal(node.ownerDocument)) scrollPageEdge(node, edge);
+    if (id && node && !pageHasModal(node.ownerDocument)) onNavigate(id);
   }
 
   return (
     <>
       <span ref={marker} hidden />
       {document &&
-        position.visible &&
+        visible &&
+        navigation.entries.length > 1 &&
         createPortal(
-          <nav className="page-scroll-edges" aria-label={`${label}快速滚动`}>
-            <button
-              type="button"
-              aria-label={`${label}回到顶部`}
-              title="回到页面顶部"
-              disabled={position.atTop}
-              onClick={() => jump("top")}
-            >
-              <ArrowUpToLine size={18} aria-hidden="true" />
-              <span>顶部</span>
-            </button>
-            <button
-              type="button"
-              aria-label={`${label}回到底部`}
-              title="回到页面底部"
-              disabled={position.atBottom}
-              onClick={() => jump("bottom")}
-            >
-              <ArrowDownToLine size={18} aria-hidden="true" />
-              <span>底部</span>
-            </button>
-          </nav>,
+          <FloatingScrollControls
+            className="page-scroll-edges"
+            label={`${label}上下节快捷导航`}
+            previous={{
+              label: `${label}上一节`,
+              caption: "上节",
+              title: navigation.previous
+                ? `上一节：${navigation.previous.label}`
+                : "已到第一节",
+              disabled: !navigation.previous,
+              icon: <ChevronUp size={18} />,
+              onClick: () => jump(navigation.previous?.id),
+            }}
+            next={{
+              label: `${label}下一节`,
+              caption: "下节",
+              title: navigation.next
+                ? `下一节：${navigation.next.label}`
+                : "已到最后一节",
+              disabled: !navigation.next,
+              icon: <ChevronDown size={18} />,
+              onClick: () => jump(navigation.next?.id),
+            }}
+            position={{
+              text: `${navigation.index + 1}/${navigation.entries.length}`,
+              label: `当前第 ${navigation.index + 1} 节，共 ${navigation.entries.length} 节：${navigation.current?.label || ""}`,
+            }}
+          />,
           document.body,
         )}
     </>

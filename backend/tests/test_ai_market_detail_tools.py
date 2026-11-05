@@ -181,7 +181,10 @@ def test_large_ladder_keeps_counts_and_explicit_bounded_lists(market, monkeypatc
     assert value['summary']['highest_board_stocks']['items'][0]['instrument_id'] == '600000.SH'
 
 
-@pytest.mark.parametrize('section', tools.DETAIL_SECTIONS)
+# Stored review and dragon-tiger branches have their own immutable-source
+# fixtures; they must not inherit evidence from this generic market-page stub.
+@pytest.mark.parametrize('section', [section for section in tools.DETAIL_SECTIONS
+                                     if section not in ('auction', 'noon', 'dragon_tiger')])
 def test_detail_injects_fixed_market_and_is_bounded(market, monkeypatch, section):
     row = ladder_row(SYMBOL, 1)
     lookup_mode = tools.GAINERS_LOOKUP_MODES.get(section)

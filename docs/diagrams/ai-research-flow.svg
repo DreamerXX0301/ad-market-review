@@ -53,9 +53,9 @@
   <path d="M1385 471V495H411V520" class="pipe"/>
 
   <rect x="52" y="532" width="718" height="277" rx="17" class="node"/>
-  <text x="78" y="574" class="step">05</text><text x="120" y="576" class="heading">六类受限只读资料</text>
-  <text x="78" y="619" class="body">盘面与时段 · 可用性 · 个股报价</text>
-  <text x="78" y="657" class="body">涨停梯队 · 盘面明细 · 已存研究</text>
+  <text x="78" y="574" class="step">05</text><text x="120" y="576" class="heading">八类受限只读资料</text>
+  <text x="78" y="619" class="body">盘面 · 可用性 · 个股报价 · 走势</text>
+  <text x="78" y="657" class="body">涨停梯队 · 盘面明细 · 研究 · 盘中链路</text>
   <text x="78" y="696" class="body">读已有发布与记录，不采集新行情、不写业务</text>
   <rect x="78" y="721" width="666" height="62" rx="8" fill="#21364e"/>
   <text x="97" y="749" class="small">同一模型响应可提出多项查询，后端依序执行。</text>

@@ -68,6 +68,48 @@ def _call(slot='all', query='', day='today'):
     return ai_read_tools.execute_read_tool('read_intraday_data', {'date': day, 'slot': slot, 'query': query})
 
 
+@pytest.mark.parametrize('dense', [False, True])
+def test_seven_slots_keep_0935_independent_and_fit_existing_tool_budget(source, monkeypatch, dense):
+    from app.services import ai_intraday_read
+    traces = []
+    original_connect = ai_intraday_read._connect
+    def traced_connect(path):
+        connection = original_connect(path)
+        if connection:
+            connection.set_trace_callback(traces.append)
+        return connection
+    monkeypatch.setattr(ai_intraday_read, '_connect', traced_connect)
+    monkeypatch.setattr(ai_read_tools, 'local_now', lambda: datetime.fromisoformat(DAY + 'T15:00:00+08:00'))
+    for slot in SLOTS:
+        value = _snapshot(slot['key'])
+        if dense:
+            value['sectors'] = value['strong_sectors'] = [
+                {**value['sectors'][0], 'instrument_id': f'{881000 + index}.TI',
+                 'name': '合成多方向有界摘要容量验证行业' + str(index)} for index in range(30)]
+            value['stocks'] = [{**value['stocks'][0], 'instrument_id': f'{600000 + index}.SH',
+                                'name': '合成容量验证股票' + str(index)} for index in range(30)]
+        _save(source, value)
+    before = source.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall()
+    result = _call('all')
+    assert result['ok'] and len(result['evidence']) == 7
+    assert list(result['summary']['phases']) == [slot['key'] for slot in SLOTS]
+    assert set(result['source_bindings']) == {slot['key'] for slot in SLOTS}
+    assert all(len(dumps(item['data']).encode()) <= 3 * 1024 for item in result['evidence'])
+    assert len(dumps(result).encode()) <= ai_read_tools.MAX_RESULT_BYTES
+    assert sum('SELECT trade_date,slot,snapshot_id,content_sha256,payload_json' in sql for sql in traces) == 7
+    opening = _call('0935')
+    assert len(opening['evidence']) == 1 and opening['evidence'][0]['kind'] == 'intraday:0935'
+    assert opening['evidence'][0]['dates']['collected_end_at'].startswith(DAY + 'T09:35:')
+    assert source.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall() == before
+
+
+def test_0935_without_real_snapshot_is_missing_not_auction_or_1000(source):
+    _save(source, _snapshot('1000'))
+    result = _call('0935')
+    assert result['evidence'] == [] and result['source_bindings'] == {}
+    assert result['summary']['phases']['0935']['phase_state'] == 'not_collected'
+
+
 def test_adjacent_board_changes_are_read_from_same_database_and_keep_sha_and_bounded_summary(source, monkeypatch):
     from test_intraday_board_changes import frame, A, B, C, D
 

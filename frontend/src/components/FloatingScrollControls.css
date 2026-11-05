@@ -1,10 +1,11 @@
-.page-scroll-edges {
+.floating-scroll-controls {
   position: fixed;
   z-index: 24;
   right: max(9px, env(safe-area-inset-right));
   top: 50%;
   transform: translateY(-50%);
   display: grid;
+  justify-items: center;
   gap: 2px;
   padding: 3px;
   border: 1px solid var(--border);
@@ -12,14 +13,13 @@
   background: var(--surface);
   box-shadow: 0 5px 20px rgb(0 0 0 / 15%);
 }
-
-.page-scroll-edges button {
+.floating-scroll-controls > button {
   display: grid;
   justify-items: center;
   align-content: center;
   gap: 3px;
   width: 40px;
-  min-height: 48px;
+  min-height: 46px;
   padding: 6px 3px;
   border: 0;
   border-radius: 9px;
@@ -30,39 +30,53 @@
     color 120ms,
     background 120ms;
 }
-
-.page-scroll-edges button > span {
+.floating-scroll-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.floating-scroll-caption {
   font-size: 10px;
   line-height: 1.2;
+  white-space: nowrap;
 }
-
-.page-scroll-edges button:hover:not(:disabled) {
+.floating-scroll-controls > button:hover:not(:disabled) {
   background: var(--blue-bg);
   color: var(--blue);
 }
-
-.page-scroll-edges button:focus-visible {
+.floating-scroll-controls > button:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 1px;
 }
-
-.page-scroll-edges button:disabled {
+.floating-scroll-controls > button:disabled {
   opacity: 0.35;
   cursor: default;
 }
-
+.floating-scroll-position {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
 @media (max-width: 700px) {
-  .page-scroll-edges {
+  .floating-scroll-controls {
     right: max(10px, env(safe-area-inset-right));
     top: auto;
     bottom: max(22px, env(safe-area-inset-bottom));
     transform: none;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, auto);
+    align-items: center;
+  }
+  .floating-scroll-controls[data-position="sections"] {
+    grid-template-columns: auto auto auto;
+  }
+  .floating-scroll-position {
+    padding: 0 4px;
   }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  .page-scroll-edges button {
+  .floating-scroll-controls > button {
     transition: none;
   }
 }

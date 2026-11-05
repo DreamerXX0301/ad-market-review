@@ -310,6 +310,7 @@ assert.equal(
   false,
 );
 
+const controlsProbe = encode("export const calls=[];export default function Controls(props){calls.push(props);return null;}");
 let code = compile(
   await fs.readFile(
     new URL("./EmotionPageNavigation.tsx", import.meta.url),
@@ -318,6 +319,8 @@ let code = compile(
   true,
 );
 code = code
+  .replaceAll('from "../../components/PageScrollEdges"', "from " + JSON.stringify(controlsProbe))
+  .replaceAll('from "../../components/pageScroll"', "from " + JSON.stringify(encode(compile(await fs.readFile(new URL("../../components/pageScroll.ts", import.meta.url), "utf8")))))
   .replaceAll(
     'from "react"',
     "from " + JSON.stringify(import.meta.resolve("react")),
@@ -342,6 +345,9 @@ const markup = renderToStaticMarkup(
     createElement("section", { id: "emotion-reading" }, "当前读数"),
   ),
 );
+const { calls: floatingControls } = await import(controlsProbe);
+assert.deepEqual(floatingControls.at(-1).sections, sections, "floating and left directories consume the same section list");
+assert.equal(floatingControls.at(-1).activeId, sections[0].id);
 assert.ok(markup.includes('aria-label="市场情绪页内目录"'));
 assert.ok(markup.includes('aria-current="location"'));
 assert.ok(markup.includes("2026-10-23"));

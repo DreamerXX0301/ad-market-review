@@ -305,14 +305,22 @@ const boardCode = ts.transpileModule(
   ),
   { compilerOptions: { module: ts.ModuleKind.ES2022 } },
 ).outputText;
+const jsxRuntime = encoded(
+  "export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const Fragment='fragment';",
+);
+const suspensionCode = ts.transpileModule(
+  await fs.readFile(new URL("./MarketSuspensionBadge.tsx", import.meta.url), "utf8"),
+  { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } },
+).outputText.replaceAll('"react/jsx-runtime"', JSON.stringify(jsxRuntime));
+const suspensionModule = encoded(suspensionCode);
+const { default: MarketSuspensionBadge } = await import(suspensionModule);
 for (const [from, to] of Object.entries({
   "./NoonStockChange": encoded("export default 'stock-change';"),
+  "./MarketSuspensionBadge": suspensionModule,
   react: encoded(
     "export const {useState,useEffect}=globalThis.__noonSectorHooks;",
   ),
-  "react/jsx-runtime": encoded(
-    "export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const Fragment='fragment';",
-  ),
+  "react/jsx-runtime": jsxRuntime,
   "../../lib/api": encoded("export const {useApi}=globalThis.__noonSectorAPI;"),
   "../../lib/format": encoded(
     "export const amount=v=>v??'—',num=v=>v??'—',percent=v=>v??'—',tone=v=>v==null?'':v<0?'down':'up';",
@@ -441,12 +449,20 @@ try {
     null,
     "known main board with no quote is retained without manufactured zero",
   );
-  assert.equal(
-    table()
-      .props.columns.find((column) => column.key === "board")
-      .render(missingQuote.board).props.children,
-    "主板",
-  );
+  const boardCell = table().props.columns.find((column) => column.key === "board").render;
+  const missingBoardCell = boardCell(missingQuote.board, missingQuote);
+  assert.equal(nodes(missingBoardCell).find((node) => node.type === "Badge").props.children, "主板");
+  const suspensionElement = (row) => nodes(boardCell(row.board, row))
+    .find((node) => node.type === MarketSuspensionBadge);
+  assert.equal(MarketSuspensionBadge(suspensionElement(missingQuote).props), null,
+    "a missing quote does not establish a full-session suspension");
+  const confirmedSuspension = { ...missingQuote, suspension: { state: "suspended", full_session: true, source: "exchange" } };
+  const suspensionBadge = MarketSuspensionBadge(suspensionElement(confirmedSuspension).props);
+  assert.equal(text(suspensionBadge), "停牌");
+  assert.equal(suspensionBadge.props.title, "全天停牌 · 交易所公告");
+  assert.equal(MarketSuspensionBadge(suspensionElement({ ...missingQuote,
+    suspension: { state: "suspended", full_session: false, source: "exchange" },
+  }).props), null, "partial-session evidence cannot claim a full-day suspension");
   const changeCell = table().props.columns.find((column) => column.key === "change_pct").render;
   assert.deepEqual(changeCell(null, missingQuote).props, { value: null, state: null });
   assert.deepEqual(changeCell(9.99, { current_events: ["limit_up"] }).props, {

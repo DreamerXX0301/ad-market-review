@@ -78,6 +78,7 @@ import DataNotes from "./DataNotes";
 import { chartDataNotes } from "./dataNotePresentation";
 import {
   barLimitMarker,
+  barBrokenMarker,
   LimitStatus,
   PatternStatus,
   limitCoverageText,
@@ -1071,6 +1072,42 @@ export function CandleChart({
           z: 8,
         });
       }
+      const broken = bars.flatMap((bar) => {
+        const marker = barBrokenMarker(bar);
+        return marker
+          ? [
+              {
+                value: [bar.date, bar.high],
+                name: marker.name,
+                label: { formatter: marker.text },
+              },
+            ]
+          : [];
+      });
+      if (broken.length)
+        series.push({
+          name: "炸板",
+          type: "scatter",
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          data: broken,
+          symbol: "diamond",
+          symbolSize: 7,
+          symbolOffset: [0, -8],
+          itemStyle: { color: pal.provisional, opacity: 1 },
+          label: {
+            show: true,
+            position: "top",
+            distance: 2,
+            fontSize: 10,
+            fontWeight: 600,
+            color: pal.provisional,
+          },
+          labelLayout: { hideOverlap: true },
+          tooltip: { show: false },
+          clip: false,
+          z: 8,
+        });
     }
     mas.forEach((n) => {
       series.push({
@@ -1232,7 +1269,14 @@ export function CandleChart({
               `<div style="color:${pal.tooltipText}"><strong>${b.date}</strong> <strong style="color:${pal.provisional}">· ${snapshotLabel}未收盘</strong>` +
               `<div>开 ${num(b.open)}　${snapshotLabel}价 <strong>${num(b.close)}</strong></div>` +
               `<div>高 ${num(b.high)}　低 ${num(b.low)}</div>` +
-              `<div>${snapshotLabel}涨跌幅 <strong style="color:${changeColor}">${percent(b.change_pct)}</strong></div></div>`
+              `<div>${snapshotLabel}涨跌幅 <strong style="color:${changeColor}">${percent(b.change_pct)}</strong></div>` +
+              limitTooltipHtml(b, period, {
+                up: pal.up,
+                down: pal.down,
+                text: pal.tooltipText,
+                warning: pal.provisional,
+              }) +
+              "</div>"
             );
           }
           const change = candleChange(b, period);
@@ -1897,10 +1941,13 @@ export function CandleChart({
             role="region"
             aria-label={noonPreview.slot_label ? "盘中快照" : "午间快照"}
           >
-            <strong>{noonPreview.trade_date} {noonPreview.slot_label || "午间快照"}</strong>
+            <strong>
+              {noonPreview.trade_date} {noonPreview.slot_label || "午间快照"}
+            </strong>
             {noonPreview.quote && (
               <span>
-                {noonPreview.slot_label ? "盘中" : "午间"}{isIndex ? "点位" : "价"}{" "}
+                {noonPreview.slot_label ? "盘中" : "午间"}
+                {isIndex ? "点位" : "价"}{" "}
                 <b>{num(noonPreview.quote.latest_price)}</b>
               </span>
             )}
@@ -1932,7 +1979,11 @@ export function CandleChart({
             <div className="ohlc-strip">
               <span>
                 {activeBar.date}
-                {activeBar.noon_provisional ? activeBar.intraday_provisional ? " · 盘中未收盘" : " · 午间未收盘" : ""}
+                {activeBar.noon_provisional
+                  ? activeBar.intraday_provisional
+                    ? " · 盘中未收盘"
+                    : " · 午间未收盘"
+                  : ""}
               </span>
               {!activeBar.noon_provisional && (
                 <span title={activeSessionDistance.reason}>
@@ -1963,7 +2014,11 @@ export function CandleChart({
                 </small>
               </span>
               <span>
-                {activeBar.noon_provisional ? "午间价" : "收"}{" "}
+                {activeBar.noon_provisional
+                  ? activeBar.intraday_provisional
+                    ? "盘中价"
+                    : "午间价"
+                  : "收"}{" "}
                 <b className={tone(activeBar.close - activeBar.open)}>
                   {num(activeBar.close)}
                 </b>
@@ -2013,7 +2068,7 @@ export function CandleChart({
               {supportsLimits && !activeBar.noon_provisional && (
                 <LimitStatus bar={activeBar} period={period} />
               )}
-              {supportsLimits && !activeBar.noon_provisional && (
+              {supportsLimits && (
                 <PatternStatus bar={activeBar} period={period} />
               )}
             </div>
@@ -2376,6 +2431,8 @@ export function CandleChart({
             <>
               <span className="up">▼ 收盘涨停</span>
               <span className="down">▲ 收盘跌停</span>
+              <span className="chart-broken-legend">◆ 炸板</span>
+              <span className="up">▼ 回封</span>
               <span>同日形态合并标注：地天 / 一字涨 / 一字跌</span>
               <span>{showLimits ? "标记已显示" : "标记已隐藏"}</span>
             </>
@@ -2386,7 +2443,9 @@ export function CandleChart({
             </span>
           )}
           <span>{limitCoverageText(data?.limit_event_coverage)}</span>
-          <span>涨跌停按收盘池核验，单纯触板 / 炸板不作为收盘事件。</span>
+          <span>
+            涨跌停按收盘池核验；炸板、回封按同日来源证据另行标记，盘中状态不代表收盘。
+          </span>
           <span>
             形态只用原始日K与来源证据；无标记不等于未涨跌停或没有形态。
           </span>
@@ -2767,8 +2826,8 @@ export function StockDrawer({
     intradaySnapshotId
       ? `/market/intraday/quotes/${encodeURIComponent(intradaySnapshotId)}/${encodeURIComponent(id)}`
       : noonSnapshotId
-      ? `/market/noon/${encodeURIComponent(noonSnapshotId)}/stocks/${encodeURIComponent(id)}/quote`
-      : null,
+        ? `/market/noon/${encodeURIComponent(noonSnapshotId)}/stocks/${encodeURIComponent(id)}/quote`
+        : null,
   );
   const selectedSnapshot = intradaySnapshotId || noonSnapshotId;
   const snapshotLabel = intradaySnapshotId ? "盘中" : "午间";
@@ -3106,7 +3165,9 @@ export function StockDrawer({
             <StockEventBaseline state={eventReference} />
             {selectedSnapshot && !noonPreview && (
               <p className="muted">
-                {noon.loading ? `正在读取${snapshotLabel}快照…` : `${snapshotLabel}快照暂不可用。`}
+                {noon.loading
+                  ? `正在读取${snapshotLabel}快照…`
+                  : `${snapshotLabel}快照暂不可用。`}
               </p>
             )}
             <CandleChart

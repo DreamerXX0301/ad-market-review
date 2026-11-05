@@ -1,5 +1,6 @@
 """Intraday snapshot reads, capture requests, and local automation settings."""
 from fastapi import APIRouter, Body, Query
+from fastapi.responses import JSONResponse
 
 from app.services import intraday_service
 
@@ -10,9 +11,12 @@ router = APIRouter(prefix='/api/v1/market/intraday', tags=['intraday'])
 def view(date: str | None = None):
     from app.services.intraday_brief import read_brief_view
 
-    result = intraday_service.read_view(date)
-    result.update(read_brief_view(result['date'], snapshots=result['snapshots']))
-    return result
+    read_context = {}
+    result = intraday_service.read_view(date, read_context=read_context)
+    result.update(read_brief_view(result['date'], snapshots=result['snapshots'], read_context=read_context))
+    # Both readers produce JSON primitives from verified stored projections.
+    # Avoid FastAPI recursively copying the large tree before encoding it again.
+    return JSONResponse(content=result)
 
 
 @router.post('/jobs')

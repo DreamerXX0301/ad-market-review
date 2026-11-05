@@ -8,47 +8,6 @@
 .noon-workbench .panel-head h2 {
   font-size: 15px;
 }
-.noon-quick-navigation {
-  position: fixed;
-  right: 12px;
-  bottom: 30px;
-  z-index: 12;
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  padding: 5px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 22px;
-  box-shadow: 0 5px 18px #0002;
-}
-.noon-quick-navigation > button {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  background: transparent;
-  color: var(--blue);
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
-}
-.noon-quick-navigation > button:hover {
-  background: var(--surface2);
-}
-.noon-quick-navigation > button:disabled {
-  color: var(--muted);
-  opacity: 0.4;
-  cursor: default;
-}
-.noon-quick-navigation > button:focus-visible {
-  outline: 2px solid var(--blue);
-}
-.noon-quick-navigation > span {
-  color: var(--muted);
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-}
 .noon-reading-content [id] {
   scroll-margin-top: var(--noon-scroll-offset, 110px);
 }

@@ -10,7 +10,7 @@ from app.services.noon_analysis import number
 
 VERSION = 'intraday-board-changes-v1'
 EVIDENCE_VERSION = 'intraday-board-pools-v1'
-BASELINES = {'1030': '1000', '1100': '1030', '1330': 'noon', '1400': '1330', '1430': '1400'}
+BASELINES = {'1000': '0935', '1030': '1000', '1100': '1030', '1330': 'noon', '1400': '1330', '1430': '1400', 'close': '1430'}
 LABELS = {'new_sealed': '较上档新入封板池', 'new_broken': '较上档新增炸板样本',
           'new_limit_down': '较上档新入跌停池', 'opened': '上档封板、本档炸板',
           'resealed': '上档炸板、本档封板'}
@@ -33,19 +33,33 @@ def _binding(snapshot, row):
         if (original.get('date') != snapshot.get('date') or row['trade_date'] != snapshot.get('date')
                 or row['snapshot_id'] != snapshot.get('id')):
             return None
-        if slot != 'noon' and (original.get('id') != snapshot.get('id') or original.get('slot') != slot
-                               or row['slot'] != slot or original.get('version') != 'intraday-snapshot-v5'):
+        if slot not in ('noon', 'close') and (original.get('id') != snapshot.get('id') or original.get('slot') != slot
+                               or row['slot'] != slot or original.get('version') not in ('intraday-snapshot-v5', 'intraday-snapshot-v6')):
             return None
         start, end = (datetime.fromisoformat(original[key]) for key in ('collected_start_at', 'collected_end_at'))
         if (start.tzinfo is None or end.tzinfo is None or start > end
                 or any(value.astimezone(CHINA).date().isoformat() != snapshot['date'] for value in (start, end))):
             return None
+        if slot == 'close':
+            from app.services.intraday_close import VERSION as CLOSE_VERSION
+
+            receipt = original.get('source_binding', {})
+            if (original.get('version') != CLOSE_VERSION or original.get('id') != snapshot.get('id')
+                    or original.get('slot') != 'close' or receipt != snapshot.get('source_binding')
+                    or (receipt.get('snapshot_id'), receipt.get('date'), receipt.get('source_id')) != (
+                        snapshot['id'], snapshot['date'], 'fuyao')
+                    or not re.fullmatch('[a-f0-9]{64}', str(receipt.get('content_sha256')))
+                    or not re.fullmatch('[a-f0-9]{64}', str(receipt.get('reference_sha256')))
+                    or start != end or start.astimezone(CHINA).strftime('%H:%M:%S') != '15:00:00'
+                    or datetime.fromisoformat(receipt['published_at']) < end):
+                return None
+            return {**receipt, 'projection_sha256': digest}
         if slot == 'noon':
             if original.get('version') != 'noon-snapshot-v1' or not '11:30' <= start.strftime('%H:%M') <= end.strftime('%H:%M') < '13:00':
                 return None
         else:
-            from app.services.intraday_service import SLOTS
-            window = next((value for value in SLOTS if value['key'] == slot), None)
+            from app.services.intraday_service import slots_for_version
+            window = next((value for value in slots_for_version(original['version']) if value['key'] == slot), None)
             if not window or not window['start'] <= start.astimezone(CHINA).strftime('%H:%M') <= end.astimezone(CHINA).strftime('%H:%M') < window['end']:
                 return None
         frame = {**original, 'slot': slot, 'id': snapshot['id']}
@@ -60,6 +74,14 @@ def _binding(snapshot, row):
 
 def _pool_receipt(snapshot, key):
     """Only a same-window, checksummed response can support a saved pool claim."""
+    if snapshot.get('slot') == 'close':
+        from app.services.intraday_close import VERSION as CLOSE_VERSION
+
+        receipt = snapshot.get('source_binding', {})
+        return (snapshot.get('version') == CLOSE_VERSION
+                and (receipt.get('snapshot_id'), receipt.get('date'), receipt.get('source_id')) == (
+                    snapshot.get('id'), snapshot.get('date'), 'fuyao')
+                and bool(re.fullmatch('[a-f0-9]{64}', str(receipt.get('reference_sha256')))))
     noon = snapshot.get('slot') == 'noon'
     checks = snapshot.get('sources' if noon else 'source_checks', ())
     if not isinstance(checks, list):
@@ -177,15 +199,46 @@ def _quotes(snapshot):
     return result
 
 
-def build_changes(current, previous, *, current_row, previous_row=None):
+def frame_quotes(snapshot, cache=None):
+    """Same immutable input object within one request; never cache across requests or dates."""
+    if cache is None:
+        return _quotes(snapshot)
+    source = snapshot.get('comparison_input')
+    key = (id(source), snapshot.get('date'), snapshot.get('slot'), snapshot.get('id'))
+    indexed = cache.setdefault('quote_indices', {})
+    saved = indexed.get(key)
+    if saved is None or saved[0] is not source:
+        saved = source, _quotes(snapshot)
+        indexed[key] = saved
+    return saved[1]
+
+
+def _read_binding(snapshot, row, cache):
+    if cache is None:
+        return _binding(snapshot, row)
+    if row is None:
+        return None
+    try:
+        record = (id(row['payload_json']), row['content_sha256'], row['trade_date'], row['snapshot_id'])
+    except (KeyError, IndexError, TypeError):
+        return _binding(snapshot, row)
+    key = (id(snapshot), id(row), snapshot.get('id'), snapshot.get('date'), snapshot.get('slot'),
+           snapshot.get('collected_start_at'), snapshot.get('collected_end_at'), record)
+    bindings = cache.setdefault('frame_bindings', {})
+    if key not in bindings:
+        bindings[key] = snapshot, row, _binding(snapshot, row)
+    return bindings[key][2]
+
+
+def build_changes(current, previous, *, current_row, previous_row=None, read_cache=None):
     """Exact differences require complete enumerations; positive cross-pool matches give lower bounds."""
     baseline = BASELINES.get(current.get('slot'))
     result = {'version': VERSION, 'scope': SCOPE, 'baseline_slot': baseline, 'state': 'unknown',
               'source_bindings': {}, 'groups': {key: {'label': label, 'state': 'unknown', 'count': None,
                    'items': [], 'omitted_count': 0, 'reason_code': 'missing_adjacent_snapshot'}
                    for key, label in LABELS.items()}}
-    now = _binding(current, current_row)
-    before = _binding(previous, previous_row) if previous else None
+    now = _read_binding(current, current_row, read_cache)
+    before = _read_binding(previous, previous_row, read_cache) if previous else None
     if now:
         result['source_bindings']['current'] = now
     if before:
@@ -198,7 +251,7 @@ def build_changes(current, previous, *, current_row, previous_row=None):
     up, up_exact = current_pools['limit_up']; old_up, old_up_exact = prior_pools['limit_up']
     broken, broken_exact = current_pools['limit_break']; old_broken, old_broken_exact = prior_pools['limit_break']
     down, down_exact = current_pools['limit_down']; old_down, old_down_exact = prior_pools['limit_down']
-    current_quotes, previous_quotes = _quotes(current), _quotes(previous)
+    current_quotes, previous_quotes = frame_quotes(current, read_cache), frame_quotes(previous, read_cache)
     sample_rows = {}
     for snapshot in (current,):
         ladder = snapshot.get('ladder', {})
@@ -257,17 +310,18 @@ def read_noon_row(connection, day):
         AND length(CAST(payload_json AS BLOB))<=?''', (day, 8 * 1024 * 1024)).fetchone()
 
 
-def attach_changes(snapshots, rows, noon_row=None):
+def attach_changes(snapshots, rows, noon_row=None, *, read_cache=None):
     records = {row['slot']: row for row in rows}
     by_slot = {snapshot['slot']: snapshot for snapshot in snapshots}
     noon = noon_frame(noon_row)
     for snapshot in snapshots:
-        if snapshot.get('version') != 'intraday-snapshot-v5':
+        if snapshot.get('version') not in ('intraday-snapshot-v5', 'intraday-snapshot-v6'):
             continue
         key = BASELINES.get(snapshot['slot'])
         prior = noon if key == 'noon' else by_slot.get(key)
         snapshot['board_changes'] = build_changes(snapshot, prior, current_row=records.get(snapshot['slot']),
-                                                  previous_row=noon_row if key == 'noon' else records.get(key))
+                                                  previous_row=noon_row if key == 'noon' else records.get(key),
+                                                  read_cache=read_cache)
 
 
 def stock_rows(snapshot):

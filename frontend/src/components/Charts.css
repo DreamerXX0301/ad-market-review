@@ -239,6 +239,10 @@
   background: transparent;
   font-weight: 400;
 }
+.candle-pattern-status > .warning,
+.chart-broken-legend {
+  color: var(--warning, #d89a37);
+}
 .chart-limit-legend {
   display: flex;
   align-items: baseline;

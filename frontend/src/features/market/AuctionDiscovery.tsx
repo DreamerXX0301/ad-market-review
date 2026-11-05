@@ -36,6 +36,43 @@ const DIRECTION_FILTERS = [
 ] as const;
 type DirectionFilter = (typeof DIRECTION_FILTERS)[number][0];
 
+export function discoveryThemeDistribution(items: Row[]) {
+  const unique = [
+    ...new Map(items.map((row) => [row.instrument_id, row])).values(),
+  ];
+  return (["industry", "concept"] as const).map((kind) => {
+    const groups = new Map<string, Set<string>>();
+    let classified = 0;
+    for (const stock of unique) {
+      const names = new Set<string>(
+        noonRows(stock.themes)
+          .filter(
+            (theme) =>
+              theme.kind === kind &&
+              typeof theme.name === "string" &&
+              theme.name.trim(),
+          )
+          .map((theme) => theme.name.trim()),
+      );
+      if (names.size) classified++;
+      for (const name of names) {
+        if (!groups.has(name)) groups.set(name, new Set());
+        groups.get(name)!.add(stock.instrument_id);
+      }
+    }
+    return {
+      kind,
+      total: unique.length,
+      missing: unique.length - classified,
+      groups: [...groups]
+        .map(([name, symbols]) => ({ name, count: symbols.size }))
+        .sort(
+          (a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"),
+        ),
+    };
+  });
+}
+
 export function DiscoveryWorkspace({
   directions,
   changeLabel,
@@ -214,28 +251,38 @@ export function DiscoveryWorkspace({
   );
 }
 
-function Stocks({
+export function Stocks({
   items,
   chartDate,
   onStock,
   label,
   showLeader = false,
+  showDistribution = false,
   history = {},
 }: StockLinks & {
   items: Row[];
   label: string;
   showLeader?: boolean;
+  showDistribution?: boolean;
   history?: Record<string, Row>;
 }) {
+  const [themeFilter, setThemeFilter] = useState<{
+    kind: string;
+    name: string;
+  } | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
   const [sort, setSort] = useState<MarketSort>({
     key: "auction_pct",
     order: "desc",
   });
-  const onSort = (key: string) =>
+  const onSort = (key: string) => {
+    setPage(0);
     setSort((current) => ({
       key,
       order: current.key === key && current.order === "desc" ? "asc" : "desc",
     }));
+  };
   const enriched: Row[] = items.map((stock) => {
     const metrics = history[stock.instrument_id] || {};
     return {
@@ -254,7 +301,23 @@ function Stocks({
       source_warnings: noonLines(stock.warnings).join(" · ") || null,
     };
   });
-  const rows = sortMarketRows(enriched, sort);
+  const distribution = discoveryThemeDistribution(items);
+  const filtered = enriched.filter(
+    (stock) =>
+      !themeFilter ||
+      noonRows(stock.themes).some(
+        (theme) =>
+          theme.kind === themeFilter.kind &&
+          theme.name?.trim() === themeFilter.name,
+      ),
+  );
+  const ordered = sortMarketRows(filtered, sort);
+  const pages = Math.max(1, Math.ceil(ordered.length / pageSize));
+  const currentPage = Math.min(page, pages - 1);
+  const rows = ordered.slice(
+    currentPage * pageSize,
+    (currentPage + 1) * pageSize,
+  );
   const knownPcts = enriched
     .map((stock) => auctionNumber(stock.auction_pct))
     .filter((value): value is number => value != null);
@@ -273,142 +336,259 @@ function Stocks({
     ["limit_up_1y", "近一年涨停次数"],
     ["source_warnings", "来源异动"],
   ];
-  return (
-    <div className="auction-table-wrap">
-      <table
-        className="auction-table auction-discovery-stocks"
-        aria-label={label}
+  function themeButton(kind: string, group: { name: string; count: number }) {
+    const selected =
+      themeFilter?.kind === kind && themeFilter.name === group.name;
+    return (
+      <button
+        type="button"
+        key={group.name}
+        className="discovery-distribution-chip"
+        data-kind={kind}
+        aria-pressed={selected}
+        onClick={() => {
+          setThemeFilter(selected ? null : { kind, name: group.name });
+          setPage(0);
+        }}
       >
-        <thead>
-          <tr>
-            {headers.map(([key, caption]) => (
-              <th
-                key={key}
-                scope="col"
-                aria-sort={
-                  sort.key === key
-                    ? sort.order === "desc"
-                      ? "descending"
-                      : "ascending"
-                    : undefined
-                }
-              >
-                <MarketSortHeader
-                  field={key}
-                  caption={caption}
-                  sort={sort}
-                  onSort={onSort}
-                />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((stock) => {
-            const pct = auctionNumber(stock.auction_pct);
-            const height = auctionNumber(stock.previous_board_count);
-            return (
-              <tr key={stock.instrument_id}>
-                <td className={tone(pct)}>
-                  {percent(pct)}
-                  {leaderPct != null && pct === leaderPct && (
-                    <span className="auction-discovery-leader">样本领涨</span>
-                  )}
-                </td>
-                <td>
-                  <div className="auction-identity">
-                    <button
-                      type="button"
-                      className="auction-stock"
-                      disabled={!chartDate || !onStock}
-                      title={chartDate ? `K线截至 ${chartDate}` : undefined}
-                      onClick={() => onStock?.(stock.instrument_id)}
-                    >
-                      {stock.name || stock.instrument_id}
-                    </button>
-                    <span className="auction-discovery-code muted">
-                      <CopyStockCode instrumentId={stock.instrument_id} />
-                    </span>
-                  </div>
-                </td>
-                <td>
-                  <Badge>{stock.board_label}</Badge>
-                </td>
-                <td className="auction-discovery-themes">
-                  {noonRows(stock.themes).length ? (
-                    <div className="auction-discovery-theme-list">
-                      {noonRows(stock.themes)
-                        .slice(0, 3)
-                        .map((theme) => (
-                          <span
-                            key={`${theme.kind}:${theme.name}`}
-                            className={`discovery-theme ${theme.kind === "industry" ? "industry" : "concept"}`}
-                            title={`成员档案 ${theme.member_date || "待核验"}`}
-                          >
-                            {theme.name}
-                          </span>
-                        ))}
-                      {noonRows(stock.themes).length > 3 && (
-                        <span
-                          className="muted"
-                          title={noonRows(stock.themes)
-                            .slice(3)
-                            .map((theme) => theme.name)
-                            .join("、")}
-                        >
-                          +{noonRows(stock.themes).length - 3}
-                        </span>
-                      )}
+        <span>{group.name}</span>
+        <b>{group.count}只</b>
+      </button>
+    );
+  }
+  return (
+    <div className="auction-discovery-list">
+      {showDistribution && (
+        <div
+          className="discovery-distribution"
+          aria-label={`${label}行业概念分布`}
+        >
+          <div className="discovery-distribution-heading">
+            <strong>主要行业与概念</strong>
+            <small>
+              按全部 {integer(distribution[0].total)} 只股票统计，概念可重叠
+            </small>
+            <button
+              type="button"
+              className="btn small"
+              disabled={!themeFilter}
+              onClick={() => {
+                setThemeFilter(null);
+                setPage(0);
+              }}
+            >
+              清除筛选
+            </button>
+          </div>
+          {distribution.map(({ kind, groups, missing }) => (
+            <div className="discovery-distribution-row" key={kind}>
+              <span>{kind === "industry" ? "行业" : "概念"}</span>
+              <div className="discovery-distribution-options">
+                {groups.slice(0, 3).map((group) => themeButton(kind, group))}
+                {groups.length > 3 && (
+                  <details className="discovery-distribution-more">
+                    <summary>
+                      其余{groups.length - 3}个
+                      {kind === "industry" ? "行业" : "概念"}
+                    </summary>
+                    <div>
+                      {groups.slice(3).map((group) => themeButton(kind, group))}
                     </div>
-                  ) : (
-                    <span className="muted">归属待核验</span>
-                  )}
-                </td>
-                <td>
-                  {height != null && height > 0 ? (
-                    <AuctionHeightBadge row={stock} />
-                  ) : (
-                    "—"
-                  )}
-                </td>
-                <td>{amount(auctionNumber(stock.auction_amount))}</td>
-                <td>
-                  <MemberReturnCell row={stock} field="change_30d_pct" />
-                </td>
-                <td>
-                  <MemberReturnCell row={stock} field="return_ytd_pct" />
-                </td>
-                <td title={stock.last_limit_up_reason || undefined}>
-                  {stock.last_limit_up_date || "—"}
-                  {stock.last_limit_up_date &&
-                    stock.last_limit_up_complete !== true && (
-                      <small className="auction-discovery-leader">
-                        最近已确认
-                      </small>
-                    )}
-                </td>
-                <td
-                  title={
-                    stock.limit_up_1y_complete === true
-                      ? "近一年逐日收盘涨停已完整核验"
-                      : "历史来源覆盖不足，仅列已确认次数，不把缺报补为零"
+                  </details>
+                )}
+                {missing > 0 && <small>另有 {missing} 只归属待核验</small>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="auction-table-wrap auction-discovery-table-scroll">
+        <table
+          className="auction-table auction-discovery-stocks"
+          aria-label={label}
+        >
+          <colgroup>
+            {[118, 170, 90, 220, 96, 140, 136, 112, 140, 130, 180].map(
+              (width, index) => (
+                <col key={index} style={{ width }} />
+              ),
+            )}
+          </colgroup>
+          <thead>
+            <tr>
+              {headers.map(([key, caption]) => (
+                <th
+                  key={key}
+                  scope="col"
+                  aria-sort={
+                    sort.key === key
+                      ? sort.order === "desc"
+                        ? "descending"
+                        : "ascending"
+                      : undefined
                   }
                 >
-                  {auctionNumber(history[stock.instrument_id]?.limit_up_1y) !=
-                  null
-                    ? `${integer(history[stock.instrument_id].limit_up_1y)} 次`
-                    : stock.limit_up_1y_observed > 0
-                      ? `≥${integer(stock.limit_up_1y_observed)} 次`
-                      : "—"}
-                </td>
-                <td className="auction-discovery-warnings">
-                  {noonLines(stock.warnings).join(" · ") || "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  <MarketSortHeader
+                    field={key}
+                    caption={caption}
+                    sort={sort}
+                    onSort={onSort}
+                  />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((stock) => {
+              const pct = auctionNumber(stock.auction_pct);
+              const height = auctionNumber(stock.previous_board_count);
+              return (
+                <tr key={stock.instrument_id}>
+                  <td className={tone(pct)}>
+                    {percent(pct)}
+                    {leaderPct != null && pct === leaderPct && (
+                      <span className="auction-discovery-leader">样本领涨</span>
+                    )}
+                  </td>
+                  <td>
+                    <div className="auction-identity">
+                      <button
+                        type="button"
+                        className="auction-stock"
+                        disabled={!chartDate || !onStock}
+                        title={chartDate ? `K线截至 ${chartDate}` : undefined}
+                        onClick={() => onStock?.(stock.instrument_id)}
+                      >
+                        {stock.name || stock.instrument_id}
+                      </button>
+                      <span className="auction-discovery-code muted">
+                        <CopyStockCode instrumentId={stock.instrument_id} />
+                      </span>
+                    </div>
+                  </td>
+                  <td>
+                    <Badge>{stock.board_label}</Badge>
+                  </td>
+                  <td className="auction-discovery-themes">
+                    {noonRows(stock.themes).length ? (
+                      <div className="auction-discovery-theme-list">
+                        {noonRows(stock.themes)
+                          .slice(0, 3)
+                          .map((theme) => (
+                            <span
+                              key={`${theme.kind}:${theme.name}`}
+                              className={`discovery-theme ${theme.kind === "industry" ? "industry" : "concept"}`}
+                              title={`成员档案 ${theme.member_date || "待核验"}`}
+                            >
+                              {theme.name}
+                            </span>
+                          ))}
+                        {noonRows(stock.themes).length > 3 && (
+                          <span
+                            className="muted"
+                            title={noonRows(stock.themes)
+                              .slice(3)
+                              .map((theme) => theme.name)
+                              .join("、")}
+                          >
+                            +{noonRows(stock.themes).length - 3}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="muted">归属待核验</span>
+                    )}
+                  </td>
+                  <td>
+                    {height != null && height > 0 ? (
+                      <AuctionHeightBadge row={stock} />
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td>{amount(auctionNumber(stock.auction_amount))}</td>
+                  <td>
+                    <MemberReturnCell row={stock} field="change_30d_pct" />
+                  </td>
+                  <td>
+                    <MemberReturnCell row={stock} field="return_ytd_pct" />
+                  </td>
+                  <td title={stock.last_limit_up_reason || undefined}>
+                    {stock.last_limit_up_date || "—"}
+                    {stock.last_limit_up_date &&
+                      stock.last_limit_up_complete !== true && (
+                        <small className="auction-discovery-leader">
+                          最近已确认
+                        </small>
+                      )}
+                  </td>
+                  <td
+                    title={
+                      stock.limit_up_1y_complete === true
+                        ? "近一年逐日收盘涨停已完整核验"
+                        : "历史来源覆盖不足，仅列已确认次数，不把缺报补为零"
+                    }
+                  >
+                    {auctionNumber(history[stock.instrument_id]?.limit_up_1y) !=
+                    null
+                      ? `${integer(history[stock.instrument_id].limit_up_1y)} 次`
+                      : stock.limit_up_1y_observed > 0
+                        ? `≥${integer(stock.limit_up_1y_observed)} 次`
+                        : "—"}
+                  </td>
+                  <td className="auction-discovery-warnings">
+                    {noonLines(stock.warnings).join(" · ") || "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="discovery-pagination" aria-label={`${label}分页`}>
+        <span>
+          {themeFilter && `${themeFilter.name} · `}共 {integer(ordered.length)}{" "}
+          只
+          {ordered.length > 0 &&
+            ` · ${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, ordered.length)}`}
+        </span>
+        <label>
+          每页{" "}
+          <select
+            aria-label={`${label}每页条数`}
+            value={pageSize}
+            onChange={(event) => {
+              setPageSize(Number(event.target.value));
+              setPage(0);
+            }}
+          >
+            {[10, 20, 30].map((size) => (
+              <option key={size} value={size}>
+                {size}条
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn small"
+          disabled={currentPage === 0}
+          onClick={() => setPage(currentPage - 1)}
+        >
+          上一页
+        </button>
+        <span>
+          {currentPage + 1} / {pages} 页
+        </span>
+        <button
+          type="button"
+          className="btn small"
+          disabled={currentPage + 1 >= pages}
+          onClick={() => setPage(currentPage + 1)}
+        >
+          下一页
+        </button>
+      </div>
     </div>
   );
 }
@@ -559,7 +739,7 @@ export default function AuctionDiscovery({
             </div>
           )}
           {individuals.length > 0 && (
-            <details className="auction-discovery-extra">
+            <details className="auction-discovery-extra" open>
               <summary>
                 <ChevronRight size={15} aria-hidden="true" />
                 其他个股异动 · {integer(individuals.length)} 只
@@ -567,13 +747,14 @@ export default function AuctionDiscovery({
               <Stocks
                 items={individuals}
                 label="其他个股竞价异动"
+                showDistribution
                 history={history?.items}
                 {...{ chartDate, onStock }}
               />
             </details>
           )}
           {hasSupplement && (
-            <details className="auction-discovery-extra">
+            <details className="auction-discovery-extra" open>
               <summary>
                 <ChevronRight size={15} aria-hidden="true" />
                 昨日重点补查 · 核验 {integer(supplement.valid)} /{" "}
@@ -584,6 +765,7 @@ export default function AuctionDiscovery({
                 <Stocks
                   items={supplementRows}
                   label="昨日重点补查股票"
+                  showDistribution
                   history={history?.items}
                   {...{ chartDate, onStock }}
                 />

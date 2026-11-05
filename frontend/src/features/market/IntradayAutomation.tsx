@@ -1,43 +1,40 @@
-import { useState } from "react";
-import { api, useApi } from "../../lib/api";
+import { Clock3, Settings2 } from "lucide-react";
+import { useApi } from "../../lib/api";
+import type { Row } from "../../lib/api";
 
-const path = "/market/intraday/automation";
-type Automation = { enabled: boolean; revision: number };
-
-export default function IntradayAutomation() {
-  const settings = useApi<Automation>(path);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const value = settings.data;
-
-  const toggle = async () => {
-    if (!value || saving) return;
-    setSaving(true);
-    setError("");
-    try {
-      const next = await api<Automation>(path, {
-        method: "PUT",
-        body: JSON.stringify({ enabled: !value.enabled, expected_revision: value.revision }),
-      });
-      if (next.enabled === value.enabled || next.revision <= value.revision)
-        throw new Error("未能确认自动采集设置。");
-      settings.setData(next);
-    } catch (problem) {
-      setError(problem instanceof Error ? problem.message : "自动采集设置暂不可用。");
-      settings.reload();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (!value) return null;
+export function IntradayAutomationStatus({
+  value,
+  error,
+}: {
+  value?: Row | null;
+  error?: string;
+}) {
+  const enabled = typeof value?.enabled === "boolean" ? value.enabled : null;
+  const label =
+    error || enabled === null
+      ? "自动状态待确认"
+      : enabled
+        ? "自动采集已开"
+        : "自动采集关闭";
   return (
-    <span className="intraday-automation">
-      <button type="button" className="btn small" aria-pressed={value.enabled}
-        disabled={saving || settings.loading} onClick={toggle}>
-        {saving ? "正在保存…" : value.enabled ? "自动采集已开" : "开启自动采集"}
-      </button>
-      {error && <small role="alert">{error}</small>}
-    </span>
+    <a
+      className="btn small intraday-automation-status"
+      href="#data?section=intraday-automatic"
+      aria-label={`${label}，去数据中心设置`}
+      title="在数据中心统一设置自动采集计划"
+      data-enabled={enabled ?? undefined}
+    >
+      <Clock3 size={13} aria-hidden="true" />
+      {label}
+      <Settings2 size={12} aria-hidden="true" />
+    </a>
+  );
+}
+
+/** Observation pages read the authorization; only Data Center can change it. */
+export default function IntradayAutomation() {
+  const settings = useApi<Row>("/market/intraday/automation");
+  return (
+    <IntradayAutomationStatus value={settings.data} error={settings.error} />
   );
 }

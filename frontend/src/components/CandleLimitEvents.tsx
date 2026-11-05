@@ -3,18 +3,27 @@ import type { ChartPeriod } from "./candleChange";
 
 export type LimitKind = "limit_up" | "limit_down";
 export type PatternKind =
-  "earth_to_sky" | "one_price_limit_up" | "one_price_limit_down";
+  | "earth_to_sky"
+  | "one_price_limit_up"
+  | "one_price_limit_down"
+  | "broken_board"
+  | "resealed_board";
 export type LimitDescription = {
   text: string;
   detail: string;
   source: string;
-  tone: "up" | "down" | "muted";
+  tone: "up" | "down" | "muted" | "warning";
 };
 export const PATTERN_BASIS = "verified-source-close-pool-and-raw-ohlc-v1";
+export const BOARD_BASIS = "verified-dated-close-pool-board-events-v1";
+export const INTRADAY_BOARD_BASIS =
+  "verified-intraday-snapshot-board-events-v1";
 const patternLabels: Record<PatternKind, string> = {
   earth_to_sky: "地天板",
   one_price_limit_up: "一字涨停",
   one_price_limit_down: "一字跌停",
+  broken_board: "炸板",
+  resealed_board: "回封",
 };
 const patternKinds = Object.keys(patternLabels) as PatternKind[];
 
@@ -56,20 +65,35 @@ export function confirmedBarPatterns(bar?: Row): Row[] {
   for (const event of Array.isArray(bar?.pattern_events)
     ? bar.pattern_events
     : []) {
+    const board = ["broken_board", "resealed_board"].includes(event?.kind);
+    const intraday = board && event?.is_intraday === true;
     if (
       !event ||
       !patternKinds.includes(event.kind) ||
-      event.basis !== PATTERN_BASIS ||
+      event.basis !==
+        (intraday
+          ? INTRADAY_BOARD_BASIS
+          : board
+            ? BOARD_BASIS
+            : PATTERN_BASIS) ||
       event.raw_price_basis !== "none" ||
       !isoDay(event.date) ||
       !isoDay(event.bar_date) ||
       event.date > event.bar_date ||
       (isoDay(bar?.date) &&
         (event.bar_date !== bar.date || event.date > bar.date)) ||
-      !positive(event.raw_volume) ||
-      !["open", "high", "low", "close"].every((field) =>
-        positive(event.raw_ohlc?.[field]),
-      )
+      (intraday
+        ? bar?.noon_provisional !== true ||
+          event.snapshot_id !== bar.snapshot_id ||
+          event.date !== bar.date ||
+          !/^[a-f0-9]{64}$/.test(event.evidence?.snapshot_sha256 || "") ||
+          !positive(event.raw_close) ||
+          event.raw_close !== bar.close ||
+          !(positive(bar.volume) || positive(bar.amount))
+        : !positive(event.raw_volume) ||
+          !["open", "high", "low", "close"].every((field) =>
+            positive(event.raw_ohlc?.[field]),
+          ))
     )
       continue;
     unique.set(event.date + ":" + event.kind, event);
@@ -82,18 +106,27 @@ export function confirmedBarPatterns(bar?: Row): Row[] {
 /** One plot label per closing direction, rather than stacked shape/limit tags. */
 export function barLimitMarker(bar: Row, kind: LimitKind) {
   const up = kind === "limit_up";
-  const patterns = confirmedBarPatterns(bar).filter((event) =>
+  const confirmed = confirmedBarPatterns(bar);
+  const resealed =
+    up && confirmed.some((event) => event.kind === "resealed_board");
+  const patterns = confirmed.filter((event) =>
     up
-      ? event.kind !== "one_price_limit_down"
+      ? ["earth_to_sky", "one_price_limit_up"].includes(event.kind)
       : event.kind === "one_price_limit_down",
   );
   if (
     !patterns.length &&
+    !resealed &&
     !confirmedBarLimits(bar).some((event) => event.kind === kind)
   )
     return null;
   const pattern =
     patterns.find((event) => event.kind === "earth_to_sky") || patterns[0];
+  if (resealed)
+    return {
+      text: "回封",
+      name: bar.noon_provisional ? "盘中回封" : "收盘涨停 · 回封",
+    };
   return {
     text: pattern
       ? pattern.kind === "earth_to_sky"
@@ -108,6 +141,13 @@ export function barLimitMarker(bar: Row, kind: LimitKind) {
       ? `${patternLabels[pattern.kind as PatternKind]} · 收盘${up ? "涨停" : "跌停"}`
       : `收盘${up ? "涨停" : "跌停"}`,
   };
+}
+
+/** A broken-board event cannot become a closing limit-up marker. */
+export function barBrokenMarker(bar: Row) {
+  if (!confirmedBarPatterns(bar).some((event) => event.kind === "broken_board"))
+    return null;
+  return { text: "炸", name: bar.noon_provisional ? "盘中炸板" : "收盘炸板" };
 }
 
 function eventSources(events: Row[]) {
@@ -127,6 +167,12 @@ function eventSources(events: Row[]) {
 function patternDayDetail(event: Row) {
   const price = (value: number) =>
     value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  if (["broken_board", "resealed_board"].includes(event.kind)) {
+    const kind = event.kind === "broken_board" ? "炸板" : "回封";
+    if (event.is_intraday)
+      return `${event.date} · 所选时点${kind} · 仅依据该快照原始来源状态，不代表最终收盘`;
+    return `${event.date} · 原始收盘 ${price(event.raw_close ?? event.raw_ohlc.close)} · ${kind === "炸板" ? "同日炸板来源池与原始收盘价精确核验" : "同日收盘涨停且有明确开板次数证据"}；不还原完整分时路径`;
+  }
   const quote = event.raw_ohlc;
   const band = event.evidence?.limit_band;
   const reference =
@@ -160,15 +206,23 @@ export function describeBarPatterns(
     descriptions.push({
       text:
         period === "D"
-          ? patternLabels[kind]
+          ? (positives.some((event) => event.is_intraday) ? "盘中" : "") +
+            patternLabels[kind]
           : `${cycle}内${positives.length}日${patternLabels[kind]}`,
       detail:
         positives.map(patternDayDetail).join("；") +
         (period === "D"
-          ? "；价格依据为未复权原始日线，图上位置随展示口径换算"
+          ? positives.some((event) => event.is_intraday)
+            ? "；价格来自所选时点未复权原始快照"
+            : "；价格依据为未复权原始日线，图上位置随展示口径换算"
           : `；只汇总具体交易日，不将整根${cycle}K称为${patternLabels[kind]}`),
       source,
-      tone: kind === "one_price_limit_down" ? "down" : "up",
+      tone:
+        kind === "broken_board"
+          ? "warning"
+          : kind === "one_price_limit_down"
+            ? "down"
+            : "up",
     });
   }
   if (includeUnknown) {
@@ -288,15 +342,15 @@ function escapeHtml(value: string) {
 export function limitTooltipHtml(
   bar: Row | undefined,
   period: ChartPeriod,
-  colors: { up: string; down: string; text: string },
+  colors: { up: string; down: string; text: string; warning?: string },
 ) {
   return [
-    ...describeBarLimits(bar, period),
-    ...describeBarPatterns(bar, period, true),
+    ...(bar?.noon_provisional ? [] : describeBarLimits(bar, period)),
+    ...describeBarPatterns(bar, period, !bar?.noon_provisional),
   ]
     .map(
       (item) =>
-        `<div style="margin-top:5px;color:${item.tone === "muted" ? colors.text : colors[item.tone]};max-width:260px;white-space:normal">${escapeHtml(item.text)} · ${escapeHtml(item.source)}<div style="font-size:10px;color:${colors.text}">${escapeHtml(item.detail)}</div></div>`,
+        `<div style="margin-top:5px;color:${item.tone === "muted" ? colors.text : item.tone === "warning" ? colors.warning || "#d89a37" : colors[item.tone]};max-width:260px;white-space:normal">${escapeHtml(item.text)} · ${escapeHtml(item.source)}<div style="font-size:10px;color:${colors.text}">${escapeHtml(item.detail)}</div></div>`,
     )
     .join("");
 }

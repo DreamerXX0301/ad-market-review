@@ -13,6 +13,7 @@ import { amount, dateTime, num, percent, textValue } from "../../lib/format";
 import { Badge, Panel, Table } from "../../components/UI";
 import { CandleChart } from "../../components/Charts";
 import CopyStockCode from "../../components/CopyStockCode";
+import PageScrollEdges from "../../components/PageScrollEdges";
 import {
   ResearchFinancialColorGuide,
   ResearchFinancialValue,
@@ -187,6 +188,12 @@ export default function ResearchEvidenceDetails({
   }
   return (
     <div className="research-reader research-evidence-report" ref={readerRef}>
+      <PageScrollEdges
+        label="个股调研"
+        sections={sections.map(([id, label]) => ({ id, label }))}
+        activeId={active}
+        onNavigate={selectSection}
+      />
       <nav className="research-reader-nav" aria-label="个股调研章节">
         <span className="research-reader-nav-title">报告目录</span>
         <div role="tablist" aria-label="调研内容">

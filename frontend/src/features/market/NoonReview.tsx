@@ -45,6 +45,8 @@ import NoonReadGuide from "./NoonReadGuide";
 import NoonTemperature from "./NoonTemperature";
 import NoonLadderTopics from "./NoonLadderTopics";
 import CopyStockCode from "../../components/CopyStockCode";
+import AIEntry from "../ai/AIEntry";
+import FloatingScrollControls from "../../components/FloatingScrollControls";
 import NoonBoardFilter, { NoonBoardTag } from "./NoonBoardFilter";
 import { filterRows } from "./noonBoardPresentation";
 import type { NoonBoardFilterValue } from "./noonBoardPresentation";
@@ -1463,6 +1465,9 @@ export default function NoonReview({
           <p>上午的市场事实，与上个交易日关注逐项对照。</p>
         </div>
         <div className="noon-head-actions" hidden={tab === "close"}>
+          {selected && (
+            <AIEntry kind="market" asOf={selected} marketStage="noon" />
+          )}
           {view?.today && (
             <button
               className="btn"
@@ -2217,39 +2222,38 @@ export default function NoonReview({
         </p>
       )}
       {payload && active && tab !== "close" && (
-        <div className="noon-quick-navigation" aria-label="午评上下节快捷导航">
-          <button
-            type="button"
-            aria-label="午评上一节"
-            aria-keyshortcuts="Alt+ArrowUp"
-            disabled={readingIndex === 0}
-            title={
+        <FloatingScrollControls
+          className="noon-quick-navigation"
+          label="午评上下节快捷导航"
+          position={{
+            text: `${readingIndex + 1}/${NOON_READING_SECTIONS.length}`,
+            label: `当前第${readingIndex + 1}节，共${NOON_READING_SECTIONS.length}节`,
+          }}
+          previous={{
+            label: "午评上一节",
+            caption: "上节",
+            shortcut: "Alt+ArrowUp",
+            disabled: readingIndex === 0,
+            title:
               readingIndex > 0
                 ? `上一节：${NOON_READING_SECTIONS[readingIndex - 1].title}（Alt+↑）`
-                : "已经是第一节"
-            }
-            onClick={() => stepReading(-1)}
-          >
-            <ChevronUp size={18} />
-          </button>
-          <span>
-            {readingIndex + 1}/{NOON_READING_SECTIONS.length}
-          </span>
-          <button
-            type="button"
-            aria-label="午评下一节"
-            aria-keyshortcuts="Alt+ArrowDown"
-            disabled={readingIndex === NOON_READING_SECTIONS.length - 1}
-            title={
+                : "已经是第一节",
+            icon: <ChevronUp size={18} />,
+            onClick: () => stepReading(-1),
+          }}
+          next={{
+            label: "午评下一节",
+            caption: "下节",
+            shortcut: "Alt+ArrowDown",
+            disabled: readingIndex === NOON_READING_SECTIONS.length - 1,
+            title:
               readingIndex < NOON_READING_SECTIONS.length - 1
                 ? `下一节：${NOON_READING_SECTIONS[readingIndex + 1].title}（Alt+↓）`
-                : "已经是最后一节"
-            }
-            onClick={() => stepReading(1)}
-          >
-            <ChevronDown size={18} />
-          </button>
-        </div>
+                : "已经是最后一节",
+            icon: <ChevronDown size={18} />,
+            onClick: () => stepReading(1),
+          }}
+        />
       )}
     </div>
   );

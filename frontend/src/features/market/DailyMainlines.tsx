@@ -340,7 +340,7 @@ export default function DailyMainlines({
                             .map((value) => item(value, true))}
                         </ul>
                         {selected.visible.length > 2 && (
-                          <details className="daily-mainline-more-members">
+                          <details className="daily-mainline-more-members" open>
                             <summary>
                               展开其余 {selected.visible.length - 2} 只
                             </summary>
@@ -372,7 +372,7 @@ export default function DailyMainlines({
                   </header>
                   <div className="daily-mainline-other-grid">
                     {others.map((group) => (
-                      <details key={group.key}>
+                      <details key={group.key} open>
                         <summary>
                           <strong>{group.name}</strong>
                           <span>
@@ -404,7 +404,7 @@ export default function DailyMainlines({
                     {individuals.slice(0, 5).map((value) => item(value))}
                   </ul>
                   {individuals.length > 5 && (
-                    <details className="daily-mainline-more-cues">
+                    <details className="daily-mainline-more-cues" open>
                       <summary>
                         展开其余 {individuals.length - 5} 只个股线索
                       </summary>

@@ -15,6 +15,7 @@ from app.services.market_supplement import load_supplement
 from app.services.chart_patterns import attach_chart_patterns
 
 KINDS = {'up': ('limitup', 'limit_up', '收盘涨停'), 'down': ('limitdown', 'limit_down', '收盘跌停')}
+POOL_KINDS = {**KINDS, 'broken': ('breakpool', 'broken_board', '收盘炸板')}
 SCOPE = '已核验来源收盘池；false仅指该完整来源池明确未入池，不是交易所全A涨跌停历史全集'
 
 
@@ -84,7 +85,7 @@ def _evidence(record, symbol, day, raw_close, *, source, path, kind, allow_absen
     if record.get('date') is not None and _day(record.get('date')) != day:
         return {**base, 'state': None, 'status': 'unknown', 'reason': '来源池日期与该交易日不符'}
     declared_kind = record.get('pool_kind')
-    if declared_kind in ('limitup', 'limitdown') and declared_kind != KINDS[kind][0]:
+    if declared_kind in ('limitup', 'limitdown', 'breakpool') and declared_kind != POOL_KINDS[kind][0]:
         return {**base, 'state': None, 'status': 'unknown', 'reason': '来源池事件类型不符'}
     items = record.get('items')
     if not isinstance(items, list): return {**base, 'state': None, 'status': 'unknown', 'reason': '未留存可验证的来源池'}
@@ -94,6 +95,7 @@ def _evidence(record, symbol, day, raw_close, *, source, path, kind, allow_absen
         observed_prices = []
         pattern_identity_valid = True
         pattern_dates_valid = _pattern_dates_match(record, day)
+        opening_counts = []; opening_counts_invalid = False
         for row, identity in matched:
             if identity != 'exact':
                 return {**base, 'state': None, 'status': 'conflict', 'reason': '来源证券标识冲突，未按名称或涨幅猜测'}
@@ -105,9 +107,16 @@ def _evidence(record, symbol, day, raw_close, *, source, path, kind, allow_absen
             if any(abs(price - raw_close) > .011 for price in prices):
                 return {**base, 'state': None, 'status': 'conflict', 'reason': '来源事件价格与该日未复权收盘冲突'}
             observed_prices.extend(prices)
+            if 'open_times' in row:
+                opened = row['open_times']
+                if type(opened) is int and opened >= 0:
+                    opening_counts.append(opened)
+                else:
+                    opening_counts_invalid = True
             pattern_identity_valid = pattern_identity_valid and _pattern_identity_matches(row, symbol)
             pattern_dates_valid = pattern_dates_valid and _pattern_dates_match(row, day)
         return {**base, 'state': True, 'status': 'confirmed', 'reason': None, 'observed_prices': observed_prices,
+                'opening_counts': opening_counts, 'opening_counts_invalid': opening_counts_invalid,
                 'pattern_validation': {'instrument_id': symbol, 'trade_date': day,
                                        'source_identity_valid': pattern_identity_valid, 'source_dates_valid': pattern_dates_valid}}
     if _quarantined(record, symbol):
@@ -218,6 +227,18 @@ def enrich_chart_limits(market, chart, supplement=None, *, focus_day=None):
             event = {'date': day, 'kind': event_kind, 'label': label, 'source': ' + '.join(sources), 'sources': sources, 'basis': 'verified-source-close-pool', 'raw_close': raw_prices[day], 'chart_price': None, 'bar_date': None, 'evidence': positives}
             day_events.append(event); events.append(event)
         daily[day] = {'up': states['up'], 'down': states['down'], 'events': day_events}
+        broken_proofs = []
+        if 'breakpool' in history:
+            record = {'items': history['breakpool'], 'complete': history.get('coverage', {}).get('breakpool', {}).get('complete', False),
+                      'quarantine': history.get('quarantine', {}).get('breakpool', []), 'date': day}
+            broken_proofs.append(_evidence(record, symbol, day, raw_prices.get(day), source='fuyao',
+                                          path='reference.pool_history.' + day + '.breakpool', kind='broken'))
+        if reference.get('pool_trade_date') == day and 'breakpool' in reference:
+            record = {'items': reference['breakpool'], 'complete': reference.get('pool_coverage', {}).get('breakpool', {}).get('complete', False),
+                      'quarantine': reference.get('pool_quarantine', {}).get('breakpool', []), 'date': day}
+            broken_proofs.append(_evidence(record, symbol, day, raw_prices.get(day), source='fuyao',
+                                          path='reference.breakpool', kind='broken'))
+        daily[day]['broken'] = _combine(broken_proofs)
     period = chart.get('period', 'D')
     if period == 'D':
         for bar in bars:

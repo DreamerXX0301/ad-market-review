@@ -62,6 +62,7 @@ import {
 } from "./dataPresentation";
 import "./DataCenter.css";
 import AutomaticReviewSettings from "./AutomaticReviewSettings";
+import IntradayAutomationSettings from "./IntradayAutomationSettings";
 import CoveragePanel from "./CoveragePanel";
 import PublishedStorageDetails from "./PublishedStorageDetails";
 import { publishedStorageView } from "./storagePresentation";
@@ -707,6 +708,7 @@ export default function DataCenter({
           setFollowChain(false);
         }}
       />
+      <IntradayAutomationSettings />
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}

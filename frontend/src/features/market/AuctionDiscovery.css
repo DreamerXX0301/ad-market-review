@@ -77,6 +77,144 @@
 .auction-discovery-extra > p {
   padding: 8px 12px;
 }
+.auction-discovery-list {
+  min-width: 0;
+}
+.discovery-distribution {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.discovery-distribution-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-height: 30px;
+}
+.discovery-distribution-heading > strong {
+  font-size: 12px;
+}
+.discovery-distribution-heading > small,
+.discovery-distribution-options > small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.discovery-distribution-heading > button {
+  margin-left: auto;
+}
+.discovery-distribution-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+.discovery-distribution-row > span {
+  padding-top: 5px;
+  color: var(--muted);
+}
+.discovery-distribution-options,
+.discovery-distribution-more > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.discovery-distribution-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.discovery-distribution-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discovery-distribution-chip > b {
+  flex-shrink: 0;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.discovery-distribution-chip[data-kind="industry"] {
+  color: var(--blue);
+}
+.discovery-distribution-chip[data-kind="concept"] {
+  color: var(--accent-secondary);
+}
+.discovery-distribution-chip:hover,
+.discovery-distribution-chip[aria-pressed="true"] {
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 10%, var(--surface));
+}
+.discovery-distribution-more {
+  width: 100%;
+}
+.discovery-distribution-more > summary {
+  width: fit-content;
+  padding: 4px 0;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 400;
+}
+.discovery-distribution-more > div {
+  max-height: 168px;
+  padding: 6px 2px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.auction-discovery-table-scroll {
+  scrollbar-gutter: stable;
+}
+.auction-discovery-table-scroll .auction-discovery-stocks {
+  table-layout: fixed;
+  width: 1552px;
+  min-width: 1552px;
+}
+.discovery-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.discovery-pagination > span:first-child {
+  margin-right: auto;
+}
+.discovery-pagination label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.discovery-pagination select {
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--surface2);
+  color: var(--text);
+  font: inherit;
+}
+.discovery-distribution-chip:focus-visible,
+.discovery-pagination select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
 .auction-discovery-stocks .auction-discovery-warnings {
   min-width: 7em;
   max-width: 22em;

@@ -155,9 +155,9 @@ class Store:
             return {'removed_files':removed,'removed_bytes':removed_bytes,'retained_dates':sorted(index['days']),'anchor_date':index.get('anchor_date'),'window_trading_days':WINDOW}
 
 
-def _context(day=None):
+def _context(day=None, *, market=None):
     from .market_service import context
-    return context(day)
+    return context(day, market=market)
 
 
 def _coverage(index,calendar,target,selected):
@@ -168,8 +168,8 @@ def _coverage(index,calendar,target,selected):
             'failures':list(index.get('failures',{}).values()),'latest_market_date':target}
 
 
-def read_view(day=None):
-    market,status,day=_context(day);store=Store();reason=None
+def read_view(day=None, *, market=None):
+    market,status,day=_context(day,market=market);store=Store();reason=None
     with supplement_access():
         try:index=store.index();record=store.day(index,day)
         except (OSError,ValueError,TypeError,KeyError):index={'days':{},'failures':{},'anchor_date':None};record=None;reason='龙虎榜本地索引或逐日对象校验失败，保留未知'
@@ -185,9 +185,9 @@ def read_view(day=None):
         'availability':{'available':True,'reason':None,'sources':['fuyao','eastmoney'],'date':day},'boards':boards,'labels':labels,'coverage':coverage,'warnings':warnings}
 
 
-def read_seats(symbol,day=None,range_days=1):
+def read_seats(symbol,day=None,range_days=1, *, market=None):
     if not isinstance(symbol,str) or not re.fullmatch(r'\d{6}\.(SH|SZ|BJ)',symbol):raise HTTPException(422,'请选择明确的A股代码')
-    market,status,day=_context(day)
+    market,status,day=_context(day,market=market)
     identity=next((row for row in market.instruments(query=symbol,limit=10000) if row.get('instrument_id')==symbol and row.get('kind')=='stock'),None)
     if identity is None:raise HTTPException(422,'龙虎榜席位仅用于名录已核验A股，未知代码不按股票猜测')
     with supplement_access():

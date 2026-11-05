@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import PageScrollEdges from "../../components/PageScrollEdges";
 import { revealEmotionSection } from "./emotionNavigation";
 import {
   noonReadingActivationLine,
@@ -56,7 +57,9 @@ export default function AuctionPageNavigation({
         }))
         .filter(
           (item): item is { id: string; node: HTMLElement } =>
-            !!item.node && boundary.contains(item.node),
+            !!item.node &&
+            boundary.contains(item.node) &&
+            item.node.getClientRects().length > 0,
         );
       const ids = targets.map(({ id }) => id);
       setAvailable((current) =>
@@ -136,8 +139,19 @@ export default function AuctionPageNavigation({
       )
         unpin();
     };
-    // Capture observes document scrolling and an independently scrolling main container.
-    boundary.ownerDocument.addEventListener("scroll", schedule, true);
+    const pageScroll = (event: Event) => {
+      if (
+        [
+          boundary.ownerDocument,
+          boundary.ownerDocument.documentElement,
+          boundary.ownerDocument.body,
+          owner,
+        ].includes(event.target as Document | HTMLElement | null)
+      )
+        schedule();
+    };
+    // Only the document or actual main scroller drives the section selection.
+    boundary.ownerDocument.addEventListener("scroll", pageScroll, true);
     boundary.ownerDocument.addEventListener("toggle", schedule, true);
     boundary.ownerDocument.addEventListener("wheel", unpin, {
       capture: true,
@@ -160,7 +174,7 @@ export default function AuctionPageNavigation({
     return () => {
       cancelAnimationFrame(frame);
       resize?.disconnect();
-      boundary.ownerDocument.removeEventListener("scroll", schedule, true);
+      boundary.ownerDocument.removeEventListener("scroll", pageScroll, true);
       boundary.ownerDocument.removeEventListener("toggle", schedule, true);
       boundary.ownerDocument.removeEventListener("wheel", unpin, true);
       boundary.ownerDocument.removeEventListener("touchmove", unpin, true);
@@ -195,6 +209,12 @@ export default function AuctionPageNavigation({
       className={`auction-page-reader${entries.length ? "" : " auction-page-reader-empty"}`}
       ref={root}
     >
+      <PageScrollEdges
+        label="盘前竞价"
+        sections={entries.filter(({ id }) => available.includes(id))}
+        activeId={active}
+        onNavigate={navigate}
+      />
       {entries.length > 0 && (
         <nav
           className="auction-page-directory"

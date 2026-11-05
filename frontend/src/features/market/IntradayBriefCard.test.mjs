@@ -26,9 +26,10 @@ const code = result.output
 const {
   default: BriefCard,
   BriefText,
+  BriefDirectionText,
+  briefDirectionBindings,
   briefSections,
   briefSectionScrollTop,
-  briefSlotScrollLeft,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(code).toString("base64")
 );
@@ -65,6 +66,7 @@ const structured = {
           kind: "leading",
           text: "光伏设备 +8.30%，合成甲 +9.80%。",
           sector_id: "884306.TI",
+          sector_name: "光伏设备",
         },
         { id: "s2", kind: "strengthening", text: "较上档 +2.30 个百分点。" },
         { id: "s3", kind: "weakening", text: "消费方向 -0.25 个百分点。" },
@@ -215,6 +217,57 @@ assert.match(
   "old body-only headlines keep their original wording",
 );
 
+const selectedDirections = [];
+const onSelectDirection = (...args) => selectedDirections.push(args);
+const linked = BriefDirectionText({
+  item: structured.sections[1].highlights[0],
+  slot: "1030",
+  label: "10:30 早盘一小时",
+  onSelectDirection,
+});
+const directionButton = linked.props.children.find(
+  (node) => node?.type === "button",
+);
+assert.ok(directionButton);
+directionButton.props.onClick();
+assert.deepEqual(
+  selectedDirections,
+  [["1030", "884306.TI"]],
+  "direction links select the explicit source identity and the highlight's own time slot",
+);
+const clickable = renderToStaticMarkup(
+  createElement(BriefCard, { brief: structured, onSelectDirection }),
+);
+assert.match(
+  clickable,
+  /class="ibt-direction-link"[^>]*aria-label="查看 10:30 早盘一小时 光伏设备个股"/,
+);
+assert.doesNotMatch(clickable, /href=|合成甲个股/);
+assert.deepEqual(
+  briefDirectionBindings({ text: "只有文字没有来源标识：光伏设备" }),
+  [],
+  "wording alone cannot resolve a clickable sector",
+);
+assert.deepEqual(
+  briefDirectionBindings({
+    sector_id: "A",
+    sector_name: "同名题材",
+    current_sector_counts: [{ sector_id: "B", name: "同名题材" }],
+  }),
+  [],
+  "ambiguous labels cannot silently choose a different source identity",
+);
+const countLinks = briefDirectionBindings({
+  current_sector_counts: [
+    { sector_id: "A", name: "题材甲" },
+    { sector_id: "B", name: "题材乙" },
+  ],
+});
+assert.deepEqual(countLinks, [
+  { id: "A", name: "题材甲" },
+  { id: "B", name: "题材乙" },
+]);
+
 const viewport = {
   scrollTop: 120,
   getBoundingClientRect: () => ({ top: 300 }),
@@ -231,33 +284,21 @@ assert.equal(
   }),
   0,
 );
-const nav = {
-  scrollLeft: 0,
-  clientWidth: 300,
-  getBoundingClientRect: () => ({ left: 20 }),
+const sevenSlotBrief = {
+  slot: "1000", sections: [
+    { slot: "1000", summary: "十点观察", highlights: [] },
+    { slot: "0935", summary: "开盘五分钟观察", highlights: [] },
+    { slot: "auction", summary: "竞价原候选", highlights: [] },
+  ],
 };
-assert.equal(
-  briefSlotScrollLeft(nav, {
-    getBoundingClientRect: () => ({ left: 830, width: 100 }),
-  }),
-  616,
-  "selected late slot is revealed only within the horizontal nav",
-);
-nav.scrollLeft = 600;
-assert.equal(
-  briefSlotScrollLeft(nav, {
-    getBoundingClientRect: () => ({ left: 10, width: 90 }),
-  }),
-  584,
-  "early slot can be revealed to the left",
-);
-assert.equal(
-  briefSlotScrollLeft(nav, {
-    getBoundingClientRect: () => ({ left: 50, width: 90 }),
-  }),
-  600,
-  "visible chips do not jitter",
-);
+assert.deepEqual(briefSections(sevenSlotBrief).map((row) => row.slot), ["auction", "0935", "1000"]);
+const earlyHTML = render(sevenSlotBrief, "0935");
+assert.match(earlyHTML, /09:35 开盘观察/);
+assert.match(earlyHTML, /竞价原候选/);
+const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./IntradayBriefCard.tsx", import.meta.url), "utf8"));
+const css = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./IntradayBriefCard.css", import.meta.url), "utf8"));
+assert.doesNotMatch(source, /briefSlotScrollLeft|nav\.scrollTo/, "the fixed time selector has no automatic horizontal scrolling");
+assert.match(css, /\.ibt-slots\s*\{[^}]*grid-template-columns: repeat\(auto-fit/, "time chips wrap in the fixed header instead of hiding later stages");
 console.log(
   "intraday brief timeline: structured/legacy/missing, safe numeric text, zero and internal-only scroll geometry passed",
 );

@@ -91,6 +91,29 @@ assert.deepEqual(noonPreviousText({ summary: ["昨天保存原文"], payload: { 
 assert.equal(noonPreviousFacts({ date: "2026-10-27", state: "background_only", payload: { date: "2026-10-27", mode: "previous_session_price_facts", up: 2 } }).up, 2);
 assert.equal(noonPreviousFacts({ date: "2026-10-27", state: "background_only", payload: { date: "2026-10-26", mode: "previous_session_price_facts", up: 2 } }), null);
 const app = await fs.readFile(new URL("../../App.tsx", import.meta.url), "utf8");
-assert.match(app, /key !== "noon" && key !== "auction" && date && !dates\.includes\(date\)/);
+assert.match(app, /!isIntradayReview\(key\) && date && !dates\.includes\(date\)/);
 assert.match(app, /marketDates=\{dates\}/, "noon-only dates must not expand backtest inputs");
+const encoded = (value) => "data:text/javascript;base64," + Buffer.from(value).toString("base64");
+const compileDateHelper = async (path) => ts.transpileModule(
+  await fs.readFile(new URL(path, import.meta.url), "utf8"),
+  { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } },
+).outputText;
+const calendarCode = await compileDateHelper("../../components/marketDate.ts");
+const viewDateCode = (await compileDateHelper("../../components/marketViewDate.ts"))
+  .replaceAll('"./marketDate"', JSON.stringify(encoded(calendarCode)));
+const { isIntradayReview, marketViewDate } = await import(encoded(viewDateCode));
+for (const route of ["auction", "noon", "intraday"]) {
+  assert.equal(isIntradayReview(route), true);
+  assert.equal(marketViewDate(route, null, "2026-10-27", day), day,
+    `${route} may observe today before a completed-day publication`);
+  assert.equal(marketViewDate(route, { date: "2026-10-26", mode: "manual" }, "2026-10-27", day), "2026-10-26",
+    `${route} preserves an explicitly selected historical observation day`);
+}
+for (const route of ["market", "emotion", "strategy", "backtest"]) {
+  assert.equal(isIntradayReview(route), false);
+  assert.equal(marketViewDate(route, null, "2026-10-27", day), "2026-10-27",
+    `${route} retains the completed-day default instead of using a partial review date`);
+}
+assert.equal(marketViewDate("intraday", null, "2026-10-27", "2026-02-30"), "",
+  "invalid calendar days cannot become intraday defaults");
 console.log("noon presentation: daily lock, unknown data, date isolation, frozen context passed");

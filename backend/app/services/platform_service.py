@@ -15,18 +15,20 @@ MODULES = {
 }
 
 
-def summary(market=None):
+def summary(market=None, *, include_storage=True):
     from .published_storage import published_storage
     status=(market or get_market()).status()
-    accounting=published_storage(published_dir(),status.get('snapshot_id'))
-    return {'stock_count':status.get('symbols',0),'row_count':status.get('rows',0),'first_date':status.get('data_begin'),'last_date':status.get('data_end'),'storage_bytes':accounting['logical_bytes'],'storage_accounting':accounting,'storage_layout':status.get('storage_layout','legacy-single-file'),'retention':status.get('active_window'),'last_storage_write':status.get('storage_write')}
+    accounting=published_storage(published_dir(),status.get('snapshot_id')) if include_storage else None
+    return {'stock_count':status.get('symbols',0),'row_count':status.get('rows',0),'first_date':status.get('data_begin'),'last_date':status.get('data_end'),'storage_bytes':accounting['logical_bytes'] if accounting is not None else None,'storage_accounting':accounting,'storage_layout':status.get('storage_layout','legacy-single-file'),'retention':status.get('active_window'),'last_storage_write':status.get('storage_write')}
 
 
-def bootstrap():
+def bootstrap(*, scope='full'):
+    if scope not in ('full', 'navigation'):
+        raise ValueError('启动信息范围不受支持')
     from .source_service import list_sources
     market=get_market(); status=market.status()
     quotes=(market.index_quotes() if hasattr(market,'index_quotes') else market.indices()) if status.get('ready') else []
-    return {'app_name':APP_NAME,'version':APP_VERSION,'instance_label':os.environ.get('SHIXU_INSTANCE_LABEL','')[:120],'data_date':business_date(),'market_snapshot_id':status.get('snapshot_id'),'market_dates':market.calendar(),'data_summary':summary(market),'indices':quotes,'sources':list_sources(include_supplement=False)['items']}
+    return {'app_name':APP_NAME,'version':APP_VERSION,'instance_label':os.environ.get('SHIXU_INSTANCE_LABEL','')[:120],'data_date':business_date(),'market_snapshot_id':status.get('snapshot_id'),'market_dates':market.calendar(),'data_summary':summary(market, include_storage=scope == 'full'),'indices':quotes,'sources':list_sources(include_supplement=False)['items']}
 
 
 def data_status():

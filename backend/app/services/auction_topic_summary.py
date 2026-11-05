@@ -3,6 +3,7 @@
 不读当前head、DuckDB、网络或全历史目录，不修改竞价正文或成员档案。
 """
 from collections import Counter
+from contextlib import nullcontext
 from datetime import date, datetime
 import json
 import math
@@ -72,12 +73,13 @@ def _source(payload):
     return generation, previous, expected_end
 
 
-def _load_original_topics(generation, previous, expected_end):
+def _load_original_topics(generation, previous, expected_end, *, connection=None):
     """SQL artifact pins anchor bytes before consulting the named generation."""
     reference_key = generation + '/reference.json'
-    with connect() as connection:
-        connection.execute('BEGIN')
-        rows = connection.execute('''SELECT s.snapshot_id,s.data_end,s.manifest_path,s.manifest_sha256,
+    with (connect() if connection is None else nullcontext(connection)) as reader:
+        if not reader.in_transaction:
+            reader.execute('BEGIN')
+        rows = reader.execute('''SELECT s.snapshot_id,s.data_end,s.manifest_path,s.manifest_sha256,
             a.object_key,a.sha256,a.byte_count FROM dataset_snapshot s JOIN snapshot_artifact a USING(snapshot_id)
             WHERE s.module='topics' AND s.state='published'
               AND json_extract(s.lineage_json,'$.market_snapshot_id')=?
@@ -112,8 +114,8 @@ def _load_original_topics(generation, previous, expected_end):
         part = (reference.get('fields') or {}).get('topics')
         if not isinstance(part, dict):
             raise ValueError('原参考文件没有题材成员分片')
-        with connect() as connection:
-            parts = connection.execute('''SELECT sha256,byte_count FROM snapshot_artifact
+        with (connect() if connection is None else nullcontext(connection)) as reader:
+            parts = reader.execute('''SELECT sha256,byte_count FROM snapshot_artifact
                 WHERE snapshot_id=? AND object_key=? LIMIT 2''',
                 (anchor['snapshot_id'], part.get('object_key'))).fetchall()
         if len(parts) != 1 or parts[0]['sha256'] != part.get('sha256') or parts[0]['byte_count'] != part.get('bytes'):
@@ -151,7 +153,7 @@ def _empty(payload, codes=None, changes=None, generation=None, reason=None):
                          'valid_quotes': len(changes), 'groups': 0, 'rejected_groups': 0}}
 
 
-def build_topic_summary(payload):
+def build_topic_summary(payload, *, connection=None):
     """Read and classify a verified snapshot without changing its payload."""
     if not isinstance(payload, dict):
         return _empty({}, reason='未取得竞价正文，题材归属保持未知')
@@ -159,7 +161,9 @@ def build_topic_summary(payload):
     try:
         codes, changes = _samples(payload)
         generation, previous, expected_end = _source(payload)
-        topics, digest = _load_original_topics(generation, previous, expected_end)
+        topics, digest = (_load_original_topics(generation, previous, expected_end)
+                          if connection is None else
+                          _load_original_topics(generation, previous, expected_end, connection=connection))
     except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError):
         return _empty(payload, codes, changes, generation,
             '原采集代际成员资料未通过明确来源、SQLite发布锚点、日期、路径或SHA核验；不使用当前名单补齐')

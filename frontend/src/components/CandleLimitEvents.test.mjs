@@ -32,6 +32,9 @@ const {
   describeBarPatterns,
   PatternStatus,
   barLimitMarker,
+  barBrokenMarker,
+  BOARD_BASIS,
+  INTRADAY_BOARD_BASIS,
   limitTooltipHtml,
 } = helpers;
 const day = "2026-10-23";
@@ -237,6 +240,95 @@ assert.doesNotMatch(safeHtml, /<img|<script>/);
 assert.match(safeHtml, /&lt;img/);
 assert.match(safeHtml, /&lt;script&gt;/);
 
+const broken = {
+  ...up,
+  limit_events: [],
+  pattern_events: [event("broken_board", day, { basis: BOARD_BASIS })],
+};
+const resealed = {
+  ...up,
+  pattern_events: [event("resealed_board", day, { basis: BOARD_BASIS })],
+};
+assert.equal(barBrokenMarker(broken).text, "炸");
+assert.equal(barLimitMarker(broken, "limit_up"), null, "炸板不冒充收盘涨停");
+assert.equal(barLimitMarker(resealed, "limit_up").text, "回封");
+assert.equal(barBrokenMarker(resealed), null);
+assert.match(limitTooltipHtml(broken, "D", colors), /炸板.*原始收盘/s);
+assert.match(
+  describeBarPatterns(
+    {
+      ...broken,
+      pattern_events: [
+        event("broken_board", "2026-10-22", { basis: BOARD_BASIS }),
+      ],
+    },
+    "W",
+  )[0].text,
+  /周内1日炸板/,
+);
+for (const extra of [
+  { basis: PATTERN_BASIS },
+  { raw_volume: 0 },
+  { date: "2026-10-24" },
+]) {
+  assert.equal(
+    barBrokenMarker({
+      ...broken,
+      pattern_events: [
+        event("broken_board", day, { basis: BOARD_BASIS, ...extra }),
+      ],
+    }),
+    null,
+  );
+}
+const temporaryEvent = {
+  date: day,
+  bar_date: day,
+  kind: "broken_board",
+  basis: INTRADAY_BOARD_BASIS,
+  raw_price_basis: "none",
+  is_intraday: true,
+  snapshot_id: "intraday_original",
+  raw_close: 8,
+  evidence: { snapshot_sha256: "a".repeat(64) },
+};
+const temporary = {
+  date: day,
+  high: 9,
+  low: 7,
+  close: 8,
+  amount: 1000,
+  volume: null,
+  noon_provisional: true,
+  snapshot_id: "intraday_original",
+  pattern_events: [temporaryEvent],
+};
+assert.equal(barBrokenMarker(temporary).name, "盘中炸板");
+assert.match(limitTooltipHtml(temporary, "D", colors), /盘中炸板/);
+assert.doesNotMatch(
+  limitTooltipHtml(temporary, "D", colors),
+  /收盘涨停|涨跌停状态待核验/,
+);
+for (const changed of [
+  { snapshot_id: "intraday_other" },
+  { noon_provisional: false },
+  { date: "2026-10-22" },
+  { close: 8.01 },
+  { amount: null, volume: 0 },
+  { pattern_events: [{ ...temporaryEvent, evidence: {} }] },
+])
+  assert.equal(barBrokenMarker({ ...temporary, ...changed }), null);
+assert.equal(
+  barLimitMarker(
+    {
+      ...temporary,
+      pattern_events: [{ ...temporaryEvent, kind: "resealed_board" }],
+    },
+    "limit_up",
+  ).name,
+  "盘中回封",
+);
+
 // Exercise the real plot branch, proving one marker per closing direction and
 // that the saved limit-marker switch controls all new labels as well.
 const chartSource = await fs.readFile(
@@ -270,6 +362,7 @@ const plot = new Function(
   "showLimits",
   "period",
   "barLimitMarker",
+  "barBrokenMarker",
   transpile(branches[0].getText(ast)),
 );
 const bars = [
@@ -283,12 +376,27 @@ const bars = [
   },
 ];
 const series = [];
-plot(series, bars, colors, true, true, "D", barLimitMarker);
+plot(series, bars, colors, true, true, "D", barLimitMarker, barBrokenMarker);
 assert.equal(series.length, 2);
 assert.equal(series[0].data.length, 1);
 assert.equal(series[0].data[0].label.formatter, "地天");
 assert.equal(series[1].data.length, 1);
 assert.equal(series[1].data[0].label.formatter, "一字跌");
+const boardSeries = [];
+plot(
+  boardSeries,
+  [broken, resealed, temporary],
+  { ...colors, provisional: "#dfaa44" },
+  true,
+  true,
+  "D",
+  barLimitMarker,
+  barBrokenMarker,
+);
+assert.equal(boardSeries[0].data.length, 1, "回封与原涨停合为一个标记");
+assert.equal(boardSeries[0].data[0].label.formatter, "回封");
+assert.equal(boardSeries.at(-1).name, "炸板");
+assert.equal(boardSeries.at(-1).data.length, 2, "收盘和临时盘中炸板均标记");
 for (const [supported, shown, period] of [
   [true, false, "D"],
   [false, true, "D"],
@@ -296,7 +404,16 @@ for (const [supported, shown, period] of [
   [true, true, "M"],
 ]) {
   const hidden = [];
-  plot(hidden, bars, colors, supported, shown, period, barLimitMarker);
+  plot(
+    hidden,
+    bars,
+    colors,
+    supported,
+    shown,
+    period,
+    barLimitMarker,
+    barBrokenMarker,
+  );
   assert.deepEqual(
     hidden,
     [],

@@ -36,10 +36,10 @@ MAX_DETAIL_ROWS = 30
 def tool_schemas():
     """Responses function tools; names/arguments never accept filesystem/SQL."""
     specs = [
-        ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。auction包含已核验竞价发现和10:00同股开盘对照（如已保存），覆盖只限异动样本。未到时点与已到但未采集分开；成交额不是净流入。',
+        ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。noon自动串同日竞价、截至午评实际结束已完成的上午观察与午评本体；close串联截至原正式收盘的竞价、七档盘中、午评及正式封板/炸板池，缺档保持未知。密集累计按phase_fact_columns解析values/rows和省略计数数组，null未知。auction包含已核验竞价发现和10:00同股开盘对照（如已保存），覆盖只限异动样本。未到时点与已到但未采集分开；成交额不是净流入。',
          {'date': {'type': 'string', 'description': '用户明确日期YYYY-MM-DD，或today；今天不沿用旧页面日期'},
           'section': {'type': 'string', 'enum': list(SECTIONS)}}, ['date', 'section']),
-        ('read_intraday_data', '读取所选日期盘中观察的已保存快照，包含盘中新方向、延续、走弱、板块指数和个股样本、封炸板与成交额，以及相邻时点新增封板/跌停/炸板、封板打开和炸板回封的已核验变化；partial只是下界，unknown不是0，新入池不等于首次涨停。研究盘中情况或盘中轮动且未指定时段用all，一次返回六个时点的有界摘要。指定时点用对应键；北京时间10:00用1000，10:30用1030，11:00用1100，13:30用1330，14:00用1400，14:30用1430。竞价、午评和收盘用read_market_data。',
+        ('read_intraday_data', '读取所选日期盘中观察的已保存快照，包含盘中新方向、延续、走弱、板块指数和个股样本、封炸板与成交额，以及相邻时点新增封板/跌停/炸板、封板打开和炸板回封的已核验变化；partial只是下界，unknown不是0，新入池不等于首次涨停。研究盘中情况或盘中轮动且未指定时段用all，一次返回七个时点的有界摘要。指定时点用对应键；北京时间09:35用0935，10:00用1000，10:30用1030，11:00用1100，13:30用1330，14:00用1400，14:30用1430。竞价、午评和收盘用read_market_data。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'},
           'slot': {'type': 'string', 'enum': list(INTRADAY_SLOTS)},
           'query': {'type': 'string', 'description': '题材或股票名称、代码，最多80字；整体研究传空串'}},
@@ -59,7 +59,7 @@ def tool_schemas():
          ['date', 'instrument_id', 'period', 'count']),
         ('read_limit_up_data', '读取指定完成日已保存的涨停梯队、各连板高度名单、首板和最高板、反包/晋级失败/20cm及题材确认家数。复用与页面相同的日期及价格核验，来源不全时数量只给已确认下界，不能称全市场完整统计。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
-        ('read_market_detail', '读取系统已保存的盘面页面事实：指数、板块表现、情绪及次日观察条件、近30交易日涨幅榜、历史监管监控、炸板分析。gainers_related按真实分类名称关键词筛完整前1000并取股票并集，gainers_topic按真实topic_id等值筛选；两者query必填。其他分区query用于名称或代码筛选，空串不筛选。返回有界名单，区分已观察数、确认总数及截取范围；观察条件不是确定预测，板块成交额不是净流入。',
+        ('read_market_detail', '读取系统已保存的盘面页面事实：指数、板块表现、情绪及次日观察条件、近30交易日涨幅榜、历史监管监控、龙虎榜、竞价及午评明细、炸板分析。auction/noon读取对应时点已存个股、方向、题材分布及封炸跌停池，query先筛完整已留存来源再有界返回，不要求今天已收盘。dragon_tiger分别返回单日和三日股票/机构/游资榜；query唯一精确命中股票名称或代码时另附对应席位，匿名席位不合并、金额不跨区间相加。abnormal保留监控标签、来源观察日与期限；供应商区间不是官方监管期限。gainers_related按真实分类名称关键词筛完整前1000并取股票并集，gainers_topic按真实topic_id等值筛选；两者query必填。其他分区query用于名称或代码筛选，空串不筛选。返回有界名单，区分已观察数、确认总数及截取范围；观察条件不是确定预测，板块成交额不是净流入。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today；仅gainers_related/gainers_topic可用latest读取最新已发布完成日，明确问今天用today，不回退旧日。'},
           'section': {'type': 'string', 'enum': list(DETAIL_SECTIONS)},
           'query': {'type': 'string', 'description': '最多80字符。gainers_related传分类名称关键词，如电池；gainers_topic传真实topic_id。其他分区不筛选传空串。'}}, ['date', 'section', 'query']),
@@ -171,15 +171,16 @@ def _market(heads=None):
     return MarketData(data_dir(), snapshot_id=snapshot or '')
 
 
-def _availability(day, now):
+def _availability(day, now, *, allow_market_calendar=True):
     selected, settings, all_heads = {}, [], {}
     for label, path in _paths():
         identity = briefs.fingerprints(day, source_path=path)
         all_heads[label] = identity
         settings.append(_settings(path))
         for phase, key in _BRIEF_KIND.items():
-            if phase not in selected and identity.get(key):
-                selected[phase] = {'source': label, **identity[key]}
+            metadata = identity.get(key) or (identity.get('closing_pools') if phase == 'close' else None)
+            if phase not in selected and metadata:
+                selected[phase] = {'source': label, **metadata}
     calendar_state, calendar_binding = 'unknown', None
     for saved in settings:
         calendar = saved.get('automatic-review-calendar-v1', {})
@@ -193,7 +194,7 @@ def _availability(day, now):
                 break
     if selected:
         calendar_state = 'trading_day'
-    if calendar_state == 'unknown':
+    if calendar_state == 'unknown' and allow_market_calendar:
         market = _market()
         if market.status().get('ready') and day in market.calendar():
             calendar_state = 'trading_day'
@@ -227,20 +228,24 @@ def _availability(day, now):
             'calendar_binding': calendar_binding, 'phases': phases}, selected, all_heads
 
 
-def _add_blocks(result, day, selected, kinds):
+def _add_blocks(result, day, selected, kinds, *, cutoff=None):
     for label, path in _paths():
         wanted = {kind for kind in kinds if selected.get(kind, {}).get('source') == label}
         if not wanted:
             continue
-        data = briefs.build_briefs(day, source_path=path)
         mapping = {_BRIEF_KIND[phase]: phase for phase in wanted}
         if 'auction' in wanted:
             mapping['auction_discovery'] = 'auction'
+        if 'close' in wanted:
+            mapping['closing_pools'] = 'close'
+        data = briefs.build_briefs(day, source_path=path, kinds=set(mapping), cutoff=cutoff)
         for block in data['blocks']:
             key = block['evidence']['evidence_id'].split(':')[-1]
             if key not in mapping:
                 continue
             evidence = block['evidence']
+            if key == 'closing_pools':
+                result['source_bindings']['closing_pools'] = evidence['source_binding']
             identifier = evidence['evidence_id']
             result['evidence'].append(evidence)
             result['metrics'].extend({**metric, 'evidence_ids': [identifier]} for metric in block['metrics'])
@@ -633,6 +638,10 @@ def _limit_up(result, day, now):
 
 
 def _market_detail(result, day, section, query, now):
+    if section in ('auction', 'noon'):
+        from app.services.ai_review_detail import fill_review_detail
+        fill_review_detail(result, day, section, query, now)
+        return
     available = _completed_market(result, day, now)
     if available is None: return
     market, status, heads, supplement = available
@@ -642,7 +651,11 @@ def _market_detail(result, day, section, query, now):
     from app.services import market_service
     lookup_mode = GAINERS_LOOKUP_MODES.get(section)
     kind = 'gainers' if lookup_mode else 'broken-boards' if section == 'broken_boards' else section
-    data = (market_service.index_overview(day, market=market) if section == 'indices' else
+    if section == 'dragon_tiger':
+        from app.services.ai_dragon_tiger_read import read_data
+        data = read_data(day, market=market, query=query)
+    else:
+        data = (market_service.index_overview(day, market=market) if section == 'indices' else
             market_service.market_page(kind, day, limit=1000 if section == 'sectors' else 200,
                 query='' if lookup_mode or section == 'sectors' else query, market=market,
                 **({'top_n': 1000} if kind == 'gainers' else {}),
@@ -666,7 +679,12 @@ def _market_detail(result, day, section, query, now):
     if section == 'sectors' and query:
         result['summary'].update(query_source_count=data['query_source_count'], query_source_complete=data['query_source_complete'])
     if data.get('unavailable_reason'): _gap(result, section, data['unavailable_reason'])
-    if lookup_mode:
+    if section == 'dragon_tiger':
+        projection = data['projection']
+    elif section == 'abnormal':
+        from app.services.ai_abnormal_read import project_data
+        projection = project_data(data, query, stock_projector=_stock_fields)
+    elif lookup_mode:
         lookup = data['classification_lookup']
         rows = []
         for row in data.get('items', []):
@@ -742,6 +760,8 @@ def _market_detail(result, day, section, query, now):
     result['evidence'] = [{'evidence_id': 'market_detail:' + section, 'source': 'local_market_page', 'kind': section,
         'title': '指定日系统盘面：' + section, 'dates': {'trade_date': day}, 'data': _fit_detail(projection)}]
     _bind_detail(result, day, data, heads, supplement)
+    if section == 'dragon_tiger':
+        result['source_bindings']['published_detail']['dragon_tiger'] = data['dragon_tiger_binding']
     if section == 'sectors':
         result['source_bindings']['published_detail']['supplement_dates'] = [day]
 
@@ -886,6 +906,51 @@ def _bounded(result):
     for row in result['metrics']:
         row['metric_id'] = namespace + row['metric_id']
         row['evidence_ids'] = [ids[value] for value in row.get('evidence_ids', []) if value in ids]
+    if result['summary'].get('noon_context') or result['summary'].get('close_context'):
+        from app.services.ai_intraday_read import _omit_sample
+
+        while len(dumps(result).encode()) > MAX_RESULT_BYTES:
+            omitted = False
+            for evidence in sorted(result['evidence'], key=lambda row: len(dumps(row['data']).encode()), reverse=True):
+                data = evidence['data']
+                if _omit_sample(data):
+                    omitted = True
+                    break
+                choices = [('directions.' + key, rows) for key, rows in data.get('directions', {}).items() if rows]
+                choices.extend(('pools.' + key, pool['samples']) for key, pool in data.get('pools', {}).items() if pool.get('samples'))
+                carryover = data.get('carryover', {})
+                choices.extend(('carryover.' + key, carryover.get(key, {}).get('stocks', []))
+                               for key in ('highest_candidates', 'price_reference'))
+                choices.extend(('carryover_direction_stocks', row.get('stocks', [])) for row in carryover.get('directions', []))
+                choices.append(('opening_comparison_examples', data.get('opening_comparison', {}).get('examples', [])))
+                choices = [(key, rows) for key, rows in choices if rows]
+                if choices:
+                    key, rows = max(choices, key=lambda item: len(dumps(item[1]).encode()))
+                    rows.pop()
+                    if key.startswith('pools.'):
+                        pool = data['pools'][key.removeprefix('pools.')]
+                        pool['omitted_count'] = pool.get('omitted_count', 0) + 1
+                    counts = data.setdefault('omitted_for_budget', {})
+                    counts[key] = counts.get(key, 0) + 1
+                    omitted = True
+                    break
+            if omitted:
+                continue
+            # These metric rows duplicate numeric facts kept in the original
+            # evidence data. Keep every phase before reducing that catalog.
+            if result['metrics']:
+                result['metrics'].pop()
+                result['summary']['omitted_duplicate_metrics_for_budget'] = result['summary'].get('omitted_duplicate_metrics_for_budget', 0) + 1
+                continue
+            break
+        if len(dumps(result).encode()) > MAX_RESULT_BYTES:
+            from app.services.ai_prefix_budget import compact_prefix
+            compact_prefix(result)
+        if len(dumps(result).encode()) > MAX_RESULT_BYTES:
+            error = _result(result['tool_name'], result['date'])
+            error.update(ok=False, state='error')
+            _gap(error, 'result_capacity', '累计前缀必要来源和计数超过24KiB；未删除时段或截断JSON，请按具体时点读取', 'unknown')
+            return error
     excluded = Counter()
     while len(dumps(result).encode()) > MAX_RESULT_BYTES and result['evidence']:
         # Keep useful summary/phase metadata and whole factual observations.
@@ -982,7 +1047,8 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
             if section not in SECTIONS:
                 raise ValueError('盘面分区无效')
             result['date'] = day
-            availability, selected, before = _availability(day, now)
+            availability, selected, before = (_availability(day, now, allow_market_calendar=False)
+                                                if section in ('noon', 'close') else _availability(day, now))
             result['summary'] = availability
             result['source_bindings']['intraday'] = before
             if availability.get('calendar_binding'):
@@ -992,7 +1058,13 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
                 result['state'] = 'available'
             else:
                 kinds = tuple(PHASES) if section == 'overview' else (section,) if section in PHASES else ()
-                if section != 'overview':
+                if section == 'noon':
+                    from app.services.ai_noon_context import add_noon_context
+                    add_noon_context(result, day, selected, before, now)
+                elif section == 'close':
+                    from app.services.ai_noon_context import add_close_context
+                    add_close_context(result, day, selected, before, now)
+                elif section != 'overview':
                     _add_blocks(result, day, selected, kinds)
                 for phase in kinds:
                     if availability['phases'][phase]['phase_state'] != 'available':

@@ -1,4 +1,4 @@
-"""Project at most six verified, same-day saved intraday snapshots for AI."""
+"""Project at most seven verified, same-day saved intraday snapshots for AI."""
 from datetime import date, datetime, time
 import json
 
@@ -7,19 +7,23 @@ from fastapi import HTTPException
 from app.core import dumps
 from app.services.ai_read_tools import _connect, _gap, _paths, _pick_fields
 from app.services.auction_followup import model_input_allowed
-from app.services.intraday_service import MAX_PAYLOAD, SLOTS, decode_snapshot
+from app.services.intraday_service import MAX_PAYLOAD, SLOTS, decode_snapshot, slots_for_version
 from app.services.intraday_board_changes import BASELINES, build_changes, noon_frame, read_noon_row
 from app.services.sync_clock import CHINA
 
 _SLOTS = {item['key']: item for item in SLOTS}
 _SOURCE = 'saved_intraday_observation'
-_SCOPE = '同一采集窗口内已核验的报价和事件。涨跌幅相对昨收，变化为百分点，成交额为人民币元。'
+_SCOPE = ('同一采集窗口内已核验的报价和事件。涨跌幅相对昨收，变化为百分点，成交额为人民币元。'
+          '行业题材来自原名单；上市板块按留存证券代码展示，不推断历史身份。')
+_CHANGE_SCOPE = '相邻池观察；新入池非首次涨停，缺席非开板或跌停解除；partial为下界，unknown不是0。分布按完整已确认变化集合，概念可重叠。'
 _MARKET = ('up', 'down', 'flat', 'valid', 'observed')
 _STOCK = ('instrument_id', 'name', 'latest_price', 'change_pct', 'change_pp', 'amount',
-          'amount_delta', 'limit_up_state', 'continue_day_cnt', 'board_count', 'previous_board_count', 'state')
+          'amount_delta', 'limit_up_state', 'limit_down_state', 'board_transition',
+          'continue_day_cnt', 'board_count', 'previous_board_count', 'state', 'board')
 _DIRECTION = ('instrument_id', 'name', 'kind', 'signal', 'change_pct', 'change_pp',
               'amount_delta', 'member_date', 'up_ratio', 'limit_up_count', 'limit_up_count_state',
-              'broken_count', 'broken_count_state')
+              'broken_count', 'broken_count_state', 'breadth_state', 'breadth_reason', 'broken_count_reason',
+              'member_count', 'rankable_members', 'member_coverage_pct', 'median_change_pct')
 _AMOUNT_COMPARISON = ('previous_amount', 'comparison_amount', 'change_from_previous',
                       'previous_date', 'comparable_count')
 _INTERVAL_AMOUNT = ('amount', *_AMOUNT_COMPARISON, 'previous_comparable_count', 'scope', 'state')
@@ -96,7 +100,7 @@ def _read_snapshot(connection, metadata, day, slot, now, *, include_row=False):
     if not model_input_allowed(snapshot):
         raise ValueError('盘中材料禁止AI处理')
     start, end = (_clock(snapshot[field], day) for field in ('collected_start_at', 'collected_end_at'))
-    window = _SLOTS[slot]
+    window = next(item for item in slots_for_version(snapshot['version']) if item['key'] == slot)
     finished = metadata['finished_at_ms']
     if (not time.fromisoformat(window['start']) <= start.time() <= end.time() < time.fromisoformat(window['end'])
             or type(finished) is not int or not int(end.timestamp() * 1000) <= finished <= int(now.timestamp() * 1000)):
@@ -105,29 +109,38 @@ def _read_snapshot(connection, metadata, day, slot, now, *, include_row=False):
 
 
 def _change_summary(value, query, detailed):
+    from app.services.ai_intraday_evidence import stock_projection
     if not value:
         return {'state': 'unknown'}
     groups = {}
     for key, group in value['groups'].items():
         matching = [row for row in group['items'] if _matches(row, query)]
         groups[key] = _pick_fields(group, ('state', 'count'))
+        if 'classification' in group:
+            groups[key]['classification'] = group['classification']
+        else:
+            groups[key]['classification'] = {'state': 'unknown', 'total': group.get('count'),
+                'classified': None, 'missing': group.get('count')}
         if detailed:
             groups[key].update(**_pick_fields(group, ('reason_code', 'omitted_count')),
-                               samples=[_pick_fields(row, _STOCK) for row in matching[:3]])
+                               samples=[stock_projection(row, _STOCK) for row in matching[:3]])
     result = {'state': value['state'], 'baseline_slot': value['baseline_slot'], 'groups': groups,
-              'scope': '相邻池观察；partial为下界，unknown不是0；新入池非首次涨停，缺席非开板。'}
+              'scope': _CHANGE_SCOPE}
     if detailed:
         result['source_bindings'] = {key: _pick_fields(row, ('snapshot_id', 'slot', 'collected_end_at'))
                                      for key, row in value['source_bindings'].items()}
+    else:
+        result.pop('scope')
     return result
 
 
 def _stock_samples(rows, query, limit):
+    from app.services.ai_intraday_evidence import stock_projection
     selected = {}
     for row in rows:
         code = row.get('instrument_id')
         if code and code not in selected and _matches(row, query):
-            selected[code] = _pick_fields(row, _STOCK)
+            selected[code] = stock_projection(row, _STOCK)
     return list(selected.values())[:limit]
 
 
@@ -138,7 +151,12 @@ def _direction_samples(snapshot, query, limit, stock_limit):
     directions = []
     for row in discovery['directions']:
         name_match = _matches(row, query)
-        stocks = _stock_samples(row.get('stocks', ()), '' if name_match else query, stock_limit)
+        stocks = []
+        for stock in row.get('stocks', ()):
+            extra = snapshot.get('_ai_stocks', {}).get(stock.get('instrument_id'), {})
+            stocks.append({**stock, **_pick_fields(extra, ('themes', 'board', 'limit_down_state',
+                                                          'board_transition', '_ai_observed_date'))})
+        stocks = _stock_samples(stocks, '' if name_match else query, stock_limit)
         if name_match or stocks:
             directions.append({**_pick_fields(row, _DIRECTION), 'stocks': stocks})
     diverse = {}
@@ -164,10 +182,9 @@ def _project(snapshot, query, detailed):
     sectors = []
     sector_rows = snapshot.get('sectors', ())
     if query:
-        from app.services.intraday_rotation import live_rotation_sectors
         # Search the retained full quote list only for an explicit existing query;
         # the model still receives the original bounded number of matching rows.
-        sector_rows = live_rotation_sectors(snapshot) or sector_rows
+        sector_rows = snapshot.get('rotation_sectors') or sector_rows
     for row in sector_rows:
         if _matches(row, query):
             sectors.append(_pick_fields({**industry.get(row.get('instrument_id'), {}), **row}, _DIRECTION))
@@ -219,6 +236,8 @@ def _project(snapshot, query, detailed):
         'direction_discovery': _direction_samples(snapshot, query, direction_limit, stock_limit),
         'sector_samples': sectors[:direction_limit], 'matching_sector_sample_count': len(sectors),
         'stock_samples': _stock_samples(samples, query, stock_limit),
+        'historical_metrics_state': 'not_in_snapshot',
+        'historical_metrics_reason': '本工具未读取年度日线及事件覆盖；30日/年内收益、最近涨停和一年次数保持未知。',
         'sample_note': '方向和个股只返回已存资料中的有限样本，名称或代码未命中时不能认定全市场没有。',
     }
     if comparison := _pick_fields(turnover.get('amount_comparison'), _AMOUNT_COMPARISON):
@@ -227,26 +246,44 @@ def _project(snapshot, query, detailed):
         # The tool's common summary already carries this same scope once.
         # Do not let repeated prose evict saved phases or their numeric facts.
         data.pop('scope')
+        data['interval_amount'].pop('scope', None)
+        data['direction_discovery'].pop('scope', None)
+        data.pop('historical_metrics_reason')
         data['sample_note'] = '仅有限样本，未命中不能认定没有。'
-    # Each slot keeps its date and essential facts in a six-slot reply.
+    # Each slot keeps its date and essential facts in a seven-slot reply.
     cap = (10 if detailed else 3) * 1024
-    discovery = data['direction_discovery']
     while len(dumps(data).encode()) > cap:
-        groups = data['board_changes'].get('groups', {})
-        largest = max(groups.values(), key=lambda group: len(group.get('samples', ())), default=None)
-        if largest and largest.get('samples'):
-            largest['samples'].pop()
-            continue
-        for key in ('sector_samples', 'stock_samples'):
-            if data[key]:
-                data[key].pop()
-                break
-        else:
-            if not discovery['directions']:
-                raise ValueError('必要时点摘要超出容量')
-            discovery['directions'].pop()
-            discovery['omitted_matching_directions'] += 1
+        if not _omit_sample(data):
+            raise ValueError('必要时点摘要超出容量')
     return data
+
+
+def _omit_sample(data):
+    """Omit whole optional rows, preserving all stage identities and numeric facts."""
+    choices = [(key, data.get(key, [])) for key in ('sector_samples', 'stock_samples')]
+    ladder = data.get('ladder', {})
+    choices.extend([('highest_board_samples', ladder.get('highest_board_samples', [])),
+                    ('broken_samples', ladder.get('broken_board', {}).get('samples', [])),
+                    ('directions', data.get('direction_discovery', {}).get('directions', []))])
+    choices.extend(('board_changes.' + key, row.get('samples', []))
+                   for key, row in data.get('board_changes', {}).get('groups', {}).items())
+    choices.extend(('board_changes.' + key + '.' + dimension, row.get('classification', {}).get(dimension, []))
+                   for key, row in data.get('board_changes', {}).get('groups', {}).items()
+                   for dimension in ('industries', 'concepts'))
+    candidates = [(key, values) for key, values in choices if values]
+    if not candidates and data.get('indices'):
+        candidates = [('indices', data['indices'])]
+    if not candidates:
+        return False
+    key, values = max(candidates, key=lambda item: len(dumps(item[1]).encode()))
+    values.pop()
+    omitted = data.setdefault('omitted_for_budget', {})
+    notice_key = ('classification_top_rows' if key.startswith('board_changes.') and key.count('.') > 1
+                  else 'board_change_samples' if key.startswith('board_changes.') else key)
+    omitted[notice_key] = omitted.get(notice_key, 0) + 1
+    if key == 'directions':
+        data['direction_discovery']['omitted_matching_directions'] += 1
+    return True
 
 
 def _missing_state(record, day, slot, now, calendar):
@@ -264,17 +301,27 @@ def _missing_state(record, day, slot, now, calendar):
     return 'unknown', '无该时点记录，且没有覆盖该日的已核验交易日历'
 
 
-def fill_intraday(result, day, slot, query, now):
-    slots = tuple(_SLOTS) if slot == 'all' else (slot,)
+def fill_intraday(result, day, slot, query, now, *, allowed_slots=None, cutoff=None, source_paths=None):
+    from app.services.ai_intraday_evidence import prepare_frame
+    from app.services.ai_read_tools import MAX_RESULT_BYTES
+    slots = tuple(allowed_slots) if allowed_slots is not None else tuple(_SLOTS) if slot == 'all' else (slot,)
+    effective_now = min(now, cutoff) if cutoff is not None else now
     source = None
     calendar = None
     phase_results = {}
-    for label, path in _paths():
+    for label, path in (source_paths if source_paths is not None else _paths()):
         connection = _connect(path)
         if connection is None:
             continue
         try:
             connection.execute('BEGIN')
+            read_context = {}
+            decoded = {}
+            def read_frame(record, key):
+                identity = (key, record['snapshot_id'], record['content_sha256'], record['finished_at_ms'])
+                if identity not in decoded:
+                    decoded[identity] = _read_snapshot(connection, record, day, key, effective_now, include_row=True)
+                return decoded[identity]
             required = tuple(dict.fromkeys((*slots, *(BASELINES[key] for key in slots
                                                        if BASELINES.get(key) not in (None, 'noon')))))
             records = _source_rows(connection, day, required)
@@ -283,12 +330,15 @@ def fill_intraday(result, day, slot, query, now):
                 calendar = _calendar_state(connection, day)
             for key in slots:
                 record = records.get(key)
+                if cutoff is not None and record and (record.get('finished_at_ms') or 0) > int(cutoff.timestamp() * 1000):
+                    source_phases[key] = ('not_collected', '截至午评实际时点尚未完成留存，不补入后来资料')
+                    continue
                 if not record or not record['snapshot_id'] or record['status'] not in ('succeeded', 'partial'):
                     if record:
                         source_phases[key] = _missing_state(record, day, key, now, calendar)
                     continue
                 try:
-                    value, raw_row = _read_snapshot(connection, record, day, key, now, include_row=True)
+                    value, raw_row = read_frame(record, key)
                     previous = previous_row = None
                     baseline = BASELINES.get(key)
                     if baseline == 'noon':
@@ -299,10 +349,11 @@ def fill_intraday(result, day, slot, query, now):
                             previous = previous_row = None
                     elif baseline in records and records[baseline]['status'] in ('succeeded', 'partial'):
                         try:
-                            previous, previous_row = _read_snapshot(connection, records[baseline], day, baseline, now, include_row=True)
+                            previous, previous_row = read_frame(records[baseline], baseline)
                         except (ValueError, TypeError, KeyError, HTTPException):
                             pass
                     value['board_changes'] = build_changes(value, previous, current_row=raw_row, previous_row=previous_row)
+                    member_binding = prepare_frame(connection, value, query.casefold(), read_context, previous=previous)
                     data = _project(value, query.casefold(), slot != 'all')
                 except (ValueError, TypeError, KeyError, HTTPException):
                     source_phases[key] = ('unknown', '该时点快照未通过身份、时间或AI处理权限核验')
@@ -312,6 +363,8 @@ def fill_intraday(result, day, slot, query, now):
                     'title': _SLOTS[key]['start'] + ' ' + _SLOTS[key]['label'],
                     'dates': {'trade_date': day, 'collected_end_at': value['collected_end_at']}, 'data': data})
                 result['source_bindings'][key] = _pick_fields(record, ('snapshot_id', 'content_sha256', 'finished_at_ms'))
+                if member_binding:
+                    result['source_bindings'][key]['member_reference'] = member_binding
                 if previous_binding := value['board_changes']['source_bindings'].get('previous'):
                     result['source_bindings'][key]['board_change_previous'] = previous_binding
                 source_phases[key] = ('available' if value.get('quality') == 'complete' else 'partial',
@@ -326,14 +379,22 @@ def fill_intraday(result, day, slot, query, now):
             connection.close()
     phases = {}
     for key in slots:
-        state, reason = phase_results.get(key) or _missing_state(None, day, key, now, calendar)
+        state, reason = phase_results.get(key) or _missing_state(None, day, key, effective_now, calendar)
         phases[key] = {'phase_state': state, 'time': _SLOTS[key]['start'], 'reason': reason}
         if state in ('unknown', 'not_collected', 'rest_day'):
             _gap(result, 'intraday:' + key, reason, state)
-    result['summary'] = {'phases': phases, 'query': query, 'scope': _SCOPE, 'calendar_state': calendar or 'unknown'}
+    result['summary'] = {'phases': phases, 'query': query, 'scope': _SCOPE,
+                         'board_change_scope': _CHANGE_SCOPE, 'calendar_state': calendar or 'unknown'}
     if source:
         result['source'] = [source]
     states = [phase['phase_state'] for phase in phases.values()]
     result['state'] = ('available' if all(state == 'available' for state in states)
                        else 'partial' if result['evidence']
                        else states[0] if len(set(states)) == 1 else 'unknown')
+    # Reserve the common tool's evidence-ID namespace overhead. Keep all seven
+    # phases by dropping complete optional samples before its total 24KiB guard.
+    if slot == 'all':
+        while len(dumps(result).encode()) > MAX_RESULT_BYTES - 512:
+            candidates = sorted(result['evidence'], key=lambda row: len(dumps(row['data']).encode()), reverse=True)
+            if not any(_omit_sample(row['data']) for row in candidates):
+                break

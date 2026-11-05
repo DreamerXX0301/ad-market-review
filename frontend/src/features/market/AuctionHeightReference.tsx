@@ -4,6 +4,7 @@ import { Empty, ErrorBox, Loading } from "../../components/UI";
 import { useApi } from "../../lib/api";
 import { integer, num, percent, tone } from "../../lib/format";
 import { isAuctionGeneralAttribute } from "./auctionExplorerPresentation";
+import "./AuctionHeightReference.css";
 
 type AuctionTheme = {
   topic_code: string;
@@ -42,19 +43,18 @@ type Reference = {
 };
 
 function HeightThemes({ stock }: { stock: ReferenceStock }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const themes = stock.themes ?? [];
   if (!themes.length) {
     return (
       <small
-        className="intraday-height-themes"
+        className="ahr-themes-unknown"
         title={stock.themes_reason || "这份竞价快照未取得可核验题材归属"}
       >
         题材待核验
       </small>
     );
   }
-  const visibleCount = 3;
   const industry = themes.find((theme) => theme.kind === "industry");
   const concepts = themes.filter(
     (theme) => theme.kind === "concept" && !isAuctionGeneralAttribute(theme),
@@ -62,11 +62,16 @@ function HeightThemes({ stock }: { stock: ReferenceStock }) {
   const ordered = [
     ...(industry ? [industry] : []),
     ...concepts,
-    ...themes.filter((theme) => theme !== industry && !concepts.includes(theme)),
+    ...themes.filter(
+      (theme) => theme !== industry && !concepts.includes(theme),
+    ),
   ];
+  const preview = [...(industry ? [industry] : []), ...concepts.slice(0, 2)];
+  const compact = preview.length ? preview : ordered.slice(0, 2);
+  const hiddenCount = themes.length - compact.length;
   return (
-    <span className="intraday-height-themes intraday-theme-chips">
-      {(expanded ? ordered : ordered.slice(0, visibleCount)).map((theme) => (
+    <div className="ahr-themes" aria-label={`${stock.name}的行业与题材`}>
+      {(expanded ? ordered : compact).map((theme) => (
         <span
           key={`${theme.kind}:${theme.topic_code}`}
           data-kind={theme.kind}
@@ -75,18 +80,18 @@ function HeightThemes({ stock }: { stock: ReferenceStock }) {
           {theme.name}
         </span>
       ))}
-      {themes.length > visibleCount && (
+      {hiddenCount > 0 && (
         <button
           type="button"
-          className="intraday-height-themes-more"
+          className="ahr-themes-more"
           aria-expanded={expanded}
           aria-label={`${stock.name} ${expanded ? "收起其余题材" : "查看其余题材"}`}
           onClick={() => setExpanded(!expanded)}
         >
-          {expanded ? "收起" : `+${themes.length - visibleCount}`}
+          {expanded ? "收起" : `+${hiddenCount} 更多`}
         </button>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -104,8 +109,39 @@ export default function AuctionHeightReference({
   );
   const reference = data?.date === date ? data : null;
   return (
-    <section className="panel intraday-brief" aria-label="前日高度板与竞价反馈">
-      <h2>前日高度板与竞价反馈</h2>
+    <section
+      className="panel auction-height-reference"
+      aria-label="前日高度板与竞价反馈"
+    >
+      <header className="ahr-header">
+        <div className="ahr-heading">
+          <h2>前日高度板与竞价反馈</h2>
+          <span>前日队列 · 本次竞价</span>
+        </div>
+        {reference && (
+          <div className="ahr-summary" aria-label="前日高度核验摘要">
+            <span>
+              前收 <time>{reference.previous_date ?? "待核验"}</time>
+            </span>
+            <span>
+              候选最高 <b>{integer(reference.highest_board)}</b> 板
+            </span>
+            <span>
+              已核验{" "}
+              <b>
+                {integer(reference.verified_height_count)} /{" "}
+                {integer(reference.candidate_count)}
+              </b>{" "}
+              只
+            </span>
+            {reference.unknown_height_count > 0 && (
+              <span className="ahr-summary-unknown">
+                板数待核验 {integer(reference.unknown_height_count)} 只
+              </span>
+            )}
+          </div>
+        )}
+      </header>
       {error ? (
         <ErrorBox message={error} retry={reload} />
       ) : loading || !reference ? (
@@ -117,63 +153,63 @@ export default function AuctionHeightReference({
         />
       ) : (
         <>
-          <p>
-            {reference.previous_date} 收盘 · 本份竞价候选内最高{" "}
-            {integer(reference.highest_board)} 板 ·{" "}
-            {integer(reference.verified_height_count)} /{" "}
-            {integer(reference.candidate_count)} 只候选核验到前日板数
-            {reference.unknown_height_count > 0 &&
-              ` · 另有 ${integer(reference.unknown_height_count)} 只前日涨停的板数待核验`}
-          </p>
-          <p className="intraday-feedback-note">
-            按前一交易日收盘板数分组，涨跌幅来自本次竞价。题材取自竞价时已留存的成员名单。触及常规涨停参考价只表示价格匹配，封板状态待盘中核验。
-          </p>
-          <div className="intraday-feedback-grid">
+          <details className="ahr-method">
+            <summary>口径说明</summary>
+            <p>
+              按前一交易日收盘板数分组，最高板数仅限本份竞价候选，涨跌幅来自本次竞价。
+              题材取自竞价时已留存的成员名单。触及常规涨停参考价只表示价格匹配，封板状态待盘中核验。
+            </p>
+          </details>
+          <div className="ahr-groups">
             {reference.groups.map((group) => (
-              <details
-                key={group.board_count}
-                className="intraday-feedback-card"
-                open
-              >
+              <details key={group.board_count} className="ahr-group" open>
                 <summary>
                   <strong>
                     前日 {integer(group.board_count)} 板 ·{" "}
-                    {integer(group.items.length)} 只
+                    <small>{integer(group.items.length)} 只</small>
                   </strong>
-                  <span>
+                  <span className="ahr-group-stats">
                     高开 {integer(group.up)} · 低开 {integer(group.down)} · 平开{" "}
                     {integer(group.flat)}
                     {group.unknown > 0 && ` · 缺报价 ${integer(group.unknown)}`}
                   </span>
                 </summary>
-                <div className="intraday-feedback-body">
-                  <ul className="intraday-feedback-stocks">
+                <div className="ahr-group-body">
+                  <ul className="ahr-stocks">
                     {group.items.map((stock) => (
-                      <li key={stock.instrument_id}>
-                        {onStock ? (
-                          <button
-                            className="stock-link"
-                            type="button"
-                            onClick={() => onStock(stock.instrument_id)}
+                      <li key={`${date}:${stock.instrument_id}`}>
+                        <div className="ahr-stock-head">
+                          {onStock ? (
+                            <button
+                              className="ahr-stock-name"
+                              type="button"
+                              title={`查看 ${stock.name}`}
+                              onClick={() => onStock(stock.instrument_id)}
+                            >
+                              {stock.name}
+                            </button>
+                          ) : (
+                            <span className="ahr-stock-name">{stock.name}</span>
+                          )}
+                          <CopyStockCode instrumentId={stock.instrument_id} />
+                          <strong
+                            className={`ahr-stock-change ${tone(stock.auction_pct)}`}
+                            title="本次留存竞价涨幅"
                           >
-                            {stock.name}
-                          </button>
-                        ) : (
-                          <span>{stock.name}</span>
-                        )}
-                        <CopyStockCode instrumentId={stock.instrument_id} />
-                        <span className={tone(stock.auction_pct)}>
-                          {stock.auction_pct === null
-                            ? "竞价报价未知"
-                            : percent(stock.auction_pct)}
-                        </span>
-                        {stock.opening_reference_price != null && (
-                          <small>
-                            触及涨停参考价 {num(stock.opening_reference_price)}{" "}
-                            元
-                          </small>
-                        )}
-                        <HeightThemes stock={stock} />
+                            {stock.auction_pct === null
+                              ? "报价待核验"
+                              : percent(stock.auction_pct)}
+                          </strong>
+                        </div>
+                        <div className="ahr-stock-info">
+                          {stock.opening_reference_price != null && (
+                            <small className="ahr-opening-reference">
+                              触及涨停参考价{" "}
+                              {num(stock.opening_reference_price)} 元
+                            </small>
+                          )}
+                          <HeightThemes stock={stock} />
+                        </div>
                       </li>
                     ))}
                   </ul>

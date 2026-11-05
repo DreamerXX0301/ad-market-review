@@ -86,6 +86,8 @@ assert.match(html,/复制六位代码 688001/);
 assert.match(html,/昨日2板/);
 assert.equal((html.match(/样本领涨/g)||[]).length,1);
 assert.match(html,/其他个股异动 · 1 只/);
+assert.equal((html.match(/<details class="auction-discovery-extra" open=""/g)||[]).length,2,"individual anomalies and prior-focus recheck start open");
+assert.equal((html.match(/主要行业与概念/g)||[]).length,2,"both independent discovery lists expose their own distribution");
 assert.match(html,/-1\.00%/);
 assert.match(html,/0\.00元/);
 assert.match(html,/补查丁/);

@@ -51,17 +51,18 @@
 }
 
 .intraday-brief-timeline .ibt-slots {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
   gap: 5px;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  scrollbar-width: thin;
+  overflow: visible;
   padding: 0 0 9px;
 }
 
 .intraday-brief-timeline .ibt-slots button {
-  display: inline-flex;
-  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-width: 0;
   align-items: center;
   gap: 5px;
   padding: 6px 9px;
@@ -71,11 +72,12 @@
   color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  line-height: 1.45;
   cursor: pointer;
 }
 
 .intraday-brief-timeline .ibt-slot-dot {
+  flex-shrink: 0;
   width: 5px;
   height: 5px;
   border-radius: 50%;
@@ -96,6 +98,7 @@
 .intraday-brief-timeline .ibt-slots small {
   font-size: 9px;
   opacity: 0.8;
+  white-space: nowrap;
 }
 
 .intraday-brief-timeline .ibt-scroll {
@@ -246,6 +249,29 @@
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-line;
+}
+
+.intraday-brief-timeline .ibt-direction-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 0 1px;
+  border: 0;
+  border-bottom: 1px dotted color-mix(in srgb, var(--blue) 65%, transparent);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--blue);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.intraday-brief-timeline .ibt-direction-link:hover {
+  background: var(--blue-bg);
+  border-bottom-style: solid;
+}
+.intraday-brief-timeline .ibt-direction-link:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
 }
 
 .intraday-brief-timeline .ibt-scroll .ibt-comparison {

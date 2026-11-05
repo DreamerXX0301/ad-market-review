@@ -94,6 +94,7 @@ globalThis.fetch = () => { throw Error("reading/navigation rendering must not fe
 try {
   const html = renderToStaticMarkup(createElement(NoonReview, {date:day,onDate(){},onStock(){},chartDate:"2026-10-27"}));
   assert.ok(html.includes('aria-label="午评阅读导航"'));
+  assert.match(html, /#ai\?ai_kind=market(?:&amp;|&)ai_day=2026-10-28(?:&amp;|&)ai_stage=noon/, "noon opens a dated AI context without sending or capturing");
   for (const id of ["noon-overview-start", "noon-prior-feedback", "noon-today-ladder", "noon-directions", "noon-afternoon", "noon-review-history"])
     assert.ok(html.includes(`id="${id}"`), `navigation target ${id} must exist in the real page`);
   assert.ok(!html.includes('aria-controls="noon-data-gaps"'), "source diagnostics must not return to the primary menu");

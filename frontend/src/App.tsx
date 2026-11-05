@@ -6,6 +6,7 @@ import type { Row } from "./lib/api";
 import { lazyView } from "./components/LazyView";
 import AppShell, { marketRoutes, routeTitles } from "./components/AppShell";
 import { isCalendarDate } from "./components/marketDate";
+import { intradayChartSelection } from "./components/intradayChartNavigation";
 import {
   completedReviewDate,
   isIntradayReview,
@@ -119,7 +120,7 @@ const RetainedPage = memo(
   (_previous, next) => !next.active,
 );
 export default function App() {
-  const bootstrap = useApi<Row>("/bootstrap");
+  const bootstrap = useApi<Row>("/bootstrap?scope=navigation");
   const [visible, setVisible] = useState(() => !document.hidden);
   const [incrementBlocked, setIncrementBlocked] = useState(true);
   const [route, setRoute] = useState(currentRoute),
@@ -184,7 +185,7 @@ export default function App() {
   );
   const reloadBootstrap = bootstrap.reload;
   useEffect(() => {
-    if ((route === "noon" || route === "intraday") && visible) reloadBootstrap();
+    if (isIntradayReview(route) && visible) reloadBootstrap();
   }, [route, visible, reloadBootstrap]);
   const setDate = useCallback((day: string) => {
     if (!isCalendarDate(day)) return;
@@ -267,7 +268,8 @@ export default function App() {
   const noonChartAsOf = noonChartDate(dates, date);
   const openStock = useCallback(
     (id: string, navigation?: StockNavigation) => {
-      if (isIntradayReview(route) && !noonChartAsOf) {
+      const chartDay = noonPublishedClose || noonChartAsOf;
+      if (isIntradayReview(route) && !chartDay) {
         notify("该观察日期之前没有已发布收盘行情，不能打开历史图表。", "error");
         return;
       }
@@ -276,14 +278,14 @@ export default function App() {
           id,
           navigation,
           isIntradayReview(route)
-            ? noonChartAsOf || undefined
+            ? chartDay || undefined
             : marketRoutes.has(route)
               ? date || undefined
               : undefined,
         ),
       );
     },
-    [route, date, noonChartAsOf, notify],
+    [route, date, noonChartAsOf, noonPublishedClose, notify],
   );
   const openTrackedStock = useCallback(
     (id: string, round: Row, navigation?: StockNavigation) => {
@@ -414,7 +416,7 @@ export default function App() {
             onDate={resetDate}
             onDatesChanged={auctionDates.reload}
             onStock={openStock}
-            chartDate={noonChartAsOf || undefined}
+            chartDate={noonPublishedClose || noonChartAsOf || undefined}
           />
         );
       case "intraday": {
@@ -426,21 +428,19 @@ export default function App() {
             dateFixed={dateChoice !== null}
             onResetDate={resetDate}
             onStock={(id, selection) => {
-              const slot = selection?.slot;
-              // The close anchor confirms publication even if the global date
-              // directory has not refreshed yet.
-              const asOf = slot === "close" ? date : noonChartAsOf;
-              if (!asOf) {
+              const chart = intradayChartSelection(
+                date,
+                dates,
+                noonChartAsOf,
+                selection,
+              );
+              if (!chart) {
                 notify("该时点之前没有已发布收盘行情。", "error");
                 return;
               }
-              const snapshotId = selection?.snapshotId;
               setStock({
-                ...stockSelectionForOpen(id, undefined, asOf),
-                noonSnapshotId: slot === "noon" ? snapshotId : undefined,
-                intradaySnapshotId: snapshotId?.startsWith("intraday_")
-                  ? snapshotId
-                  : undefined,
+                ...stockSelectionForOpen(id, undefined, chart.asOf),
+                ...chart,
               });
             }}
           />

@@ -12,6 +12,7 @@ import {
   Panel as BasePanel,
 } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
+import FloatingScrollControls from "../../components/FloatingScrollControls";
 import {
   amount,
   dateTime,
@@ -1316,30 +1317,28 @@ export default function NoonCloseReview({
         </div>
       </div>
       {active && (
-        <div
+        <FloatingScrollControls
           className="noon-quick-navigation noon-close-quick"
-          aria-label="收盘回看上下节快捷导航"
-        >
-          <button
-            type="button"
-            aria-label="收盘回看上一节"
-            disabled={sectionIndex === 0}
-            onClick={() => navigate(CLOSE_SECTIONS[sectionIndex - 1].key)}
-          >
-            <ChevronUp size={18} />
-          </button>
-          <span>
-            {sectionIndex + 1}/{CLOSE_SECTIONS.length}
-          </span>
-          <button
-            type="button"
-            aria-label="收盘回看下一节"
-            disabled={sectionIndex === CLOSE_SECTIONS.length - 1}
-            onClick={() => navigate(CLOSE_SECTIONS[sectionIndex + 1].key)}
-          >
-            <ChevronDown size={18} />
-          </button>
-        </div>
+          label="收盘回看上下节快捷导航"
+          position={{
+            text: `${sectionIndex + 1}/${CLOSE_SECTIONS.length}`,
+            label: `当前第${sectionIndex + 1}节，共${CLOSE_SECTIONS.length}节`,
+          }}
+          previous={{
+            label: "收盘回看上一节",
+            caption: "上节",
+            disabled: sectionIndex === 0,
+            icon: <ChevronUp size={18} />,
+            onClick: () => navigate(CLOSE_SECTIONS[sectionIndex - 1].key),
+          }}
+          next={{
+            label: "收盘回看下一节",
+            caption: "下节",
+            disabled: sectionIndex === CLOSE_SECTIONS.length - 1,
+            icon: <ChevronDown size={18} />,
+            onClick: () => navigate(CLOSE_SECTIONS[sectionIndex + 1].key),
+          }}
+        />
       )}
     </section>
   );

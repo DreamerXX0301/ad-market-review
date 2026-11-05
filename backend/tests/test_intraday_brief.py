@@ -91,7 +91,7 @@ def test_cumulative_cutoff_excludes_future_and_late_published_earlier_slots():
     selected = brief._preceding(records, '1030')
     assert [slot for slot, _ in selected] == ['auction', '1030']
     output = brief._brief('1030', [(slot, _projection(slot, 4)) for slot, _ in selected])
-    assert [row['status'] for row in output['context']] == ['complete', 'missing', 'complete']
+    assert [row['status'] for row in output['context']] == ['complete', 'missing', 'missing', 'complete']
     assert '11:00' not in output['body'] and '15:00' not in output['body']
     assert '10:00 开盘首轮' in output['body']
 

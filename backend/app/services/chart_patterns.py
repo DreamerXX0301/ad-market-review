@@ -16,7 +16,10 @@ KINDS = {
     'earth_to_sky': '地天板',
     'one_price_limit_up': '一字涨停',
     'one_price_limit_down': '一字跌停',
+    'broken_board': '炸板',
+    'resealed_board': '回封',
 }
+BOARD_VERSION = 'verified-dated-close-pool-board-events-v1'
 TICK = Decimal('0.01')
 RATES = (Decimal('0.05'), Decimal('0.10'), Decimal('0.20'), Decimal('0.30'))
 SCOPE = '逐日未复权有效成交OHLC与已核验同日收盘来源池；不是盘口封单或完整分时路径'
@@ -87,6 +90,77 @@ def _one_price(quote, closing, *, day, symbol):
         return _state(False, '完整已核验来源池明确未收盘入池'), []
     proofs, reason = _pool_proofs(closing, prices['close'], day=day, symbol=symbol)
     return (_state(True), proofs) if proofs else (_state(None, reason), [])
+
+
+def _board_event(quote, states, *, day, symbol, resealed=False):
+    up, broken = states.get('up', {}), states.get('broken', {})
+    if (up.get('status') == 'conflict' or broken.get('status') == 'conflict'
+            or up.get('state') is True and broken.get('state') is True):
+        return _state(None, '同日封板/炸板来源或原价冲突，不认定炸板或回封'), []
+    closing = up if resealed else broken
+    if closing.get('state') is False:
+        return _state(False, '完整原来源池明确未入对应收盘池'), []
+    proofs, reason = _pool_proofs(closing, quote['prices']['close'], day=day, symbol=symbol)
+    if reason:
+        return _state(None, reason), []
+    if not resealed:
+        return _state(True), proofs
+    counts = [value for proof in proofs for value in proof.get('opening_counts', ())]
+    if any(proof.get('opening_counts_invalid') for proof in proofs) or (any(value > 0 for value in counts) and 0 in counts):
+        return _state(None, '同日收盘封板来源的开板次数缺效或相互冲突，回封保持未知'), []
+    if any(value > 0 for value in counts):
+        return _state(True), proofs
+    if counts:
+        return _state(False, '同日封板来源明确开板次数为0，不标回封'), []
+    return _state(None, '同日收盘封板已核实，但没有明确开板次数或先炸后封路径证据'), []
+
+
+def attach_intraday_board_patterns(quote, snapshot, *, content_sha256, resealed=False):
+    """Caller has verified the immutable body; only positive same-capture pool evidence is used."""
+    from app.services.intraday_board_changes import _pools, _conflicts
+
+    symbol, day = quote['instrument_id'], snapshot['date']
+    pools = _pools(snapshot)
+    conflict = symbol in _conflicts(snapshot)
+    up, broken = symbol in pools['limit_up'][0], symbol in pools['limit_break'][0]
+    down = symbol in pools['limit_down'][0]
+    current_price = _tick(quote.get('latest_price'))
+    for key in ('limit_up', 'limit_break', 'limit_down'):
+        event = pools[key][0].get(symbol, {})
+        if 'latest_price' in event and _tick(event['latest_price']) != current_price:
+            conflict = True
+    state = 'unknown' if conflict else 'sealed' if up else 'broken' if broken else None
+    opening = []
+    if up and not conflict:
+        candidates = [pools['limit_up'][0][symbol], *snapshot.get('sealed_stocks', ())]
+        candidates.extend(row for group in snapshot.get('ladder', {}).get('groups', ()) for row in group.get('items', ()))
+        for row in candidates:
+            if row.get('instrument_id') == symbol and 'open_times' in row and row['open_times'] is not None:
+                opening.append(row['open_times'])
+    valid_counts = all(type(value) is int and value >= 0 for value in opening)
+    count_conflict = bool(opening and any(value == 0 for value in opening)
+                          and (resealed or any(type(value) is int and value > 0 for value in opening)))
+    recovered = up and not conflict and not count_conflict and valid_counts and (resealed or any(value > 0 for value in opening))
+    price = current_price
+    traded = ((_number(quote.get('volume')) or 0) > 0 or (_number(quote.get('amount')) or 0) > 0)
+    events = []
+    for kind, confirmed in (('broken_board', state == 'broken'), ('resealed_board', recovered)):
+        if not confirmed or price is None or not traded:
+            continue
+        events.append({'date': day, 'kind': kind, 'label': '盘中' + KINDS[kind],
+            'basis': 'verified-intraday-snapshot-board-events-v1', 'snapshot_id': snapshot.get('id'),
+            'bar_date': day, 'chart_price': None, 'raw_close': float(price), 'raw_price_basis': 'none',
+            'source': 'fuyao', 'sources': ['fuyao'], 'is_intraday': True,
+            'evidence': {'snapshot_sha256': content_sha256, 'collected_end_at': snapshot.get('collected_end_at'),
+                         'open_times': opening, 'confirmed_previous_broken_current_sealed': bool(resealed),
+                         'scope': '仅所选盘中快照已核验来源状态，不代表最终收盘'}})
+    quote.update(limit_up_state=state, limit_down_state='unknown' if conflict else 'sealed' if down else None,
+                 pattern_events=events)
+    if recovered:
+        quote['board_transition'] = 'resealed'
+    else:
+        quote.pop('board_transition', None)
+    return quote
 
 
 def _earth(quote, closing, *, day, calendar, raw, instrument, snapshot_id):
@@ -177,7 +251,7 @@ def attach_chart_patterns(chart, *, raw_rows=(), calendar=(), closing_states=Non
             'since': calendar[0] if calendar else (bars[0]['date'] if bars else None), 'until': until,
             'snapshot_id': chart.get('snapshot_id'), 'price_validation_basis': 'same-date-unadjusted-effective-ohlcv',
             'intraday_path_available': False, 'future_dates_excluded': True,
-            'notice': '一字仅证明全天成交价相同且收盘入来源池；地天仅证明触及跌停价后收盘涨停，不代表全天封死、首次触板或开板回封路径。'}
+            'notice': '一字仅证明全天成交价相同且收盘入来源池；地天仅证明触及跌停价后收盘涨停。炸板须有同日来源池，回封须已核验封板及明确开板次数；均不推断首次触板时刻或完整分时路径。'}
     if evaluation_dates is not None:
         base.update(scope='observation_day', definition=SCOPE, evaluation_dates=list(evaluation_dates))
     if not applicable or not until or not bars:
@@ -211,6 +285,9 @@ def attach_chart_patterns(chart, *, raw_rows=(), calendar=(), closing_states=Non
             proofs = []; band = None
             if reason:
                 state = _state(None, reason)
+            elif kind in ('broken_board', 'resealed_board'):
+                state, proofs = _board_event(quote, closing_states.get(day, {}), day=day, symbol=symbol,
+                                              resealed=kind == 'resealed_board')
             elif kind == 'earth_to_sky':
                 state, proofs, band = _earth(quote, closing, day=day, calendar=full_calendar, raw=raw, instrument=instrument, snapshot_id=chart.get('snapshot_id'))
             else:
@@ -220,12 +297,13 @@ def attach_chart_patterns(chart, *, raw_rows=(), calendar=(), closing_states=Non
                 continue
             prices = {key: float(value) for key, value in quote['prices'].items()}
             sources = list(dict.fromkeys(proof['source'] for proof in proofs if proof.get('source')))
-            event = {'date': day, 'kind': kind, 'label': label, 'basis': VERSION, 'snapshot_id': chart.get('snapshot_id'),
+            event_basis = BOARD_VERSION if kind in ('broken_board', 'resealed_board') else VERSION
+            event = {'date': day, 'kind': kind, 'label': label, 'basis': event_basis, 'snapshot_id': chart.get('snapshot_id'),
                      'raw_ohlc': prices, 'raw_low': prices['low'], 'raw_close': prices['close'], 'raw_volume': quote['volume'],
                      'raw_price_basis': 'none', 'source': ' + '.join(sources), 'sources': sources,
                      'bar_date': None, 'chart_price': None,
                      'evidence': {'closing_pool': proofs, 'raw_quote_source': quote['source'], 'limit_band': band,
-                                  'price_tick': float(TICK), 'calculation_version': VERSION}}
+                                  'price_tick': float(TICK), 'calculation_version': event_basis}}
             events.append(event); day_events.append(event)
         daily[day] = {'states': states, 'events': day_events}
     period = chart.get('period', 'D')

@@ -130,7 +130,8 @@ def test_malformed_or_explicitly_denied_auction_does_not_send_body(database):
     assert result['state'] == 'unknown' and not result['evidence'] and result['gaps']
 
 
-def test_close_parent_revision_amount_and_membership_dates_remain_exact(database):
+def test_close_parent_revision_amount_and_membership_dates_remain_exact(database, monkeypatch):
+    monkeypatch.setattr(tools, 'local_now', lambda: datetime.fromisoformat(DAY + 'T16:00:00+08:00'))
     save(database, 'market_noon_snapshot', 'noon', noon_payload())
     save_close(database, revision=1); save_close(database, revision=2)
     result = call('close')

@@ -119,6 +119,8 @@ const charts = encode(
 const copy = encode(
   `import React from ${react}; export default ({instrumentId})=>React.createElement('code',null,instrumentId);`,
 );
+const controlsProbe = encode("export const calls=[];export default function Controls(props){calls.push(props);return null;}");
+const { calls: floatingControls } = await import(controlsProbe);
 const source = (
   await fs.readFile(
     new URL("./ResearchEvidenceDetails.tsx", import.meta.url),
@@ -130,6 +132,7 @@ const source = (
   .replace('"../../components/UI"', JSON.stringify(ui))
   .replace('"../../components/Charts"', JSON.stringify(charts))
   .replace('"../../components/CopyStockCode"', JSON.stringify(copy))
+  .replace('"../../components/PageScrollEdges"', JSON.stringify(controlsProbe))
   .replace('"./ResearchFinancialValue"', JSON.stringify(financialValue))
   .replace('"./researchEvidencePresentation"', JSON.stringify(helper))
   .replace(
@@ -206,6 +209,8 @@ const html = renderToStaticMarkup(
     legacyDetails: createElement("span", null, "LEGACY_DETAILS"),
   }),
 );
+assert.deepEqual(floatingControls.at(-1).sections.map(row=>row.id), ["overview", "company", "valuation", "news", "technical", "evidence"]);
+assert.equal(floatingControls.at(-1).activeId, "overview");
 for (const name of [
   "overview",
   "company",
@@ -392,11 +397,11 @@ try {
     configurable: true,
     value: { hash: "#research" },
   });
-  tabs()
-    .find((tab) => tab.props.id === "research-tab-technical")
-    .props.onClick();
+  floatingControls.at(-1).onNavigate("technical");
   tree = renderReader();
   renderToStaticMarkup(tree);
+  assert.equal(tabs().find(tab=>tab.props["aria-selected"]).props.id, "research-tab-technical", "floating chapter navigation updates the original tab selection");
+  assert.equal(floatingControls.at(-1).activeId, "technical");
   assert.deepEqual(
     globalThis.__researchFrozenProps.frozenChartsByPeriod,
     report.technical_assessment.frozen_charts_by_period,

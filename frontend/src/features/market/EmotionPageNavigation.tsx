@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import PageScrollEdges from "../../components/PageScrollEdges";
+import { pageScrollOwner } from "../../components/pageScroll";
 import {
   activeEmotionSection,
   emotionSections,
@@ -99,7 +101,12 @@ export default function EmotionPageNavigation({
           ...section,
           element: document.getElementById(section.id),
         }))
-        .filter(({ element }) => element && boundary.contains(element));
+        .filter(
+          ({ element }) =>
+            element &&
+            boundary.contains(element) &&
+            element.getClientRects().length > 0,
+        );
       setAvailable((previous) => {
         const next = targets.map(({ id }) => id);
         return previous.join("|") === next.join("|") ? previous : next;
@@ -180,8 +187,17 @@ export default function EmotionPageNavigation({
       )
         interruptScroll();
     };
-    // Capture nested scrolling containers as well as the document viewport.
-    document.addEventListener("scroll", schedule, true);
+    const pageScroll = (event: Event) => {
+      const owner = root.current && pageScrollOwner(root.current);
+      if (
+        [document, document.documentElement, document.body, owner].includes(
+          event.target as Document | HTMLElement | null,
+        )
+      )
+        schedule();
+    };
+    // Briefs and stock tables must not move the page directory selection.
+    document.addEventListener("scroll", pageScroll, true);
     document.addEventListener("toggle", schedule, true);
     document.addEventListener("scrollend", finishScroll, true);
     document.addEventListener("wheel", interruptScroll, {
@@ -199,7 +215,7 @@ export default function EmotionPageNavigation({
       cancelAnimationFrame(frame);
       window.clearTimeout(settling);
       window.clearTimeout(gesture);
-      document.removeEventListener("scroll", schedule, true);
+      document.removeEventListener("scroll", pageScroll, true);
       document.removeEventListener("toggle", schedule, true);
       document.removeEventListener("scrollend", finishScroll, true);
       document.removeEventListener("wheel", interruptScroll, true);
@@ -231,6 +247,12 @@ export default function EmotionPageNavigation({
 
   return (
     <div className="emotion-reader" ref={root}>
+      <PageScrollEdges
+        label="市场情绪"
+        sections={sections.filter(({ id }) => available.includes(id))}
+        activeId={active}
+        onNavigate={navigate}
+      />
       {sections.length > 0 && (
         <nav className="emotion-reader-nav" aria-label="市场情绪页内目录">
           <strong>本页目录</strong>

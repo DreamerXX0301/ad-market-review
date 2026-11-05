@@ -127,9 +127,10 @@ assert.equal(untrusted.reportId, undefined);
 assert.equal(untrusted.asOf, undefined);
 for (const [marketStage, clock, phrase] of [
   ["auction", "09:25", /重点名单之外/],
+  ["0935", "09:35", /盘中观察快照/],
   ["1000", "10:00", /盘中观察快照/],
   ["1430", "14:30", /盘中观察快照/],
-  ["noon", "11:30", /午评/],
+  ["noon", "", /午评快照/],
   ["close", "15:00", /收盘复盘/],
 ]) {
   const context = { kind: "market", asOf: "2026-10-30", marketStage };
@@ -144,6 +145,9 @@ for (const [marketStage, clock, phrase] of [
     /ai_stage/,
   );
 }
+const noonQuestion = aiMarketQuestion({kind: "market", asOf: "2026-11-05", marketStage: "noon"});
+assert.match(noonQuestion, /竞价.*全部已存上午盘中观察.*午评本身/);
+assert.doesNotMatch(noonQuestion, /11:30/, "a configured 11:35 noon capture must not be described as 11:30");
 assert.notEqual(
   readAILaunch("#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=1000").key,
   readAILaunch("#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=1430").key,

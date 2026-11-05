@@ -16,6 +16,10 @@ export type NoonChartPreview = {
     volume?: number | null;
     amount?: number | null;
     change_pct?: number | null;
+    pattern_events?: Row[];
+    limit_up_state?: string | null;
+    limit_down_state?: string | null;
+    board_transition?: string | null;
   } | null;
   reason?: string | null;
 };
@@ -81,6 +85,14 @@ export function provisionalNoonBar(
     complete: false,
     noon_provisional: true,
     intraday_provisional: Boolean(preview.slot_label),
+    snapshot_id: preview.snapshot_id,
+    raw_close: latest_price,
+    pattern_events: Array.isArray(quote.pattern_events)
+      ? quote.pattern_events.map((event) => ({
+          ...event,
+          chart_price: latest_price,
+        }))
+      : [],
   };
 }
 

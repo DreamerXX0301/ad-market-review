@@ -361,9 +361,6 @@
   flex-wrap: wrap;
   padding: 8px 0;
 }
-.noon-close-quick {
-  z-index: 38;
-}
 @media (max-width: 1200px) {
   .noon-close-layout {
     grid-template-columns: 140px minmax(0, 1fr);

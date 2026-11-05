@@ -19,7 +19,11 @@ def _live():
     topics = [{'topic_code': code, 'name': names.get(code, code), 'kind': 'concept',
                'source': 'fuyao', 'observed_date': PRIOR, 'members_complete': True,
                'instrument_ids': ['600001.SH', '600002.SH']} for code in codes]
-    return {'version': 'intraday-snapshot-v5', 'date': DAY, 'comparison_input': {'sectors': quotes},
+    return {'version': 'intraday-snapshot-v5', 'date': DAY, 'slot': '1030',
+            'collected_start_at': DAY + 'T10:30:00+08:00', 'collected_end_at': DAY + 'T10:30:10+08:00',
+            'source_checks': [{'domain': 'limit_up_page_1', 'state': 'accepted',
+                               'response_sha256': 'a' * 64, 'source_time': DAY + 'T10:30:01+08:00'}],
+            'comparison_input': {'sectors': quotes},
             'sectors': quotes[:20], 'sealed_pool_input': {'state': 'observed', 'items': []}}, {'topics': topics}
 
 
