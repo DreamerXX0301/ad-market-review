@@ -155,10 +155,17 @@ def test_explicit_empty_event_pool_is_observed_and_old_snapshot_is_read_only(noo
         assert (ladder['state'], ladder['sealed_count'], ladder['highest_board']) == ('observed', 0, None)
     if key == 'limit_break':
         assert _noon_anchor(archived)['ladder']['broken_board'] == {'state': 'observed', 'count': 0}
+    from app.services.intraday_board_changes import noon_frame
+    baseline = noon_frame(archived)
+    assert baseline['events'][key]['state'] == 'observed' and baseline['events'][key]['count'] == 0
+    assert json.loads(archived['payload_json'])['events'][key]['state'] == 'unknown'
 
     receipt = core.raw_dir() / 'noon' / job['job_id'] / f'{key}_page_1.json.gz'
     receipt.write_bytes(receipt.read_bytes() + b'invalid')
     unverified = service._snapshot_view(archived)
+    unverified_baseline = noon_frame(archived)
+    assert unverified_baseline['events'][key]['state'] == 'unknown'
+    assert unverified_baseline['events'][key]['count'] is None
     assert 'limit_down_source_pool' not in unverified['workbench']
     assert 'verified_empty_event_pools' not in unverified['workbench']
     assert next(row for row in unverified['workbench']['temperature']['components']

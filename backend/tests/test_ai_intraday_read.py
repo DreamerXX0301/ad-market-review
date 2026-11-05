@@ -68,6 +68,31 @@ def _call(slot='all', query='', day='today'):
     return ai_read_tools.execute_read_tool('read_intraday_data', {'date': day, 'slot': slot, 'query': query})
 
 
+def test_adjacent_board_changes_are_read_from_same_database_and_keep_sha_and_bounded_summary(source, monkeypatch):
+    from test_intraday_board_changes import frame, A, B, C, D
+
+    monkeypatch.setattr(ai_read_tools, 'local_now', lambda: datetime.fromisoformat(DAY+'T14:40:00+08:00'))
+    prior, current = frame('1400', [A, B], [C]), frame('1430', [B, C], [A], [D])
+    for value in (prior, current):
+        value['date'] = DAY
+        for key in ('collected_start_at', 'collected_end_at'):
+            value[key] = DAY + value[key][10:]
+        for check in value['source_checks']:
+            check['source_time'] = DAY + check['source_time'][10:]
+        _save(source, value)
+    raw_before = source.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall()
+    result = _call('1430', C.split('.')[0])
+    data = result['evidence'][0]['data']['board_changes']
+    assert data['groups']['resealed']['count'] == 1 and data['groups']['new_limit_down']['count'] == 1
+    assert data['groups']['resealed']['samples'][0]['instrument_id'] == C
+    assert result['source_bindings']['1430']['board_change_previous']['content_sha256'] == sha256(dumps(prior).encode()).hexdigest()
+    assert data['source_bindings']['current']['snapshot_id'] == current['id']
+    all_slots = _call('all')
+    assert len(all_slots['evidence']) == 2
+    assert all(len(dumps(item['data']).encode()) <= 3 * 1024 for item in all_slots['evidence'])
+    assert source.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall() == raw_before
+
+
 def test_all_intraday_reads_only_available_times_and_direction_sample(source):
     _save(source, _snapshot('1000'))
     _save(source, _snapshot('1330'))
@@ -99,6 +124,21 @@ def test_single_slot_filters_direction_or_exact_code_and_never_substitutes(sourc
     assert _call('1330', '000001')['evidence'][0]['data']['stock_samples'][0]['latest_price'] == 11
     assert _call('1000')['evidence'] == []
     assert _call('1330', day='2026-11-03')['evidence'] == []
+
+
+def test_explicit_topic_query_reads_retained_full_quotes_outside_strength_top_twenty(source):
+    snapshot = _snapshot()
+    snapshot['comparison_input']['sectors'] = [
+        {'instrument_id': code, 'name': name, 'kind': 'concept', 'latest_price': 102,
+         'prev_close': 100, 'change_pct': 2, 'currency': 'CNY', 'price_basis': 'none'}
+        for code, name in [('886021.TI', '国企改革'), ('886108.TI', 'AI应用'), ('886100.TI', 'DeepSeek概念')]]
+    _save(source, snapshot)
+    for query in ('国企改革', 'AI应用', 'DeepSeek'):
+        result = _call('1330', query)
+        rows = result['evidence'][0]['data']['sector_samples']
+        assert len(rows) == 1 and query.casefold() in rows[0]['name'].casefold()
+        assert rows[0]['change_pct'] == 2
+    assert _call()['evidence'][0]['data']['sector_samples'][0]['name'] == '半导体设备'
 
 
 def test_all_six_keeps_each_timestamp_under_global_result_budget(source, monkeypatch):

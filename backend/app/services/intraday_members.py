@@ -221,13 +221,14 @@ def _close(base):
     from app.services.noon_context import _event_cohorts
 
     day, generation, code = base['date'], base['snapshot_id'], base['topic_code']
-    anchors = read_brief_view(day)['anchors']
+    anchors = read_brief_view(day, include_sections=False)['anchors']
     anchor = next((item for item in anchors if item['slot'] == 'close'), None)
     if anchor is None:
         return _result(base, state='missing', reason='所选交易日没有留存正式收盘复盘')
     if anchor['id'] != generation:
         return _result(base, reason='收盘复盘快照已变化，请刷新观察页')
-    if not any(item['instrument_id'] == code for item in anchor['sectors']):
+    rotation = anchor.get('rotation_sectors', anchor.get('sectors', ()))
+    if not any(item['instrument_id'] == code for item in rotation):
         return _result(base, reason='本份收盘复盘未留存该板块')
     try:
         symbols, observed, complete = _topic_members(generation, day, code)
@@ -281,15 +282,22 @@ def _member_provenance(snapshot):
 
 def _live(base, row):
     snapshot = intraday.decode_snapshot(row)
-    board = snapshot.get('board_stocks', {}).get(base['topic_code'])
+    board = snapshot.get('board_stocks', {}).get(base['topic_code']) or {}
     provenance = _member_provenance(snapshot)
-    if not board or not provenance:
+    if not provenance:
         return _result(base, reason='此时点未留存可核验的成员名单凭证，只能查看快照中的个股样本',
                        membership_basis=LIVE_BASIS)
+    if not board:
+        from app.services.intraday_rotation import _quote_projection
+
+        quotes = [item for item in snapshot.get('comparison_input', {}).get('sectors', ())
+                  if isinstance(item, dict) and item.get('instrument_id') == base['topic_code']]
+        if len(quotes) != 1 or _quote_projection(quotes[0]) is None:
+            return _result(base, reason='原快照未留存该板块的唯一可核验指数报价', membership_basis=LIVE_BASIS)
     generation, end, reference_sha = provenance
     try:
         symbols, observed, complete = _topic_members(generation, end, base['topic_code'],
-                                                     observed=board['member_date'], reference_sha=reference_sha)
+                                                     observed=board.get('member_date'), reference_sha=reference_sha)
         market = _bound_market(generation)
         names = {row['instrument_id']: row.get('name') for row in market.instruments(limit=10000)}
     except (OSError, ValueError, TypeError, KeyError):
@@ -313,6 +321,33 @@ def _live(base, row):
                    state='sealed' if symbol in sealed else 'broken' if symbol in broken else None,
                    height=sealed.get(symbol)) for symbol in symbols]
     result = _page(base, rows, complete=complete, observed=observed, basis=LIVE_BASIS)
+    from app.services.intraday_board_changes import _pools, _conflicts
+
+    current_pools = _pools(snapshot)
+    conflicts = _conflicts(snapshot)
+    for item in result['items']:
+        if not item.get('quote_available'):
+            continue
+        code = item['instrument_id']
+        if code in conflicts:
+            item.update(limit_up_state='unknown', limit_down_state='unknown', continue_day_cnt=None)
+            continue
+        for pool_key, state in (('limit_up', 'sealed'), ('limit_break', 'broken')):
+            if code in current_pools[pool_key][0]:
+                item['limit_up_state'] = state
+                height = current_pools[pool_key][0][code].get('continue_day_cnt')
+                if type(height) is int and height > 0:
+                    item['continue_day_cnt'] = height
+        if code in current_pools['limit_down'][0]:
+            item['limit_down_state'] = 'sealed'
+    if complete:
+        from app.services.intraday_brief import sector_membership_fingerprint
+
+        sector = next((item for item in snapshot.get('comparison_input', {}).get('sectors', ())
+                       if item.get('instrument_id') == base['topic_code']), {})
+        if sector.get('kind') in ('industry', 'concept'):
+            result['member_reference_sha256'] = sector_membership_fingerprint(
+                generation, end, base['topic_code'], sector['kind'], observed, symbols)
     try:
         reference = market.reference()
         if market.status().get('data_end') == end:

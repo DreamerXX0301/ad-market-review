@@ -8,6 +8,7 @@ from app.core import dumps
 from app.services.ai_read_tools import _connect, _gap, _paths, _pick_fields
 from app.services.auction_followup import model_input_allowed
 from app.services.intraday_service import MAX_PAYLOAD, SLOTS, decode_snapshot
+from app.services.intraday_board_changes import BASELINES, build_changes, noon_frame, read_noon_row
 from app.services.sync_clock import CHINA
 
 _SLOTS = {item['key']: item for item in SLOTS}
@@ -82,7 +83,7 @@ def _clock(value, day):
     return observed
 
 
-def _read_snapshot(connection, metadata, day, slot, now):
+def _read_snapshot(connection, metadata, day, slot, now, *, include_row=False):
     size = metadata['payload_bytes']
     if type(size) is not int or not 0 < size <= MAX_PAYLOAD:
         raise ValueError('盘中正文超出有界范围')
@@ -100,7 +101,25 @@ def _read_snapshot(connection, metadata, day, slot, now):
     if (not time.fromisoformat(window['start']) <= start.time() <= end.time() < time.fromisoformat(window['end'])
             or type(finished) is not int or not int(end.timestamp() * 1000) <= finished <= int(now.timestamp() * 1000)):
         raise ValueError('盘中采集时间与所选时段不符')
-    return snapshot
+    return (snapshot, row) if include_row else snapshot
+
+
+def _change_summary(value, query, detailed):
+    if not value:
+        return {'state': 'unknown'}
+    groups = {}
+    for key, group in value['groups'].items():
+        matching = [row for row in group['items'] if _matches(row, query)]
+        groups[key] = _pick_fields(group, ('state', 'count'))
+        if detailed:
+            groups[key].update(**_pick_fields(group, ('reason_code', 'omitted_count')),
+                               samples=[_pick_fields(row, _STOCK) for row in matching[:3]])
+    result = {'state': value['state'], 'baseline_slot': value['baseline_slot'], 'groups': groups,
+              'scope': '相邻池观察；partial为下界，unknown不是0；新入池非首次涨停，缺席非开板。'}
+    if detailed:
+        result['source_bindings'] = {key: _pick_fields(row, ('snapshot_id', 'slot', 'collected_end_at'))
+                                     for key, row in value['source_bindings'].items()}
+    return result
 
 
 def _stock_samples(rows, query, limit):
@@ -143,9 +162,19 @@ def _project(snapshot, query, detailed):
     industry = {row.get('instrument_id'): row for row in
                 [*snapshot.get('strong_sectors', ()), *snapshot.get('limit_up_sectors', ())]}
     sectors = []
-    for row in snapshot.get('sectors', ()):
+    sector_rows = snapshot.get('sectors', ())
+    if query:
+        from app.services.intraday_rotation import live_rotation_sectors
+        # Search the retained full quote list only for an explicit existing query;
+        # the model still receives the original bounded number of matching rows.
+        sector_rows = live_rotation_sectors(snapshot) or sector_rows
+    for row in sector_rows:
         if _matches(row, query):
             sectors.append(_pick_fields({**industry.get(row.get('instrument_id'), {}), **row}, _DIRECTION))
+    if query:
+        sectors.sort(key=lambda row: query not in (
+            str(row.get('name') or '').casefold(), str(row.get('instrument_id') or '').casefold(),
+            str(row.get('instrument_id') or '').casefold().split('.')[0]))
     direction_limit, stock_limit = (6, 3) if detailed else (4, 1)
     samples = [*leaders, *snapshot.get('candidates', ()), *snapshot.get('sealed_stocks', ()),
                *broken.get('items', ()), *snapshot.get('stocks', ())]
@@ -186,6 +215,7 @@ def _project(snapshot, query, detailed):
         'same_day_limit_up_feedback': _pick_fields(feedback.get('same_day'), (
             'state', 'label', 'collected_end_at', 'held_count', 'entered_count', 'absent_count',
             'held_state', 'entered_state', 'absent_state')),
+        'board_changes': _change_summary(snapshot.get('board_changes'), query, detailed),
         'direction_discovery': _direction_samples(snapshot, query, direction_limit, stock_limit),
         'sector_samples': sectors[:direction_limit], 'matching_sector_sample_count': len(sectors),
         'stock_samples': _stock_samples(samples, query, stock_limit),
@@ -193,10 +223,20 @@ def _project(snapshot, query, detailed):
     }
     if comparison := _pick_fields(turnover.get('amount_comparison'), _AMOUNT_COMPARISON):
         data['turnover']['amount_comparison'] = comparison
+    if not detailed:
+        # The tool's common summary already carries this same scope once.
+        # Do not let repeated prose evict saved phases or their numeric facts.
+        data.pop('scope')
+        data['sample_note'] = '仅有限样本，未命中不能认定没有。'
     # Each slot keeps its date and essential facts in a six-slot reply.
     cap = (10 if detailed else 3) * 1024
     discovery = data['direction_discovery']
     while len(dumps(data).encode()) > cap:
+        groups = data['board_changes'].get('groups', {})
+        largest = max(groups.values(), key=lambda group: len(group.get('samples', ())), default=None)
+        if largest and largest.get('samples'):
+            largest['samples'].pop()
+            continue
         for key in ('sector_samples', 'stock_samples'):
             if data[key]:
                 data[key].pop()
@@ -235,7 +275,9 @@ def fill_intraday(result, day, slot, query, now):
             continue
         try:
             connection.execute('BEGIN')
-            records = _source_rows(connection, day, slots)
+            required = tuple(dict.fromkeys((*slots, *(BASELINES[key] for key in slots
+                                                       if BASELINES.get(key) not in (None, 'noon')))))
+            records = _source_rows(connection, day, required)
             source_phases = {}
             if calendar is None:
                 calendar = _calendar_state(connection, day)
@@ -246,7 +288,21 @@ def fill_intraday(result, day, slot, query, now):
                         source_phases[key] = _missing_state(record, day, key, now, calendar)
                     continue
                 try:
-                    value = _read_snapshot(connection, record, day, key, now)
+                    value, raw_row = _read_snapshot(connection, record, day, key, now, include_row=True)
+                    previous = previous_row = None
+                    baseline = BASELINES.get(key)
+                    if baseline == 'noon':
+                        previous_row = read_noon_row(connection, day)
+                        previous = noon_frame(previous_row)
+                        if previous and (not model_input_allowed({**previous, 'source_checks': previous.get('sources', ())})
+                                         or _clock(previous['collected_end_at'], day) > now):
+                            previous = previous_row = None
+                    elif baseline in records and records[baseline]['status'] in ('succeeded', 'partial'):
+                        try:
+                            previous, previous_row = _read_snapshot(connection, records[baseline], day, baseline, now, include_row=True)
+                        except (ValueError, TypeError, KeyError, HTTPException):
+                            pass
+                    value['board_changes'] = build_changes(value, previous, current_row=raw_row, previous_row=previous_row)
                     data = _project(value, query.casefold(), slot != 'all')
                 except (ValueError, TypeError, KeyError, HTTPException):
                     source_phases[key] = ('unknown', '该时点快照未通过身份、时间或AI处理权限核验')
@@ -256,6 +312,8 @@ def fill_intraday(result, day, slot, query, now):
                     'title': _SLOTS[key]['start'] + ' ' + _SLOTS[key]['label'],
                     'dates': {'trade_date': day, 'collected_end_at': value['collected_end_at']}, 'data': data})
                 result['source_bindings'][key] = _pick_fields(record, ('snapshot_id', 'content_sha256', 'finished_at_ms'))
+                if previous_binding := value['board_changes']['source_bindings'].get('previous'):
+                    result['source_bindings'][key]['board_change_previous'] = previous_binding
                 source_phases[key] = ('available' if value.get('quality') == 'complete' else 'partial',
                                       '已核验本时点保存记录')
             if result['evidence']:

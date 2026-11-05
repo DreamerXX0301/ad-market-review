@@ -1,0 +1,12 @@
+.intraday-stock-state-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.intraday-stock-state-badges [data-kind="resealed"] {
+  color: var(--red);
+  border: 1px solid color-mix(in srgb, var(--red) 36%, transparent);
+  background: color-mix(in srgb, var(--red) 10%, var(--surface));
+}

@@ -751,7 +751,7 @@ def start_brief_worker():
     return close
 
 
-def read_brief_view(day):
+def read_brief_view(day, *, snapshots=None, include_sections=True):
     with connect() as connection:
         rows = connection.execute('SELECT slot,body_json FROM market_intraday_brief WHERE trade_date=?', (day,)).fetchall()
     result = {'briefs': [], 'anchors': []}
@@ -762,7 +762,16 @@ def read_brief_view(day):
             anchor = stored['anchor']
             if row['slot'] == 'noon':
                 _restore_noon_details(anchor, day)
+            elif row['slot'] == 'close':
+                from app.services.intraday_rotation import close_rotation_sectors
+                try:
+                    anchor['rotation_sectors'] = close_rotation_sectors(day, anchor['id'])
+                except (ValueError, TypeError, KeyError, OSError, HTTPException):
+                    anchor['rotation_sectors'] = []
             result['anchors'].append(anchor)
+    if include_sections:
+        from app.services.intraday_narrative import attach_sections
+        attach_sections(day, result['briefs'], result['anchors'], snapshots)
     return result
 
 
@@ -793,6 +802,8 @@ def _restore_noon_details(anchor, day):
                               if key in original})
     if ladder is not None:
         anchor['ladder'] = ladder
+    from app.services.intraday_rotation import noon_rotation_sectors
+    anchor['rotation_sectors'] = noon_rotation_sectors(payload)
     sector_metadata = {row.get('topic_code') or row.get('instrument_id'): row for row in payload.get('sectors', [])}
     quotes = {row['instrument_id']: row for row in payload.get('stocks', [])}
     for sector in anchor.get('sectors', []):

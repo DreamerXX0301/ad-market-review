@@ -28,8 +28,10 @@ const {
   feedbackThemeGroups,
   filterFeedbackTheme,
   IntradaySnapshotFeedback,
+  IntradayBoardChanges,
   Rotation,
   rotationCellChange,
+  rotationStageBoards,
   StrengthView,
   timelineSlots,
 } = await import(
@@ -37,6 +39,91 @@ const {
 );
 const render = (snapshot) =>
   renderToStaticMarkup(createElement(IntradaySnapshotFeedback, { snapshot }));
+
+const changesMarkup = renderToStaticMarkup(
+  createElement(IntradayBoardChanges, {
+    snapshot: {
+      id: "current",
+      board_changes: {
+        baseline_slot: "1330",
+        source_bindings: {
+          previous: { collected_end_at: "2026-11-05T13:30:30+08:00" },
+          current: { collected_end_at: "2026-11-05T14:00:30+08:00" },
+        },
+        groups: {
+          new_sealed: { state: "observed", count: 0, items: [] },
+          new_limit_down: {
+            state: "unknown",
+            count: null,
+            items: [],
+            reason_code: "no_saved_down_pool",
+          },
+          resealed: { state: "partial", count: 1, items: [] },
+        },
+      },
+    },
+  }),
+);
+assert.match(changesMarkup, /13:30 → 14:00/);
+assert.match(changesMarkup, /新增封板<\/span><strong>0<small>只/);
+assert.doesNotMatch(
+  changesMarkup,
+  /新增跌停/,
+  "uncollected categories are hidden instead of invented as zero",
+);
+assert.match(changesMarkup, /炸板回封<\/span><strong>≥1<small>只/);
+assert.match(changesMarkup, /本段没有该类变化/);
+assert.match(changesMarkup, /新入封板池不等于首次涨停/);
+assert.equal(
+  renderToStaticMarkup(
+    createElement(IntradayBoardChanges, {
+      snapshot: {
+        board_changes: {
+          baseline_slot: "1400",
+          groups: { new_sealed: { count: null, state: "unknown" } },
+        },
+      },
+    }),
+  ),
+  "",
+);
+const themeChangesMarkup = renderToStaticMarkup(
+  createElement(IntradayBoardChanges, {
+    snapshot: {
+      id: "themes",
+      board_changes: {
+        baseline_slot: "1400",
+        groups: {
+          new_sealed: {
+            state: "observed",
+            count: 2,
+            items: [
+              {
+                instrument_id: "A",
+                name: "合成甲",
+                themes: [
+                  { kind: "industry", name: "半导体" },
+                  { kind: "concept", name: "芯片" },
+                ],
+              },
+              {
+                instrument_id: "B",
+                name: "合成乙",
+                themes: [
+                  { kind: "industry", name: "半导体" },
+                  { kind: "concept", name: "芯片" },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    },
+  }),
+);
+assert.match(themeChangesMarkup, /新增封板集中方向/);
+assert.match(themeChangesMarkup, /半导体<\/span><b>2 只/);
+assert.match(themeChangesMarkup, /芯片<\/span><b>2 只/);
 
 const brief = renderToStaticMarkup(
   createElement(BriefCard, {
@@ -149,7 +236,11 @@ const broken = render({
   },
 });
 assert.match(broken, /炸板 <b>≥1<\/b>/);
-assert.equal((broken.match(/<details class="intraday-feedback-card" open="">/g) || []).length, 4);
+assert.equal(
+  (broken.match(/<details class="intraday-feedback-card" open="">/g) || [])
+    .length,
+  4,
+);
 assert.match(broken, /1 只池间状态冲突，待核验/);
 assert.match(
   broken,
@@ -196,36 +287,81 @@ assert.match(
   themeSummary,
   /aria-label="封板题材筛选".*aria-pressed="false".*芯片<\/span><b>2 只<\/b>.*样本均涨幅 <b class="up">\+6\.00%<\/b>/,
 );
-assert.doesNotMatch(themeSummary.split("<div class=\"intraday-feedback-body\">")[0], /intraday-feedback-leader/);
+assert.doesNotMatch(
+  themeSummary.split('<div class="intraday-feedback-body">')[0],
+  /intraday-feedback-leader/,
+);
 assert.match(
   themeSummary,
   /分母为已列出的 3 只.*电子<\/span><b>2 只 <small>66\.7%<\/small>/,
 );
 assert.match(themeSummary, /查看 3 只炸板个股/);
 
-const feedbackRows = (count, from) => Array.from({ length: count }, (_, index) => ({
-  instrument_id: `${600001 + from + index}.SH`,
-  name: `核验样本${from + index}`,
-  change_pct: index === count - 1 ? 29.99 : 2,
-  themes: [
-    { kind: "concept", name: index < 12 ? "芯片" : index < 22 ? "芯片设备" : index < 30 ? "光伏" : index < 34 ? "储能" : `零散概念${index}` },
-    { kind: "industry", name: index < 35 ? "电子" : `行业${index}` },
-    { kind: "industry", name: "芯片" },
-  ],
-}));
+const feedbackRows = (count, from) =>
+  Array.from({ length: count }, (_, index) => ({
+    instrument_id: `${600001 + from + index}.SH`,
+    name: `核验样本${from + index}`,
+    change_pct: index === count - 1 ? 29.99 : 2,
+    themes: [
+      {
+        kind: "concept",
+        name:
+          index < 12
+            ? "芯片"
+            : index < 22
+              ? "芯片设备"
+              : index < 30
+                ? "光伏"
+                : index < 34
+                  ? "储能"
+                  : `零散概念${index}`,
+      },
+      { kind: "industry", name: index < 35 ? "电子" : `行业${index}` },
+      { kind: "industry", name: "芯片" },
+    ],
+  }));
 const sealedStocks = feedbackRows(60, 0);
 const brokenStocks = feedbackRows(40, 100);
 const { featured, remaining } = feedbackThemeGroups(sealedStocks, "concept");
-assert.deepEqual(featured.map(([name, items]) => [name, items.length]), [["芯片", 12], ["芯片设备", 10], ["光伏", 8]]);
-assert.equal(remaining.length, 27, "groups outside the first three, including singletons, remain reachable");
+assert.deepEqual(
+  featured.map(([name, items]) => [name, items.length]),
+  [
+    ["芯片", 12],
+    ["芯片设备", 10],
+    ["光伏", 8],
+  ],
+);
+assert.equal(
+  remaining.length,
+  27,
+  "groups outside the first three, including singletons, remain reachable",
+);
 const withAttributes = sealedStocks.map((row) => ({
-  ...row, themes: [...row.themes, { kind: "concept", name: "融资融券" }, { kind: "concept", name: "深股通" }],
+  ...row,
+  themes: [
+    ...row.themes,
+    { kind: "concept", name: "融资融券" },
+    { kind: "concept", name: "深股通" },
+  ],
 }));
 const categorized = feedbackThemeGroups(withAttributes, "concept");
-assert.deepEqual(categorized.featured.map(([name]) => name), ["芯片", "芯片设备", "光伏"]);
-assert.deepEqual(categorized.attributes.map(([name]) => name).sort(), ["深股通", "融资融券"].sort());
-assert.equal(filterFeedbackTheme(withAttributes, "concept", "融资融券").length, 60, "attribute remains selectable from its own section");
-assert.deepEqual(filterFeedbackTheme(sealedStocks, "concept", "芯片"), sealedStocks.slice(0, 12));
+assert.deepEqual(
+  categorized.featured.map(([name]) => name),
+  ["芯片", "芯片设备", "光伏"],
+);
+assert.deepEqual(
+  categorized.attributes.map(([name]) => name).sort(),
+  ["深股通", "融资融券"].sort(),
+);
+assert.equal(
+  filterFeedbackTheme(withAttributes, "concept", "融资融券").length,
+  60,
+  "attribute remains selectable from its own section",
+);
+assert.deepEqual(
+  filterFeedbackTheme(sealedStocks, "concept", "芯片"),
+  sealedStocks.slice(0, 12),
+);
 assert.deepEqual(filterFeedbackTheme(sealedStocks, "concept", "不存在"), []);
 assert.equal(filterFeedbackTheme(sealedStocks, "industry", "芯片").length, 60);
 const denseFeedback = render({
@@ -241,13 +377,23 @@ const denseFeedback = render({
   },
 });
 const [sealCard, breakCard] = denseFeedback
-  .split('<details class="intraday-feedback-card" open="">').slice(1);
+  .split('<details class="intraday-feedback-card" open="">')
+  .slice(1);
 assert.match(sealCard, /盘中封板梯队.*封板 <b>60<\/b>.*核验样本59/);
 assert.doesNotMatch(sealCard, /盘中炸板|核验样本100/);
 const featuredMarkup = sealCard.split("intraday-feedback-leaders-more")[0];
-assert.equal((featuredMarkup.match(/class="intraday-feedback-leader"/g) || []).length, 3);
-assert.match(sealCard, /intraday-feedback-leaders-more"><summary>更多概念 · 27 个.*零散概念59/);
-assert.match(breakCard, /盘中炸板.*炸板 <b>40<\/b>.*查看 40 只炸板个股.*核验样本139/);
+assert.equal(
+  (featuredMarkup.match(/class="intraday-feedback-leader"/g) || []).length,
+  3,
+);
+assert.match(
+  sealCard,
+  /intraday-feedback-leaders-more"><summary>更多概念 · 27 个.*零散概念59/,
+);
+assert.match(
+  breakCard,
+  /盘中炸板.*炸板 <b>40<\/b>.*查看 40 只炸板个股.*核验样本139/,
+);
 assert.match(breakCard, /更多行业/);
 assert.doesNotMatch(breakCard, /盘中封板梯队/);
 
@@ -310,6 +456,36 @@ assert.match(directions, /aria-sort="descending".*?按涨停家数升序排列/)
 assert.match(directions, /盘中发现<\/button>/);
 assert.match(directions, /涨幅扩大/);
 assert.equal((directions.match(/aria-label="方向内个股"/g) || []).length, 1);
+const directionFacts = directions.match(
+  /class="intraday-detail-facts">(.*?)<\/div>/,
+)?.[1];
+assert.ok(directionFacts);
+assert.doesNotMatch(directionFacts, /较开盘|成员涨幅中位数|覆盖|首板|连板/);
+const zeroDirectionFacts = renderToStaticMarkup(
+  createElement(StrengthView, {
+    historyScope,
+    requestedBoard: "zero",
+    snapshot: {
+      strong_sectors: [
+        {
+          instrument_id: "zero",
+          name: "合成零值方向",
+          change_pct: 0,
+          open_change_pct: 0,
+          median_change_pct: 0,
+          rankable_members: 0,
+          member_count: 10,
+          first_board_count: 0,
+          multi_board_count: 0,
+          board_height_count_state: "observed",
+        },
+      ],
+    },
+  }),
+);
+assert.match(zeroDirectionFacts, /较开盘 <strong class="muted">0\.00%/);
+assert.match(zeroDirectionFacts, /首板 <strong>0 只/);
+assert.match(zeroDirectionFacts, /连板 <strong>0 只/);
 
 const stockStatus = renderToStaticMarkup(
   createElement(StrengthView, {
@@ -344,8 +520,8 @@ const stockStatus = renderToStaticMarkup(
   }),
 );
 assert.match(stockStatus, /data-kind="reference"[^>]+>涨停价参考/);
-assert.match(stockStatus, /data-kind="sealed">首板/);
-assert.match(stockStatus, /data-kind="sealed">2 连板/);
+assert.match(stockStatus, /data-kind="sealed"[^>]*>首板/);
+assert.match(stockStatus, /data-kind="sealed"[^>]*>2 连板/);
 assert.match(stockStatus, /title="本时点已核验封板，板数待核验">涨停/);
 
 const stages = timelineSlots({
@@ -414,58 +590,143 @@ assert.match(rotation("close"), /按15:00升序排列/);
 assert.match(rotation("close"), /涨停家数优先/);
 
 const indexBoard = (change, extras = {}) => ({
-  ...theme, change_pct: change, prev_close: 100, latest_price: 100 + change,
-  price_basis: "none", currency: "CNY", quote_source: "fuyao", quote_basis: "provider_index",
+  ...theme,
+  change_pct: change,
+  prev_close: 100,
+  latest_price: 100 + change,
+  price_basis: "none",
+  currency: "CNY",
+  quote_source: "fuyao",
+  quote_basis: "provider_index",
   ...extras,
 });
 const sameDate = { date: "2026-11-05" };
 const comparisonInput = {
-  snapshot: sameDate, previousSnapshot: sameDate, slot: "1030", previousSlot: "1000",
-  current: indexBoard(4), previous: indexBoard(2),
+  snapshot: sameDate,
+  previousSnapshot: sameDate,
+  slot: "1030",
+  previousSlot: "1000",
+  current: indexBoard(4),
+  previous: indexBoard(2),
 };
-assert.deepEqual(rotationCellChange(comparisonInput), { changePP: 2, sealedDelta: null });
-assert.equal(rotationCellChange({ ...comparisonInput, current: indexBoard(-1) }).changePP, -3);
-assert.equal(rotationCellChange({ ...comparisonInput, previousSlot: "auction" }).changePP, null);
-assert.equal(rotationCellChange({ ...comparisonInput, previousSnapshot: undefined }).reason, "上一档缺档");
-assert.equal(rotationCellChange({ ...comparisonInput, previousSnapshot: { date: "2026-11-04" } }).changePP, null);
+assert.deepEqual(rotationCellChange(comparisonInput), {
+  changePP: 2,
+  sealedDelta: null,
+});
+assert.equal(
+  rotationCellChange({ ...comparisonInput, current: indexBoard(-1) }).changePP,
+  -3,
+);
+assert.equal(
+  rotationCellChange({ ...comparisonInput, previousSlot: "auction" }).changePP,
+  null,
+);
+assert.equal(
+  rotationCellChange({ ...comparisonInput, previousSnapshot: undefined })
+    .reason,
+  "上一档缺档",
+);
+assert.equal(
+  rotationCellChange({
+    ...comparisonInput,
+    previousSnapshot: { date: "2026-11-04" },
+  }).changePP,
+  null,
+);
 for (const mismatch of [
-  { kind: "concept" }, { instrument_id: "884230.TI" }, { quote_source: "other" },
-  { quote_basis: "archived_member_sample" }, { currency: "USD" }, { prev_close: 101 },
-  { latest_price: 109 }, { change_pct: null },
-]) assert.equal(rotationCellChange({ ...comparisonInput, current: indexBoard(4, mismatch) }).changePP, null);
-const exactMemberProof = { member_reference_sha256: "a".repeat(64), member_list_complete: true, member_count: 20, limit_up_count_state: "observed" };
+  { kind: "concept" },
+  { instrument_id: "884230.TI" },
+  { quote_source: "other" },
+  { quote_basis: "archived_member_sample" },
+  { currency: "USD" },
+  { prev_close: 101 },
+  { latest_price: 109 },
+  { change_pct: null },
+])
+  assert.equal(
+    rotationCellChange({ ...comparisonInput, current: indexBoard(4, mismatch) })
+      .changePP,
+    null,
+  );
+const exactMemberProof = {
+  member_reference_sha256: "a".repeat(64),
+  member_list_complete: true,
+  member_count: 20,
+  limit_up_count_state: "observed",
+};
 const sealedComparison = {
   ...comparisonInput,
   current: indexBoard(4, { ...exactMemberProof, limit_up_count: 3 }),
   previous: indexBoard(2, { ...exactMemberProof, limit_up_count: 1 }),
 };
 assert.equal(rotationCellChange(sealedComparison).sealedDelta, 2);
-assert.equal(rotationCellChange({
-  ...sealedComparison, previous: { ...sealedComparison.previous, member_reference_sha256: "b".repeat(64) },
-}).sealedDelta, null);
-assert.equal(rotationCellChange({
-  ...sealedComparison, previous: { ...sealedComparison.previous, limit_up_count_state: "partial" },
-}).sealedDelta, null);
-assert.equal(rotationCellChange({
-  ...sealedComparison, current: { ...sealedComparison.current, limit_up_count: 21 },
-}).sealedDelta, null);
+assert.equal(
+  rotationCellChange({
+    ...sealedComparison,
+    previous: {
+      ...sealedComparison.previous,
+      member_reference_sha256: "b".repeat(64),
+    },
+  }).sealedDelta,
+  null,
+);
+assert.equal(
+  rotationCellChange({
+    ...sealedComparison,
+    previous: { ...sealedComparison.previous, limit_up_count_state: "partial" },
+  }).sealedDelta,
+  null,
+);
+assert.equal(
+  rotationCellChange({
+    ...sealedComparison,
+    current: { ...sealedComparison.current, limit_up_count: 21 },
+  }).sealedDelta,
+  null,
+);
 const adjacentSlots = [
   { key: "1000", start: "10:00", label: "开盘首轮" },
   { key: "1030", start: "10:30", label: "早盘一小时" },
   { key: "1100", start: "11:00", label: "上午观察" },
   { key: "noon", start: "11:35", label: "午评" },
 ];
-const deltaGrid = renderToStaticMarkup(createElement(Rotation, {
-  stages: adjacentSlots, activeStage: "noon", onSelect: () => {},
-  samples: new Map([
-    ["1000", { ...sameDate, sectors: [indexBoard(3, { ...exactMemberProof, limit_up_count: 1 })] }],
-    ["1030", { ...sameDate, sectors: [indexBoard(1, { ...exactMemberProof, limit_up_count: 2 })] }],
-    ["noon", { ...sameDate, summary: { comparison_slot: "1030" }, sectors: [indexBoard(4, { change_pp: 3 })] }],
-  ]),
-}));
+const deltaGrid = renderToStaticMarkup(
+  createElement(Rotation, {
+    stages: adjacentSlots,
+    activeStage: "noon",
+    onSelect: () => {},
+    samples: new Map([
+      [
+        "1000",
+        {
+          ...sameDate,
+          sectors: [indexBoard(3, { ...exactMemberProof, limit_up_count: 1 })],
+        },
+      ],
+      [
+        "1030",
+        {
+          ...sameDate,
+          sectors: [indexBoard(1, { ...exactMemberProof, limit_up_count: 2 })],
+        },
+      ],
+      [
+        "noon",
+        {
+          ...sameDate,
+          summary: { comparison_slot: "1030" },
+          sectors: [indexBoard(4, { change_pp: 3 })],
+        },
+      ],
+    ]),
+  }),
+);
 assert.match(deltaGrid, /type="checkbox" checked="".*较上一档变化/);
 assert.match(deltaGrid, /intraday-rotation-change down.*较10:00 -2\.00 百分点/);
-assert.match(deltaGrid, /较10:00 -2\.00 百分点<span class="up"> · 封板\+1<\/span>/);
+assert.match(
+  deltaGrid,
+  /较10:00 -2\.00 百分点<span class="up"> · 封板\+1<\/span>/,
+);
 assert.match(deltaGrid, /上一档缺档/);
 assert.doesNotMatch(deltaGrid, /较10:30 \+3\.00/);
 assert.match(deltaGrid, /aria-label="11:35 半导体设备 查看个股"/);
@@ -495,3 +756,64 @@ const turnover = render({
 assert.match(turnover, /data-direction="up">放量 40\.00亿元/);
 assert.match(turnover, /data-direction="down">缩量 10\.00亿元/);
 assert.match(turnover, /前一交易日同档暂无可比成交额/);
+
+// A quote outside the short strength lists remains visible across slots.
+const unseenTheme = {
+  instrument_id: "886108.TI",
+  name: "合成AI应用",
+  kind: "concept",
+};
+const completeSectorSnapshot = {
+  date: "2026-11-05",
+  slot: "1030",
+  id: "intraday_" + "b".repeat(32),
+  strength_coverage: {},
+  sectors: [theme],
+  strong_sectors: [theme],
+  rotation_sectors: [{ ...unseenTheme, change_pct: 2.81, limit_up_count: 3 }],
+};
+assert.deepEqual(
+  rotationStageBoards(completeSectorSnapshot).map((row) => row.instrument_id),
+  ["886108.TI"],
+);
+assert.deepEqual(
+  rotationStageBoards({ ...completeSectorSnapshot, rotation_sectors: [] }),
+  [],
+  "an explicit empty projection must not silently reuse a different ranking",
+);
+const allSectorGrid = renderToStaticMarkup(
+  createElement(Rotation, {
+    stages,
+    activeStage: "1030",
+    onSelect() {},
+    samples: new Map([
+      [
+        "1000",
+        {
+          ...completeSectorSnapshot,
+          slot: "1000",
+          rotation_sectors: [
+            { ...unseenTheme, change_pct: 1.91, limit_up_count: 1 },
+          ],
+        },
+      ],
+      ["1030", completeSectorSnapshot],
+    ]),
+  }),
+);
+assert.match(allSectorGrid, /1\.91%/);
+assert.match(allSectorGrid, /2\.81%/);
+assert.match(allSectorGrid, /10:30 合成AI应用 查看个股/);
+const requestedRetained = renderToStaticMarkup(
+  createElement(StrengthView, {
+    snapshot: completeSectorSnapshot,
+    requestedBoard: unseenTheme.instrument_id,
+    historyScope: { date: "2026-11-05", slot: "1030" },
+    onStock() {},
+  }),
+);
+assert.match(
+  requestedRetained,
+  /合成AI应用/,
+  "selecting a rotation-only quote opens the original member scope",
+);

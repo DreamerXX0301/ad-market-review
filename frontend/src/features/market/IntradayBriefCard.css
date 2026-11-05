@@ -1,0 +1,321 @@
+.intraday-brief.intraday-brief-timeline {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 460px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+.intraday-brief-timeline .ibt-header {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 13px 16px 0;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--blue) 7%, transparent),
+      transparent 65%
+    ),
+    var(--surface);
+}
+
+.intraday-brief-timeline .ibt-eyebrow,
+.intraday-brief-timeline .ibt-eyebrow > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.intraday-brief-timeline .ibt-eyebrow {
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.intraday-brief-timeline .ibt-eyebrow small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.intraday-brief-timeline .ibt-header h2 {
+  margin: 7px 0 11px;
+  font-size: clamp(15px, 1.7vw, 19px);
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.intraday-brief-timeline .ibt-slots {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  padding: 0 0 9px;
+}
+
+.intraday-brief-timeline .ibt-slots button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.intraday-brief-timeline .ibt-slot-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.intraday-brief-timeline .ibt-slots button[aria-current="step"],
+.intraday-brief-timeline .ibt-slots button:hover {
+  color: var(--blue);
+  border-color: color-mix(in srgb, var(--blue) 65%, var(--border));
+  background: var(--blue-bg);
+}
+
+.intraday-brief-timeline .ibt-slots [data-status="missing"] {
+  border-style: dashed;
+}
+
+.intraday-brief-timeline .ibt-slots small {
+  font-size: 9px;
+  opacity: 0.8;
+}
+
+.intraday-brief-timeline .ibt-scroll {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+  padding: 13px 16px 16px;
+}
+
+.intraday-brief-timeline .ibt-scroll:focus-visible,
+.intraday-brief-timeline .ibt-slots button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.intraday-brief-timeline .ibt-sections {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.intraday-brief-timeline .ibt-section {
+  position: relative;
+  border-left: 2px solid var(--border);
+  margin-left: 5px;
+  padding: 0 0 22px 17px;
+}
+
+.intraday-brief-timeline .ibt-section::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 5px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.intraday-brief-timeline .ibt-section.is-active {
+  border-left-color: color-mix(in srgb, var(--blue) 60%, var(--border));
+}
+
+.intraday-brief-timeline .ibt-section.is-active::before {
+  background: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-bg);
+}
+
+.intraday-brief-timeline .ibt-section-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.intraday-brief-timeline .ibt-section-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.intraday-brief-timeline .ibt-section-heading > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.intraday-brief-timeline .ibt-section-heading .ibt-active-label {
+  color: var(--blue);
+  border-radius: 4px;
+  background: var(--blue-bg);
+  padding: 1px 5px;
+}
+
+.intraday-brief-timeline .ibt-scroll .ibt-summary {
+  margin: 0 0 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+.intraday-brief-timeline .ibt-scroll .ibt-summary.is-legacy {
+  color: var(--subtle);
+  font-size: 12px;
+}
+
+.intraday-brief-timeline .ibt-highlights {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.intraday-brief-timeline .ibt-highlight {
+  display: grid;
+  grid-template-columns: 75px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface2) 55%, transparent);
+}
+
+.intraday-brief-timeline .ibt-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.8;
+  white-space: nowrap;
+}
+
+.intraday-brief-timeline .ibt-strengthening .ibt-kind,
+.intraday-brief-timeline .ibt-sealed .ibt-kind {
+  color: var(--red);
+}
+
+.intraday-brief-timeline .ibt-weakening .ibt-kind {
+  color: var(--green);
+}
+
+.intraday-brief-timeline .ibt-broken .ibt-kind {
+  color: var(--amber);
+}
+
+.intraday-brief-timeline .ibt-auction .ibt-kind {
+  color: var(--purple, #b49af2);
+}
+
+.intraday-brief-timeline .ibt-scroll .ibt-highlight p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+.intraday-brief-timeline .ibt-scroll .ibt-comparison {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.65;
+}
+
+.intraday-brief-timeline .ibt-evidence {
+  border-top: 1px solid var(--border);
+  padding-top: 11px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.intraday-brief-timeline .ibt-evidence summary {
+  cursor: pointer;
+}
+
+.intraday-brief-timeline .ibt-evidence summary small {
+  font-size: 10px;
+  margin-left: 5px;
+}
+
+.intraday-brief-timeline .ibt-evidence ul {
+  margin-bottom: 0;
+  padding-left: 18px;
+  line-height: 1.7;
+}
+
+.intraday-brief-timeline .intraday-brief-value {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.intraday-brief-timeline .intraday-brief-warning {
+  color: var(--amber);
+}
+
+.intraday-brief-timeline .ibt-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .intraday-brief.intraday-brief-timeline {
+    height: clamp(360px, 64dvh, 460px);
+  }
+  .intraday-brief-timeline .ibt-header {
+    padding: 11px 11px 0;
+  }
+  .intraday-brief-timeline .ibt-eyebrow small {
+    display: none;
+  }
+  .intraday-brief-timeline .ibt-scroll {
+    padding: 12px 10px;
+  }
+  .intraday-brief-timeline .ibt-section {
+    padding-left: 12px;
+  }
+  .intraday-brief-timeline .ibt-highlight {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+    padding: 8px;
+  }
+  .intraday-brief-timeline .ibt-scroll .ibt-highlight p {
+    font-size: 12px;
+  }
+}

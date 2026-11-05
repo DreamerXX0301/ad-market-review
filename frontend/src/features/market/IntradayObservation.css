@@ -1033,76 +1033,9 @@
   text-align: left;
 }
 
-.intraday-brief {
-  min-width: 0;
-  padding: 14px 16px;
-  overflow-wrap: anywhere;
-}
-
-.intraday-brief-top {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 5px 12px;
-}
-
-.intraday-brief h2 {
-  margin: 6px 0;
-  font-size: clamp(16px, 2vw, 21px);
-}
-
-.intraday-brief p {
-  margin: 0;
-  color: var(--subtle);
-  white-space: pre-line;
-  line-height: 1.65;
-}
-
-.intraday-brief-value {
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
-.intraday-brief-warning {
-  color: var(--amber);
-}
-
-.intraday-brief-top small,
-.intraday-brief-evidence,
-.intraday-brief-context,
 .intraday-stage-scope {
   color: var(--muted);
   font-size: 12px;
-}
-
-.intraday-brief-context {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  list-style: none;
-  margin: 10px 0;
-  padding: 0;
-}
-
-.intraday-brief-context li {
-  padding: 2px 6px;
-  background: var(--surface2);
-  border-radius: 4px;
-}
-
-.intraday-brief-context [data-status="missing"] {
-  background: transparent;
-}
-
-.intraday-brief-evidence summary {
-  cursor: pointer;
-}
-
-.intraday-brief-evidence ul {
-  display: grid;
-  gap: 5px;
-  padding-left: 18px;
 }
 
 .intraday-stage-scope {
@@ -1232,6 +1165,170 @@
   margin: 0;
   padding: 5px 14px 12px;
   list-style: none;
+}
+
+.intraday-board-changes .panel-head h2 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.intraday-change-period {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.intraday-change-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 220px));
+  gap: 8px;
+  padding: 14px;
+}
+
+.intraday-change-tabs button {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px 15px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.intraday-change-tabs button[aria-pressed="true"] {
+  border-color: var(--blue);
+  box-shadow: inset 0 0 0 1px var(--blue);
+}
+
+.intraday-change-tabs button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.intraday-change-tabs button > span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.intraday-change-tabs button strong {
+  font-size: 24px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.intraday-change-tabs button strong small {
+  margin-left: 5px;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.intraday-change-tabs button > small,
+.intraday-change-tabs button strong small {
+  color: var(--muted);
+}
+
+.intraday-change-tabs button[data-kind="sealed"] strong {
+  color: var(--red);
+}
+.intraday-change-tabs button[data-kind="down"] strong {
+  color: var(--green);
+}
+.intraday-change-tabs button[data-kind="broken"] strong {
+  color: var(--amber);
+}
+
+.intraday-change-tabs button[data-state="unknown"] strong {
+  color: var(--muted);
+}
+
+.intraday-change-content {
+  padding: 0 14px;
+}
+
+.intraday-change-theme-summary {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.intraday-change-theme-heading,
+.intraday-change-theme-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.intraday-change-theme-heading strong {
+  font-size: 12px;
+}
+
+.intraday-change-theme-heading small,
+.intraday-change-theme-row > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.intraday-change-theme-row > span {
+  min-width: 24px;
+}
+
+.intraday-change-content > .intraday-ranking {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.intraday-change-note,
+.intraday-change-footnote {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.intraday-change-note {
+  margin: 0 0 10px;
+}
+.intraday-change-footnote {
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.intraday-change-empty {
+  padding: 18px 0 25px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.intraday-stock-state[data-kind="limit-down"] {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, var(--surface));
+}
+
+@container (max-width: 620px) {
+  .intraday-change-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 10px;
+  }
+  .intraday-change-tabs button {
+    padding: 10px;
+  }
+  .intraday-change-content {
+    padding: 0 10px;
+  }
 }
 
 .intraday-event-bars li {

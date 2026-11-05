@@ -11,7 +11,7 @@ def view(date: str | None = None):
     from app.services.intraday_brief import read_brief_view
 
     result = intraday_service.read_view(date)
-    result.update(read_brief_view(result['date']))
+    result.update(read_brief_view(result['date'], snapshots=result['snapshots']))
     return result
 
 

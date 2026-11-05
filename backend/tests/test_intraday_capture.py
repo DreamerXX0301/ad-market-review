@@ -145,12 +145,16 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     monkeypatch.setattr(service, 'get_market', lambda: market)
     requests = []
 
-    def source(endpoint, params, before_attempt):
+    def source(endpoint, params, before_attempt, **options):
         before_attempt()
         requests.append((endpoint, params))
         timestamp = int(clock.timestamp() * 1000)
         if endpoint.endswith('trading-days'):
             return {'data': {'item': [{'date': day.replace('-', '')} for day in (PRIOR, DAY)], 'timestamp': timestamp}}
+        if endpoint.endswith('limit-down-pool'):
+            assert options['max_attempts'] == 1 and 0 < options['timeout'] <= 8
+            return {'code': 0, 'data': {'item': [], 'timestamp': timestamp,
+                                       'pagination': {'total': 0, 'page': 1, 'size': 200, 'pages': 0}}}
         if clock.hour == 11 and (endpoint.endswith('limit-up-pool') or endpoint.endswith('limit-break-pool')):
             return {'code': 0, 'data': {'item': [], 'timestamp': timestamp,
                                        'pagination': {'total': 0, 'page': 1, 'size': 200, 'pages': 0}}}
@@ -208,6 +212,10 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert first['snapshots'][0]['scheduled_at'] == '2026-10-28T10:00:00+08:00'
     with core.connect() as connection:
         saved = service._saved_slot(connection, DAY, '1000')
+        parameters = json.loads(connection.execute("SELECT parameters_json FROM job WHERE request_key='a'").fetchone()[0])
+        assert parameters['board_change_evidence'] == service.BOARD_CHANGE_EVIDENCE
+        assert parameters['request_budget'] == service.REQUEST_BUDGETS[service.VERSION] + 2
+        assert saved['board_pool_evidence']['limit_down'] == {'state': 'observed', 'count': 0, 'items': []}
         chart = next(row for row in saved['comparison_input']['stocks'] if row['instrument_id'] == '000001.SZ')
         assert (chart['open'], chart['high'], chart['low'], chart['latest_price']) == (10, 10.1, 10, 10.1)
         assert 'quote_source' not in saved['sectors'][0], 'read-side metadata never changes the frozen snapshot'
@@ -279,8 +287,9 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     }) is None
     assert [row['instrument_id'] for row in first['snapshots'][0]['sealed_stocks']] == ['000001.SZ']
     assert not first['snapshots'][0]['candidates']
-    assert len(requests) == 6
+    assert len(requests) == 7
     assert requests[4][0].endswith('limit-break-pool')
+    assert requests[6][0].endswith('limit-down-pool')
     major_indices = first['snapshots'][0]['market_pulse']['indices']
     assert [row['instrument_id'] for row in major_indices] == ['000001.SH', '399001.SZ', '399006.SZ', '000688.SH']
     assert all(row['latest_price'] == 10.1 for row in major_indices)
@@ -298,6 +307,16 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     expected_themes = [{'name': '测试行业', 'kind': 'industry', 'member_date': PRIOR}]
     assert prior['items'][0]['themes'] == expected_themes
     assert first['snapshots'][0]['relay_feedback']['same_day']['state'] == 'unknown'
+
+    # Successful new-flag captures use the same 28-natural-day retention boundary.
+    with core.connect() as connection:
+        for older_day, key in (('2026-09-30', 'expired-intraday'), ('2026-10-01', 'retained-boundary')):
+            identifier = service._enqueue(connection, key, older_day, service.SLOTS[0], clock)
+            connection.execute("UPDATE job SET status='succeeded' WHERE job_id=?", (identifier,))
+            raw = core.dumps({'retained': key})
+            connection.execute('''UPDATE market_intraday_capture SET snapshot_id=?,payload_json=?,content_sha256=?
+                WHERE job_id=?''', ('intraday_' + sha256(key.encode()).hexdigest()[:32], raw,
+                                   sha256(raw.encode()).hexdigest(), identifier))
 
     clock = clock.replace(hour=10, minute=30)
     assert queue('b').status_code == 200
@@ -321,6 +340,14 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert same_day['absent'][0]['instrument_id'] == '000001.SZ'
     assert same_day['entered'][0]['themes'] == same_day['absent'][0]['themes'] == expected_themes
     assert second['ladder']['broken_board']['items'][0]['themes'][0]['name'] == '测试行业'
+    groups = second['board_changes']['groups']
+    assert groups['new_sealed']['count'] == groups['opened']['count'] == groups['resealed']['count'] == 1
+    assert groups['new_limit_down']['count'] == 0 and groups['new_limit_down']['state'] == 'observed'
+    assert groups['resealed']['items'][0]['themes'] == expected_themes
+    assert groups['resealed']['items'][0]['continue_day_cnt'] == 1
+    with core.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM market_intraday_capture WHERE trade_date='2026-09-30'").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM market_intraday_capture WHERE trade_date='2026-10-01'").fetchone()[0] == 1
     prior_broken = second['relay_feedback']['prior_broken_session']
     assert prior_broken['date'] == PRIOR and prior_broken['state'] == 'observed'
     assert prior_broken['sealed_count'] == 1 and prior_broken.get('promotion_count') is None
@@ -342,6 +369,38 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert empty['summary']['limit_up_pool_state'] == empty['summary']['limit_break_pool_state'] == 'observed'
     assert empty['ladder']['sealed_count'] == empty['ladder']['broken_board']['count'] == 0
     assert empty['ladder']['broken_board']['items'] == []
+
+    # An already frozen v5 task without the marker keeps the original network plan.
+    clock = clock.replace(hour=14, minute=0)
+    with core.connect() as connection:
+        identifier = service._enqueue(connection, 'old-v5', DAY, service.SLOTS[4], clock)
+        frozen = json.loads(connection.execute('SELECT parameters_json FROM job WHERE job_id=?', (identifier,)).fetchone()[0])
+        frozen.pop('board_change_evidence'); frozen.pop('request_budget')
+        connection.execute('UPDATE job SET parameters_json=?,parameters_hash=? WHERE job_id=?',
+                           (core.dumps(frozen), core.digest(frozen), identifier))
+    before = len(requests)
+    worker.dispatch(tasks.claim_next('test'))
+    assert not any(endpoint.endswith('limit-down-pool') for endpoint, _ in requests[before:])
+    with core.connect() as connection:
+        assert 'board_pool_evidence' not in service._saved_slot(connection, DAY, '1400')
+
+    # The added evidence must not bypass the unchanged 2MiB atomic publication guard.
+    clock = clock.replace(hour=13, minute=30)
+    assert queue('oversized-board-evidence').status_code == 200
+    original_canonical = service.canonical
+    def oversized(value):
+        encoded = original_canonical(value)
+        return encoded + b' ' * service.MAX_PAYLOAD if value.get('version') == service.VERSION else encoded
+    with monkeypatch.context() as patch:
+        patch.setattr(service, 'canonical', oversized)
+        claimed = tasks.claim_next('test')
+        with pytest.raises(ValueError, match='2MiB'):
+            worker.dispatch(claimed)
+        tasks.finish(claimed['job_id'], 'failed', error='盘中快照超过2MiB容量上限', lease_owner=claimed['lease_owner'])
+    with core.connect() as connection:
+        record = connection.execute('''SELECT c.snapshot_id,j.status FROM market_intraday_capture c
+            JOIN job j USING(job_id) WHERE j.request_key='oversized-board-evidence' ''').fetchone()
+        assert record['snapshot_id'] is None and record['status'] == 'failed'
 
     # Old queued work runs within its frozen request plan and still publishes its own shape.
     clock = clock.replace(hour=14, minute=35)

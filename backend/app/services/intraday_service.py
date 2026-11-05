@@ -12,6 +12,8 @@ from app.services import task_service as tasks
 from app.services.increment_access import require_business_unlocked
 from app.services.intraday_discovery import SECTOR_LISTS, build_intraday_discovery
 from app.services.intraday_feedback import attach_feedback_themes, feedback_stock_rows
+from app.services.intraday_board_changes import (EVIDENCE_VERSION as BOARD_CHANGE_EVIDENCE,
+    attach_changes, attach_current_states, read_noon_row, stock_rows as change_stock_rows)
 from app.services.noon_analysis import INDEX_NAMES, normalize_pool, normalize_quotes, number
 from app.services.noon_collection import (CHINA, WindowExpired, canonical, contains_secret,
     STOCK_CODE, explicit_empty_pool_page, items, paged, source_time, trading_days)
@@ -159,6 +161,7 @@ def read_view(day=None):
         busy = configured and conn.execute("SELECT 1 FROM job WHERE status IN ('queued','running') LIMIT 1").fetchone()
         automation = _automation_config(conn)
         noon_scheduled_at, noon_schedule_source = _noon_schedule(conn, day, today)
+        noon_row = read_noon_row(conn, day)
     latest = rows[-1] if rows else None
     occupied = slot and any(row['slot'] == slot['key'] for row in rows)
     reason = ('仅在今天的交易观察时段开放采集' if not slot else
@@ -167,10 +170,13 @@ def read_view(day=None):
               '已有任务运行或排队，请等工作进程空闲' if busy else None)
     saved = [value for row in rows if (value := decode_snapshot(row))]
     _restore_legacy_turnover(saved)
+    attach_changes(saved, rows, noon_row)
+    for value in saved:
+        attach_current_states(value)
     _attach_saved_stock_references(saved)
     snapshots = [{k: v for k, v in value.items()
                   if k not in ('version', 'comparison_input', 'source_checks', 'sealed_pool_input',
-                               'member_reference')} | {'discovery': build_intraday_discovery(value)}
+                               'member_reference', 'board_pool_evidence')} | {'discovery': build_intraday_discovery(value)}
                  for value in saved]
     from app.services.intraday_brief import sector_comparison_metadata
     for snapshot in snapshots:
@@ -195,6 +201,7 @@ def _enqueue(connection, key, day, slot, now, *, version=VERSION, authorization=
     parameters = dict(operation=OPERATION, version=version, date=day, slot=slot['key'], source_id='fuyao')
     if version == VERSION:
         parameters['suspension_evidence'] = SUSPENSION_VERSION
+        parameters.update(board_change_evidence=BOARD_CHANGE_EVIDENCE, request_budget=REQUEST_BUDGETS[version] + 2)
     if authorization:
         parameters['automation'] = authorization
     signature = digest(parameters)
@@ -294,6 +301,7 @@ class Capture:
         self.attempts = 0
         self.max_requests = max_requests
         self.version = json.loads(job.get('parameters_json', '{}')).get('version')
+        self.board_change_evidence = json.loads(job.get('parameters_json', '{}')).get('board_change_evidence') == BOARD_CHANGE_EVIDENCE
 
     def guard_window(self):
         _guard_job(self.job)
@@ -323,7 +331,8 @@ class Capture:
         prefix, _, page = name.rpartition('_')
         if (len(self.checks) >= self.max_requests
                 or prefix == 'stocks_page' and int(page) > 8
-                or prefix in ('limit_up_page', 'limit_break_page') and int(page) > 2):
+                or prefix in ('limit_up_page', 'limit_break_page', 'limit_down_page') and int(page) > 2
+                or prefix == 'limit_down_page' and not self.board_change_evidence):
             self.gap(name, '达到本时段请求预算')
             return None
         check = dict(domain=name, state='unknown')
@@ -336,7 +345,11 @@ class Capture:
             self.attempts += 1
 
         try:
-            body = self.adapter.request(endpoint, params or {}, before_attempt=before_attempt)
+            options = {}
+            if prefix == 'limit_down_page':
+                deadline = datetime.combine(date.fromisoformat(self.day), time.fromisoformat(self.slot['end']), CHINA)
+                options = {'max_attempts': 1, 'timeout': min(8., max(.1, (deadline - now_china()).total_seconds()))}
+            body = self.adapter.request(endpoint, params or {}, before_attempt=before_attempt, **options)
             self.guard_window()
             received = now_china()
             if not isinstance(body, dict) or not isinstance(body.get('data'), dict):
@@ -532,13 +545,33 @@ def _attach_market_amount(pulse, current, earlier, prior_day):
         _cumulative_amounts(current), _cumulative_amounts(earlier), prior_day)
 
 
+def _reconcile_board_pools(*pools):
+    """New frozen plans discard contradictory positive claims before all aggregates."""
+    seen, conflicts = set(), set()
+    for pool in pools:
+        codes = {row['instrument_id'] for row in pool['items']}
+        conflicts.update(seen & codes)
+        seen.update(codes)
+    if conflicts:
+        for pool in pools:
+            rows = [row for row in pool['items'] if row['instrument_id'] not in conflicts]
+            removed = len(pool['items']) - len(rows)
+            if removed:
+                pool.update(items=rows, state='partial' if rows else 'unknown', count=len(rows) if rows else None,
+                            excluded_rows=pool.get('excluded_rows', 0) + removed,
+                            reason='同轮来源池状态相互冲突，相关股票未用于状态与梯队统计')
+    return conflicts
+
+
 def _attach_saved_stock_references(snapshots):
     from app.analytics.market import MarketData
     from app.services.intraday_brief import sector_membership_fingerprint
     from app.services.noon_membership_context import GENERATION, _day
+    from app.services.intraday_rotation import live_rotation_sectors
 
     references, classifications, member_fingerprints = {}, {}, {}
     for snapshot in snapshots:
+        snapshot['rotation_sectors'] = live_rotation_sectors(snapshot, reference={}, identity=('', ''))
         identity = snapshot.get('member_reference') or {}
         generation, end = identity.get('generation'), identity.get('date')
         if (not GENERATION.fullmatch(str(generation)) or not _day(end) or end >= snapshot['date']):
@@ -555,12 +588,22 @@ def _attach_saved_stock_references(snapshots):
             except (OSError, ValueError, KeyError, TypeError):
                 references[source] = {}
         reference = references[source]
+        snapshot['rotation_sectors'] = live_rotation_sectors(snapshot, reference=reference, identity=source)
         displayed = [*snapshot.get('stocks', ()), *snapshot.get('candidates', ())]
         displayed.extend(row for key in SECTOR_LISTS for board in snapshot.get(key, ())
                          for row in board.get('candidates', ()))
         displayed.extend(row for board in snapshot.get('board_stocks', {}).values() for row in board.get('items', ()))
+        changes = list(change_stock_rows(snapshot))
+        displayed.extend(changes)
+        from app.services.noon_membership_context import _display_board
+        for row in changes:
+            identity_row = reference.get('master', {}).get(row['instrument_id'], {})
+            if row.get('name') == row['instrument_id'] and identity_row.get('name'):
+                row['name'] = identity_row['name']
+            row['board'] = _display_board(row)
         attach_intraday_references(snapshot, displayed, reference.get('master', {}), reference.get('calendar', ()))
         pending = [row for row in feedback_stock_rows(snapshot) if 'themes' not in row]
+        pending.extend(changes)
         boards = [row for key in SECTOR_LISTS for row in snapshot.get(key, ())]
         if (pending or boards) and reference:
             key = (generation, snapshot['date'])
@@ -642,6 +685,11 @@ def execute_capture(job, progress=None):
     expected = dict(operation=OPERATION, version=version, date=day, slot=params.get('slot'), source_id='fuyao')
     if version == VERSION and params.get('suspension_evidence') == SUSPENSION_VERSION:
         expected['suspension_evidence'] = SUSPENSION_VERSION
+    extended_pools = version == VERSION and params.get('board_change_evidence') == BOARD_CHANGE_EVIDENCE
+    if extended_pools and type(params.get('request_budget')) is not int:
+        raise ValueError('盘中板况采集预算冻结参数无效')
+    if extended_pools:
+        expected.update(board_change_evidence=BOARD_CHANGE_EVIDENCE, request_budget=REQUEST_BUDGETS[version] + 2)
     if authorization is not None:
         if (version != VERSION or not isinstance(authorization, dict)
                 or set(authorization) != {'revision', 'calendar_sha256'}
@@ -686,7 +734,8 @@ def execute_capture(job, progress=None):
     reference = market.reference()
     catalog, _, _, _ = _catalog(reference)
     codes = _planned_board_codes(catalog)
-    capture = Capture(job, day, slot, client('fuyao'), progress, REQUEST_BUDGETS[version])
+    capture = Capture(job, day, slot, client('fuyao'), progress,
+                      REQUEST_BUDGETS[version] + (2 if extended_pools else 0))
     capture.guard_window()
     if calendar_receipt:
         calendar = calendar_receipt.get('days', ())
@@ -699,6 +748,7 @@ def execute_capture(job, progress=None):
     raw_stocks, declared, complete = paged(capture, 'stocks', '/api/a-share/prices/snapshot', market=True)
     pool_inputs = None
     break_inputs = ([], None, False) if has_break_pool else None
+    down_inputs = ([], None, False) if extended_pools else None
     if version != LEGACY_VERSION:
         pool_inputs = capture.pool('limit_up', '/api/a-share/special-data/limit-up-pool')
     raw_indices, raw_boards = [], []
@@ -715,6 +765,9 @@ def execute_capture(job, progress=None):
             response = capture.request(f'boards_{offset // 50 + 1}', '/api/a-share-index/prices/snapshot',
                                        {'thscodes': ','.join(batch)}, dated=True)
             raw_boards.extend(row for row in (items(response) or []) if isinstance(row, dict) and row.get('thscode') in batch)
+        # Preserve priority and timeout behavior of every pre-existing request.
+        if extended_pools:
+            down_inputs = capture.pool('limit_down', '/api/a-share/special-data/limit-down-pool')
     except WindowExpired:
         capture.gap('boards', '原观察窗口结束，剩余板块未采集')
     _guard_job(job)
@@ -735,10 +788,16 @@ def execute_capture(job, progress=None):
     quotes_by_code = {row['instrument_id']: row for row in all_stocks}
     pool = normalize_pool(*pool_inputs, quotes_by_code, '涨停') if pool_inputs is not None else None
     break_pool = normalize_pool(*break_inputs, quotes_by_code, '炸板') if break_inputs is not None else None
+    down_pool = normalize_pool(*down_inputs, quotes_by_code, '跌停') if down_inputs is not None else None
+    board_conflicts = _reconcile_board_pools(pool, break_pool, down_pool) if extended_pools else set()
+    if board_conflicts:
+        capture.gap('board_pools', '同轮封板、炸板或跌停池存在状态冲突，已剔除相关股票并降级覆盖')
     if pool and pool['state'] != 'observed':
         capture.gap('limit_up', '本轮涨停池未完整核验，只展示可确认的封板样本')
     if break_pool and break_pool['state'] != 'observed':
         capture.gap('limit_break', '本轮炸板池未完整核验，只展示可确认的炸板样本')
+    if down_pool and down_pool['state'] != 'observed':
+        capture.gap('limit_down', '本轮跌停池未完整核验，只展示可确认的跌停样本')
     conflicts = ({row['instrument_id'] for row in pool['items']}
                  & {row['instrument_id'] for row in break_pool['items']}) if break_pool else set()
     if conflicts:
@@ -832,6 +891,17 @@ def execute_capture(job, progress=None):
                            if row['instrument_id'] not in conflicts]
         comparable_state = ('partial' if comparable_pool else 'unknown') if conflicts else pool['state']
         snapshot['sealed_pool_input'] = {'state': comparable_state, 'items': comparable_pool}
+    if extended_pools:
+        # Compact full pool enumerations share the original immutable body, cap and retention.
+        def compact_pool(value):
+            return {'state': value['state'], 'count': value['count'],
+                    'items': [{'instrument_id': row['instrument_id'],
+                               **({'continue_day_cnt': row['continue_day_cnt']} if
+                                  type(row.get('continue_day_cnt')) is int and row['continue_day_cnt'] > 0 else {})}
+                              for row in value['items']]}
+        snapshot['board_pool_evidence'] = {'version': BOARD_CHANGE_EVIDENCE, 'conflicts': sorted(board_conflicts),
+            **{key: compact_pool(value) for key, value in
+               (('limit_up', pool), ('limit_break', break_pool), ('limit_down', down_pool))}}
     raw = canonical(snapshot)
     if len(raw) > MAX_PAYLOAD:
         raise ValueError('盘中快照超过2MiB容量上限')

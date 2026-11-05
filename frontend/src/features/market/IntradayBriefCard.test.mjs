@@ -1,0 +1,263 @@
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { build } from "vite";
+
+const require = createRequire(import.meta.url);
+const result = await build({
+  configFile: false,
+  root: new URL("../../../", import.meta.url).pathname,
+  logLevel: "silent",
+  build: {
+    write: false,
+    ssr: new URL("./IntradayBriefCard.tsx", import.meta.url).pathname,
+    minify: false,
+  },
+});
+const code = result.output
+  .find((item) => item.type === "chunk" && item.isEntry)
+  .code.replace(
+    /from "([^".][^"]*)"/g,
+    (_, id) =>
+      `from ${JSON.stringify(pathToFileURL(require.resolve(id)).href)}`,
+  );
+const {
+  default: BriefCard,
+  BriefText,
+  briefSections,
+  briefSectionScrollTop,
+  briefSlotScrollLeft,
+} = await import(
+  "data:text/javascript;base64," + Buffer.from(code).toString("base64")
+);
+const render = (brief, selectedSlot) =>
+  renderToStaticMarkup(createElement(BriefCard, { brief, selectedSlot }));
+
+const structured = {
+  id: "brief-fixture",
+  slot: "1030",
+  headline: "10:30 盘面简报",
+  body: "旧正文仍保留，但结构化重点优先展示。",
+  context: [
+    { slot: "auction", label: "09:25 竞价", status: "complete" },
+    { slot: "1000", label: "10:00 开盘首轮", status: "missing" },
+    { slot: "1030", label: "10:30 早盘一小时", status: "partial" },
+  ],
+  sections: [
+    {
+      slot: "auction",
+      label: "09:25 竞价",
+      status: "complete",
+      summary: "高开 40 只，低开 30 只。",
+      highlights: [{ id: "a1", kind: "auction", text: "半导体方向 +2.30%。" }],
+    },
+    {
+      slot: "1030",
+      label: "10:30 早盘一小时",
+      status: "partial",
+      summary: "上涨 1,200 只、下跌 300 只。",
+      comparison_note: "上一档缺档，不跨时点推算变化。",
+      highlights: [
+        {
+          id: "s1",
+          kind: "leading",
+          text: "光伏设备 +8.30%，合成甲 +9.80%。",
+          sector_id: "884306.TI",
+        },
+        { id: "s2", kind: "strengthening", text: "较上档 +2.30 个百分点。" },
+        { id: "s3", kind: "weakening", text: "消费方向 -0.25 个百分点。" },
+        { id: "s4", kind: "sealed", text: "封板 25 只。" },
+        { id: "s5", kind: "broken", text: "炸板 至少 6 只。" },
+        { id: "s6", kind: "__proto__", text: "未知分类保留原文。" },
+      ],
+    },
+  ],
+  evidence: [{ id: "e1", label: "成交", text: "<引用> -1,011.20 亿元" }],
+};
+const parsed = briefSections(structured);
+assert.deepEqual(
+  parsed.map((section) => section.slot),
+  ["auction", "1000", "1030"],
+);
+assert.equal(parsed[1].status, "missing");
+assert.match(parsed[1].summary, /未留存/);
+assert.equal(parsed[2].highlights.length, 6);
+const html = render(structured);
+assert.match(html, /<h2>10:30 早盘一小时累计简报<\/h2>/);
+assert.ok(
+  html.indexOf('class="ibt-header"') < html.indexOf('class="ibt-scroll"'),
+  "header and time chips stay outside the scroll viewport",
+);
+assert.match(html, /aria-label="分时段简报内容"/);
+assert.match(html, /aria-current="step"[^>]*>.*?10:30/s);
+for (const label of [
+  "领涨方向",
+  "相对走强",
+  "相对回落",
+  "封板变化",
+  "炸板观察",
+  "竞价方向",
+])
+  assert.ok(html.includes(label), label);
+assert.doesNotMatch(html, /旧正文仍保留/);
+assert.match(html, /class="ibt-highlight ibt-market"/);
+assert.match(
+  html,
+  /&lt;引用&gt; <span class="intraday-brief-value down">-1,011\.20 亿元/,
+);
+assert.ok(
+  html.indexOf('class="intraday-brief-evidence ibt-evidence"') >
+    html.indexOf('class="ibt-highlights"'),
+);
+assert.doesNotMatch(html, /<details[^>]* open/);
+assert.match(
+  render(structured, "1000"),
+  /data-slot="1000" data-status="missing"/,
+);
+assert.match(
+  render(structured, "1400"),
+  /data-slot="1400" data-status="unavailable"/,
+);
+
+const legacyBody =
+  "2026-11-05 上涨 1,200 只、下跌 300 只，涨幅 +2.34% → −0.56%，平盘 +0.00%。\n封板 25 只、炸板 至少 6 只，放量后缩量。";
+const legacy = render({
+  headline: "10:30 盘面简报",
+  body: legacyBody,
+  evidence: structured.evidence,
+});
+assert.match(
+  legacy,
+  /2026-11-05 <span class="intraday-brief-value up">上涨 1,200 只/,
+);
+assert.match(legacy, /class="intraday-brief-value down">下跌 300 只/);
+assert.match(
+  legacy,
+  /class="intraday-brief-value up">\+2\.34%<\/span> → <span class="intraday-brief-value down">−0\.56%<\/span>，平盘 \+0\.00%。\n/,
+);
+assert.match(legacy, /class="intraday-brief-value up">封板 25 只/);
+assert.match(
+  legacy,
+  /class="intraday-brief-value intraday-brief-warning">炸板 至少 6 只/,
+);
+assert.match(
+  legacy,
+  /class="intraday-brief-value up">放量<\/span>后<span class="intraday-brief-value down">缩量/,
+);
+
+const old = briefSections({
+  slot: "1030",
+  sections: [],
+  body: "09:25 竞价 · 高开35只。\n09:25 竞价 · 方向甲 +2.3%。\n10:30 早盘一小时：方向乙 -1.2%。",
+  context: [
+    { slot: "auction", label: "09:25 竞价", status: "complete" },
+    { slot: "1030", label: "10:30 早盘一小时", status: "complete" },
+  ],
+});
+assert.deepEqual(
+  old.map((section) => section.slot),
+  ["auction", "1030"],
+);
+assert.equal(old[0].summary, "高开35只。\n方向甲 +2.3%。");
+assert.equal(old[1].summary, "方向乙 -1.2%。");
+const escapedLabel = briefSections({
+  body: "10:00 观察(1) · 真实原文。",
+  context: [{ slot: "1000", label: "10:00 观察(1)" }],
+});
+assert.equal(
+  escapedLabel[0].summary,
+  "真实原文。",
+  "labels with RegExp punctuation remain literal",
+);
+
+const unsafe = render({
+  headline: '<script>alert("x")</script>',
+  body: "<img src=x onerror=alert(1)> +0.00% -0.00% 上涨 0 只 炸板 0 家",
+  context: [null],
+  evidence: [{ text: "<a href=javascript:alert(1)>来源</a>" }],
+});
+assert.match(unsafe, /&lt;script&gt;/);
+assert.match(unsafe, /&lt;img src=x/);
+assert.match(unsafe, /&lt;a href=javascript:/);
+assert.doesNotMatch(unsafe, /<script>|<img |<a href/);
+const zero = renderToStaticMarkup(
+  createElement(BriefText, {
+    text: "+0.00% −0.00% +0只 上涨 0 只、封板 至少 0 家、炸板 0 只",
+  }),
+);
+assert.doesNotMatch(
+  zero,
+  /class=/,
+  "zero values stay neutral across signed changes and event counts",
+);
+assert.match(render({}), /暂未生成可展示的简报/);
+assert.match(
+  render({
+    slot: "noon",
+    headline: "11:30 旧午评标题",
+    sections: [
+      {
+        slot: "noon",
+        label: "11:35 午评",
+        status: "complete",
+        summary: "真实回执",
+        highlights: [],
+      },
+    ],
+  }),
+  /<h2>11:35 午评累计简报<\/h2>/,
+);
+assert.match(
+  legacy,
+  /<h2>10:30 盘面简报<\/h2>/,
+  "old body-only headlines keep their original wording",
+);
+
+const viewport = {
+  scrollTop: 120,
+  getBoundingClientRect: () => ({ top: 300 }),
+};
+const target = { getBoundingClientRect: () => ({ top: 570 }) };
+assert.equal(
+  briefSectionScrollTop(viewport, target),
+  378,
+  "internal geometry adds only its own existing scroll offset",
+);
+assert.equal(
+  briefSectionScrollTop(viewport, {
+    getBoundingClientRect: () => ({ top: 0 }),
+  }),
+  0,
+);
+const nav = {
+  scrollLeft: 0,
+  clientWidth: 300,
+  getBoundingClientRect: () => ({ left: 20 }),
+};
+assert.equal(
+  briefSlotScrollLeft(nav, {
+    getBoundingClientRect: () => ({ left: 830, width: 100 }),
+  }),
+  616,
+  "selected late slot is revealed only within the horizontal nav",
+);
+nav.scrollLeft = 600;
+assert.equal(
+  briefSlotScrollLeft(nav, {
+    getBoundingClientRect: () => ({ left: 10, width: 90 }),
+  }),
+  584,
+  "early slot can be revealed to the left",
+);
+assert.equal(
+  briefSlotScrollLeft(nav, {
+    getBoundingClientRect: () => ({ left: 50, width: 90 }),
+  }),
+  600,
+  "visible chips do not jitter",
+);
+console.log(
+  "intraday brief timeline: structured/legacy/missing, safe numeric text, zero and internal-only scroll geometry passed",
+);
