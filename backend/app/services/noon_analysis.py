@@ -156,7 +156,7 @@ def normalize_pool(rows, declared, complete, quotes, name):
         output = [r for r in output if counts[r['instrument_id']] == 1]
         excluded += sum(n for n in counts.values() if n > 1)
     state = 'observed' if complete and not excluded else 'partial' if output else 'unknown'
-    return {'state': state, 'count': len(output) if output else None,
+    return {'state': state, 'count': len(output) if output or state == 'observed' else None,
             'declared_total': declared, 'items': output, 'excluded_rows': excluded,
             'reason': None if state == 'observed' else '来源范围、身份、价格或分页未完整核验，不能把缺失视为零事件',
             'scope': f'扶摇{name}来源池；价格与本次股票快照交叉核对，尚未收盘'}
@@ -165,17 +165,18 @@ def normalize_pool(rows, declared, complete, quotes, name):
 def board_summary(pool):
     values = [row.get('continue_day_cnt') for row in pool.get('items', [])]
     known = [value for value in values if isinstance(value, int) and not isinstance(value, bool) and value > 0]
+    verified_empty = pool.get('state') == 'observed' and not values
     counts = Counter(known)
     maximum = max(known) if known else None
     unknown = len(values) - len(known)
     return {'max_confirmed': maximum, 'max_continuous_board': maximum,
-            'first_board_count': counts.get(1, 0) if known else None,
-            'multi_board_count': sum(count for height, count in counts.items() if height >= 2) if known else None,
-            'continuous_board_count': sum(count for height, count in counts.items() if height >= 2) if known else None,
+            'first_board_count': counts.get(1, 0) if known or verified_empty else None,
+            'multi_board_count': sum(count for height, count in counts.items() if height >= 2) if known or verified_empty else None,
+            'continuous_board_count': sum(count for height, count in counts.items() if height >= 2) if known or verified_empty else None,
             'height_unknown_count': unknown, 'unknown_count': unknown,
             'distribution': [{'board_count': height, 'count': count} for height, count in sorted(counts.items(), reverse=True)],
             'scope': '本次已核验涨停池价格样本的来源连续板数字段；不是全市场收盘确认高度，不解析几天几板文本',
-            'reason': None if known and pool.get('state') == 'observed' and not unknown else
+            'reason': None if verified_empty or (known and pool.get('state') == 'observed' and not unknown) else
                       '样本或来源连续板数字段不完整，家数与高度只表示已核验部分'}
 
 

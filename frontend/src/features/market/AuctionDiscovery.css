@@ -93,13 +93,47 @@
   color: var(--muted);
   font-size: 10px;
 }
+.auction-discovery-stocks .auction-identity {
+  min-width: 130px;
+}
+.auction-discovery-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.auction-discovery-stocks .auction-discovery-themes {
+  min-width: 170px;
+  max-width: 260px;
+  white-space: normal;
+}
+.auction-discovery-theme-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.discovery-theme {
+  display: inline-block;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.discovery-theme.industry {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 13%, transparent);
+}
+.discovery-theme.concept {
+  color: var(--purple, #b99afa);
+  background: color-mix(in srgb, var(--purple, #b99afa) 13%, transparent);
+}
 
 .discovery-workspace {
   display: grid;
   grid-template-columns: minmax(16rem, 0.78fr) minmax(0, 1.22fr);
   gap: 12px;
   min-width: 0;
-  align-items: stretch;
+  align-items: start;
 }
 .discovery-direction,
 .discovery-detail {
@@ -182,6 +216,9 @@
 .discovery-direction-table tr[data-selected="true"] {
   background: var(--surface2);
 }
+.discovery-direction-table tbody tr {
+  cursor: pointer;
+}
 .discovery-direction-table tr[data-selected="true"] > td:first-child {
   box-shadow: inset 2px 0 var(--blue);
 }
@@ -195,6 +232,7 @@
   font-size: 10px;
 }
 .discovery-direction-table .stock-link {
+  flex-direction: row;
   white-space: normal;
   overflow-wrap: anywhere;
   text-align: start;

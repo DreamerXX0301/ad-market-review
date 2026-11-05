@@ -355,8 +355,9 @@ def freeze_stock_classifications(payload, topics, *, source_sha256=None):
         return {symbol: _classification('采集所用成员资料未通过归属核验，不用当前目录替代', generation) for symbol in symbols}
 
 
-def _frozen_classifications(payload, generation):
-    symbols, _ = _target_symbols(payload)
+def frozen_stock_classifications(payload, symbols):
+    """Validate stored classification facts for a caller's bounded stock list."""
+    generation = _source_id(payload)
     mapping = payload.get('stock_classifications')
     output = {}
     sectors = {_code(row): row for row in payload.get('sectors') or [] if isinstance(row, dict) and _code(row)}
@@ -408,7 +409,7 @@ def build_member_limit_context(payload):
     generation = _source_id(payload)
     symbols, _ = _target_symbols(payload)
     frozen_classes = 'stock_classifications' in payload
-    classifications = (_frozen_classifications(payload, generation) if frozen_classes else
+    classifications = (frozen_stock_classifications(payload, symbols) if frozen_classes else
         {symbol: _classification('原采集代际成员资料未取得，不使用当前名单补写归属', generation) for symbol in symbols})
     sectors = payload.get('sectors')
     sectors = [row for row in sectors if isinstance(row, dict)] if isinstance(sectors, list) else []

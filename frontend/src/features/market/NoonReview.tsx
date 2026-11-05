@@ -1,4 +1,5 @@
 import NoonStockChange from "./NoonStockChange";
+import MarketSuspensionBadge from "./MarketSuspensionBadge";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import {
@@ -173,6 +174,7 @@ function QuoteIdentity({
         </span>
       )}
       <NoonBoardTag row={row} />
+      <MarketSuspensionBadge evidence={row.suspension} />
       <small>
         <CopyStockCode instrumentId={row.instrument_id} code={row.topic_code} />
       </small>
@@ -602,7 +604,9 @@ function PoolFacts({
             </summary>
             {!rows.length ? (
               <p>
-                {event.reason || "本次没有可核验样本，不能据此认定零事件。"}
+                {event.state === "observed" && event.count === 0
+                  ? "来源已确认本次为 0 只。"
+                  : event.reason || "本次没有可核验样本，不能据此认定零事件。"}
               </p>
             ) : (
               <QuoteTable
@@ -1154,7 +1158,19 @@ export default function NoonReview({
   const snapshot = view?.snapshot || {},
     summary = payload?.summary || {},
     breadth = summary.breadth || {},
-    events = payload?.events || {};
+    events = { ...payload?.events };
+  const restoredPoolKeys = new Set<string>();
+  for (const key of ["limit_up", "limit_down", "limit_break"]) {
+    const verifiedPool =
+      snapshot.workbench?.verified_empty_event_pools?.[key] ??
+      (key === "limit_down"
+        ? snapshot.workbench?.limit_down_source_pool
+        : null);
+    if (verifiedPool?.state === "observed" && verifiedPool.count === 0) {
+      events[key] = verifiedPool;
+      restoredPoolKeys.add(key);
+    }
+  }
   const onStock =
     onNoonStock && typeof snapshot.snapshot_id === "string"
       ? (id: string) => onNoonStock(id, snapshot.snapshot_id)
@@ -1171,7 +1187,19 @@ export default function NoonReview({
     flat = noonNumber(breadth.flat);
   const breadthTotal =
     up != null && down != null && flat != null ? up + down + flat : null;
-  const gaps = noonLines(payload?.gaps);
+  const gapRows = payload?.gaps;
+  const gaps = noonLines(
+    Array.isArray(gapRows)
+      ? gapRows.filter(
+          (gap) =>
+            !restoredPoolKeys.has(gap?.domain) ||
+            ![
+              "来源为空，不能确认真实零事件",
+              "来源范围、身份、价格或分页未完整核验，不能把缺失视为零事件",
+            ].includes(gap?.reason),
+        )
+      : gapRows,
+  );
   const stocks = noonRows(payload?.stocks);
   const recent = Array.isArray(view?.available_dates)
     ? view.available_dates
@@ -1866,6 +1894,7 @@ export default function NoonReview({
                   key={snapshot.snapshot_id}
                   workbench={snapshot.workbench}
                   snapshotId={snapshot.snapshot_id}
+                  stockSuspensions={snapshot.stock_suspensions}
                   boardFilter={boardFilter}
                   onStock={onStock}
                   chartDate={chartDate}

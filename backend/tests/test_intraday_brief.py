@@ -44,6 +44,46 @@ def _projection(slot, up, percent=None):
                 {'instrument_id': '884229.TI', 'name': '半导体设备', 'change_pct': percent}]}
 
 
+def test_sector_comparison_metadata_only_marks_verified_raw_index_quotes():
+    row = {'instrument_id': '884229.TI', 'name': '半导体设备', 'kind': 'industry',
+           'latest_price': 103, 'prev_close': 100, 'change_pct': 3,
+           'currency': 'CNY', 'price_basis': 'none'}
+    assert not brief._sector(row).get('quote_basis'), 'auction averages never inherit index provenance'
+    projected = brief._sector(row, quote_source='fuyao')
+    assert {key: projected[key] for key in
+            ('quote_source', 'quote_basis', 'latest_price', 'prev_close', 'currency', 'price_basis')} == {
+        'quote_source': 'fuyao', 'quote_basis': 'provider_index', 'latest_price': 103,
+        'prev_close': 100, 'currency': 'CNY', 'price_basis': 'none'}
+    assert not brief.sector_comparison_metadata(row, source='other')
+    assert not brief.sector_comparison_metadata({**row, 'change_pct': 9}, source='fuyao')
+    assert not brief.sector_comparison_metadata({**row, 'prev_close': None}, source='fuyao')
+    assert not brief.sector_comparison_metadata({**row, 'kind': 'stock'}, source='fuyao')
+
+
+def test_noon_rotation_member_identity_reuses_frozen_proof_only(monkeypatch):
+    from app.services import noon_membership_context
+    from app.services.noon_sector_views import freeze_memberships
+    from test_noon_membership_context import payload, topic, GENERATION, PRIOR, OBSERVED, CODE
+
+    value = payload()
+    sector = value['sectors'][0]
+    sector.update(member_limit_up_count=1, member_limit_up_state='observed')
+    value['sector_memberships'] = freeze_memberships(value, [topic()])
+    quotes = {row['instrument_id']: row for row in value['stocks']}
+    monkeypatch.setattr(noon_membership_context, '_load_topics', lambda *_: pytest.fail('no later member source'))
+    result = brief._noon_member_metadata(value, sector, quotes)
+    assert result == {'member_count': 2, 'member_date': OBSERVED, 'member_list_complete': True,
+                      'member_reference_sha256': brief.sector_membership_fingerprint(
+                          GENERATION, PRIOR, CODE, 'industry', OBSERVED, ['600002.SH', '600001.SH'])}
+    sector['member_limit_up_count'] = 2
+    assert not brief._noon_member_metadata(value, sector, quotes)
+    sector['member_limit_up_count'] = 1
+    value['sector_memberships']['items'][CODE]['sha256'] = '0' * 64
+    assert not brief._noon_member_metadata(value, sector, quotes)
+    value.pop('sector_memberships')
+    assert not brief._noon_member_metadata(value, sector, quotes)
+
+
 def test_cumulative_cutoff_excludes_future_and_late_published_earlier_slots():
     records = {'auction': {'time': 10, 'ready': 20}, '1000': {'time': 35, 'ready': 80},
                '1030': {'time': 50, 'ready': 51}, '1100': {'time': 60, 'ready': 61},
@@ -118,6 +158,14 @@ def test_closing_projection_only_uses_verified_counts(monkeypatch):
     verified = {'state': 'partial', 'observed_broken_count': 32}
     common = {'date': day, 'snapshot_id': generation}
     overview = {**common, 'quality': 'partial', 'total_amount': 100,
+                'amount_change': 30, 'amount_previous_date': '2026-11-03',
+                'indices': [
+                    {'date': day, 'instrument_id': '000001.SH', 'name': '上证指数',
+                     'close': 3000, 'change_pct': 1, 'amount_unit': 'CNY', 'amount': 30,
+                     'amount_previous': 40, 'amount_previous_date': '2026-11-03'},
+                    {'date': '2026-11-03', 'instrument_id': '000688.SH', 'name': '科创50',
+                     'close': 1200, 'change_pct': 2, 'amount_unit': 'CNY', 'amount': 11},
+                ],
                 'breadth': {'up': 3, 'down': 2, 'flat': 1, 'total': 6},
                 'limit_up_count': 121, 'broken_count': 33, 'broken_board_analysis': {'current': verified}}
     ladder = {**common, 'main_coverage': {'complete': False, 'confirmed_count': 119},
@@ -129,6 +177,11 @@ def test_closing_projection_only_uses_verified_counts(monkeypatch):
     anchor = brief._close_anchor(day, {'generation': generation})
     assert anchor['ladder']['sealed_count'] == 119
     assert anchor['ladder']['broken_board']['count'] == 32
+    assert anchor['market_pulse']['turnover']['amount_comparison']['previous_amount'] == 70
+    assert len(anchor['market_pulse']['indices']) == 1
+    index = anchor['market_pulse']['indices'][0]
+    assert index['latest_price'] == 3000 and index['amount'] == 30
+    assert index['amount_comparison']['change_from_previous'] == -10
     assert anchor['retrospective']['events'][-2]['count'] == 1
     output = brief._brief('close', [('close', anchor)])
     assert '至少 119 只' in output['body'] and '至少 32 只' in output['body']
@@ -136,6 +189,63 @@ def test_closing_projection_only_uses_verified_counts(monkeypatch):
     overview['snapshot_id'] = 'prior-generation'
     with pytest.raises(ValueError, match='正式发布身份不符'):
         brief._close_anchor(day, {'generation': generation})
+
+
+def test_old_noon_anchor_uses_exact_original_amounts_without_updating_stored_brief(monkeypatch):
+    from contextlib import nullcontext
+    from hashlib import sha256
+    import sqlite3
+
+    from test_noon_comparison import CODE, snapshot
+
+    payload = snapshot()
+    payload['version'] = 'noon-snapshot-v1'
+    payload['indices'][0].update(name='上证指数', change_pct=1.25, latest_price=3000)
+    rows = [{'instrument_id': f'{600001 + index}.SH', 'name': f'样本{index}',
+             'latest_price': 11, 'prev_close': 10, 'change_pct': 10}
+            for index in range(14)]
+    sealed = [{**row, 'continue_day_cnt': index + 1} for index, row in enumerate(rows[:2])]
+    payload.update(stocks=rows, events={'limit_up': {'state': 'observed', 'items': sealed},
+                                       'limit_break': {'state': 'observed', 'items': rows[2:]}})
+    topic_code = '884045.TI'
+    topic = {'topic_code': topic_code, 'name': '测试行业', 'kind': 'industry',
+             'source': 'fuyao', 'members_observed_date': '2026-10-21'}
+    payload['sectors'] = [{'instrument_id': topic_code, **topic, 'latest_price': 103,
+                           'prev_close': 100, 'change_pct': 3, 'currency': 'CNY', 'price_basis': 'none'}]
+    payload['stock_classifications'] = {rows[2]['instrument_id']: {
+        'industries': [topic], 'topics': [], 'state': 'observed_sample'}}
+    anchor = {'id': 'noon-fixture', 'date': payload['date'], 'slot': 'noon',
+              'collected_start_at': payload['collected_start_at'], 'collected_end_at': payload['collected_end_at'],
+              'sectors': [{'instrument_id': topic_code, 'name': topic['name'], 'kind': topic['kind'], 'change_pct': 3}],
+              **{key: {'indices': [{'instrument_id': CODE, 'name': '上证指数', 'change_pct': 1.25}]}
+                 for key in ('market', 'market_pulse')}}
+    stored = json.dumps({'anchor': anchor, 'brief': {'body': '已生成的原始简报'}})
+    raw = json.dumps(payload)
+    connection = sqlite3.connect(':memory:')
+    connection.row_factory = sqlite3.Row
+    monkeypatch.setattr(brief, 'connect', lambda: nullcontext(connection))
+    connection.executescript('''CREATE TABLE market_intraday_brief (trade_date,slot,body_json);
+        CREATE TABLE market_noon_snapshot (trade_date,snapshot_id,collected_start_at,collected_end_at,content_sha256,payload_json);''')
+    connection.execute("INSERT INTO market_intraday_brief VALUES (?,'noon',?)", (anchor['date'], stored))
+    connection.execute('INSERT INTO market_noon_snapshot VALUES (?,?,?,?,?,?)', (
+        anchor['date'], anchor['id'], anchor['collected_start_at'], anchor['collected_end_at'],
+        sha256(raw.encode()).hexdigest(), raw))
+    view = brief.read_brief_view(anchor['date'])
+    index = view['anchors'][0]['market_pulse']['indices'][0]
+    assert index['latest_price'] == 3000 and index['amount'] == 120
+    assert index['amount_comparison']['label'] == '较昨日午评'
+    assert index['amount_comparison']['change_from_previous'] == 20
+    assert view['anchors'][0]['sectors'][0]['quote_basis'] == 'provider_index'
+    assert view['anchors'][0]['sectors'][0]['prev_close'] == 100
+    ladder = view['anchors'][0]['ladder']
+    assert [(item['board_count'], len(item['items'])) for item in ladder['groups']] == [(2, 1), (1, 1)]
+    assert ladder['broken_board']['count'] == len(ladder['broken_board']['items']) == 12
+    assert ladder['broken_board']['items'][0]['themes'] == [
+        {'name': '测试行业', 'kind': 'industry', 'member_date': '2026-10-21'}]
+    assert connection.execute('SELECT body_json FROM market_intraday_brief').fetchone()[0] == stored
+    connection.execute("UPDATE market_noon_snapshot SET content_sha256='invalid'")
+    assert brief.read_brief_view(anchor['date'])['anchors'][0] == anchor
+    connection.close()
 
 
 def test_worker_retains_audited_fallback_without_repeating_failed_model(tmp_path, monkeypatch):

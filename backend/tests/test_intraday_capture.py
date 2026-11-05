@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from app import core, worker
 from app.routers.intraday import router
@@ -54,6 +55,69 @@ def test_break_pool_rejects_stale_source_and_third_page(monkeypatch):
     assert [gap['domain'] for gap in capture.gaps] == ['limit_break_page_1', 'limit_break_page_3']
 
 
+def test_rotation_member_identity_uses_original_reference_and_preserves_unknowns(monkeypatch):
+    from copy import deepcopy
+
+    code, a, b = '884045.TI', '000001.SZ', '000002.SZ'
+    reference = {
+        'master': {}, 'calendar': [PRIOR, DAY],
+        'industry_catalog': [{'thscode': code, 'name': '测试行业'}], 'concept_catalog': [],
+        'topics': [{'topic_code': code, 'observed_date': PRIOR, 'source': 'fuyao',
+                    'kind': 'industry', 'members_complete': True, 'instrument_ids': [b, a]}],
+    }
+    market = SimpleNamespace(status=lambda: {'snapshot_id': GENERATION, 'data_end': PRIOR},
+                             reference=lambda: reference)
+    monkeypatch.setattr(service, 'get_market', lambda: market)
+
+    def snapshot(**board_changes):
+        board = {'instrument_id': code, 'kind': 'industry', 'member_date': PRIOR,
+                 'member_list_complete': True, 'member_count': 2, **board_changes}
+        return {'date': DAY, 'member_reference': {'generation': GENERATION, 'date': PRIOR},
+                'index_only_sectors': [board], 'comparison_input': {'stocks': []}}
+
+    first, second = snapshot(), snapshot()
+    saved = deepcopy(first)
+    service._attach_saved_stock_references([first, second])
+    identity = first['index_only_sectors'][0]['member_reference_sha256']
+    assert identity == second['index_only_sectors'][0]['member_reference_sha256']
+    assert len(identity) == 64 and 'member_reference_sha256' not in saved['index_only_sectors'][0]
+    reference['topics'][0]['instrument_ids'] = [a, b]
+    reordered = snapshot()
+    service._attach_saved_stock_references([reordered])
+    assert reordered['index_only_sectors'][0]['member_reference_sha256'] == identity
+    for changes in ({'member_date': '2026-10-26'}, {'member_list_complete': False},
+                    {'member_count': 1}, {'kind': 'concept'}):
+        unknown = snapshot(**changes)
+        service._attach_saved_stock_references([unknown])
+        assert 'member_reference_sha256' not in unknown['index_only_sectors'][0]
+    reference['topics'][0]['members_complete'] = False
+    incomplete = snapshot()
+    service._attach_saved_stock_references([incomplete])
+    assert 'member_reference_sha256' not in incomplete['index_only_sectors'][0]
+
+
+@pytest.mark.parametrize(('offset', 'pages', 'code', 'complete'), [
+    (0, 0, 0, True),
+    (-30, 0, 0, False),
+    (0, 1, 0, False),
+    (0, 0, 1, False),
+])
+def test_intraday_zero_requires_success_and_timestamp_in_exact_window(monkeypatch, offset, pages, code, complete):
+    clock = datetime(2026, 10, 28, 10, 0, 7, tzinfo=CHINA)
+    monkeypatch.setattr(service, 'now_china', lambda: clock)
+    monkeypatch.setattr(service, '_guard_job', lambda _: None)
+    params = {'parameters_json': json.dumps({'version': service.VERSION})}
+    response = {'code': code, 'data': {'item': [], 'timestamp': int(clock.timestamp() * 1000) + offset * 1000,
+                'pagination': {'page': 1, 'pages': pages, 'size': 200, 'total': 0}}}
+    def request(endpoint, params, **_kwargs):
+        assert params == {'date_ms': int(clock.replace(hour=0, second=0).timestamp() * 1000), 'page': 1, 'size': 200}
+        return response
+    adapter = SimpleNamespace(request=request)
+    capture = service.Capture(params, DAY, service.SLOTS[0], adapter, None, 30)
+    assert capture.pool('limit_break', '/api/a-share/special-data/limit-break-pool') == ([], 0, complete)
+    assert bool(capture.gaps) is not complete
+
+
 def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     monkeypatch.setenv('SHIXU_DATA_DIR', str(tmp_path))
     for key in ('SHIXU_SQLITE_PATH', 'SHIXU_PUBLISHED_DIR', 'SHIXU_RAW_DIR', 'SHIXU_WORK_DIR'):
@@ -87,6 +151,9 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
         timestamp = int(clock.timestamp() * 1000)
         if endpoint.endswith('trading-days'):
             return {'data': {'item': [{'date': day.replace('-', '')} for day in (PRIOR, DAY)], 'timestamp': timestamp}}
+        if clock.hour == 11 and (endpoint.endswith('limit-up-pool') or endpoint.endswith('limit-break-pool')):
+            return {'code': 0, 'data': {'item': [], 'timestamp': timestamp,
+                                       'pagination': {'total': 0, 'page': 1, 'size': 200, 'pages': 0}}}
         if endpoint.endswith('limit-up-pool'):
             assert params['date_ms'] == int(datetime(2026, 10, 28, tzinfo=CHINA).timestamp() * 1000)
             sealed = ([{'thscode': '000001.SZ', 'last_price': 10.1, 'continue_day_cnt': 2}] if first_slot() else
@@ -143,7 +210,14 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
         saved = service._saved_slot(connection, DAY, '1000')
         chart = next(row for row in saved['comparison_input']['stocks'] if row['instrument_id'] == '000001.SZ')
         assert (chart['open'], chart['high'], chart['low'], chart['latest_price']) == (10, 10.1, 10, 10.1)
+        assert 'quote_source' not in saved['sectors'][0], 'read-side metadata never changes the frozen snapshot'
     assert first['snapshots'][0]['sectors'][0]['kind'] == 'industry'
+    projected = first['snapshots'][0]['sectors'][0]
+    assert (projected['quote_source'], projected['quote_basis'], projected['prev_close']) == (
+        'fuyao', 'provider_index', 10)
+    member_board = first['snapshots'][0]['index_only_sectors'][0]
+    assert len(member_board['member_reference_sha256']) == 64
+    assert 'member_reference_sha256' not in saved['index_only_sectors'][0]
     assert first['snapshots'][0]['summary']['limit_up_pool_state'] == 'observed'
     assert first['snapshots'][0]['summary']['limit_break_pool_state'] == 'observed'
     sector_stocks = first['snapshots'][0]['board_stocks']['884045.TI']
@@ -170,6 +244,28 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     second_page = api.get(url + '/members', params={**lookup, 'page': 2}).json()
     assert second_page['items'][0]['limit_up_state'] == 'broken'
     assert second_page['items'][1]['change_pct'] is None and second_page['items'][1]['missing_reason']
+    ascending = {**lookup, 'sort': 'change_pct', 'direction': 'asc'}
+    first_sorted = api.get(url + '/members', params=ascending).json()
+    assert (first_sorted['sort'], first_sorted['direction']) == ('change_pct', 'asc')
+    assert [item['rank'] for item in first_sorted['items']] == [3, 2]
+    second_sorted = api.get(url + '/members', params={**ascending, 'page': 2}).json()
+    assert [item['rank'] for item in second_sorted['items']] == [1, 4]
+    assert second_sorted['items'][-1]['change_pct'] is None
+    assert api.get(url + '/members', params={**lookup, 'sort': 'unexpected'}).status_code == 422
+
+    def history_for_symbols(date, slot, symbols):
+        assert (date, slot) == (DAY, '1000') and len(symbols) == 4
+        return {'date': date, 'slot': slot, 'as_of': PRIOR, 'items': {
+            '000001.SZ': {'limit_up_1y': 0},
+            '000002.SZ': {'limit_up_1y_observed': 0},
+            '000003.SZ': {'limit_up_1y_observed': 5},
+        }}
+
+    monkeypatch.setattr(intraday_members, 'history_for_symbols', history_for_symbols)
+    historical = api.get(url + '/members', params={**lookup, 'sort': 'limit_up_1y'}).json()
+    assert [item['instrument_id'] for item in historical['items']] == ['000003.SZ', '000001.SZ']
+    assert historical['history']['as_of'] == PRIOR
+    assert set(historical['history']['items']) == {'000003.SZ', '000001.SZ'}
     only_star = api.get(url + '/members', params={**lookup, 'board': 'star'}).json()
     assert only_star['matched'] == 1 and only_star['items'][0]['instrument_id'] == '688001.SH'
     assert api.get(url + '/members', params={**lookup, 'slot': '1030'}).json()['state'] == 'missing'
@@ -188,6 +284,8 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     major_indices = first['snapshots'][0]['market_pulse']['indices']
     assert [row['instrument_id'] for row in major_indices] == ['000001.SH', '399001.SZ', '399006.SZ', '000688.SH']
     assert all(row['latest_price'] == 10.1 for row in major_indices)
+    assert all(row['amount'] == 100 and row['amount_comparison']['previous_amount'] is None for row in major_indices)
+    assert 'interval_amount' not in major_indices[0]  # No 09:30 endpoint was captured.
     assert requests[3][1]['thscodes'] == ','.join(row['instrument_id'] for row in major_indices)
     assert first['snapshots'][0]['ladder']['highest_board'] == 2
     broken = first['snapshots'][0]['ladder']['broken_board']
@@ -197,6 +295,8 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     prior = first['snapshots'][0]['relay_feedback']['prior_session']
     assert prior['date'] == PRIOR and prior['state'] == 'observed' and prior['promotion_count'] == 1
     assert prior['items'][0]['previous_board_count'] == 1
+    expected_themes = [{'name': '测试行业', 'kind': 'industry', 'member_date': PRIOR}]
+    assert prior['items'][0]['themes'] == expected_themes
     assert first['snapshots'][0]['relay_feedback']['same_day']['state'] == 'unknown'
 
     clock = clock.replace(hour=10, minute=30)
@@ -210,16 +310,38 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     interval = second['summary']['interval_amount']
     assert interval['amount'] == 40 and interval['comparable_count'] == 2
     assert interval['previous_date'] == PRIOR and interval['previous_amount'] is None
+    major_index = second['market_pulse']['indices'][0]
+    assert major_index['amount'] == 120 and major_index['interval_amount']['amount'] == 20
+    assert major_index['interval_amount']['previous_amount'] is None
     assert {'comparison_input', 'source_checks', 'sealed_pool_input'}.isdisjoint(second)
     same_day = second['relay_feedback']['same_day']
     assert same_day['label'] == '开盘首轮' and same_day['state'] == 'observed'
     assert same_day['held_count'] == 0 and same_day['entered_count'] == same_day['absent_count'] == 1
     assert same_day['entered'][0]['instrument_id'] == '000003.SZ'
     assert same_day['absent'][0]['instrument_id'] == '000001.SZ'
+    assert same_day['entered'][0]['themes'] == same_day['absent'][0]['themes'] == expected_themes
     assert second['ladder']['broken_board']['items'][0]['themes'][0]['name'] == '测试行业'
     prior_broken = second['relay_feedback']['prior_broken_session']
     assert prior_broken['date'] == PRIOR and prior_broken['state'] == 'observed'
     assert prior_broken['sealed_count'] == 1 and prior_broken.get('promotion_count') is None
+    assert prior_broken['items'][0]['themes'] == expected_themes
+    with core.connect() as connection:
+        old = service._saved_slot(connection, DAY, '1030')
+    relay = old['relay_feedback']
+    relay['same_day']['entered'][0].pop('themes')
+    relay['prior_broken_session']['items'][0].pop('themes')
+    service._attach_saved_stock_references([old])
+    assert relay['same_day']['entered'][0]['themes'] == expected_themes
+    assert relay['prior_broken_session']['items'][0]['themes'] == expected_themes
+
+    clock = clock.replace(hour=11, minute=0)
+    assert queue('verified-empty').status_code == 200
+    worker.dispatch(tasks.claim_next('test'))
+    empty = api.get(url).json()['snapshots'][-1]
+    assert empty['slot'] == '1100'
+    assert empty['summary']['limit_up_pool_state'] == empty['summary']['limit_break_pool_state'] == 'observed'
+    assert empty['ladder']['sealed_count'] == empty['ladder']['broken_board']['count'] == 0
+    assert empty['ladder']['broken_board']['items'] == []
 
     # Old queued work runs within its frozen request plan and still publishes its own shape.
     clock = clock.replace(hour=14, minute=35)
@@ -338,3 +460,78 @@ def test_interval_vs_previous_day_uses_four_exact_symbol_endpoints():
     assert result['previous_amount'] == 100
     assert result['change_from_previous'] == 200
     assert result['comparable_count'] == 2 and result['previous_comparable_count'] == 1
+
+
+def test_stock_and_index_turnover_compares_only_matching_evidence(monkeypatch):
+    from contextlib import nullcontext
+
+    def quote(symbol, amount, *, currency='CNY'):
+        return dict(instrument_id=symbol, currency=currency, price_basis='none',
+                    prev_close=10, latest_price=11, amount=amount)
+
+    a, b = '000001.SH', '399001.SZ'
+    stock, extra = '000001.SZ', '600001.SH'
+    pulse = {'turnover': {'amount': 1000}, 'indices': [{'instrument_id': a}, {'instrument_id': b}]}
+    current = {'version': service.VERSION, 'date': DAY, 'slot': '1030', 'market_pulse': pulse,
+               'relay_feedback': {'prior_session': {'date': PRIOR}},
+               'comparison_input': {'stocks': [quote(stock, 500), quote(extra, 500)],
+                                    'indices': [quote(a, 400), quote(b, 200)]}}
+    before = {'comparison_input': {'indices': [quote(a, 250), quote(b, 230)]}}
+    previous = {'comparison_input': {'stocks': [quote(stock, 450), quote(extra, 500, currency='USD')],
+                                     'indices': [quote(a, 500), quote(b, 210)]}}
+    previous_before = {'comparison_input': {'indices': [quote(a, 300), quote(b, 100)]}}
+    service._attach_turnover(current, before, previous, previous_before, PRIOR)
+    market_comparison = pulse['turnover']['amount_comparison']
+    assert market_comparison == {'previous_date': PRIOR, 'comparison_amount': 500, 'previous_amount': 450,
+                                 'change_from_previous': 50, 'comparable_count': 1}
+    first_index, second_index = pulse['indices']
+    assert first_index['amount'] == 400
+    assert first_index['amount_comparison']['change_from_previous'] == -100
+    assert first_index['interval_amount']['amount'] == 150
+    assert first_index['interval_amount']['change_from_previous'] == -50
+    assert second_index['interval_amount']['amount'] is None  # Same-day amount dropped.
+    assert second_index['interval_amount']['previous_amount'] is None
+
+    pulse['turnover'].pop('amount_comparison')
+    pulse['indices'] = [{'instrument_id': a}]
+    current['comparison_input'].pop('indices')
+    monkeypatch.setattr(service, 'connect', lambda: nullcontext())
+    def retained(_, day, slot):
+        assert (day, slot) == (PRIOR, '1030')
+        return previous
+    monkeypatch.setattr(service, '_optional_turnover_slot', retained)
+    service._restore_legacy_turnover([current])
+    assert pulse['turnover']['amount_comparison'] == market_comparison
+    assert 'amount' not in pulse['indices'][0]  # Old checksums cannot recover missing index amounts.
+
+
+def test_unconfirmed_stock_only_gets_exact_regular_price_reference_with_dated_identity(monkeypatch):
+    code = '920007.BJ'
+    identity = {'name': '样本北交所股', 'list_date': '2025-08-08', 'kind': 'stock'}
+    market = SimpleNamespace(status=lambda: {'snapshot_id': GENERATION, 'data_end': PRIOR},
+                             reference=lambda: {'master': {code: identity},
+                                                'calendar': ['2026-10-21', '2026-10-22', '2026-10-23',
+                                                             '2026-10-26', '2026-10-27']})
+    monkeypatch.setattr(service, 'get_market', lambda: market)
+
+    def projected(**overrides):
+        quote = {'instrument_id': code, 'price_basis': 'none', 'currency': 'CNY',
+                 'amount': 123, 'latest_price': 39.49, 'prev_close': 30.38, **overrides}
+        quote['change_pct'] = (quote['latest_price'] / quote['prev_close'] - 1) * 100
+        row = {'instrument_id': code, 'name': identity['name'], 'change_pct': quote['change_pct'],
+               'limit_up_state': 'not_in_verified_pool', 'continue_day_cnt': None}
+        snapshot = {'date': DAY, 'member_reference': {'generation': GENERATION, 'date': PRIOR},
+                    'candidates': [row], 'comparison_input': {'stocks': [quote]}}
+        service._attach_saved_stock_references([snapshot])
+        return row
+
+    result = projected()
+    assert result['limit_up_reference_price'] == 39.49
+    assert result['limit_up_state'] == 'not_in_verified_pool' and result['continue_day_cnt'] is None
+    assert 'limit_up_reference_price' not in projected(latest_price=39.48)
+    assert 'limit_up_reference_price' not in projected(amount=0)
+    assert 'limit_up_reference_price' not in projected(currency='USD')
+    identity['list_date'] = '2026-10-23'
+    assert 'limit_up_reference_price' not in projected()
+    identity.update(list_date='2025-08-08', name='*ST 样本')
+    assert 'limit_up_reference_price' not in projected()

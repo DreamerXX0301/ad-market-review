@@ -52,6 +52,7 @@ export function MemberReturnCell({
         end={coverage.end}
         priceBasis={coverage.price_basis}
         missingSessions={coverage.missing_sessions}
+        coverage={coverage}
       />
     </div>
   );

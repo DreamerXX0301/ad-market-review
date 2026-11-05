@@ -134,6 +134,22 @@ def _snapshot_view(row):
     return value
 
 
+def auction_stock_suspensions(day, quotes, benchmark):
+    """Join only retained candidates without a conflicting auction observation."""
+    from app.services.auction_analysis import number
+    from app.services.market_suspensions import suspensions_for_date
+    suspensions = suspensions_for_date(day)
+    if not suspensions:
+        return {}
+    traded = {stock['instrument_id'] for stock in [*quotes, *benchmark]
+              if any(number(stock.get(key), positive=True) is not None
+                     for key in ('auction_volume', 'auction_amount'))
+              or number(stock.get('auction_pct')) not in (None, 0)}
+    return {stock['instrument_id']: proof for stock in quotes
+            if (proof := suspensions.get(stock['instrument_id'])) is not None
+            and stock['instrument_id'] not in traded}
+
+
 def read_view(day=None):
     now = now_china()
     day = day_value(day if day is not None else now.date().isoformat())
@@ -174,15 +190,19 @@ def read_view(day=None):
     # Classification is a read projection, never part of the immutable quote body.
     # validate_snapshot has already checked both the identities and the 100-row bound.
     from app.services.market_broken_boards import _board_fields
-    stock_boards = {item['instrument_id']: _board_fields(item['instrument_id'])
-                    for item in snapshot['payload']['quotes']['items']} if snapshot else {}
+    payload = snapshot['payload'] if snapshot else {}
+    quotes = (payload.get('quotes') or {}).get('items', [])
+    benchmark = (payload.get('benchmark') or {}).get('items', [])
+    stock_boards = {item['instrument_id']: _board_fields(item['instrument_id']) for item in quotes}
     return {'date': day, 'today': now.date().isoformat(), 'now': now.isoformat(),
             'capture_window': window, 'capture_reason': reason,
             'can_capture': False, 'can_retry': False, 'can_resume': False,
             'locked_for_day': ledger is not None, 'state': state,
             **automatic,
             'task': tasks.task_view(ledger['job_id']) if ledger else None,
-            'snapshot': snapshot, 'stock_boards': stock_boards, 'available_dates': dates,
+            'snapshot': snapshot, 'stock_boards': stock_boards,
+            'stock_suspensions': auction_stock_suspensions(day, quotes, benchmark) if quotes else {},
+            'available_dates': dates,
             'preparation': preparation_view(day, now) if retained is None and state != 'purged' else None,
             'retention': retention,
             'scope': '已留存的最多100只观察股票竞价样本；新采集仅来自每天自动计划，不代表全市场或策略跟踪信号。'}
@@ -226,9 +246,12 @@ def create_capture(payload, *, automation=None):
                     raise HTTPException(409, '请先完成行情初始化')
                 if not _configured(connection):
                     raise HTTPException(409, '请先配置并启用扶摇数据源')
+                from app.services.market_suspensions import VERSION as SUSPENSION_VERSION
+
                 params = {'operation': 'auction_snapshot', 'version': VERSION, 'source_id': 'fuyao',
                           'date': day, 'window_end_at': window['end_at'], 'stage': 'final',
-                          'instrument_ids': instruments, 'max_symbols': MAX_SYMBOLS}
+                          'instrument_ids': instruments, 'max_symbols': MAX_SYMBOLS,
+                          'suspension_evidence': SUSPENSION_VERSION}
                 if automatic:
                     params.update(automatic=True, automation=automatic)
                 identifier = new_id('job')

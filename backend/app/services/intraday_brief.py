@@ -28,6 +28,8 @@ LABELS = dict(TIMELINE)
 ORDER = {key: index for index, (key, _) in enumerate(TIMELINE)}
 INDEX_IDS = ('000001.SH', '399001.SZ', '399006.SZ', '000688.SH')
 MAX_BRIEF_BYTES = 384 * 1024
+MAX_NOON_BYTES = 8 * 1024 * 1024
+MAX_NOON_POOL_ROWS = 2000  # Noon collection keeps at most ten 200-row pages per source pool.
 BRIEF_VERSION = 1
 LENSES = {
     'market': '市场广度与成交',
@@ -57,8 +59,16 @@ def _known_count(value):
 
 
 def _index_rows(rows):
-    return [{k: row[k] for k in ('instrument_id', 'name', 'change_pct') if k in row}
+    return [{k: row[k] for k in ('instrument_id', 'name', 'change_pct', 'latest_price') if k in row}
+            | {'amount': row['amount'] if row.get('amount_unit', row.get('currency')) == 'CNY'
+               and _number(row.get('amount')) and row['amount'] >= 0 else None}
             for row in rows if row.get('instrument_id') in INDEX_IDS and _number(row.get('change_pct'))]
+
+
+def _anchor_amount_comparison(current, previous, previous_date, label, count=None):
+    return {'previous_date': previous_date, 'previous_amount': previous,
+            'comparison_amount': current, 'change_from_previous': current - previous,
+            'comparable_count': count, 'label': label}
 
 
 def _pool_count(value, state):
@@ -68,7 +78,50 @@ def _pool_count(value, state):
     return f'{count:,} 只' if state == 'observed' else f'至少 {count:,} 只'
 
 
-def _sector(row, stocks=()):
+def sector_comparison_metadata(row, *, source):
+    """Comparable raw index facts from an already verified provider response."""
+    code = row.get('topic_code') or row.get('instrument_id')
+    price, previous = row.get('latest_price', row.get('last_price')), row.get('prev_close', row.get('prev_price'))
+    change = row.get('change_pct', row.get('price_change_ratio_pct'))
+    if (source != 'fuyao' or not isinstance(code, str) or not re.fullmatch(r'\d{6}\.TI', code)
+            or row.get('kind') not in ('industry', 'concept')
+            or row.get('price_basis', 'none') != 'none' or row.get('currency', 'CNY') != 'CNY'
+            or not _number(price) or price <= 0 or not _number(previous) or previous <= 0
+            or not _number(change) or abs((price / previous - 1) * 100 - change) > .001):
+        return {}
+    return {'quote_source': source, 'quote_basis': 'provider_index',
+            'latest_price': price, 'prev_close': previous, 'price_basis': 'none', 'currency': 'CNY'}
+
+
+def sector_membership_fingerprint(generation, reference_date, code, kind, member_date, symbols):
+    return _digest({'source': 'fuyao', 'generation': generation, 'reference_date': reference_date,
+                    'date': member_date, 'code': code, 'kind': kind, 'instrument_ids': sorted(set(symbols))})
+
+
+def _noon_member_metadata(payload, sector, quotes):
+    from app.services import noon_membership_context as membership
+    from app.services.noon_sector_views import _members
+
+    if not isinstance(payload.get('sector_memberships'), dict):
+        return {}
+    generation = membership._source_id(payload)
+    if generation is None:
+        return {}
+    proof, _, error = _members(payload, sector, quotes)
+    sealed, pool_complete = membership._limit_pool(payload, quotes)
+    if (error or not proof or not proof['complete'] or not pool_complete
+            or sector.get('member_limit_up_state') != 'observed'
+            or type(sector.get('member_limit_up_count')) is not int
+            or sector['member_limit_up_count'] != len(set(proof['members']) & sealed)):
+        return {}
+    code = sector.get('topic_code') or sector.get('instrument_id')
+    observed = proof['topic']['observed_date']
+    return {'member_reference_sha256': sector_membership_fingerprint(
+                generation, payload['previous_review']['date'], code, sector['kind'], observed, proof['members']),
+            'member_count': len(proof['members']), 'member_date': observed, 'member_list_complete': True}
+
+
+def _sector(row, stocks=(), *, quote_source=None):
     return {
         'instrument_id': row.get('topic_code') or row.get('instrument_id'),
         'name': row['name'], 'kind': row.get('kind', 'concept'),
@@ -76,6 +129,7 @@ def _sector(row, stocks=()):
         'limit_up_count': row.get('limit_up_count'),
         'limit_up_count_state': row.get('limit_up_count_state', 'unknown'),
         'stocks': list(stocks)[:6],
+        **sector_comparison_metadata(row, source=quote_source),
     }
 
 
@@ -120,18 +174,40 @@ def _auction_anchor(row):
     return _anchor(row, 'auction', market=market, scope=scope, sectors=sectors)
 
 
-def _noon_anchor(row):
+def _verified_noon_payload(row):
     encoded = row['payload_json'].encode()
-    if len(encoded) > 8 * 1024 * 1024 or sha256(encoded).hexdigest() != row['content_sha256']:
+    if len(encoded) > MAX_NOON_BYTES or sha256(encoded).hexdigest() != row['content_sha256']:
         raise ValueError('午评快照正文校验失败')
     payload = json.loads(encoded)
     if (payload.get('date'), payload.get('version'), payload.get('collected_start_at'), payload.get('collected_end_at')) != (
         row['trade_date'], 'noon-snapshot-v1', row['collected_start_at'], row['collected_end_at'],
     ):
         raise ValueError('午评快照身份校验失败')
-    summary, events = payload['summary'], payload['events']
+    return payload
+
+
+def _noon_indices(payload):
+    from app.services.noon_comparison import build_index_comparisons
+
+    indices = _index_rows(payload['indices'])
+    comparisons = build_index_comparisons(payload)
+    for index in indices:
+        comparison = comparisons.get(index['instrument_id'], {})
+        if comparison.get('state') in ('snapshot_comparison', 'matched_period'):
+            index['amount_comparison'] = _anchor_amount_comparison(
+                comparison['current_amount'], comparison['previous_amount'],
+                payload['calendar']['previous_day'], comparison['label'], count=1)
+    return indices
+
+
+def _noon_anchor(row):
+    from app.services.noon_service import retained_empty_event_pools
+
+    payload = _verified_noon_payload(row)
+    summary = payload['summary']
+    events = {**payload['events'], **retained_empty_event_pools(row, payload)}
     up, broken = events.get('limit_up', {}), events.get('limit_break', {})
-    heights = events.get('board_summary', {})
+    heights = up.get('board_summary', events.get('board_summary', {}))
     ladder = {
         'state': up.get('state'), 'sealed_count': up.get('count'),
         'highest_board': heights.get('max_confirmed'),
@@ -140,7 +216,7 @@ def _noon_anchor(row):
         'broken_board': {'state': broken.get('state'), 'count': broken.get('count')},
     }
     market = {
-        'indices': _index_rows(payload['indices']),
+        'indices': _noon_indices(payload),
         'breadth': {**summary['breadth'], 'observed': summary['breadth']['total']},
         'turnover': {'amount': summary['amount'].get('value'), 'valid': summary['amount'].get('valid')},
     }
@@ -162,15 +238,17 @@ def _noon_anchor(row):
         sector_stocks = [_stock(value, board_count=sealed.get(value['instrument_id'], {}).get('continue_day_cnt'),
                                 state='sealed' if value['instrument_id'] in sealed else
                                 'broken' if value['instrument_id'] in broken_ids else None) for value in members[:6]]
-        sectors.append(_sector({**sector, 'limit_up_count': sector.get('member_limit_up_count'),
-                                'limit_up_count_state': sector.get('member_limit_up_state')}, sector_stocks))
+        sectors.append({**_sector({**sector, 'limit_up_count': sector.get('member_limit_up_count'),
+                                   'limit_up_count_state': sector.get('member_limit_up_state')}, sector_stocks,
+                                  quote_source='fuyao'),
+                        **_noon_member_metadata(payload, sector, stocks)})
     return _anchor(row, 'noon', market=market, ladder=ladder, sectors=sectors[:24],
                    scope='午评留存范围，逐股报价时刻可能未知')
 
 
 def _compact_live(snapshot):
     # The full verified live detail remains in the existing snapshots API.
-    sectors = [_sector(row) for row in snapshot.get('sectors', []) if _number(row.get('change_pct'))]
+    sectors = [_sector(row, quote_source='fuyao') for row in snapshot.get('sectors', []) if _number(row.get('change_pct'))]
     return {
         'slot': snapshot['slot'], 'id': snapshot['id'], 'quality': snapshot['quality'],
         'collected_end_at': snapshot['collected_end_at'],
@@ -234,19 +312,29 @@ def _close_anchor(day, record):
         'sealed_count': day_sealed, 'highest_board': height or None,
         'broken_board': {'state': broken_verified.get('state', 'unknown'), 'count': day_broken},
     }
+    closing_indices = [row for row in overview.get('indices', []) if row.get('date') == day]
     market = {
-        'indices': _index_rows(overview.get('indices', [])),
+        'indices': _index_rows([{**row, 'latest_price': row.get('close')} for row in closing_indices]),
         'breadth': {**breadth, 'valid': sum(breadth[k] for k in ('up', 'down', 'flat')),
                     'observed': breadth.get('expected_current_universe') or breadth['total']},
         'turnover': {'amount': overview.get('total_amount'), 'valid': breadth['total']},
     }
     if _number(overview.get('amount_change')):
         market['turnover']['previous_day_delta'] = overview['amount_change']
+        market['turnover']['amount_comparison'] = _anchor_amount_comparison(
+            overview['total_amount'], overview['total_amount'] - overview['amount_change'],
+            overview['amount_previous_date'], '较前一交易日收盘')
+    projected_indices = {row['instrument_id']: row for row in market['indices']}
+    for row in closing_indices:
+        index = projected_indices.get(row['instrument_id'])
+        if index and _number(index['amount']) and _number(row.get('amount_previous')):
+            index['amount_comparison'] = _anchor_amount_comparison(
+                index['amount'], row['amount_previous'], row['amount_previous_date'], '较前一交易日收盘', count=1)
     sectors = []
     for row in sectors_view['items']:
         if (row.get('quote_source') == 'fuyao' and row.get('quote_basis') == 'provider_index'
                 and row.get('quote_date') == day and _number(row.get('change_pct'))):
-            sectors.append(_sector({**row, 'limit_up_count': None}))
+            sectors.append(_sector({**row, 'limit_up_count': None}, quote_source='fuyao'))
     close_review = read_view(day).get('review')
     if close_review and close_review.get('source_snapshot_id') == generation:
         market['noon_to_close'] = {
@@ -671,5 +759,71 @@ def read_brief_view(day):
         stored = json.loads(row['body_json'])
         result['briefs'].append(stored['brief'])
         if stored.get('anchor'):
-            result['anchors'].append(stored['anchor'])
+            anchor = stored['anchor']
+            if row['slot'] == 'noon':
+                _restore_noon_details(anchor, day)
+            result['anchors'].append(anchor)
     return result
+
+
+def _restore_noon_details(anchor, day):
+    """Project original noon pool rows and amounts without modifying stored briefs."""
+    from app.services.noon_service import retained_empty_event_pools
+
+    with connect() as connection:
+        row = connection.execute("""SELECT * FROM market_noon_snapshot
+            WHERE trade_date=? AND snapshot_id=? AND collected_start_at=? AND collected_end_at=?
+              AND length(CAST(payload_json AS BLOB))<=?""",
+            (day, anchor.get('id'), anchor.get('collected_start_at'),
+             anchor.get('collected_end_at'), MAX_NOON_BYTES)).fetchone()
+    if row is None:
+        return
+    try:
+        payload = _verified_noon_payload(row)
+        indices = _noon_indices(payload)
+        restored = retained_empty_event_pools(row, payload)
+        ladder = _noon_ladder_details({**payload, 'events': {**payload.get('events', {}), **restored}})
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return
+    by_code = {index['instrument_id']: index for index in indices}
+    for field in ('market', 'market_pulse'):
+        for index in anchor.get(field, {}).get('indices', ()):
+            if original := by_code.get(index['instrument_id']):
+                index.update({key: original[key] for key in ('amount', 'amount_comparison', 'latest_price')
+                              if key in original})
+    if ladder is not None:
+        anchor['ladder'] = ladder
+    sector_metadata = {row.get('topic_code') or row.get('instrument_id'): row for row in payload.get('sectors', [])}
+    quotes = {row['instrument_id']: row for row in payload.get('stocks', [])}
+    for sector in anchor.get('sectors', []):
+        original = sector_metadata.get(sector.get('instrument_id'), {})
+        if (original.get('kind') == sector.get('kind') and original.get('change_pct') == sector.get('change_pct')):
+            sector.update(sector_comparison_metadata(original, source='fuyao'))
+            sector.update(_noon_member_metadata(payload, original, quotes))
+
+
+def _noon_ladder_details(payload):
+    from app.services.intraday_feedback import build_intraday_feedback, feedback_stock_rows
+    from app.services.noon_membership_context import frozen_stock_classifications
+
+    events = payload.get('events', {})
+    def bounded_pool(key):
+        pool = events.get(key)
+        if isinstance(pool, dict) and isinstance(pool.get('items'), list) and len(pool['items']) <= MAX_NOON_POOL_ROWS:
+            return pool
+        return None
+
+    up, broken = bounded_pool('limit_up'), bounded_pool('limit_break')
+    if up is None and broken is None:
+        return None
+    feedback = build_intraday_feedback(payload['stocks'], pool=up, break_pool=broken or {'state': 'unknown', 'items': []},
+                                       detail_limit=MAX_NOON_POOL_ROWS)
+    rows = list(feedback_stock_rows(feedback))
+    if rows and 'stock_classifications' in payload:
+        classes = frozen_stock_classifications(payload, {row['instrument_id'] for row in rows})
+        for row in rows:
+            classification = classes[row['instrument_id']]
+            tags = classification['industries'][:1] + classification['topics']
+            row['themes'] = [{'name': tag['name'], 'kind': tag['kind'],
+                              'member_date': tag['members_observed_date']} for tag in tags]
+    return feedback['ladder']

@@ -140,17 +140,22 @@ def summary_for(market, identifier, as_of=None):
         cached = _CACHE.get(key) if key is not None else None
         if cached is not None: _CACHE.move_to_end(key)
     if cached is not None: return deepcopy(cached)
-    change, change_reason = _daily_change(market, symbol, day, previous_day, calendar,
-        [row for row in selected if row.get('date') in (previous_day, day)], quote)
     statistics = topic_member_metrics.member_metrics(market, day, [symbol], master, quotes, supplement,
         supplement_fingerprint=fingerprint).get(symbol, {})
+    suspended = 'suspension' in statistics
+    if suspended:
+        quote = None
+        selected = [row for row in selected if row.get('date') != day]
+    change, change_reason = _daily_change(market, symbol, day, previous_day, calendar,
+        [row for row in selected if row.get('date') in (previous_day, day)], quote)
+    quote_reason = '已核实观察日全天停牌' if suspended else change_reason if quote is None else None
     value = summary_fields({**statistics, 'instrument_id': symbol, 'code': symbol[:6],
         'name': master[symbol].get('name') or symbol, 'data_date': day, 'as_of': day,
         'snapshot_id': status.get('snapshot_id'), 'quote_date': day if quote is not None else None,
         'quote_available': quote is not None,
-        'quote_reason': None if quote is not None else '观察日缺少唯一有效收盘报价，不以旧报价代替',
+        'quote_reason': quote_reason,
         'close': quote['close'] if quote is not None else None,
-        'change_pct': change, 'change_pct_reason': change_reason,
+        'change_pct': change, 'change_pct_reason': quote_reason if suspended else change_reason,
         'change_pct_date': day, 'change_pct_previous_date': previous_day,
         'return_scope': '年内以上年末已核验交易日收盘为基准；近30日按精确T/T-30市场交易日，公司行动需核验连续价格；本月单独以上月末为基准。',
         'limit_scope': '只统计观察日及之前逐股原始收盘核验的来源涨停事件；不完整次数保持未知，已确认次数仅为下界。'},

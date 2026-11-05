@@ -63,6 +63,11 @@ const rows = (value: unknown): Row[] =>
 export function noonQuoteContext(snapshot: Row): Record<string, Row> {
   const workbench = snapshot.workbench || {};
   const output: Record<string, Row> = {};
+  for (const [symbol, evidence] of Object.entries(
+    snapshot.stock_suspensions || {},
+  )) {
+    output[symbol] = { suspension: evidence };
+  }
   const classifications = {
     ...(snapshot.membership_context?.stock_classifications || {}),
     ...(snapshot.payload?.stock_classifications || {}),
@@ -71,6 +76,7 @@ export function noonQuoteContext(snapshot: Row): Record<string, Row> {
     if (value && typeof value === "object" && !Array.isArray(value)) {
       const classification = value as Row;
       output[symbol] = {
+        ...output[symbol],
         industries: rows(classification.industries),
         topics: rows(classification.topics),
         membership_state: classification.state,

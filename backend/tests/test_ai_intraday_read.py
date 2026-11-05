@@ -36,12 +36,17 @@ def _snapshot(slot='1330'):
     sector = {'instrument_id': '881121.TI', 'name': '半导体设备', 'kind': 'industry',
               'change_pct': 2, 'change_pp': 3, 'candidates': [stock], 'up_ratio': 80,
               'limit_up_count': 2, 'limit_up_count_state': 'partial'}
+    comparison = {'comparison_amount': 120000, 'previous_amount': 125000,
+                  'change_from_previous': -5000, 'comparable_count': 1}
     return {'date': DAY, 'slot': slot, 'id': 'intraday-'+slot, 'quality': 'partial', 'version': VERSION,
             'collected_start_at': DAY+'T'+clock+':00+08:00', 'collected_end_at': DAY+'T'+clock+':30+08:00',
             'summary': {'comparison_slot': 'noon', 'interval_amount': {
                 'amount': 99800, 'previous_amount': 95100, 'comparison_amount': 96000,
                 'change_from_previous': 900, 'previous_comparable_count': 20}},
-            'market_pulse': {'breadth': {'up': 3200, 'down': 2100, 'flat': 5}, 'turnover': {'amount': 120000}},
+            'market_pulse': {'breadth': {'up': 3200, 'down': 2100, 'flat': 5},
+                             'turnover': {'amount': 120000, 'amount_comparison': comparison},
+                             'indices': [{'instrument_id': '000001.SH', 'name': '上证指数', 'amount': 120000,
+                                          'amount_comparison': comparison, 'interval_amount': {'amount': 24000}}]},
             'ladder': {'sealed_count': 10, 'broken_board': {'state': 'observed', 'count': 0}},
             'strong_sectors': [sector], 'sectors': [sector], 'stocks': [stock],
             'comparison_input': {'stocks': [{'instrument_id': '000001.SZ', 'currency': 'CNY',
@@ -76,6 +81,9 @@ def test_all_intraday_reads_only_available_times_and_direction_sample(source):
     assert found['direction_discovery']['directions'][0]['signal'] == 'new'
     assert found['ladder']['broken_board']['count'] == 0
     assert found['interval_amount']['change_from_previous'] == 900
+    assert found['turnover']['amount_comparison']['change_from_previous'] == -5000
+    assert found['indices'][0]['amount'] == 120000
+    assert 'amount_comparison' not in found['indices'][0]
     assert found['stock_samples'][0]['instrument_id'] == '688012.SH'
     assert 'comparison_input' not in dumps(result) and source.execute('PRAGMA data_version').fetchone()[0] == before
     assert len(dumps(result).encode()) <= ai_read_tools.MAX_RESULT_BYTES
@@ -85,6 +93,9 @@ def test_single_slot_filters_direction_or_exact_code_and_never_substitutes(sourc
     _save(source, _snapshot())
     result = _call('1330', '半导体')
     assert result['evidence'][0]['data']['direction_discovery']['directions'][0]['name'] == '半导体设备'
+    index = result['evidence'][0]['data']['indices'][0]
+    assert index['amount_comparison']['change_from_previous'] == -5000
+    assert index['interval_amount']['amount'] == 24000
     assert _call('1330', '000001')['evidence'][0]['data']['stock_samples'][0]['latest_price'] == 11
     assert _call('1000')['evidence'] == []
     assert _call('1330', day='2026-11-03')['evidence'] == []

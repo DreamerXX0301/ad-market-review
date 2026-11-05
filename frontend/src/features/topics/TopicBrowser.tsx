@@ -351,6 +351,12 @@ export default function TopicBrowser({
                     >
                       {quote(row, value, percent)}
                     </span>
+                    {row.suspension?.full_session === true &&
+                      row.quote_available === false && (
+                        <span className="badge warn" title={row.quote_reason}>
+                          停牌
+                        </span>
+                      )}
                     {data?.quote_date &&
                       row.quote_available === true &&
                       row.quote_date === data.quote_date && (
@@ -385,6 +391,7 @@ export default function TopicBrowser({
                     end={row.return_ytd_coverage?.end}
                     priceBasis={row.return_ytd_coverage?.price_basis}
                     missingSessions={row.return_ytd_coverage?.missing_sessions}
+                    coverage={row.return_ytd_coverage}
                   />
                 ),
               },
@@ -404,6 +411,7 @@ export default function TopicBrowser({
                     end={row.change_30d_coverage?.end}
                     priceBasis={row.change_30d_coverage?.price_basis}
                     missingSessions={row.change_30d_coverage?.missing_sessions}
+                    coverage={row.change_30d_coverage}
                   />
                 ),
               },

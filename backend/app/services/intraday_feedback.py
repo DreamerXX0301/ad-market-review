@@ -112,6 +112,25 @@ def stock_themes(sectors, members, symbols):
     return indexed
 
 
+def feedback_stock_rows(snapshot):
+    ladder = snapshot.get('ladder', {})
+    for group in ladder.get('groups', ()):
+        yield from group.get('items', ())
+    yield from ladder.get('broken_board', {}).get('items', ())
+    relay = snapshot.get('relay_feedback', {})
+    for key in ('prior_session', 'prior_broken_session'):
+        yield from relay.get(key, {}).get('items', ())
+    same_day = relay.get('same_day', {})
+    for key in ('held', 'entered', 'absent'):
+        yield from same_day.get(key, ())
+
+
+def attach_feedback_themes(rows, sectors, members):
+    themes = stock_themes(sectors, members, [row['instrument_id'] for row in rows])
+    for row in rows:
+        row['themes'] = themes.get(row['instrument_id'], [])
+
+
 def _state(exact, evidence):
     return 'observed' if exact else 'partial' if evidence else 'unknown'
 
@@ -134,7 +153,7 @@ def _sample(code, quotes, sealed, *, previous_height=None, state='sealed'):
     }
 
 
-def _ladder(quotes, sealed, exact, conflicts, *, include_source_reason=False):
+def _ladder(quotes, sealed, exact, conflicts, *, include_source_reason=False, detail_limit=DETAIL_LIMIT):
     facts = board_summary({'state': 'observed' if exact else 'partial', 'items': sealed.values()})
     unknown = facts['height_unknown_count']
     heights_exact = exact and not unknown
@@ -154,9 +173,9 @@ def _ladder(quotes, sealed, exact, conflicts, *, include_source_reason=False):
         'multi_board_count': _count(facts['multi_board_count'] or 0, heights_exact),
         'highest_board': facts['max_confirmed'],
         'unknown_height_count': _count(unknown, exact),
-        'groups': [{**row, 'items': group_items[row['board_count']][:DETAIL_LIMIT]}
-                   for row in distribution[:DETAIL_LIMIT]],
-        'omitted_groups': max(0, len(distribution) - DETAIL_LIMIT),
+        'groups': [{**row, 'items': group_items[row['board_count']][:detail_limit]}
+                   for row in distribution[:detail_limit]],
+        'omitted_groups': max(0, len(distribution) - detail_limit),
     }
 
 
@@ -245,7 +264,7 @@ def _same_day(quotes, sealed, exact, previous, previous_pool, *, individual_stat
 
 def build_intraday_feedback(stocks, *, indices=(), pool=None, previous=None, previous_pool=None,
                             prior_session=None, break_pool=None, prior_broken_session=None,
-                            sectors=(), members=None):
+                            sectors=(), members=None, detail_limit=DETAIL_LIMIT):
     """All cross-session inputs must be selected and verified by the caller."""
     quotes = _by_symbol(stocks)
     sealed, exact = _pool(pool)
@@ -253,14 +272,14 @@ def build_intraday_feedback(stocks, *, indices=(), pool=None, previous=None, pre
     sealed = {code: row for code, row in sealed.items() if code in sealed_ids}
     result = {
         'market_pulse': _market_pulse(quotes, indices),
-        'ladder': _ladder(quotes, sealed, exact, conflicts, include_source_reason=break_pool is not None),
+        'ladder': _ladder(quotes, sealed, exact, conflicts, include_source_reason=break_pool is not None,
+                          detail_limit=detail_limit),
         'relay_feedback': {
             'prior_session': _prior_session(quotes, sealed, exact, prior_session),
             'same_day': _same_day(quotes, sealed, exact, previous, previous_pool, individual_states=break_pool is not None),
         },
     }
     ladder = result['ladder']
-    rows = [row for group in ladder['groups'] for row in group['items']]
     if break_pool is not None:
         ranked_breaks = []
         for code in sorted(broken):
@@ -275,14 +294,11 @@ def build_intraday_feedback(stocks, *, indices=(), pool=None, previous=None, pre
             'state': _state(break_exact, broken or conflicts),
             'count': _count(len(broken), break_exact),
             'conflict_count': len(conflicts),
-            'items': ranked_breaks[:DETAIL_LIMIT],
+            'items': ranked_breaks[:detail_limit],
         }
-        rows.extend(ladder['broken_board']['items'])
-    if members is not None:
-        themes = stock_themes(sectors, members, [row['instrument_id'] for row in rows])
-        for row in rows:
-            row['themes'] = themes.get(row['instrument_id'], [])
     if prior_broken_session is not None:
         result['relay_feedback']['prior_broken_session'] = _prior_session(
             quotes, sealed, exact, prior_broken_session, promotions=False)
+    if members is not None:
+        attach_feedback_themes(list(feedback_stock_rows(result)), sectors, members)
     return result

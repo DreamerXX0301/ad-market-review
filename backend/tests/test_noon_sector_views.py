@@ -71,6 +71,27 @@ def test_missing_quote_stays_unknown_board_filter_sort_and_pages_are_full_sample
     assert view(value, query='600001')['matched'] == 1
 
 
+def test_only_confirmed_members_without_transaction_show_suspension(monkeypatch):
+    from app.services import market_suspensions
+
+    value, member = payload(), topic()
+    halted, traded = '300001.SZ', value['stocks'][0]['instrument_id']
+    value['stocks'][0]['volume'] = 100
+    member['instrument_ids'].extend([halted, '920001.BJ'])
+    value['sectors'][0]['member_coverage'].update(total=4, complete=False)
+    value['sector_memberships'] = views.freeze_memberships(value, [member])
+    evidence = {'state': 'suspended', 'full_session': True, 'source': 'exchange'}
+    monkeypatch.setattr(market_suspensions, 'suspensions_for_date',
+                        lambda day: {halted: evidence, traded: evidence} if day == value['date'] else {})
+    before = deepcopy(value)
+    result = {row['instrument_id']: row for row in view(value)['items']}
+    assert result[halted]['suspension'] == evidence
+    assert result[halted]['change_pct'] is None and result[halted]['quote_available'] is False
+    assert 'suspension' not in result[traded]
+    assert 'suspension' not in result['920001.BJ']
+    assert value == before
+
+
 @pytest.mark.parametrize('tamper', ['hash', 'member', 'future', 'kind', 'source', 'aggregate'])
 def test_frozen_list_integrity_identity_and_aggregate_must_reconcile(tamper):
     value = payload()
@@ -140,6 +161,8 @@ def test_invalid_filters_fail_closed(filters):
 
 
 def test_actual_capture_and_http_join_add_zero_provider_calls_preserve_noon_and_daily(noon, monkeypatch):
+    from app.services.intraday_members import read_members
+
     market, client, source, _, _, _, original = noon
     topics = [{'topic_code': '881101.TI', 'name': '合成行业', 'source': 'fuyao', 'kind': 'industry',
                'observed_date': '2026-10-27', 'members_complete': True,
@@ -155,6 +178,14 @@ def test_actual_capture_and_http_join_add_zero_provider_calls_preserve_noon_and_
     assert response.status_code == 200, response.text
     assert response.json()['total'] == 3 and response.json()['matched'] == 1
     assert response.json()['items'][0]['latest_price'] is None
+    scope = (DAY, 'noon', snapshot_id, '881101.TI')
+    first = read_members(*scope, direction='asc', limit=1)
+    assert first['state'] == 'partial' and first['pages'] == 3
+    last = read_members(*scope, direction='asc', limit=1, page=3)
+    assert last['items'][0]['instrument_id'] == '301001.SZ'
+    assert last['items'][0]['change_pct'] is None
+    missing = read_members(*scope[:3], '888888.TI', direction='asc')
+    assert missing['state'] == 'unknown' and not missing['items'] and missing['unavailable_reason']
     assert source.calls == calls
     with core.connect() as c:
         assert dict(c.execute('SELECT content_sha256,payload_json FROM market_noon_snapshot WHERE snapshot_id=?', (snapshot_id,)).fetchone()) == old

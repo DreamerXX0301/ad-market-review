@@ -5,6 +5,7 @@ Source-pool absences and verified positive closing events remain separate facts.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from datetime import date, timedelta
 from collections import OrderedDict
 from copy import deepcopy
@@ -16,6 +17,7 @@ import threading
 from app.analytics.adjustments import continuous_prices
 from app.analytics.market import MarketData
 from app.core import digest
+from app.services import market_suspensions
 from app.services.chart_limits import _evidence, _combine
 from app.services.limit_history import annual_coverage
 
@@ -37,13 +39,18 @@ def _cache_key(market, day, symbols, quotes, supplement, *, supplement_fingerpri
         if status.get('snapshot_id') != snapshot or not expected.is_relative_to((root/'published').resolve()): return None
         if Path(status.get('path','')).resolve()!=expected or not (expected/'manifest.json').is_file(): return None
         ordered=tuple(sorted(symbols))
-        quote_inputs=tuple((symbol,str(quotes.get(symbol,{}).get('date',quotes.get(symbol,{}).get('trade_date',''))),_number(quotes.get(symbol,{}).get('close'))) for symbol in ordered)
+        quote_inputs=tuple(
+            (symbol, str(row.get('date', row.get('trade_date', ''))),
+             *(_number(row.get(field)) for field in ('close', 'volume', 'amount')))
+            for symbol in ordered for row in (quotes.get(symbol, {}),)
+        )
         # A fingerprint is supplied only by the verified supplement reader,
         # after every selected CAS dependency has passed its normal checks.
         # Rehashing that expanded document duplicates JSON cleanup and encode
         # work for each stock summary (and again for its member calculation).
         source_identity = supplement_fingerprint if supplement_fingerprint is not None else digest(supplement)
-        return ('topic-member-metrics-v4-unified-positive-lower-bound',str(root),snapshot,day,ordered,quote_inputs,source_identity)
+        return ('topic-member-metrics-v5',str(root),snapshot,day,ordered,quote_inputs,source_identity,
+                market_suspensions.suspension_revision())
     except (ValueError,OSError,TypeError): return None
 
 
@@ -186,22 +193,35 @@ def _daily_states(symbol, closes, calendar, sources):
     return daily
 
 
-def _return(rows, actions, calendar, start, end, quote, *, baseline_proof=None, listed=None):
+def _return(rows, actions, calendar, start, end, quote, *, baseline_proof=None, listed=None,
+            suspension_prices=None):
     coverage = {'complete': False, 'start': start, 'end': end, 'price_basis': None, 'missing_sessions': None, 'baseline_proof': baseline_proof, 'reason': None}
     def unknown(reason):
         coverage['reason'] = reason
         return None, reason, coverage
     if start is None: return unknown('没有可证明的区间基准交易日，未使用首条可见报价替代')
     if listed and listed > start: return unknown('上市日期晚于区间基准，不能把上市以来涨幅冒充完整区间涨幅')
-    if not quote or str(quote.get('date', quote.get('trade_date', '')))[:10] != end or _number(quote.get('close')) is None:
+    start_price_date, end_price_date = suspension_prices if suspension_prices is not None else (start, end)
+    if start_price_date is None or end_price_date is None or (listed and start_price_date < listed):
+        return unknown('停牌端点缺少连续可核验的记录或停牌前实际成交价')
+    exact_quote = quote and str(quote.get('date', quote.get('trade_date', '')))[:10] == end
+    if end_price_date == end and (not exact_quote or _number(quote.get('close')) is None):
         return unknown('业务日缺少有效报价，不使用上一交易日报价替代')
-    selected = [row for row in rows if start <= row['date'] <= end]
+    if end_price_date != end and exact_quote and any(
+        (_number(quote.get(field)) or 0) > 0 for field in ('volume', 'amount')
+    ):
+        return unknown('业务日实际成交与停牌记录冲突')
+    selected = [row for row in rows if start_price_date <= row['date'] <= end
+                and (suspension_prices is None or (_number(row.get('volume')) or 0) > 0)]
     by_date = {row['date']: row for row in selected}
     coverage['missing_sessions'] = sum(day not in by_date for day in calendar if start <= day <= end)
-    if start not in by_date or end not in by_date: return unknown('区间起点或终点原始收盘缺失，不移动比较端点')
-    if any(_number(by_date[point].get('close')) is None or by_date[point]['close'] <= 0 for point in (start, end)):
+    if start_price_date not in by_date or end_price_date not in by_date:
+        return unknown('区间起点或终点原始收盘缺失，不移动比较端点')
+    if any(_number(by_date[point].get('close')) is None or by_date[point]['close'] <= 0
+           for point in (start_price_date, end_price_date)):
         return unknown('区间端点价格无效')
-    if abs(by_date[end]['close']-quote['close']) > .011: return unknown('业务日报价与批量历史端点不一致')
+    if end_price_date == end and abs(by_date[end]['close']-quote['close']) > .011:
+        return unknown('业务日报价与批量历史端点不一致')
     if actions is None: return unknown('未留存可核验公司行动数据，历史价格连续口径未知')
     try:
         adjusted, info = continuous_prices(selected, actions, end, calendar)
@@ -210,11 +230,30 @@ def _return(rows, actions, calendar, start, end, quote, *, baseline_proof=None, 
     if not info.get('usable'): return unknown(info.get('reason') or '区间存在未核验公司行动')
     aligned = {row['date']: row for row in adjusted}
     basis = 'forward_event_affine' if info.get('events_count') else 'none'
-    base = _number(aligned.get(start, {}).get('close')); last = _number(aligned.get(end, {}).get('close'))
+    base = _number(aligned.get(start_price_date, {}).get('close'))
+    last = _number(aligned.get(end_price_date, {}).get('close'))
     value = (last/base-1)*100 if base is not None and base > 0 and last is not None else None
     if _number(value) is None: return unknown('连续价格计算结果无效')
     coverage.update(complete=True, price_basis=basis, action_events=info.get('events_count', 0))
+    if (start_price_date, end_price_date) != (start, end):
+        coverage.update(start_price_date=start_price_date, end_price_date=end_price_date,
+                        start_suspension=start_price_date != start, end_suspension=end_price_date != end)
     return value, None, coverage
+
+
+def _suspension_prices(symbol, index, duplicates, calendar, start, end, suspensions):
+    if start is None or not any(symbol in suspensions.get(point, {}) for point in (start, end)):
+        return None
+    prices = []
+    for point in (start, end):
+        observed = market_suspensions.suspension_endpoint(index, calendar, point, symbol)
+        if observed:
+            skipped = calendar[bisect_right(calendar, observed):bisect_right(calendar, point)]
+            if any(day in duplicates or (_number(index.get(day, {}).get('amount')) or 0) > 0
+                   for day in skipped):
+                observed = None
+        prices.append(observed)
+    return tuple(prices)
 
 
 def _annual_verified(supplement, symbols, daily, calendar, day):
@@ -318,10 +357,17 @@ def limit_metrics(market, day, symbols, supplement, reference=None):
     return result
 
 
-def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, baseline, thirty, month, month_proof, rolling_start=None):
-    histories=market.history_for_instruments(symbols,start=_history_start(calendar,sources,baseline,thirty,month),end=day)
+def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, baseline, thirty, month,
+           month_proof, suspensions, rolling_start=None):
+    first = _history_start(calendar, sources, baseline, thirty, month)
+    requested_symbols = set(symbols)
+    for point, statuses in suspensions.items():
+        if requested_symbols.intersection(statuses):
+            position = max(0, calendar.index(point) - market_suspensions.SUSPENSION_ENDPOINT_LOOKBACK)
+            first = min(first, calendar[position])
+    histories=market.history_for_instruments(symbols,start=first,end=day)
     actions=market.actions_for_instruments(symbols) if callable(getattr(market,'actions_for_instruments',None)) else None
-    daily={};cleaned={}
+    daily={};cleaned={};duplicate_dates={}
     for symbol in symbols:
         rows=[];closes={};duplicates=set()
         for raw in histories.get(symbol,[]):
@@ -332,6 +378,8 @@ def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, 
             rows.append({**raw,'date':observed})
         for observed in duplicates:closes[observed]=None
         cleaned[symbol]=[row for row in rows if row['date'] not in duplicates]
+        if duplicates:
+            duplicate_dates[symbol]=duplicates
         daily[symbol]=_daily_states(symbol,closes,calendar,sources)
     annual=_annual_verified(supplement,symbols,daily,calendar,day)
     result={}
@@ -339,17 +387,29 @@ def _batch(market, day, symbols, master, quotes, supplement, calendar, sources, 
         rows=cleaned[symbol];identity=master.get(symbol,{})
         listed=_date(identity.get('list_date'))
         own_actions=actions.get(symbol) if isinstance(actions,dict) else None
-        ytd,ytd_reason,ytd_coverage=_return(rows,own_actions,calendar,baseline,day,quotes.get(symbol),baseline_proof='上一年12月31日明确在已完成市场交易日历中' if baseline else None,listed=listed)
+        index = {row['date']: row for row in rows} if any(symbol in statuses for statuses in suspensions.values()) else {}
+        duplicates = duplicate_dates.get(symbol, ())
+        ytd,ytd_reason,ytd_coverage=_return(rows,own_actions,calendar,baseline,day,quotes.get(symbol),baseline_proof='上一年12月31日明确在已完成市场交易日历中' if baseline else None,listed=listed,
+            suspension_prices=_suspension_prices(symbol, index, duplicates, calendar, baseline, day, suspensions))
         if baseline is None:
             ytd_reason='无法证明上一年最后已完成交易日；日历未明确留存上一年12月31日，不用年初首条报价替代'
             ytd_coverage['reason']=ytd_reason
-        change,change_reason,change_coverage=_return(rows,own_actions,calendar,thirty,day,quotes.get(symbol),baseline_proof='业务日向前精确30个市场交易日' if thirty else None,listed=listed)
+        change,change_reason,change_coverage=_return(rows,own_actions,calendar,thirty,day,quotes.get(symbol),baseline_proof='业务日向前精确30个市场交易日' if thirty else None,listed=listed,
+            suspension_prices=_suspension_prices(symbol, index, duplicates, calendar, thirty, day, suspensions))
         mtd,mtd_reason,mtd_coverage=_return(rows,own_actions,calendar,month,day,quotes.get(symbol),baseline_proof=month_proof,listed=listed)
         if month is None:
             mtd_reason='无法证明上月最后交易日；不使用本月首条报价或最近30个交易日替代本月基准'
             mtd_coverage['reason']=mtd_reason
         result[symbol]={'return_ytd_pct':ytd,'return_ytd_reason':ytd_reason,'return_ytd_coverage':ytd_coverage,'change_30d_pct':change,'change_30d_reason':change_reason,'change_30d_coverage':change_coverage,**_limit_values(symbol,daily,calendar,day,annual)}
         result[symbol].update(return_mtd_pct=mtd,return_mtd_reason=mtd_reason,return_mtd_coverage=mtd_coverage)
+        suspension = suspensions.get(day, {}).get(symbol)
+        if suspension and day not in duplicates and not any(
+            (_number(row.get(field)) or 0) > 0
+            for row in (index.get(day), quotes.get(symbol))
+            if row and _date(row.get('date', row.get('trade_date'))) == day
+            for field in ('volume', 'amount')
+        ):
+            result[symbol]['suspension'] = suspension
         if rolling_start is not None:
             states = [state['state'] for observed, state in daily[symbol].items() if observed >= rolling_start]
             observed_count = sum(state is True for state in states)
@@ -383,9 +443,11 @@ def member_metrics(market, day, symbols, master, quotes, supplement, *, suppleme
         return {symbol:{'return_ytd_pct':None,'return_ytd_reason':reason,'return_ytd_coverage':{'complete':False,'start':baseline,'end':day,'price_basis':None,'missing_sessions':None,'baseline_proof':None,'reason':reason},'return_mtd_pct':None,'return_mtd_reason':reason,'return_mtd_coverage':{'complete':False,'start':month,'end':day,'price_basis':None,'missing_sessions':None,'baseline_proof':month_proof,'reason':reason},'change_30d_pct':None,'change_30d_reason':reason,'change_30d_coverage':{'complete':False,'start':thirty,'end':day,'price_basis':None,'missing_sessions':None,'baseline_proof':None,'reason':reason},'limit_up_ytd':None,'limit_up_ytd_observed':0,'limit_up_ytd_reason':reason,'limit_up_ytd_coverage':{'complete':False,'covered_days':0,'expected_days':sum(observed[:4]==day[:4] for observed in calendar),'observed_days':0,'state':'partial','basis':reason,'scope':'仅已留存来源池'},'last_limit_up_date':None,'sessions_since_limit_up':None,'last_limit_up_complete':False,'last_limit_up_reason':reason,'last_limit_up_coverage':{'complete':False,'state':'no_confirmed_event','since':calendar[0] if calendar else None,'until':day,'covered_days':0,'expected_days':len(calendar),'unknown_days':len(calendar)}} for symbol in symbols}
     reference=market.reference() if hasattr(market,'reference') else {}
     sources=_sources(reference,supplement,calendar)
+    suspensions = {point: records for point in dict.fromkeys((baseline, thirty, day))
+                   if point is not None and (records := market_suspensions.suspensions_for_date(point))}
     result={}
     for offset in range(0,len(symbols),BATCH_SIZE):
-        result.update(_batch(market,day,symbols[offset:offset+BATCH_SIZE],master,quotes,supplement,calendar,sources,baseline,thirty,month,month_proof,rolling_start))
+        result.update(_batch(market,day,symbols[offset:offset+BATCH_SIZE],master,quotes,supplement,calendar,sources,baseline,thirty,month,month_proof,suspensions,rolling_start))
     if cache_key is not None:
         with _CACHE_LOCK:
             _METRIC_CACHE[cache_key]=deepcopy(result);_METRIC_CACHE.move_to_end(cache_key)

@@ -46,7 +46,13 @@ def feedback(date: str):
 @router.get('/discovery')
 def discovery(date: str):
     from app.services.auction_discovery import read_view
-    return JSONResponse(json_clean(read_view(date)))
+    return JSONResponse(json_clean(read_view(date, include_themes=True)))
+
+
+@router.get('/discovery/history')
+def discovery_history(date: str):
+    from app.services.auction_discovery import read_history
+    return JSONResponse(json_clean(read_history(date)))
 
 
 @router.get('/resonance')

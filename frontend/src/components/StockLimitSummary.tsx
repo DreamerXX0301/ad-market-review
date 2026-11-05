@@ -53,7 +53,13 @@ export default function StockLimitSummary({
           <div>
             <span>今日涨幅</span>
             <strong className={view.daily.known ? view.daily.tone : "unknown"}>
-              {result.loading && !view.valid ? "核验中…" : view.daily.value}
+              {view.suspended ? (
+                <span className="badge warn">停牌</span>
+              ) : result.loading && !view.valid ? (
+                "核验中…"
+              ) : (
+                view.daily.value
+              )}
             </strong>
             <small>{view.daily.note}</small>
           </div>
@@ -79,6 +85,9 @@ export default function StockLimitSummary({
                   </span>
                 ))}
             </small>
+            {view.thirty.carried.map((part) => (
+              <small key={part}>{part}</small>
+            ))}
           </div>
         </div>
         <div className="stock-limit-metric" title={view.recent.reason}>
@@ -112,6 +121,9 @@ export default function StockLimitSummary({
                 </span>
               ))}
             </small>
+            {view.ytd.carried.map((part) => (
+              <small key={part}>{part}</small>
+            ))}
           </div>
         </div>
         <div

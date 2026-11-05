@@ -10,6 +10,24 @@ export function stockMetricDate(value: unknown): string | null {
     ? value
     : null;
 }
+export function carriedReturnDates(coverage?: Summary | null): string[] {
+  const dates = [];
+  for (const [point, label] of [
+    ["start", "基准"],
+    ["end", "截止"],
+  ]) {
+    const observed = stockMetricDate(coverage?.[point]),
+      price = stockMetricDate(coverage?.[point + "_price_date"]);
+    if (
+      coverage?.[point + "_suspension"] === true &&
+      observed &&
+      price &&
+      price < observed
+    )
+      dates.push(`${label}日停牌，取 ${price} 收盘`);
+  }
+  return dates;
+}
 export function stockSummaryEndpoint(id: string, asOf?: string): string | null {
   if (!/^\d{6}\.(SH|SZ|BJ)$/.test(id.toUpperCase())) return null;
   if (asOf && !stockMetricDate(asOf)) return null;
@@ -36,6 +54,10 @@ export function stockExtraMetrics(
   const valid = stockSummaryMatches(data, id, asOf),
     date = valid ? data!.data_date : asOf;
   const row = valid ? data! : {};
+  const suspended =
+    row.quote_available === false &&
+    row.suspension?.state === "suspended" &&
+    row.suspension?.full_session === true;
   const dailyKnown =
     row.quote_available === true &&
     row.quote_date === date &&
@@ -45,7 +67,9 @@ export function stockExtraMetrics(
   const daily = {
     value: dailyKnown
       ? `${row.change_pct > 0 ? "+" : ""}${row.change_pct.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
-      : "待核验",
+      : suspended
+        ? "停牌"
+        : "待核验",
     tone: dailyKnown
       ? row.change_pct > 0
         ? "up"
@@ -54,7 +78,11 @@ export function stockExtraMetrics(
           : "muted"
       : "muted",
     known: dailyKnown,
-    note: dailyKnown ? `${date} · 较前日收盘` : "当日涨幅待核验",
+    note: dailyKnown
+      ? `${date} · 较前日收盘`
+      : suspended
+        ? "观察日全天停牌"
+        : "当日涨幅待核验",
     reason:
       row.change_pct_reason ||
       "按观察日收盘与前一市场交易日的可比收盘计算；缺失报价不使用旧值代替",
@@ -109,6 +137,7 @@ export function stockExtraMetrics(
       safeEnd = !end || (!!date && end <= date);
     const known =
       typeof value === "number" && Number.isFinite(value) && safeEnd;
+    const carried = known ? carriedReturnDates(coverage) : [];
     const basis =
       coverage.price_basis === "forward_event_affine"
         ? "已核验本地公司行动连续价格"
@@ -121,6 +150,7 @@ export function stockExtraMetrics(
         : "待核验",
       tone: known ? (value > 0 ? "up" : value < 0 ? "down" : "muted") : "muted",
       known,
+      carried,
       note: known
         ? coverage.start
           ? `${coverage.start} → ${date}`
@@ -131,6 +161,7 @@ export function stockExtraMetrics(
         : [
             row[prefix + "_reason"],
             basis,
+            ...carried,
             "已实现历史涨幅，不是预测或账户含分红收益",
           ]
             .filter(Boolean)
@@ -140,6 +171,7 @@ export function stockExtraMetrics(
   return {
     date,
     valid,
+    suspended,
     daily,
     annual,
     recent,

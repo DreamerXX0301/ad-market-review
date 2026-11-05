@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
+import gzip
 from hashlib import sha256
 import json
 import re
@@ -13,7 +14,8 @@ from app.core import connect, digest, dumps, get_market, new_id
 from app.infrastructure.credentials import CredentialStore
 from app.services import task_service as tasks
 from app.services.noon_collection import (CHINA, VERSION, CAPTURE_START, CAPTURE_END, Collector, WindowExpired,
-    STOCK_CODE, SECTOR_CODE, canonical, finite, in_window, items, paged, trading_days)
+    STOCK_CODE, SECTOR_CODE, NOON_EVENT_POOLS, canonical, finite, in_window, items, paged, trading_days,
+    verified_empty_noon_pool_page)
 from app.services.noon_analysis import (INDEX_NAMES, board_summary, build_analysis, build_summary,
     normalize_pool, normalize_quotes, sector_members)
 
@@ -69,6 +71,59 @@ def _state(connection, ledger, snapshot=None):
     return value if value in ('queued', 'running', 'paused', 'failed', 'cancelled') else 'failed'
 
 
+def retained_empty_event_pools(snapshot, payload):
+    """Restore explicit zero pools from their exact original noon receipts."""
+    day = snapshot['trade_date']
+    calendar, events = payload.get('calendar'), payload.get('events')
+    if (payload.get('version') != VERSION or payload.get('date') != day
+            or not isinstance(calendar, dict) or calendar.get('verified') is not True
+            or not isinstance(events, dict) or not isinstance(payload.get('sources'), list)):
+        return {}
+    return {key: pool for key in NOON_EVENT_POOLS
+            if (pool := _retained_empty_pool(snapshot, payload, key)) is not None}
+
+
+def _retained_empty_pool(snapshot, payload, key):
+    day = snapshot['trade_date']
+    pool = payload['events'].get(key)
+    if (not isinstance(pool, dict) or pool.get('state') != 'unknown' or pool.get('count') is not None
+            or type(pool.get('declared_total')) is not int or pool['declared_total'] != 0
+            or pool.get('items') != [] or type(pool.get('excluded_rows')) is not int or pool['excluded_rows'] != 0):
+        return None
+    first_page = f'{key}_page_1'
+    candidates = [record for record in payload['sources'] if isinstance(record, dict)
+                  and record.get('name') == first_page]
+    if len(candidates) != 1:
+        return None
+    source = candidates[0]
+    if source.get('path') != f'noon/{snapshot["job_id"]}/{first_page}.json.gz':
+        return None
+    # A verified empty provider envelope should be tiny. Never open arbitrary
+    # receipts or iterate the historical raw directory during a page read.
+    if not all(type(source.get(key)) is int and 0 < source[key] <= 16 * 1024 for key in ('bytes', 'raw_bytes')):
+        return None
+    from app.core import raw_dir
+    from app.services.noon_retention import source_bytes
+    try:
+        start, end = (datetime.fromisoformat(snapshot[key]) for key in ('collected_start_at', 'collected_end_at'))
+        started, received = (datetime.fromisoformat(source[key]) for key in ('started_at', 'received_at'))
+        if (start.tzinfo is None or end.tzinfo is None or not in_window(day, start) or not in_window(day, end)
+                or not start <= started <= received <= end
+                or any(payload.get(key) != snapshot[key] for key in ('collected_start_at', 'collected_end_at'))):
+            return None
+        raw = gzip.decompress(source_bytes(raw_dir(), source))
+        if len(raw) != source['raw_bytes'] or not verified_empty_noon_pool_page(json.loads(raw), day, source, key):
+            return None
+    except (OSError, ValueError, TypeError, KeyError, EOFError, RecursionError):
+        return None
+    result = {**normalize_pool([], 0, True, {}, key),
+              'source_sha256': source['sha256'], 'source_timestamp': source['source_timestamp'],
+              'scope': '扶摇本次午间来源池；已核验原始成功零结果回执。'}
+    if key == 'limit_up':
+        result['board_summary'] = board_summary(result)
+    return result
+
+
 def _snapshot_view(row):
     if row is None:
         return None
@@ -77,6 +132,12 @@ def _snapshot_view(row):
     if sha256(encoded.encode()).hexdigest() != value['content_sha256']:
         raise HTTPException(409, '午评内容SHA核验失败，原记录保留，请检查存储')
     value['payload'] = json.loads(encoded)
+    from app.services.market_suspensions import suspensions_for_date
+    suspensions = suspensions_for_date(value['trade_date'])
+    value['stock_suspensions'] = {
+        stock['instrument_id']: proof for stock in value['payload'].get('stocks', [])
+        if (proof := noon_stock_suspension(stock, suspensions)) is not None
+    } if suspensions else {}
     from app.services.noon_workbench import build_workbench
     from app.services.noon_membership_context import build_member_limit_context
     from app.services.noon_prior_events import build_prior_event_context
@@ -91,11 +152,28 @@ def _snapshot_view(row):
         context_payload = {**context_payload, 'previous_review': {**previous, 'event_cohorts': cohorts}}
     value['membership_context'] = build_member_limit_context(context_payload)
     from app.services.noon_close_context import retained_close_classifications
-    value['workbench'] = build_workbench(value['payload'], membership_context=value['membership_context'],
+    restored_pools = retained_empty_event_pools(value, value['payload'])
+    workbench_payload = value['payload']
+    if restored_pools:
+        workbench_payload = {**workbench_payload, 'events': {**workbench_payload['events'], **restored_pools}}
+    value['workbench'] = build_workbench(workbench_payload, membership_context=value['membership_context'],
         prior_event_context=value['prior_event_context'], close_classifications=retained_close_classifications(value['payload']))
+    if restored_pools:
+        value['workbench']['verified_empty_event_pools'] = restored_pools
+        if 'limit_down' in restored_pools:
+            value['workbench']['limit_down_source_pool'] = restored_pools['limit_down']
     value['date'] = value.pop('trade_date')
     value.pop('sources_json', None)
     return value
+
+
+def noon_stock_suspension(stock, suspensions):
+    """A real intraday transaction takes precedence over halt evidence."""
+    proof = suspensions.get(stock.get('instrument_id'))
+    if proof is not None and not any(finite(stock.get(key)) and stock[key] > 0
+                                     for key in ('volume', 'amount')):
+        return proof
+    return None
 
 
 def read_stock_quote(snapshot_id, instrument_id):
@@ -131,6 +209,10 @@ def read_stock_quote(snapshot_id, instrument_id):
     if len(matches) != 1:
         return {**result, 'reason': '午评未留存该股票的唯一报价'}
     quote = matches[0]
+    from app.services.market_suspensions import suspensions_for_date
+    suspension = noon_stock_suspension(quote, suspensions_for_date(row['trade_date']))
+    if suspension is not None:
+        return {**result, 'suspension': suspension, 'reason': '该股票当日停牌，无午间临时日 K'}
     fields = ('open', 'high', 'low', 'latest_price')
     if (quote.get('price_basis') != 'none' or any(quote.get(key) != row['trade_date']
             for key in ('trade_date', 'quote_date', 'date') if key in quote)
@@ -228,9 +310,11 @@ def create_capture(payload):
                     raise HTTPException(409, '请先完成行情初始化')
                 if not _configured(connection):
                     raise HTTPException(409, '请先配置并启用扶摇数据源')
+                from app.services.market_suspensions import VERSION as SUSPENSION_VERSION
+
                 params = {'operation': 'noon_snapshot', 'version': VERSION, 'source_id': 'fuyao',
                           'date': day, 'window_end_at': window['end_at'], 'daily_once': True,
-                          'retention_calendar_days': 28}
+                          'retention_calendar_days': 28, 'suspension_evidence': SUSPENSION_VERSION}
                 identifier = new_id('job'); stamp = int(now_china().timestamp() * 1000)
                 connection.execute('''INSERT INTO job(job_id,request_key,logical_key,kind,target_date,parameters_json,
                     parameters_hash,status,planned_batches,created_at_ms) VALUES(?,?,?,'source_check',?,?,?,'queued',100,?)''',
@@ -337,8 +421,8 @@ def execute_capture(job, callback=None):
         for offset in range(0, len(codes), 50):
             raw_sectors.extend(items(collector.request('sectors_' + str(offset // 50 + 1), '/api/a-share-index/prices/snapshot',
                                {'thscodes': ','.join(codes[offset:offset + 50])}, dated=True)) or [])
-        for key, endpoint in (('limit_up', 'limit-up-pool'), ('limit_down', 'limit-down-pool'), ('limit_break', 'limit-break-pool')):
-            pools[key] = paged(collector, key, '/api/a-share/special-data/' + endpoint, {'date_ms': midnight})
+        for key, endpoint in NOON_EVENT_POOLS.items():
+            pools[key] = paged(collector, key, endpoint, {'date_ms': midnight})
         statistics = collector.request('statistics', '/api/a-share/special-data/limit-up-statistics', {'date': day}, dated=True)
         hot = collector.request('hot_hour', '/api/a-share/special-data/hot-stock-list', {'period': 'hour', 'limit': 30}, dated=True)
     except WindowExpired:
@@ -370,7 +454,7 @@ def execute_capture(job, callback=None):
         topics = []
         collector.gap('members', '本地成员名单不可用，板块指数行情独立保留')
     events = {key: normalize_pool(*pools.get(key, ([], None, False)), quotes, key)
-              for key in ('limit_up', 'limit_down', 'limit_break')}
+              for key in NOON_EVENT_POOLS}
     sectors = sector_members(normalize_quotes(raw_sectors, sectors=catalog), topics, quotes, day, events['limit_up'])
     actual_sector_codes = {row['instrument_id'] for row in sectors}
     if len(raw_sectors) != len(sectors):

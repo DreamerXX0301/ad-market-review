@@ -7,7 +7,12 @@ import { useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { amount, integer, percent, tone } from "../../lib/format";
 import AuctionHeightBadge from "./AuctionHeightBadge";
-import { auctionNumber, auctionSortRows } from "./auctionPresentation";
+import { auctionNumber } from "./auctionPresentation";
+import { MarketSortHeader } from "./MarketTable";
+import { MemberReturnCell } from "./MarketMemberMetrics";
+import { sortMarketRows } from "./marketPresentation";
+import type { MarketSort } from "./marketPresentation";
+import { boardLabel, boardOf } from "./noonBoardPresentation";
 import { noonClock, noonLines, noonRows } from "./noonPresentation";
 import "./AuctionDiscovery.css";
 
@@ -56,8 +61,21 @@ export function DiscoveryWorkspace({
 }) {
   const [filter, setFilter] = useState<DirectionFilter>("all");
   const [selected, setSelected] = useState<string>();
-  const filtered = directions.filter(
-    (row) => filter === "all" || row.kind === filter,
+  const [sort, setSort] = useState<MarketSort | null>(null);
+  const onSort = (key: string) =>
+    setSort((current) => ({
+      key,
+      order: current?.key === key && current.order === "desc" ? "asc" : "desc",
+    }));
+  const filtered = sortMarketRows(
+    directions
+      .filter((row) => filter === "all" || row.kind === filter)
+      .map((row) => ({
+        ...row,
+        change_pct: getChange(row),
+        member_count: getCount(row),
+      })),
+    sort,
   );
   const keyFor = (row: Row) => `${row.kind}:${row.instrument_id}`;
   const direction =
@@ -95,9 +113,30 @@ export function DiscoveryWorkspace({
               <thead>
                 <tr>
                   <th scope="col">#</th>
-                  <th scope="col">行业 / 题材</th>
-                  <th scope="col">{changeLabel}</th>
-                  <th scope="col">样本</th>
+                  {[
+                    ["name", "行业 / 题材"],
+                    ["change_pct", changeLabel],
+                    ["member_count", "样本"],
+                  ].map(([key, caption]) => (
+                    <th
+                      key={key}
+                      scope="col"
+                      aria-sort={
+                        sort?.key === key
+                          ? sort.order === "desc"
+                            ? "descending"
+                            : "ascending"
+                          : undefined
+                      }
+                    >
+                      <MarketSortHeader
+                        field={key}
+                        caption={caption}
+                        sort={sort}
+                        onSort={onSort}
+                      />
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -107,14 +146,17 @@ export function DiscoveryWorkspace({
                   const change = getChange(row);
                   const count = getCount(row);
                   return (
-                    <tr key={rowKey} data-selected={active}>
+                    <tr
+                      key={rowKey}
+                      data-selected={active}
+                      onClick={() => setSelected(rowKey)}
+                    >
                       <td>{i + 1}</td>
                       <th scope="row">
                         <button
                           type="button"
                           className="stock-link"
                           aria-pressed={active}
-                          onClick={() => setSelected(rowKey)}
                         >
                           {row.name || row.instrument_id}
                           <ArrowUpRight size={13} aria-hidden="true" />
@@ -178,9 +220,59 @@ function Stocks({
   onStock,
   label,
   showLeader = false,
-}: StockLinks & { items: Row[]; label: string; showLeader?: boolean }) {
-  const rows = auctionSortRows(items, "auction_pct", "desc");
-  const leaderPct = showLeader ? auctionNumber(rows[0]?.auction_pct) : null;
+  history = {},
+}: StockLinks & {
+  items: Row[];
+  label: string;
+  showLeader?: boolean;
+  history?: Record<string, Row>;
+}) {
+  const [sort, setSort] = useState<MarketSort>({
+    key: "auction_pct",
+    order: "desc",
+  });
+  const onSort = (key: string) =>
+    setSort((current) => ({
+      key,
+      order: current.key === key && current.order === "desc" ? "asc" : "desc",
+    }));
+  const enriched: Row[] = items.map((stock) => {
+    const metrics = history[stock.instrument_id] || {};
+    return {
+      ...metrics,
+      ...stock,
+      limit_up_1y:
+        metrics.limit_up_1y ??
+        (metrics.limit_up_1y_observed > 0
+          ? metrics.limit_up_1y_observed
+          : null),
+      board_label: stock.board_label || boardLabel(boardOf(stock)),
+      theme_labels:
+        noonRows(stock.themes)
+          .map((theme) => theme.name)
+          .join("、") || null,
+      source_warnings: noonLines(stock.warnings).join(" · ") || null,
+    };
+  });
+  const rows = sortMarketRows(enriched, sort);
+  const knownPcts = enriched
+    .map((stock) => auctionNumber(stock.auction_pct))
+    .filter((value): value is number => value != null);
+  const leaderPct =
+    showLeader && knownPcts.length ? Math.max(...knownPcts) : null;
+  const headers = [
+    ["auction_pct", "竞价涨幅"],
+    ["name", "股票"],
+    ["board_label", "上市板块"],
+    ["theme_labels", "行业 / 概念"],
+    ["previous_board_count", "昨日板数"],
+    ["auction_amount", "竞价额"],
+    ["change_30d_pct", "近30交易日涨幅"],
+    ["return_ytd_pct", "年内涨幅"],
+    ["last_limit_up_date", "最近一次涨停"],
+    ["limit_up_1y", "近一年涨停次数"],
+    ["source_warnings", "来源异动"],
+  ];
   return (
     <div className="auction-table-wrap">
       <table
@@ -189,11 +281,26 @@ function Stocks({
       >
         <thead>
           <tr>
-            <th scope="col">股票</th>
-            <th scope="col">昨日板数</th>
-            <th scope="col">竞价涨幅</th>
-            <th scope="col">竞价额</th>
-            <th scope="col">来源异动</th>
+            {headers.map(([key, caption]) => (
+              <th
+                key={key}
+                scope="col"
+                aria-sort={
+                  sort.key === key
+                    ? sort.order === "desc"
+                      ? "descending"
+                      : "ascending"
+                    : undefined
+                }
+              >
+                <MarketSortHeader
+                  field={key}
+                  caption={caption}
+                  sort={sort}
+                  onSort={onSort}
+                />
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -202,6 +309,12 @@ function Stocks({
             const height = auctionNumber(stock.previous_board_count);
             return (
               <tr key={stock.instrument_id}>
+                <td className={tone(pct)}>
+                  {percent(pct)}
+                  {leaderPct != null && pct === leaderPct && (
+                    <span className="auction-discovery-leader">样本领涨</span>
+                  )}
+                </td>
                 <td>
                   <div className="auction-identity">
                     <button
@@ -213,8 +326,43 @@ function Stocks({
                     >
                       {stock.name || stock.instrument_id}
                     </button>
-                    <CopyStockCode instrumentId={stock.instrument_id} />
+                    <span className="auction-discovery-code muted">
+                      <CopyStockCode instrumentId={stock.instrument_id} />
+                    </span>
                   </div>
+                </td>
+                <td>
+                  <Badge>{stock.board_label}</Badge>
+                </td>
+                <td className="auction-discovery-themes">
+                  {noonRows(stock.themes).length ? (
+                    <div className="auction-discovery-theme-list">
+                      {noonRows(stock.themes)
+                        .slice(0, 3)
+                        .map((theme) => (
+                          <span
+                            key={`${theme.kind}:${theme.name}`}
+                            className={`discovery-theme ${theme.kind === "industry" ? "industry" : "concept"}`}
+                            title={`成员档案 ${theme.member_date || "待核验"}`}
+                          >
+                            {theme.name}
+                          </span>
+                        ))}
+                      {noonRows(stock.themes).length > 3 && (
+                        <span
+                          className="muted"
+                          title={noonRows(stock.themes)
+                            .slice(3)
+                            .map((theme) => theme.name)
+                            .join("、")}
+                        >
+                          +{noonRows(stock.themes).length - 3}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="muted">归属待核验</span>
+                  )}
                 </td>
                 <td>
                   {height != null && height > 0 ? (
@@ -223,13 +371,36 @@ function Stocks({
                     "—"
                   )}
                 </td>
-                <td className={tone(pct)}>
-                  {percent(pct)}
-                  {leaderPct != null && pct === leaderPct && (
-                    <span className="auction-discovery-leader">样本领涨</span>
-                  )}
-                </td>
                 <td>{amount(auctionNumber(stock.auction_amount))}</td>
+                <td>
+                  <MemberReturnCell row={stock} field="change_30d_pct" />
+                </td>
+                <td>
+                  <MemberReturnCell row={stock} field="return_ytd_pct" />
+                </td>
+                <td title={stock.last_limit_up_reason || undefined}>
+                  {stock.last_limit_up_date || "—"}
+                  {stock.last_limit_up_date &&
+                    stock.last_limit_up_complete !== true && (
+                      <small className="auction-discovery-leader">
+                        最近已确认
+                      </small>
+                    )}
+                </td>
+                <td
+                  title={
+                    stock.limit_up_1y_complete === true
+                      ? "近一年逐日收盘涨停已完整核验"
+                      : "历史来源覆盖不足，仅列已确认次数，不把缺报补为零"
+                  }
+                >
+                  {auctionNumber(history[stock.instrument_id]?.limit_up_1y) !=
+                  null
+                    ? `${integer(history[stock.instrument_id].limit_up_1y)} 次`
+                    : stock.limit_up_1y_observed > 0
+                      ? `≥${integer(stock.limit_up_1y_observed)} 次`
+                      : "—"}
+                </td>
                 <td className="auction-discovery-warnings">
                   {noonLines(stock.warnings).join(" · ") || "—"}
                 </td>
@@ -271,6 +442,19 @@ export default function AuctionDiscovery({
   );
   const supplement = result?.supplement;
   const supplementRows = noonRows(supplement?.items);
+  const hasStockRows =
+    directions.some((row) => noonRows(row.stocks).length > 0) ||
+    individuals.length > 0 ||
+    supplementRows.length > 0;
+  const historyQuery = useApi<Row>(
+    active && hasStockRows
+      ? `/market/auction/discovery/history?date=${encodeURIComponent(date)}`
+      : null,
+  );
+  const history =
+    historyQuery.data?.date === date && historyQuery.data?.slot === "auction"
+      ? historyQuery.data
+      : null;
   const coverage = result?.coverage;
   const state = result?.state;
   const hasObservations = state === "available" || state === "partial";
@@ -332,6 +516,24 @@ export default function AuctionDiscovery({
               </div>
             )}
           {reason && <p className="auction-discovery-note">{reason}</p>}
+          {hasStockRows && (
+            <p className="auction-discovery-note">
+              {history?.as_of
+                ? `历史指标截至 ${history.as_of} 收盘，竞价数据来自当天；缺项保留未知。`
+                : historyQuery.loading
+                  ? "正在读取上一已发布收盘日的历史指标…"
+                  : "历史指标暂不可用，竞价数据仍可查看。"}
+              {historyQuery.error && (
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={historyQuery.reload}
+                >
+                  重试历史指标
+                </button>
+              )}
+            </p>
+          )}
           {directions.length > 0 && (
             <div className="auction-discovery-group">
               <h3>多股同时高开</h3>
@@ -349,6 +551,7 @@ export default function AuctionDiscovery({
                     items={noonRows(row.stocks)}
                     label={`${row.name || row.instrument_id}竞价个股`}
                     showLeader
+                    history={history?.items}
                     {...{ chartDate, onStock }}
                   />
                 )}
@@ -364,6 +567,7 @@ export default function AuctionDiscovery({
               <Stocks
                 items={individuals}
                 label="其他个股竞价异动"
+                history={history?.items}
                 {...{ chartDate, onStock }}
               />
             </details>
@@ -380,6 +584,7 @@ export default function AuctionDiscovery({
                 <Stocks
                   items={supplementRows}
                   label="昨日重点补查股票"
+                  history={history?.items}
                   {...{ chartDate, onStock }}
                 />
               ) : (

@@ -280,7 +280,7 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base["summary"] = {**summary,'top_n':top_n,'rank_state':rank_state,'available_total':available_total,'available_ranked_total':ranked_total,'available_unranked_total':available_total-ranked_total,'rank_scope_total':len(base['items']),'rank_scope':'先按近30日涨幅排名选择前N，再在该范围搜索、排序和分页' if top_n is not None else '全市场；端点未知者保留未排名'}
         if gainers_lookup is not None:
             base['items'] = matched
-        base["warnings"] = ["30个市场交易日端点涨幅；中间缺报价不删股，另列缺口。区间已核验公司行动使用事件前复权价格，未核验则不计算涨幅。", "年内涨停以逐日来源池计数；覆盖不完整时只显示已确认次数下界，不补0。"]
+        base["warnings"] = ["按30个市场交易日端点计算；端点经确认连续停牌时可用停牌前实际收盘并注明日期。中间缺报价另列缺口。区间已核验公司行动使用事件前复权价格，未核验则不计算涨幅。", "年内涨停以逐日来源池计数；覆盖不完整时只显示已确认次数下界，不补0。"]
     elif kind == "sectors":
         base.update(_sectors_from_panel(market, status, day, reference, indexed))
     elif kind == "ladder":
@@ -435,34 +435,96 @@ def _gainers_histories(market, day, baseline, rows):
     return histories
 
 
+def _gainers_suspension_histories(market, calendar, position, symbols, *, baseline_suspended):
+    from app.services.market_suspensions import SUSPENSION_ENDPOINT_LOOKBACK
+    from app.services.topic_member_metrics import BATCH_SIZE
+
+    reader = getattr(market, 'history_for_instruments', None)
+    if not symbols or position < 30 or not callable(reader):
+        return {}
+    extra = SUSPENSION_ENDPOINT_LOOKBACK if baseline_suspended else 0
+    start = calendar[max(0, position - 30 - extra)]
+    result = {}
+    for offset in range(0, len(symbols), BATCH_SIZE):
+        result.update(reader(symbols[offset:offset + BATCH_SIZE], start=start, end=calendar[position]))
+    return result
+
+
+def _gainers_suspended_endpoints(history, calendar, baseline, day, symbol):
+    from app.services.market_suspensions import suspension_endpoint
+
+    index = {row['date']: row for row in history if row.get('instrument_id') == symbol}
+    if len(index) != len(history):
+        return None, None
+    return (suspension_endpoint(index, calendar, baseline, symbol),
+            suspension_endpoint(index, calendar, day, symbol))
+
+
 def gainers_rows(market,reference,day,rows,max_items=None):
-    """Use exact T/T-30 market dates; intermediate suspension is not exclusion."""
+    """Use T/T-30 with dated source proof for any suspended endpoint."""
     from app.analytics.adjustments import continuous_prices
+    from app.services.market_suspensions import suspensions_for_date
+
     calendar=market.calendar();position=calendar.index(day);baseline=calendar[position-30] if position>=30 else None
     expected=set(calendar[position-30:position+1]) if baseline else set()
-    histories=_gainers_histories(market,day,baseline,rows)
-    result=[]; represented=set()
-    for original in rows:
-        row=dict(original);symbol=row['instrument_id'];represented.add(symbol);history=[r for r in histories.get(symbol,[]) if not baseline or r['date']>=baseline]
+    represented = {row['instrument_id'] for row in rows}
+    unquoted = [instrument for instrument in market.instruments(limit=10000)
+                if instrument.get('kind') == 'stock' and instrument['instrument_id'] not in represented
+                and (not instrument.get('list_date') or instrument['list_date'] <= day)
+                and (not instrument.get('end_date') or instrument['end_date'] >= day)]
+    day_suspensions = suspensions_for_date(day)
+    baseline_suspensions = suspensions_for_date(baseline) if baseline else {}
+    suspended_unquoted = {item['instrument_id']: item for item in unquoted if item['instrument_id'] in day_suspensions}
+    suspended_endpoints = day_suspensions.keys() | baseline_suspensions.keys()
+    suspension_symbols = sorted(suspended_endpoints & (represented | suspended_unquoted.keys()))
+    histories = _gainers_histories(market, day, baseline, [row for row in rows
+                                  if row['instrument_id'] not in suspended_endpoints])
+    suspension_histories = _gainers_suspension_histories(market, calendar, position, suspension_symbols,
+        baseline_suspended=not baseline_suspensions.keys().isdisjoint(suspension_symbols))
+    result=[]
+    for original in [*rows, *suspended_unquoted.values()]:
+        row=dict(original);symbol=row['instrument_id'];history=[r for r in histories.get(symbol,[]) if not baseline or r['date']>=baseline]
         index={r['date']:r for r in history}; missing=sorted(expected-set(index))
+        start_quote, end_quote = baseline, day
+        if symbol in day_suspensions:
+            volume = row.get('volume')
+            if not number(volume) or volume <= 0:
+                row.update(change_pct=None, return_30d_observation_suspended=True)
         reason=None; value=None; basis='none'
         if not baseline:reason='已留存市场交易日不足31天'
+        elif symbol in suspended_endpoints:
+            fallback = suspension_histories.get(symbol, [])
+            start_quote, end_quote = _gainers_suspended_endpoints(fallback, calendar, baseline, day, symbol)
+            history = [item for item in fallback if start_quote and item['date'] >= start_quote
+                       and number(item.get('volume')) and item['volume'] > 0]
+            index = {item['date']: item for item in history}
+            missing = sorted(expected - index.keys())
+            if start_quote not in index or end_quote not in index:
+                reason = '停牌端点缺少可连续核验的停牌记录或停牌前实际成交价，暂不计算'
         elif baseline not in index or day not in index:reason='缺少T或T-30端点报价，不能按最近31条报价替代'
-        else:
-            actions=market.actions(symbol,baseline,day)
+        if reason is None:
+            actions=market.actions(symbol,start_quote,day)
             if actions:
                 history,info=continuous_prices(history,actions,day,calendar)
                 if not info.get('usable'):reason='区间公司行动未通过核验，暂不计算跨事件涨幅'
                 else:index={r['date']:r for r in history};basis=info['price_basis']
-            if reason is None:value=(index[day]['close']/index[baseline]['close']-1)*100
-        row.update(return_30d=value,change_30d_pct=value,return_30d_start=baseline,return_30d_end=day,return_30d_price_basis=basis,return_30d_missing_sessions=len(missing),return_30d_missing_dates=missing,return_30d_reason=reason,return_30d_quality='unknown' if reason else 'endpoint_verified_with_gaps' if missing else 'endpoint_verified')
+            if reason is None:
+                start_close, end_close = index[start_quote].get('close'), index[end_quote].get('close')
+                if all(number(price) and not isinstance(price, bool) and price > 0 for price in (start_close, end_close)):
+                    value = (end_close / start_close - 1) * 100
+                else:
+                    reason = '端点收盘价格无效，暂不计算'
+        used_suspension = value is not None and (start_quote != baseline or end_quote != day)
+        quality = ('unknown' if reason else 'verified_suspension_endpoints' if used_suspension
+                   else 'endpoint_verified_with_gaps' if missing else 'endpoint_verified')
+        row.update(return_30d=value,change_30d_pct=value,return_30d_start=baseline,return_30d_end=day,return_30d_price_basis=basis,return_30d_missing_sessions=len(missing),return_30d_missing_dates=missing,return_30d_reason=reason,return_30d_quality=quality)
+        if used_suspension:
+            row.update(return_30d_start_quote_date=start_quote, return_30d_end_quote_date=end_quote)
         result.append(row)
     # Search includes master entries without a quote on this day. They remain
     # unranked with an explicit reason, instead of silently disappearing.
-    for instrument in market.instruments(limit=10000):
-        if instrument.get('kind')!='stock' or instrument['instrument_id'] in represented:continue
-        if instrument.get('list_date') and instrument['list_date']>day:continue
-        if instrument.get('end_date') and instrument['end_date']<day:continue
+    for instrument in unquoted:
+        if instrument['instrument_id'] in suspended_unquoted:continue
         result.append({**instrument,'change_pct':None,'return_30d':None,'change_30d_pct':None,'return_30d_start':baseline,'return_30d_end':day,'return_30d_reason':'该盘面日未留存报价，保留证券并标为未知','return_30d_quality':'unknown','topics':[],'technical_observation':'该日行情待核验','limit_up_ytd':None})
     result.sort(key=lambda r:(not number(r.get('return_30d')),-r['return_30d'] if number(r.get('return_30d')) else 0,r['instrument_id']))
     known=0
@@ -482,17 +544,19 @@ def gainers_rows(market,reference,day,rows,max_items=None):
                           if wanted.intersection(batch) for symbol in batch]
     limits=limit_metrics(market,day,evidence_symbols,reference.get('_supplement',{}),reference)
     for row in selected:row.update(limits.get(row['instrument_id'],{}))
-    return selected,{'window':'近30个市场交易日','start':baseline,'end':day,'covered_stocks':known,'unknown_count':len(result)-known,'universe_count':len(result),'with_intermediate_gaps':sum(bool(r.get('return_30d_missing_sessions')) and number(r.get('return_30d')) for r in result),'observation':'完整证券搜索；未知端点保留未排名，停牌/缺日报价不会自动清空端点收益','return_basis':'T/T-30精确交易日端点，区间有行动时仅用可核验事件前复权','annual_limitup_coverage':reference.get('_supplement',{}).get('annual_coverage',{}) and {k:v for k,v in annual_coverage(reference['_supplement'],calendar,day).items() if k!='counts' and k!='missing_dates'}}
+    return selected,{'window':'近30个市场交易日','start':baseline,'end':day,'covered_stocks':known,'unknown_count':len(result)-known,'universe_count':len(result),'with_intermediate_gaps':sum(bool(r.get('return_30d_missing_sessions')) and number(r.get('return_30d')) for r in result),'observation':'未知端点保留未排名；已核验连续停牌的端点可沿用停牌前实际收盘','return_basis':'T/T-30市场交易日端点，停牌端点标注实际取价日，区间有行动时仅用可核验事件前复权','annual_limitup_coverage':reference.get('_supplement',{}).get('annual_coverage',{}) and {k:v for k,v in annual_coverage(reference['_supplement'],calendar,day).items() if k!='counts' and k!='missing_dates'}}
 
 
 def cached_gainers(market,status,reference,day,rows,max_items=None):
     # A top-five overview must never seed the full searchable/sortable rank.
     # Supplement publication/repair can alter facts without changing its old
     # created_at timestamp; fingerprint the actual retained document instead.
+    from app.services.market_suspensions import suspension_revision
+
     supplement=reference.get('_supplement',{})
     verified=reference.get('_supplement_cache_source')
     fingerprint=verified[1] if isinstance(verified,tuple) and len(verified)==2 and verified[0] is supplement else None
-    key=(status['snapshot_id'],status.get('path'),day,fingerprint if fingerprint is not None else digest(supplement),max_items)
+    key=(status['snapshot_id'],status.get('path'),day,fingerprint if fingerprint is not None else digest(supplement),suspension_revision(),max_items)
     with _gainers_lock:
         if key not in _gainers_cache:
             _gainers_cache[key]=gainers_rows(market,reference,day,rows,max_items)

@@ -23,6 +23,11 @@ STOCK_CODE = re.compile(r'\d{6}\.(?:SH|SZ|BJ)\Z')
 SECTOR_CODE = re.compile(r'\d{6}\.TI\Z')
 MAX_REQUESTS = 96
 MAX_BYTES = 32 * 1024 * 1024
+NOON_EVENT_POOLS = {
+    'limit_up': '/api/a-share/special-data/limit-up-pool',
+    'limit_down': '/api/a-share/special-data/limit-down-pool',
+    'limit_break': '/api/a-share/special-data/limit-break-pool',
+}
 
 
 class WindowExpired(ValueError):
@@ -237,7 +242,39 @@ def items(body):
     return data['item'] if isinstance(data, dict) and isinstance(data.get('item'), list) else None
 
 
-def paged(collector, name, endpoint, params=None, *, market=False):
+def explicit_empty_pool_page(body):
+    """Exact successful zero shape; caller must verify source and capture time."""
+    if (not isinstance(body, dict) or type(body.get('code')) is not int
+            or body['code'] != 0 or items(body) != []):
+        return False
+    pagination = body['data'].get('pagination')
+    expected = {'page': 1, 'pages': 0, 'size': 200, 'total': 0}
+    return isinstance(pagination, dict) and all(
+        type(pagination.get(key)) is int and pagination[key] == value for key, value in expected.items())
+
+
+def verified_empty_noon_pool_page(body, day, source, pool):
+    """The noon provider's explicit successful zero-result page, not a missing pool."""
+    first_page = f'{pool}_page_1'
+    midnight = int(datetime.combine(datetime.fromisoformat(day).date(), time(), CHINA).timestamp() * 1000)
+    if (pool not in NOON_EVENT_POOLS or source.get('name') != first_page or source.get('domain') != first_page
+            or source.get('source') != 'fuyao' or source.get('state') != 'received'
+            or source.get('endpoint') != NOON_EVENT_POOLS[pool]
+            or type(source.get('rows')) is not int or source['rows'] != 0
+            or source.get('params') != {'date_ms': midnight, 'page': 1, 'size': 200}
+            or not explicit_empty_pool_page(body)):
+        return False
+    started, received = (datetime.fromisoformat(source[key]) for key in ('started_at', 'received_at'))
+    if (started.tzinfo is None or received.tzinfo is None or started > received
+            or source.get('requested_at') != source.get('started_at')
+            or not in_window(day, started) or not in_window(day, received)):
+        return False
+    stamp = source_time(body['data'].get('timestamp'), day, received)
+    return (stamp['state'] == 'observed' and stamp == source.get('source_timestamp')
+            and in_window(day, datetime.fromisoformat(stamp['time'])))
+
+
+def paged(collector, name, endpoint, params=None, *, market=False, verify_empty=None):
     size = 1000 if market else 200
     rows, declared, failures = [], None, []
     for page in range(1, 21 if market else 11):
@@ -276,8 +313,15 @@ def paged(collector, name, endpoint, params=None, *, market=False):
         failures.append('来源存在无效或重复证券身份')
     if declared is None or len(rows) != declared:
         failures.append('实际行数与来源总数不一致')
-    complete = declared is not None and declared > 0 and not failures
-    if declared == 0:
+    verified_zero = False
+    if declared == 0 and not failures:
+        if verify_empty is not None:
+            verified_zero = verify_empty(body)
+        elif endpoint == NOON_EVENT_POOLS.get(name):
+            record = next((entry for entry in collector.records if entry.get('name') == f'{name}_page_1'), {})
+            verified_zero = verified_empty_noon_pool_page(body, collector.day, record, name)
+    complete = declared is not None and not failures and (declared > 0 or verified_zero)
+    if declared == 0 and not verified_zero:
         failures.append('来源为空，不能确认真实零事件')
     for reason in failures:
         collector.gap(name, reason)

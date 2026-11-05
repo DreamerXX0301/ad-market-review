@@ -388,10 +388,13 @@ def _fit_detail(data):
 def _stock_fields(row, topic_query=''):
     value = _pick_fields(row, ('instrument_id', 'code', 'name', 'date', 'close', 'change_pct', 'amount',
         'rank', 'change_30d_pct', 'change_30d_reason', 'change_30d_coverage', 'turnover_rate',
+        'return_30d_start_quote_date', 'return_30d_end_quote_date', 'return_30d_quality',
         'first_limit_time', 'last_limit_time', 'break_count', 'source_industry', 'details_source',
         'limit_up_state', 'previous_board_count', 'previous_board_date', 'feedback', 'reason',
         'unverified_reason', 'limit_up_ytd', 'limit_up_ytd_observed', 'limit_up_ytd_reason',
         'topics_observed_date', 'topics_scope'))
+    if row.get('return_30d_observation_suspended') is True or isinstance(row.get('suspension'), dict):
+        value['trading_status'] = 'suspended'
     height = (row.get('board_presentation') or {}).get('height', {})
     value['board_count'] = height.get('value') if height.get('state') == 'confirmed' else None
     value['board_count_state'] = height.get('state', 'unknown')
@@ -670,8 +673,11 @@ def _market_detail(result, day, section, query, now):
             classifications = row['matched_classifications']
             rows.append({
                 **_pick_fields(row, ('instrument_id', 'code', 'name', 'rank', 'change_30d_pct',
-                                     'return_30d_start', 'return_30d_end', 'return_30d_price_basis')),
-                'quote_date': day, 'quote_source': row.get('source') or status.get('source'),
+                                     'return_30d_start', 'return_30d_end', 'return_30d_price_basis',
+                                     'return_30d_start_quote_date', 'return_30d_end_quote_date', 'return_30d_quality')),
+                'quote_date': None if row.get('return_30d_observation_suspended') else day,
+                'quote_source': row.get('source') or status.get('source'),
+                **({'trading_status': 'suspended'} if row.get('return_30d_observation_suspended') else {}),
                 'matched_classifications': classifications[:5],
                 'matched_classification_count': len(classifications),
                 'matched_classifications_truncated': len(classifications) > 5,

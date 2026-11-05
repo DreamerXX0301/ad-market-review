@@ -1,5 +1,6 @@
 import type { Row } from "../../lib/api";
 import AuctionHeightBadge from "./AuctionHeightBadge";
+import MarketSuspensionBadge from "./MarketSuspensionBadge";
 import {
   auctionStockBoard,
   auctionStockEvent,
@@ -35,6 +36,7 @@ export default function AuctionStockBadges({
       >
         {board.label}
       </span>
+      <MarketSuspensionBadge evidence={row.suspension} />
     </span>
   );
 }

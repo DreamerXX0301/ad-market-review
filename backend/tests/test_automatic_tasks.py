@@ -140,8 +140,14 @@ def test_naive_clock_is_rejected():
         service.due_state('noon', {'enabled': True, 'time': '12:05'}, datetime(2026, 10, 29, 12, 5))
 
 
-def test_noon_auto_uses_public_once_per_day_creator_and_durable_restart(scheduled):
+def test_noon_auto_uses_public_once_per_day_creator_and_durable_restart(scheduled, monkeypatch):
+    from app.services import intraday_service
+
     source, clock = scheduled; enable()
+    monkeypatch.setattr(intraday_service, 'now_china', lambda: clock[0])
+    pending = intraday_service.read_view()
+    assert (pending['noon_scheduled_at'], pending['noon_schedule_source']) == ('12:05', 'configuration')
+    assert intraday_service.read_view('2026-10-28')['noon_scheduled_at'] is None
     first = service.AutomaticReviewScheduler().tick()
     assert len(first['created']) == 1
     task = tasks.task_view(first['created'][0])
@@ -152,6 +158,11 @@ def test_noon_auto_uses_public_once_per_day_creator_and_durable_restart(schedule
     assert authorization['configuration_revision'] == 1 and authorization['scheduled_time'] == '12:05' and authorization['timezone'] == 'Asia/Shanghai'
     assert service.AutomaticReviewScheduler().tick()['created'] == []
     assert len(actual_jobs()) == 1 and len(source.calls) == 1
+    enable(noon_time='12:15')
+    receipt = intraday_service.read_view()
+    assert (receipt['noon_scheduled_at'], receipt['noon_schedule_source']) == ('12:05', 'recorded')
+    with core.connect() as connection:
+        assert intraday_service._noon_schedule(connection, DAY, '2026-10-30') == ('12:05', 'recorded')
     clock[0] = clock[0].replace(hour=18)
     service.AutomaticReviewScheduler().tick()
     state = service.read_settings()['last_checks']['noon']

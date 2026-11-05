@@ -316,6 +316,7 @@ export default function AuctionReview({
     ...candidates.get(row.instrument_id),
     ...row,
     ...(view?.stock_boards?.[row.instrument_id] || {}),
+    suspension: view?.stock_suspensions?.[row.instrument_id],
   }));
   const rows =
     sort.key === "previous_board_count"
@@ -416,6 +417,7 @@ export default function AuctionReview({
           ...candidates.get(row.instrument_id),
           ...row,
           ...(view?.stock_boards?.[row.instrument_id] || {}),
+          suspension: view?.stock_suspensions?.[row.instrument_id],
         }}
         showEvent={showHeight}
       />

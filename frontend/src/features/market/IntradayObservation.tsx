@@ -4,8 +4,14 @@ import {
   Clock3,
   RefreshCw,
   ArrowUpRight,
+  Layers3,
+  CircleAlert,
+  Filter,
+  GitCompareArrows,
+  TrendingUp,
   Sparkles,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { Empty, ErrorBox, Loading, Panel, Warning } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
 import AIEntry from "../ai/AIEntry";
@@ -20,9 +26,13 @@ import {
   NOON_BOARD_OPTIONS,
 } from "./noonBoardPresentation";
 import type { NoonBoardFilterValue } from "./noonBoardPresentation";
+import { MarketSortHeader } from "./MarketTable";
+import { sortMarketRows } from "./marketPresentation";
+import type { MarketSort } from "./marketPresentation";
 import IntradayAutomation from "./IntradayAutomation";
 import AuctionHeightReference from "./AuctionHeightReference";
-import AuctionDiscovery, { DiscoveryWorkspace } from "./AuctionDiscovery";
+import AuctionDiscovery from "./AuctionDiscovery";
+import { isStructuralLadderTopic } from "./ladderBoardPresentation";
 import "./IntradayObservation.css";
 
 const activeStatus = (value: unknown) =>
@@ -48,7 +58,21 @@ type MemberScope = StockHistoryScope & {
 };
 
 const stockHistoryQuery = ({ date, slot }: StockHistoryScope, rows: Row[]) =>
-  `/market/intraday/history?${new URLSearchParams({ date, slot, symbols: rows.map((row) => row.instrument_id).join(",") })}`;
+  `/market/intraday/history?${new URLSearchParams({
+    date,
+    slot,
+    symbols: rows
+      .map((row) => row.instrument_id)
+      .sort()
+      .join(","),
+  })}`;
+
+const historySortFields = [
+  "change_30d_pct",
+  "return_ytd_pct",
+  "last_limit_up_date",
+  "limit_up_1y",
+];
 
 function ThemeChips({
   row,
@@ -93,6 +117,37 @@ function ThemeChips({
   );
 }
 
+function TurnoverComparison({
+  comparison,
+  period,
+}: {
+  comparison?: Row;
+  period: "同档" | "同段";
+}) {
+  if (!comparison || comparison.change_from_previous == null)
+    return <small>前一交易日{period}暂无可比成交额</small>;
+  const difference = comparison.change_from_previous;
+  return (
+    <small
+      className="intraday-turnover-change"
+      title={[
+        comparison.previous_date && `对照 ${comparison.previous_date}`,
+        `昨日可比成交额 ${amount(comparison.previous_amount)}`,
+        `今日可比成交额 ${amount(comparison.comparison_amount)}`,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+    >
+      {comparison.label || `较前一交易日${period}`}{" "}
+      <b className="intraday-turnover-delta" data-direction={tone(difference)}>
+        {difference === 0
+          ? "持平"
+          : `${difference > 0 ? "放量" : "缩量"} ${amount(Math.abs(difference))}`}
+      </b>
+    </small>
+  );
+}
+
 function MarketPulse({ pulse, interval }: { pulse: Row; interval?: Row }) {
   const breadth = pulse.breadth;
   const turnover = pulse.turnover;
@@ -108,6 +163,26 @@ function MarketPulse({ pulse, interval }: { pulse: Row; interval?: Row }) {
             <small>
               {row.latest_price == null ? "点位未取得" : num(row.latest_price)}
             </small>
+            <div className="intraday-turnover-lines">
+              <small>
+                累计成交额 <b>{amount(row.amount)}</b>
+              </small>
+              <TurnoverComparison
+                comparison={row.amount_comparison}
+                period="同档"
+              />
+              {row.interval_amount?.amount != null && (
+                <>
+                  <small>
+                    本段成交额 <b>{amount(row.interval_amount.amount)}</b>
+                  </small>
+                  <TurnoverComparison
+                    comparison={row.interval_amount}
+                    period="同段"
+                  />
+                </>
+              )}
+            </div>
           </div>
         ))}
         {breadth && (
@@ -135,19 +210,21 @@ function MarketPulse({ pulse, interval }: { pulse: Row; interval?: Row }) {
             <span>样本累计成交额</span>
             <strong>{amount(turnover.amount)}</strong>
             <small>已取得 {integer(turnover.valid)} 只</small>
+            <TurnoverComparison
+              comparison={turnover.amount_comparison}
+              period="同档"
+            />
           </div>
         )}
         {interval && (
           <div className="intraday-metric">
             <span>本段新增成交额</span>
             <strong>{amount(interval.amount)}</strong>
-            <small>
-              {interval.change_from_previous != null
-                ? `较昨同段 ${interval.change_from_previous > 0 ? "+" : ""}${amount(interval.change_from_previous)}`
-                : interval.amount == null
-                  ? "区间端点未核验"
-                  : "昨同段暂无可比成交额"}
-            </small>
+            {interval.amount == null ? (
+              <small>区间端点未核验</small>
+            ) : (
+              <TurnoverComparison comparison={interval} period="同段" />
+            )}
           </div>
         )}
       </div>
@@ -176,35 +253,467 @@ function StockSamples({
     <ul className="intraday-feedback-stocks">
       {rows.map((row) => (
         <li key={row.instrument_id}>
-          {onStock ? (
-            <button
-              className="stock-link"
-              onClick={() => onStock(row.instrument_id)}
-            >
-              {row.name || row.instrument_id}
-            </button>
-          ) : (
-            <span>{row.name || row.instrument_id}</span>
-          )}
-          <CopyStockCode instrumentId={row.instrument_id} />
-          <span className={tone(row.change_pct)}>
+          <div className="intraday-feedback-stock-identity">
+            {onStock ? (
+              <button
+                type="button"
+                className="stock-link"
+                onClick={() => onStock(row.instrument_id)}
+              >
+                {row.name || row.instrument_id}
+              </button>
+            ) : (
+              <span>{row.name || row.instrument_id}</span>
+            )}
+            <CopyStockCode instrumentId={row.instrument_id} />
+          </div>
+          <strong className={tone(row.change_pct)}>
             {percent(row.change_pct)}
-          </span>
-          {broken && (
-            <span className="intraday-stock-state" data-kind="broken">
-              炸板
-            </span>
-          )}
-          <ThemeChips row={row} showMissing={Array.isArray(row.themes)} />
-          {row.previous_board_count != null && (
-            <small>
-              前日 {integer(row.previous_board_count)} 板 ·{" "}
-              {relayLabels[row.state] || "待核验"}
-            </small>
+          </strong>
+          {(broken ||
+            row.previous_board_count != null ||
+            Array.isArray(row.themes) ||
+            !!row.board_names?.length) && (
+            <div className="intraday-feedback-stock-meta">
+              {broken && (
+                <span className="intraday-stock-state" data-kind="broken">
+                  炸板
+                </span>
+              )}
+              <ThemeChips row={row} showMissing={Array.isArray(row.themes)} />
+              {row.previous_board_count != null && (
+                <small>
+                  前日 {integer(row.previous_board_count)} 板 ·{" "}
+                  {relayLabels[row.state] || "待核验"}
+                </small>
+              )}
+            </div>
           )}
         </li>
       ))}
     </ul>
+  );
+}
+
+type FeedbackGrouping = "original" | "industry" | "concept";
+type FeedbackThemeKind = Exclude<FeedbackGrouping, "original">;
+
+export function feedbackThemeGroups(rows: Row[], kind: FeedbackThemeKind) {
+  const groups = new Map<string, Row[]>();
+  const missing: Row[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.instrument_id)) continue;
+    seen.add(row.instrument_id);
+    const names = new Set(
+      ((row.themes || []) as Row[])
+        .filter((theme) => theme.kind === kind && theme.name)
+        .map((theme) => String(theme.name)),
+    );
+    if (!names.size) missing.push(row);
+    for (const name of names) {
+      const group = groups.get(name);
+      if (group) group.push(row);
+      else groups.set(name, [row]);
+    }
+  }
+  const sorted = [...groups].sort(
+    ([a, first], [b, second]) =>
+      second.length - first.length || a.localeCompare(b, "zh-CN"),
+  );
+  const attributes =
+    kind === "concept"
+      ? sorted.filter(([name]) => isStructuralLadderTopic({ name }))
+      : [];
+  const ordered =
+    kind === "concept"
+      ? sorted.filter(([name]) => !isStructuralLadderTopic({ name }))
+      : sorted;
+  const featured = ordered
+    .filter(([, items]) => kind === "industry" || items.length >= 2)
+    .slice(0, 3);
+  return {
+    groups,
+    ordered,
+    featured,
+    remaining: ordered.slice(featured.length),
+    attributes,
+    missing,
+  };
+}
+
+export function filterFeedbackTheme(
+  rows: Row[],
+  kind: FeedbackThemeKind,
+  name: string | null,
+) {
+  return name ? (feedbackThemeGroups(rows, kind).groups.get(name) ?? []) : rows;
+}
+
+function FeedbackThemeLeaders({
+  rows,
+  label,
+  selected,
+  onSelect,
+}: {
+  rows: Row[];
+  label: string;
+  selected: string | null;
+  onSelect: (name: string | null) => void;
+}) {
+  const { featured, remaining, attributes } = feedbackThemeGroups(
+    rows,
+    "concept",
+  );
+  if (!featured.length && !remaining.length && !attributes.length) return null;
+  const renderChip = ([name, items]: [string, Row[]]) => {
+    const priced = items.filter((row) => Number.isFinite(row.change_pct));
+    const average = priced.length
+      ? priced.reduce((sum, row) => sum + row.change_pct, 0) / priced.length
+      : null;
+    return (
+      <button
+        type="button"
+        className="intraday-feedback-leader"
+        key={name}
+        aria-pressed={selected === name}
+        onClick={() => onSelect(selected === name ? null : name)}
+      >
+        <Filter size={11} aria-hidden="true" />
+        <span>{name}</span>
+        <b>{integer(items.length)} 只</b>
+        {average != null && (
+          <small title={`按 ${integer(priced.length)} 只有效报价计算`}>
+            样本均涨幅 <b className={tone(average)}>{percent(average)}</b>
+          </small>
+        )}
+      </button>
+    );
+  };
+  return (
+    <div
+      className="intraday-feedback-leaders"
+      role="group"
+      aria-label={label + "筛选"}
+    >
+      <span>{label} · 点击筛选本卡</span>
+      {featured.map(renderChip)}
+      {remaining.length > 0 && (
+        <details className="intraday-feedback-more intraday-feedback-leaders-more">
+          <summary>更多概念 · {integer(remaining.length)} 个</summary>
+          <div className="intraday-feedback-leaders">
+            {remaining.map(renderChip)}
+          </div>
+        </details>
+      )}
+      {attributes.length > 0 && (
+        <details className="intraday-feedback-more intraday-feedback-leaders-more">
+          <summary>更多属性 · {integer(attributes.length)} 个</summary>
+          <div className="intraday-feedback-leaders">
+            {attributes.map(renderChip)}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function FeedbackGroupingPicker({
+  grouping,
+  onChange,
+}: {
+  grouping: FeedbackGrouping;
+  onChange: (grouping: FeedbackGrouping) => void;
+}) {
+  const options = [
+    ["original", "原分组"],
+    ["industry", "按行业"],
+    ["concept", "按概念"],
+  ] as const;
+  return (
+    <div
+      className="intraday-feedback-grouping intraday-filters"
+      role="group"
+      aria-label="留存个股分组"
+    >
+      {options.map(([value, label]) => (
+        <button
+          type="button"
+          className="btn small"
+          key={value}
+          aria-pressed={grouping === value}
+          onClick={() => onChange(value)}
+        >
+          {label}
+        </button>
+      ))}
+      {grouping !== "original" && (
+        <small>
+          {grouping === "concept"
+            ? "按留存个股统计，同一股票可归入多个概念。"
+            : "按留存个股统计，行业取已核验的主要归属。"}
+        </small>
+      )}
+    </div>
+  );
+}
+
+function FeedbackSamples({
+  grouping = "original",
+  ...props
+}: {
+  rows: Row[];
+  onStock?: (id: string) => void;
+  broken?: boolean;
+  grouping?: FeedbackGrouping;
+}) {
+  const { rows } = props;
+  if (grouping !== "original" && rows.length > 0) {
+    const { ordered, featured, remaining, attributes, missing } =
+      feedbackThemeGroups(rows, grouping);
+    const renderGroup = ([name, items]: [string, Row[]], index: number) => (
+      <details
+        className="intraday-feedback-theme"
+        key={name}
+        open={index === 0 || undefined}
+      >
+        <summary>
+          <span>{name}</span>
+          <span>{integer(items.length)} 只</span>
+        </summary>
+        <FeedbackSamples {...props} rows={items} />
+      </details>
+    );
+    return (
+      <div className="intraday-feedback-themes">
+        {(grouping === "concept" ? featured : ordered).map(renderGroup)}
+        {grouping === "concept" && remaining.length > 0 && (
+          <details className="intraday-feedback-more intraday-feedback-more-themes">
+            <summary>更多概念 · {integer(remaining.length)} 个</summary>
+            <div className="intraday-feedback-themes">
+              {remaining.map((group) => renderGroup(group, -1))}
+            </div>
+          </details>
+        )}
+        {attributes.length > 0 && (
+          <details className="intraday-feedback-more intraday-feedback-more-themes">
+            <summary>更多属性 · {integer(attributes.length)} 个</summary>
+            <div className="intraday-feedback-themes">
+              {attributes.map((group) => renderGroup(group, -1))}
+            </div>
+          </details>
+        )}
+        {missing.length > 0 &&
+          renderGroup(
+            [grouping === "industry" ? "行业未核验" : "概念未核验", missing],
+            -1,
+          )}
+      </div>
+    );
+  }
+  const remaining = rows.slice(4);
+  return (
+    <>
+      <StockSamples {...props} rows={rows.slice(0, 4)} />
+      {remaining.length > 0 && (
+        <details className="intraday-feedback-more">
+          <summary>其余 {integer(remaining.length)} 只留存个股</summary>
+          <StockSamples {...props} rows={remaining} />
+        </details>
+      )}
+    </>
+  );
+}
+
+function FeedbackCard({
+  title,
+  icon,
+  stats,
+  empty,
+  themeLeaders,
+  children,
+}: {
+  title: string;
+  icon: ReactNode;
+  stats: Array<{ label: string; value: string; kind?: string }>;
+  empty?: string;
+  themeLeaders?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <details className="intraday-feedback-card" open>
+      <summary>
+        <span className="intraday-feedback-title">
+          {icon}
+          <strong>{title}</strong>
+        </span>
+        {empty ? (
+          <span className="intraday-feedback-note">{empty}</span>
+        ) : (
+          <span className="intraday-feedback-stats">
+            {stats.map(({ label, value, kind }) => (
+              <span key={label} data-kind={kind}>
+                {label} <b>{value}</b>
+              </span>
+            ))}
+          </span>
+        )}
+      </summary>
+      <div className="intraday-feedback-body">
+        {themeLeaders}
+        {children}
+      </div>
+    </details>
+  );
+}
+
+function BrokenBoardDetails({
+  pool,
+  onStock,
+}: {
+  pool: Row;
+  onStock?: (id: string) => void;
+}) {
+  const [kind, setKind] = useState<FeedbackThemeKind>("industry");
+  const [selected, setSelected] = useState<string | null>(null);
+  const rows = (pool.items || []) as Row[];
+  const { groups, featured, remaining, attributes, missing } =
+    feedbackThemeGroups(rows, kind);
+  const visible = [...(selected ? (groups.get(selected) ?? []) : rows)].sort(
+    (a, b) =>
+      (Number.isFinite(b.change_pct) ? b.change_pct : -Infinity) -
+      (Number.isFinite(a.change_pct) ? a.change_pct : -Infinity),
+  );
+  const renderRank = ([name, members]: [string, Row[]]) => {
+    const share = (members.length / rows.length) * 100;
+    return (
+      <li key={name}>
+        <button
+          type="button"
+          aria-pressed={selected === name}
+          onClick={() => setSelected(selected === name ? null : name)}
+        >
+          <span>{name}</span>
+          <b>
+            {integer(members.length)} 只 <small>{share.toFixed(1)}%</small>
+          </b>
+          <i aria-hidden="true">
+            <span style={{ width: `${share}%` }} />
+          </i>
+        </button>
+      </li>
+    );
+  };
+  return (
+    <FeedbackCard
+      title="盘中炸板"
+      icon={<CircleAlert size={16} aria-hidden="true" />}
+      stats={[
+        {
+          label: "炸板",
+          value: evidenceCount(pool.count, pool.state),
+          kind: "broken",
+        },
+      ]}
+    >
+      {pool.conflict_count > 0 && (
+        <p className="intraday-feedback-note">
+          {integer(pool.conflict_count)} 只池间状态冲突，待核验。
+        </p>
+      )}
+      {rows.length > 0 ? (
+        <>
+          <div className="intraday-breakout-compare">
+            <div className="intraday-breakout-heading">
+              <b>哪里炸板多</b>
+              <div
+                className="intraday-filters"
+                role="group"
+                aria-label="炸板分布口径"
+              >
+                {(
+                  [
+                    ["industry", "行业"],
+                    ["concept", "概念"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="btn small"
+                    aria-pressed={kind === value}
+                    onClick={() => {
+                      setKind(value);
+                      setSelected(null);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="intraday-feedback-note">
+              按留存标签统计 · 分母为已列出的 {integer(rows.length)} 只
+              {kind === "concept" ? " · 概念可重叠" : ""}
+            </p>
+            {featured.length > 0 && (
+              <ol className="intraday-breakout-ranks">
+                {featured.map(renderRank)}
+              </ol>
+            )}
+            {remaining.length > 0 && (
+              <details className="intraday-feedback-more intraday-feedback-more-themes">
+                <summary>
+                  更多{kind === "industry" ? "行业" : "概念"} ·{" "}
+                  {integer(remaining.length)} 个
+                </summary>
+                <ol className="intraday-breakout-ranks">
+                  {remaining.map(renderRank)}
+                </ol>
+              </details>
+            )}
+            {attributes.length > 0 && (
+              <details className="intraday-feedback-more intraday-feedback-more-themes">
+                <summary>更多属性 · {integer(attributes.length)} 个</summary>
+                <ol className="intraday-breakout-ranks">
+                  {attributes.map(renderRank)}
+                </ol>
+              </details>
+            )}
+            {!groups.size && (
+              <p className="intraday-feedback-note">
+                这批个股暂无可核验的{kind === "industry" ? "行业" : "概念"}
+                归属。
+              </p>
+            )}
+            {missing.length > 0 && (
+              <small className="intraday-feedback-note">
+                {integer(missing.length)} 只归属未核验
+              </small>
+            )}
+          </div>
+          <details
+            className="intraday-feedback-more intraday-breakout-stocks"
+            open={selected != null || undefined}
+          >
+            <summary>
+              {selected
+                ? `${selected} · ${integer(visible.length)} 只`
+                : `查看 ${integer(visible.length)} 只炸板个股`}
+            </summary>
+            <StockSamples rows={visible} onStock={onStock} broken />
+          </details>
+        </>
+      ) : (
+        <p className="intraday-feedback-note">
+          {pool.state === "unknown"
+            ? "本轮炸板池待核验。"
+            : pool.count === 0
+              ? "本轮已核验的炸板池为空。"
+              : "这个时点仅有已核验家数，未留存可展示的个股。"}
+        </p>
+      )}
+    </FeedbackCard>
   );
 }
 
@@ -215,63 +724,89 @@ function LadderCard({
   ladder: Row;
   onStock?: (id: string) => void;
 }) {
-  const broken = ladder.broken_board;
+  const [grouping, setGrouping] = useState<FeedbackGrouping>("original");
+  const [selected, setSelected] = useState<string | null>(null);
+  const groups: Row[] = ladder.groups || [];
+  const rows = groups.flatMap((group) => (group.items || []) as Row[]);
   return (
-    <details className="intraday-feedback-card">
-      <summary>
-        <strong>盘中封板梯队</strong>
-        <span>
-          封板 {evidenceCount(ladder.sealed_count, ladder.state)} · 首板{" "}
-          {evidenceCount(ladder.first_board_count, ladder.height_state)} · 连板{" "}
-          {evidenceCount(ladder.multi_board_count, ladder.height_state)} · 最高{" "}
-          {ladder.highest_board == null
-            ? "—"
-            : `${evidenceCount(ladder.highest_board, ladder.height_state)} 板`}
-          {broken && (
-            <>
-              {" · "}
-              <span className="intraday-break-count">
-                炸板 {evidenceCount(broken.count, broken.state)}
-              </span>
-            </>
-          )}
-        </span>
-      </summary>
-      <div className="intraday-feedback-body">
-        <p className="intraday-feedback-note">
-          本轮采集区间的已核验封板，≥ 表示已确认下界，— 表示待核验。
-          {ladder.unknown_height_count > 0 &&
-            ` ${evidenceCount(ladder.unknown_height_count, ladder.state)} 只封板股高度待核验。`}
-        </p>
-        {(ladder.groups || []).map((group: Row) => (
-          <div className="intraday-feedback-group" key={group.board_count}>
-            <strong>
-              {integer(group.board_count)} 板 ·{" "}
-              {evidenceCount(group.count, ladder.height_state)} 只
-            </strong>
-            <StockSamples rows={group.items || []} onStock={onStock} />
-          </div>
-        ))}
-        {ladder.omitted_groups > 0 && (
-          <p className="intraday-feedback-note">仅展示主要梯队和代表股。</p>
-        )}
-        {broken && (
-          <div className="intraday-feedback-group">
-            <strong>
-              炸板池 · {evidenceCount(broken.count, broken.state)} 只
-            </strong>
-            <p className="intraday-feedback-note">
-              {broken.state === "unknown"
-                ? "本轮炸板池待核验。"
-                : "按本轮来源的炸板池核验。"}
-              {broken.conflict_count > 0 &&
-                ` ${integer(broken.conflict_count)} 只池间状态冲突，待核验。`}
-            </p>
-            <StockSamples rows={broken.items || []} onStock={onStock} broken />
-          </div>
-        )}
-      </div>
-    </details>
+    <FeedbackCard
+      title="盘中封板梯队"
+      icon={<Layers3 size={16} aria-hidden="true" />}
+      themeLeaders={
+        <FeedbackThemeLeaders
+          rows={rows}
+          label="封板题材"
+          selected={selected}
+          onSelect={setSelected}
+        />
+      }
+      stats={[
+        {
+          label: "封板",
+          value: evidenceCount(ladder.sealed_count, ladder.state),
+          kind: "sealed",
+        },
+        {
+          label: "首板",
+          value: evidenceCount(ladder.first_board_count, ladder.height_state),
+        },
+        {
+          label: "连板",
+          value: evidenceCount(ladder.multi_board_count, ladder.height_state),
+        },
+        {
+          label: "最高",
+          value:
+            ladder.highest_board == null
+              ? "—"
+              : `${evidenceCount(ladder.highest_board, ladder.height_state)} 板`,
+        },
+      ]}
+    >
+      <p className="intraday-feedback-note">
+        本轮采集区间的已核验封板，≥ 表示已确认下界，— 表示待核验。
+        {ladder.unknown_height_count > 0 &&
+          ` ${evidenceCount(ladder.unknown_height_count, ladder.state)} 只封板股高度待核验。`}
+      </p>
+      {rows.length > 0 && (
+        <FeedbackGroupingPicker
+          grouping={selected ? "original" : grouping}
+          onChange={(next) => {
+            setSelected(null);
+            setGrouping(next);
+          }}
+        />
+      )}
+      {!selected && grouping !== "original" ? (
+        <FeedbackSamples rows={rows} onStock={onStock} grouping={grouping} />
+      ) : (
+        <div className="intraday-ladder-groups">
+          {groups.map((group) => {
+            const items = filterFeedbackTheme(
+              group.items || [],
+              "concept",
+              selected,
+            );
+            if (selected && !items.length) return null;
+            return (
+              <div className="intraday-feedback-group" key={group.board_count}>
+                <strong>
+                  {integer(group.board_count)} 板 ·{" "}
+                  {selected
+                    ? `匹配 ${integer(items.length)}`
+                    : evidenceCount(group.count, ladder.height_state)}{" "}
+                  只
+                </strong>
+                <FeedbackSamples rows={items} onStock={onStock} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {ladder.omitted_groups > 0 && (
+        <p className="intraday-feedback-note">仅展示主要梯队和代表股。</p>
+      )}
+    </FeedbackCard>
   );
 }
 
@@ -284,82 +819,114 @@ function PriorSessionCard({
   priorBroken?: Row;
   onStock?: (id: string) => void;
 }) {
+  const [grouping, setGrouping] = useState<FeedbackGrouping>("original");
+  const [selected, setSelected] = useState<string | null>(null);
   return (
-    <details className="intraday-feedback-card">
-      <summary>
-        <strong>前日涨停反馈</strong>
-        <span>
-          {prior.state === "unknown"
-            ? "前日收盘样本待核验"
-            : `样本 ${evidenceCount(prior.total, prior.state)} · 本轮封板 ${evidenceCount(prior.sealed_count, prior.sealed_state)} · 晋级 ${evidenceCount(prior.promotion_count, prior.promotion_state)}`}
-        </span>
-      </summary>
-      <div className="intraday-feedback-body">
-        <p className="intraday-feedback-note">
-          {prior.date
-            ? `前一交易日 ${prior.date} 收盘涨停样本。`
-            : "未取得前一交易日的收盘涨停样本。"}
-          {prior.state !== "unknown" &&
-            `本轮有可比报价 ${integer(prior.priced)} 只，上涨 ${integer(prior.up)}、下跌 ${integer(prior.down)}、平盘 ${integer(prior.flat)}，平均 ${percent(prior.average_change_pct)}。`}
-          晋级要求本轮已核验封板且板数比前日增加一板。
-        </p>
-        {!!prior.groups?.length && (
-          <div className="intraday-table-scroll intraday-feedback-table">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">前日梯队</th>
-                  <th scope="col">可比 / 样本</th>
-                  <th scope="col">涨 / 跌 / 平</th>
-                  <th scope="col">平均涨幅</th>
-                  <th scope="col">本轮封板</th>
-                  <th scope="col">本轮晋级</th>
+    <FeedbackCard
+      title="前日涨停反馈"
+      icon={<TrendingUp size={16} aria-hidden="true" />}
+      themeLeaders={
+        <FeedbackThemeLeaders
+          rows={prior.items || []}
+          label="前日涨停题材"
+          selected={selected}
+          onSelect={setSelected}
+        />
+      }
+      empty={prior.state === "unknown" ? "前日收盘样本待核验" : undefined}
+      stats={[
+        { label: "样本", value: evidenceCount(prior.total, prior.state) },
+        {
+          label: "本轮封板",
+          value: evidenceCount(prior.sealed_count, prior.sealed_state),
+          kind: "sealed",
+        },
+        {
+          label: "晋级",
+          value: evidenceCount(prior.promotion_count, prior.promotion_state),
+          kind: "sealed",
+        },
+      ]}
+    >
+      <p className="intraday-feedback-note">
+        {prior.date
+          ? `前一交易日 ${prior.date} 收盘涨停样本。`
+          : "未取得前一交易日的收盘涨停样本。"}
+        {prior.state !== "unknown" &&
+          `本轮有可比报价 ${integer(prior.priced)} 只，上涨 ${integer(prior.up)}、下跌 ${integer(prior.down)}、平盘 ${integer(prior.flat)}，平均 ${percent(prior.average_change_pct)}。`}
+        晋级要求本轮已核验封板且板数比前日增加一板。
+      </p>
+      {!!prior.groups?.length && (
+        <div className="intraday-table-scroll intraday-feedback-table">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">前日梯队</th>
+                <th scope="col">可比 / 样本</th>
+                <th scope="col">涨 / 跌 / 平</th>
+                <th scope="col">平均涨幅</th>
+                <th scope="col">本轮封板</th>
+                <th scope="col">本轮晋级</th>
+              </tr>
+            </thead>
+            <tbody>
+              {prior.groups.map((group: Row) => (
+                <tr key={group.key}>
+                  <th scope="row">{group.label}</th>
+                  <td>
+                    {integer(group.priced)} /{" "}
+                    {evidenceCount(group.total, prior.state)}
+                  </td>
+                  <td>
+                    {integer(group.up)} / {integer(group.down)} /{" "}
+                    {integer(group.flat)}
+                  </td>
+                  <td className={tone(group.average_change_pct)}>
+                    {percent(group.average_change_pct)}
+                  </td>
+                  <td>
+                    {evidenceCount(group.sealed_count, group.sealed_state)}
+                  </td>
+                  <td>
+                    {evidenceCount(
+                      group.promotion_count,
+                      group.promotion_state,
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {prior.groups.map((group: Row) => (
-                  <tr key={group.key}>
-                    <th scope="row">{group.label}</th>
-                    <td>
-                      {integer(group.priced)} /{" "}
-                      {evidenceCount(group.total, prior.state)}
-                    </td>
-                    <td>
-                      {integer(group.up)} / {integer(group.down)} /{" "}
-                      {integer(group.flat)}
-                    </td>
-                    <td className={tone(group.average_change_pct)}>
-                      {percent(group.average_change_pct)}
-                    </td>
-                    <td>
-                      {evidenceCount(group.sealed_count, group.sealed_state)}
-                    </td>
-                    <td>
-                      {evidenceCount(
-                        group.promotion_count,
-                        group.promotion_state,
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <StockSamples rows={prior.items || []} onStock={onStock} />
-        {priorBroken && (
-          <div className="intraday-feedback-group intraday-prior-broken">
-            <strong>前日炸板反馈</strong>
-            <p className="intraday-feedback-note">
-              {priorBroken.state === "unknown"
-                ? "前日收盘炸板样本待核验。"
-                : `样本 ${evidenceCount(priorBroken.total, priorBroken.state)} · 可比 ${integer(priorBroken.priced)} 只 · 平均 ${percent(priorBroken.average_change_pct)} · 本轮封板 ${evidenceCount(priorBroken.sealed_count, priorBroken.sealed_state)}`}
-            </p>
-            <StockSamples rows={priorBroken.items || []} onStock={onStock} />
-          </div>
-        )}
-      </div>
-    </details>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <FeedbackGroupingPicker
+        grouping={selected ? "original" : grouping}
+        onChange={(next) => {
+          setSelected(null);
+          setGrouping(next);
+        }}
+      />
+      <FeedbackSamples
+        rows={filterFeedbackTheme(prior.items || [], "concept", selected)}
+        onStock={onStock}
+        grouping={selected ? "original" : grouping}
+      />
+      {!selected && priorBroken && (
+        <div className="intraday-feedback-group intraday-prior-broken">
+          <strong>前日炸板反馈</strong>
+          <p className="intraday-feedback-note">
+            {priorBroken.state === "unknown"
+              ? "前日收盘炸板样本待核验。"
+              : `样本 ${evidenceCount(priorBroken.total, priorBroken.state)} · 可比 ${integer(priorBroken.priced)} 只 · 平均 ${percent(priorBroken.average_change_pct)} · 本轮封板 ${evidenceCount(priorBroken.sealed_count, priorBroken.sealed_state)}`}
+          </p>
+          <FeedbackSamples
+            rows={priorBroken.items || []}
+            onStock={onStock}
+            grouping={grouping}
+          />
+        </div>
+      )}
+    </FeedbackCard>
   );
 }
 
@@ -370,10 +937,12 @@ function SameDayCard({
   comparison: Row;
   onStock?: (id: string) => void;
 }) {
+  const [grouping, setGrouping] = useState<FeedbackGrouping>("original");
+  const [selected, setSelected] = useState<string | null>(null);
   const groups = [
-    ["held", "两轮均入池"],
     ["entered", "本轮新入池"],
     ["absent", "本轮未入池"],
+    ["held", "两轮均入池"],
   ];
   const count = (key: string) =>
     evidenceCount(
@@ -381,38 +950,70 @@ function SameDayCard({
       comparison[`${key}_state`] ?? comparison.state,
     );
   return (
-    <details className="intraday-feedback-card">
-      <summary>
-        <strong>同日封板变化</strong>
-        <span>
-          {comparison.state === "unknown"
-            ? comparison.collected_end_at
-              ? "两轮池状态待核验"
-              : "等待同日两份快照"
-            : groups
-                .map(([key, label]) => `${label} ${count(key)}`)
-                .join(" · ")}
-        </span>
-      </summary>
-      <div className="intraday-feedback-body">
-        <p className="intraday-feedback-note">
-          {comparison.collected_end_at
-            ? `对照 ${comparison.label || "上一份快照"} ${clock(comparison.collected_end_at)}。比较仅覆盖两次采样，具体开板时间待核验。`
-            : "同一交易日取得两份盘中快照后显示。"}
-        </p>
-        {groups.map(
-          ([key, label]) =>
-            !!comparison[key]?.length && (
-              <div className="intraday-feedback-group" key={key}>
-                <strong>
-                  {label} · {count(key)} 只
-                </strong>
-                <StockSamples rows={comparison[key]} onStock={onStock} />
-              </div>
-            ),
-        )}
-      </div>
-    </details>
+    <FeedbackCard
+      title="同日封板变化"
+      icon={<GitCompareArrows size={16} aria-hidden="true" />}
+      themeLeaders={
+        <FeedbackThemeLeaders
+          rows={groups.flatMap(([key]) => (comparison[key] || []) as Row[])}
+          label="封板变化题材"
+          selected={selected}
+          onSelect={setSelected}
+        />
+      }
+      empty={
+        comparison.state === "unknown"
+          ? comparison.collected_end_at
+            ? "两轮池状态待核验"
+            : "等待同日两份快照"
+          : undefined
+      }
+      stats={groups.map(([key, label]) => ({
+        label,
+        value: count(key),
+        kind:
+          key === "entered"
+            ? "sealed"
+            : key === "absent"
+              ? "broken"
+              : undefined,
+      }))}
+    >
+      <p className="intraday-feedback-note">
+        {comparison.collected_end_at
+          ? `对照 ${comparison.label || "上一份快照"} ${clock(comparison.collected_end_at)}。比较仅覆盖两次采样，具体开板时间待核验。`
+          : "同一交易日取得两份盘中快照后显示。"}
+      </p>
+      <FeedbackGroupingPicker
+        grouping={selected ? "original" : grouping}
+        onChange={(next) => {
+          setSelected(null);
+          setGrouping(next);
+        }}
+      />
+      {groups.map(([key, label]) => {
+        const items = filterFeedbackTheme(
+          comparison[key] || [],
+          "concept",
+          selected,
+        );
+        return (
+          items.length > 0 && (
+            <div className="intraday-feedback-group" key={key}>
+              <strong>
+                {label} ·{" "}
+                {selected ? `匹配 ${integer(items.length)}` : count(key)} 只
+              </strong>
+              <FeedbackSamples
+                rows={items}
+                onStock={onStock}
+                grouping={selected ? "original" : grouping}
+              />
+            </div>
+          )
+        );
+      })}
+    </FeedbackCard>
   );
 }
 
@@ -436,6 +1037,12 @@ export function IntradaySnapshotFeedback({
           {snapshot.ladder && (
             <LadderCard ladder={snapshot.ladder} onStock={onStock} />
           )}
+          {snapshot.ladder?.broken_board && (
+            <BrokenBoardDetails
+              pool={snapshot.ladder.broken_board}
+              onStock={onStock}
+            />
+          )}
           {snapshot.relay_feedback?.prior_session && (
             <PriorSessionCard
               prior={snapshot.relay_feedback.prior_session}
@@ -452,6 +1059,22 @@ export function IntradaySnapshotFeedback({
         </div>
       )}
     </>
+  );
+}
+
+function HistoricalPriceDates({ coverage }: { coverage?: Row }) {
+  if (!coverage?.start_suspension && !coverage?.end_suspension) return null;
+  const description = [
+    coverage.start_suspension &&
+      `基准日停牌，取 ${coverage.start_price_date} 收盘`,
+    coverage.end_suspension && `截止日停牌，取 ${coverage.end_price_date} 收盘`,
+  ]
+    .filter(Boolean)
+    .join("；");
+  return (
+    <small className="intraday-historical-price-date" title={description}>
+      停牌前收盘
+    </small>
   );
 }
 
@@ -480,6 +1103,10 @@ function Ranking({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [page, setPage] = useState(0);
+  const [sort, setSort] = useState<MarketSort>({
+    key: "change_pct",
+    order: "desc",
+  });
   const [boardFilter, setBoardFilter] = useState<NoonBoardFilterValue>("all");
   const memberLimit = 20;
   const memberQuery = memberScope
@@ -491,6 +1118,8 @@ function Ranking({
         board: boardFilter,
         page: String(page + 1),
         limit: String(memberLimit),
+        sort: sort.key,
+        direction: sort.order,
       })
     : null;
   const members = useApi<Row>(
@@ -504,14 +1133,22 @@ function Ranking({
     loaded.snapshot_id === memberScope.snapshotId &&
     loaded.topic_code === memberScope.topicCode &&
     loaded.board === boardFilter &&
+    loaded.sort === sort.key &&
+    loaded.direction === sort.order &&
     loaded.page === page + 1
       ? loaded
       : null;
   const useFrozenSample = memberPage?.state === "unknown";
+  const retainedByCode = new Map(rows.map((row) => [row.instrument_id, row]));
   const displayRows: Row[] = memberScope
     ? useFrozenSample
       ? rows
-      : memberPage?.items || []
+      : ((memberPage?.items || []) as Row[]).map((row) => {
+          const retained = retainedByCode.get(row.instrument_id);
+          return retained?.themes?.length && !row.themes?.length
+            ? { ...row, themes: retained.themes }
+            : row;
+        })
     : rows;
   const filteredRows =
     !sector && historyScope && (!memberScope || useFrozenSample)
@@ -522,19 +1159,63 @@ function Ranking({
     page,
     Math.max(0, Math.ceil(filteredRows.length / pageSize) - 1),
   );
-  const visibleRows = memberScope
+  const serverSorted = memberScope && !useFrozenSample;
+  const usesHistory = historySortFields.includes(sort.key);
+  // Snapshot-only lists retain at most 30 rows. Load the whole retained list
+  // only when the selected sort actually needs those historical values.
+  const sortHistory = useApi<Row>(
+    historyScope && !serverSorted && usesHistory && filteredRows.length
+      ? stockHistoryQuery(historyScope, filteredRows)
+      : null,
+  );
+  const sortHistoryRows =
+    usesHistory &&
+    sortHistory.data?.date === historyScope?.date &&
+    sortHistory.data?.slot === historyScope?.slot
+      ? sortHistory.data?.items
+      : undefined;
+  const orderedRows = serverSorted
     ? filteredRows
-    : filteredRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+    : sortMarketRows(
+        filteredRows.map((row, index) => {
+          const values = sortHistoryRows?.[row.instrument_id];
+          return {
+            ...row,
+            rank: row.rank ?? index + 1,
+            ...(values && {
+              [sort.key]:
+                values[sort.key] ??
+                (sort.key === "limit_up_1y"
+                  ? values.limit_up_1y_observed || null
+                  : null),
+            }),
+          };
+        }),
+        sort,
+      );
+  const visibleRows = memberScope
+    ? orderedRows
+    : orderedRows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const history = useApi<Row>(
-    historyScope && !sector && visibleRows.length
+    historyScope && !sector && !usesHistory && visibleRows.length
       ? stockHistoryQuery(historyScope, visibleRows)
       : null,
   );
+  const historyData = usesHistory
+    ? serverSorted
+      ? memberPage?.history
+      : sortHistory.data
+    : history.data;
   const historyRows =
-    history.data?.date === historyScope?.date &&
-    history.data?.slot === historyScope?.slot
-      ? history.data?.items
+    historyData?.date === historyScope?.date &&
+    historyData?.slot === historyScope?.slot
+      ? historyData?.items
       : undefined;
+  const historyRequest = usesHistory
+    ? serverSorted
+      ? null
+      : sortHistory
+    : history;
   const broken = stockMode === "broken_stocks";
   const compact = stockMode != null;
   const hasOpenTimes =
@@ -543,6 +1224,31 @@ function Ranking({
   const hasAmount = displayRows.some((row) => row.amount != null);
   const hasComparison = displayRows.some(
     (row) => row.change_pp != null || row.amount_delta != null,
+  );
+  const sortHeader = (field: string, caption: string) => (
+    <th
+      scope="col"
+      aria-sort={
+        sort.key === field
+          ? sort.order === "asc"
+            ? "ascending"
+            : "descending"
+          : undefined
+      }
+    >
+      <MarketSortHeader
+        field={field}
+        caption={caption}
+        sort={sort}
+        onSort={() => {
+          setSort({
+            key: field,
+            order: sort.key === field && sort.order === "desc" ? "asc" : "desc",
+          });
+          setPage(0);
+        }}
+      />
+    </th>
   );
   return (
     <Panel
@@ -614,28 +1320,31 @@ function Ranking({
             <table>
               <thead>
                 <tr>
-                  <th scope="col">排名</th>
-                  <th scope="col">{sector ? "板块" : "股票"}</th>
-                  <th scope="col">
-                    {sector
+                  {sortHeader("rank", "排名")}
+                  {sortHeader("name", sector ? "板块" : "股票")}
+                  {sortHeader(
+                    "change_pct",
+                    sector
                       ? "指数涨跌幅"
                       : historyScope?.slot === "auction"
                         ? "竞价涨跌幅"
-                        : "今日涨跌幅"}
-                  </th>
+                        : "今日涨跌幅",
+                  )}
                   {!sector && historyScope && (
                     <>
-                      <th scope="col">近30交易日涨幅</th>
-                      <th scope="col">年内涨幅</th>
-                      <th scope="col">最近一次涨停日期</th>
-                      <th scope="col">近一年涨停次数</th>
+                      {sortHeader("change_30d_pct", "近30交易日涨幅")}
+                      {sortHeader("return_ytd_pct", "年内涨幅")}
+                      {sortHeader("last_limit_up_date", "最近一次涨停日期")}
+                      {sortHeader("limit_up_1y", "近一年涨停次数")}
                     </>
                   )}
-                  {hasOpenPrice && <th scope="col">较开盘</th>}
-                  {hasAmount && <th scope="col">累计成交额</th>}
-                  {hasOpenTimes && <th scope="col">开板次数</th>}
-                  {hasComparison && <th scope="col">较上次涨幅</th>}
-                  {hasComparison && <th scope="col">区间新增成交额</th>}
+                  {hasOpenPrice && sortHeader("open_change_pct", "较开盘")}
+                  {(hasAmount || serverSorted) &&
+                    sortHeader("amount", "累计成交额")}
+                  {hasOpenTimes && sortHeader("open_times", "开板次数")}
+                  {hasComparison && sortHeader("change_pp", "较上次涨幅")}
+                  {hasComparison &&
+                    sortHeader("amount_delta", "区间新增成交额")}
                 </tr>
               </thead>
               <tbody>
@@ -644,6 +1353,11 @@ function Ranking({
                   const previousHeight =
                     row.previous_board_count ??
                     stockHistory?.previous_board_count;
+                  const sealed =
+                    stockMode === "sealed_stocks" ||
+                    row.limit_up_state === "sealed";
+                  const brokenBoard = broken || row.limit_up_state === "broken";
+                  const height = row.continue_day_cnt;
                   return (
                     <tr key={row.instrument_id}>
                       <td>
@@ -696,7 +1410,7 @@ function Ranking({
                             : row.kind === "concept"
                               ? " · 概念"
                               : ""}
-                          {broken && (
+                          {brokenBoard && (
                             <span
                               className="intraday-stock-state"
                               data-kind="broken"
@@ -704,18 +1418,54 @@ function Ranking({
                               炸板
                             </span>
                           )}
-                          {stockMode === "sealed_stocks" && (
+                          {sealed && (
                             <span
                               className="intraday-stock-state"
                               data-kind="sealed"
+                              title={
+                                height > 0
+                                  ? undefined
+                                  : "本时点已核验封板，板数待核验"
+                              }
                             >
-                              {row.continue_day_cnt > 1
-                                ? `${row.continue_day_cnt} 连板`
-                                : row.continue_day_cnt === 1
+                              {height > 1
+                                ? `${height} 连板`
+                                : height === 1
                                   ? "首板"
-                                  : "封板"}
+                                  : "涨停"}
                             </span>
                           )}
+                          {!sealed &&
+                            !brokenBoard &&
+                            row.limit_up_reference_price != null && (
+                              <span
+                                className="intraday-stock-state"
+                                data-kind="reference"
+                                title={`最新价等于常规涨停参考价 ${num(row.limit_up_reference_price)} 元，封板及板数待核验`}
+                              >
+                                涨停价参考
+                              </span>
+                            )}
+                          {!sector && row.trading_status === "suspended" && (
+                            <span
+                              className="intraday-stock-state"
+                              data-kind="suspended"
+                              title={row.missing_reason}
+                            >
+                              停牌
+                            </span>
+                          )}
+                          {!sector &&
+                            row.trading_status !== "suspended" &&
+                            row.quote_available === false && (
+                              <span
+                                className="intraday-stock-state"
+                                data-kind="listing"
+                                title={row.missing_reason}
+                              >
+                                报价待核验
+                              </span>
+                            )}
                           {!sector && previousHeight != null && (
                             <span className="intraday-stock-state">
                               前日 {integer(previousHeight)} 板
@@ -732,27 +1482,6 @@ function Ranking({
                         {row.limit_up_state === "unknown" && (
                           <small>封板状态待核验</small>
                         )}
-                        {stockMode !== "sealed_stocks" &&
-                          row.limit_up_state === "sealed" && (
-                            <span
-                              className="intraday-stock-state"
-                              data-kind="sealed"
-                            >
-                              {row.continue_day_cnt > 1
-                                ? `${row.continue_day_cnt} 连板`
-                                : row.continue_day_cnt === 1
-                                  ? "首板"
-                                  : "封板"}
-                            </span>
-                          )}
-                        {!broken && row.limit_up_state === "broken" && (
-                          <span
-                            className="intraday-stock-state"
-                            data-kind="broken"
-                          >
-                            炸板
-                          </span>
-                        )}
                       </th>
                       <td className={tone(row.change_pct)}>
                         {percent(row.change_pct)}
@@ -761,9 +1490,15 @@ function Ranking({
                         <>
                           <td className={tone(stockHistory?.change_30d_pct)}>
                             {percent(stockHistory?.change_30d_pct)}
+                            <HistoricalPriceDates
+                              coverage={stockHistory?.change_30d_coverage}
+                            />
                           </td>
                           <td className={tone(stockHistory?.return_ytd_pct)}>
                             {percent(stockHistory?.return_ytd_pct)}
+                            <HistoricalPriceDates
+                              coverage={stockHistory?.return_ytd_coverage}
+                            />
                           </td>
                           <td>
                             {stockHistory?.last_limit_up_date || "—"}
@@ -786,7 +1521,9 @@ function Ranking({
                           {percent(row.open_change_pct)}
                         </td>
                       )}
-                      {hasAmount && <td>{amount(row.amount)}</td>}
+                      {(hasAmount || serverSorted) && (
+                        <td>{amount(row.amount)}</td>
+                      )}
                       {hasOpenTimes && (
                         <td>
                           {row.open_times == null
@@ -808,11 +1545,11 @@ function Ranking({
           </div>
           {historyScope && !sector && (
             <p className="intraday-stock-note intraday-history-note">
-              {history.error
+              {historyRequest?.error
                 ? "历史行情暂不可读"
-                : history.loading
+                : historyRequest?.loading
                   ? "历史行情读取中"
-                  : `历史指标截至 ${history.data?.as_of || "已发布可核验交易日"} · — 表示资料缺失，≥ 表示可核验下界`}
+                  : `历史指标截至 ${historyData?.as_of || "已发布可核验交易日"} · — 表示资料缺失，≥ 表示可核验下界`}
             </p>
           )}
           {!memberScope && filteredRows.length > 10 && (
@@ -891,6 +1628,7 @@ type BoardMode =
   | "index_only_sectors"
   | "wide_limit_up_sectors";
 type BoardKind = "all" | "industry" | "concept";
+type DirectionMode = BoardMode | "overview" | "discovery";
 type StockMode = "members" | "candidates" | "sealed_stocks" | "broken_stocks";
 
 const boardModes: [BoardMode, string][] = [
@@ -919,8 +1657,15 @@ export function timelineSlots(view: Row) {
   const source = new Map<string, Row>(
     ((view.slots || []) as Row[]).map((slot) => [slot.key, slot]),
   );
+  const noon =
+    typeof view.noon_scheduled_at === "string" &&
+    /^\d{2}:\d{2}$/.test(view.noon_scheduled_at)
+      ? { ...anchorSlots.noon, start: view.noon_scheduled_at }
+      : anchorSlots.noon;
   const slots: Row[] = [
-    ...Object.values(anchorSlots),
+    anchorSlots.auction,
+    noon,
+    anchorSlots.close,
     ...currentCaptureSlots.map((slot) => source.get(slot.key) || slot),
   ].sort((a, b) => a.start.localeCompare(b.start));
   for (const row of (view.snapshots || []) as Row[]) {
@@ -938,7 +1683,49 @@ export function timelineSlots(view: Row) {
   return slots;
 }
 
-function BriefCard({ brief }: { brief: Row }) {
+const briefStockCount = String.raw`[ \t]*(?:(?:至少|约|≥|≤)[ \t]*)?\d[\d,，]*[ \t]*(?:只|家)`;
+const briefMetrics = new RegExp(
+  [
+    String.raw`(?<signed>[+\-−]\d[\d,，]*(?:\.\d+)?[ \t]*(?:%|％|(?:个)?百分点|万亿元|亿元|万元))`,
+    `(?<up>(?:上涨|高开|涨幅扩大|首轮转涨|封板|涨停)${briefStockCount}|放量)`,
+    `(?<down>(?:下跌|低开|回落|跌停)${briefStockCount}|缩量)`,
+    `(?<warning>炸板${briefStockCount})`,
+  ].join("|"),
+  "gu",
+);
+
+function BriefText({ text }: { text: string }) {
+  if (typeof text !== "string") return null;
+  const pieces: ReactNode[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(briefMetrics)) {
+    const offset = match.index;
+    const value = match[0];
+    const groups = match.groups;
+    const color = groups?.signed
+      ? tone(Number.parseFloat(value.replace(/[,，]/g, "").replace("−", "-")))
+      : groups?.up
+        ? "up"
+        : groups?.down
+          ? "down"
+          : "intraday-brief-warning";
+    if (offset > cursor) pieces.push(text.slice(cursor, offset));
+    pieces.push(
+      color === "muted" ? (
+        value
+      ) : (
+        <span key={offset} className={`intraday-brief-value ${color}`}>
+          {value}
+        </span>
+      ),
+    );
+    cursor = offset + value.length;
+  }
+  pieces.push(text.slice(cursor));
+  return <>{pieces}</>;
+}
+
+export function BriefCard({ brief }: { brief: Row }) {
   const context = (brief.context || []) as Row[];
   const evidence = (brief.evidence || []) as Row[];
   return (
@@ -953,8 +1740,14 @@ function BriefCard({ brief }: { brief: Row }) {
             : "已核验事实摘要"}
         </small>
       </div>
-      <h2>{brief.headline}</h2>
-      {brief.body && <p>{brief.body}</p>}
+      <h2>
+        <BriefText text={brief.headline} />
+      </h2>
+      {brief.body && (
+        <p>
+          <BriefText text={brief.body} />
+        </p>
+      )}
       {context.length > 0 && (
         <ul className="intraday-brief-context" aria-label="纳入简报的时点">
           {context.map((item) => (
@@ -976,7 +1769,7 @@ function BriefCard({ brief }: { brief: Row }) {
             {evidence.map((item) => (
               <li key={item.id}>
                 {item.label && <strong>{item.label} </strong>}
-                {item.text}
+                <BriefText text={item.text} />
               </li>
             ))}
           </ul>
@@ -989,72 +1782,19 @@ function BriefCard({ brief }: { brief: Row }) {
 const DISCOVERY_SIGNALS: Record<string, string> = {
   new: "由弱转强",
   accelerating: "涨幅扩大",
-  fading: "涨幅回落",
+  fading: "走弱回落",
   leading: "当前领涨",
 };
+const discoveryFilters = [
+  ["all", "全部变化"],
+  ...Object.entries(DISCOVERY_SIGNALS),
+];
 
-function IntradayDiscovery({
-  snapshot,
-  historyScope,
-  onStock,
-}: {
-  snapshot: Row;
-  historyScope: StockHistoryScope;
-  onStock?: (id: string) => void;
-}) {
+function discoveryDirections(snapshot: Row, date: string, slot: string): Row[] {
   const discovery = snapshot.discovery;
-  const directions =
-    discovery?.date === historyScope.date &&
-    discovery.slot === historyScope.slot
-      ? (discovery.directions as Row[])
-      : [];
-  return (
-    <Panel
-      title="盘中发现"
-      subtitle="查看本时点新走强、涨幅扩大和回落的方向"
-      className="auction-discovery"
-    >
-      {directions?.length ? (
-        <DiscoveryWorkspace
-          directions={directions}
-          changeLabel="今日涨跌幅"
-          amountLabel="较上一时点增量成交额"
-          getChange={(row) => row.change_pct ?? null}
-          getAmount={(row) => row.amount_delta ?? null}
-          getCount={(row) => row.stocks?.length ?? null}
-          getMemberDate={(row) => row.member_date}
-          getSignal={(row) => DISCOVERY_SIGNALS[row.signal]}
-          renderStocks={(row) => (
-            <>
-              <p className="intraday-stage-scope">
-                {DISCOVERY_SIGNALS[row.signal]}
-                {row.change_pp != null &&
-                  ` · 涨幅变化 ${delta(row.change_pp, "个百分点")}`}
-                {" · 封板 "}
-                {evidenceCount(row.limit_up_count, row.limit_up_count_state)}
-                {" · 炸板 "}
-                {evidenceCount(row.broken_count, row.broken_count_state)}
-              </p>
-              <Ranking
-                key={row.instrument_id}
-                rows={row.stocks || []}
-                subtitle="已核验成员样本，可按上市板块筛选"
-                historyScope={historyScope}
-                onStock={onStock}
-                emptyTitle="当前方向暂无可核验个股"
-                stockMode="candidates"
-              />
-            </>
-          )}
-        />
-      ) : (
-        <Empty title="此时点暂无发现" description={discovery?.reason} />
-      )}
-      {discovery?.scope && (
-        <p className="intraday-stage-scope">{discovery.scope}</p>
-      )}
-    </Panel>
-  );
+  return discovery?.date === date && discovery.slot === slot
+    ? discovery.directions || []
+    : [];
 }
 
 function stageBoards(snapshot?: Row): Row[] {
@@ -1072,6 +1812,106 @@ function stageBoards(snapshot?: Row): Row[] {
   );
 }
 
+const byMove = { key: "change_pct", order: "desc" } as const;
+const bySealed = { key: "limit_up_count", order: "desc" } as const;
+
+export function rotationCellChange({
+  current,
+  previous,
+  snapshot,
+  previousSnapshot,
+  slot,
+  previousSlot,
+}: {
+  current?: Row;
+  previous?: Row;
+  snapshot?: Row;
+  previousSnapshot?: Row;
+  slot: string;
+  previousSlot: string;
+}): { changePP: number | null; sealedDelta: number | null; reason?: string } {
+  const unavailable = (reason: string) => ({
+    changePP: null,
+    sealedDelta: null,
+    reason,
+  });
+  if (!previousSnapshot) return unavailable("上一档缺档");
+  if (slot === "auction" || previousSlot === "auction")
+    return unavailable("竞价与指数口径不同");
+  if (!previous) return unavailable("上一档未留存该方向");
+  if (!current || !snapshot) return unavailable("当前档未留存");
+  const date = snapshot.date ?? snapshot.trade_date;
+  if (!date || date !== (previousSnapshot.date ?? previousSnapshot.trade_date))
+    return unavailable("交易日不同或待核验");
+  if (
+    !current.instrument_id ||
+    current.instrument_id !== previous.instrument_id ||
+    !["industry", "concept"].includes(current.kind) ||
+    current.kind !== previous.kind ||
+    !current.quote_source ||
+    current.quote_source !== previous.quote_source ||
+    current.quote_basis !== "provider_index" ||
+    previous.quote_basis !== "provider_index" ||
+    !current.price_basis ||
+    current.price_basis !== previous.price_basis ||
+    !current.currency ||
+    current.currency !== previous.currency ||
+    !Number.isFinite(current.prev_close) ||
+    current.prev_close <= 0 ||
+    current.prev_close !== previous.prev_close ||
+    !Number.isFinite(current.latest_price) ||
+    current.latest_price <= 0 ||
+    !Number.isFinite(previous.latest_price) ||
+    previous.latest_price <= 0
+  )
+    return unavailable("指数口径待核验");
+  if (
+    !Number.isFinite(current.change_pct) ||
+    !Number.isFinite(previous.change_pct)
+  )
+    return unavailable("涨幅待核验");
+  if (
+    Math.abs(
+      (current.latest_price / current.prev_close - 1) * 100 -
+        current.change_pct,
+    ) > 0.001 ||
+    Math.abs(
+      (previous.latest_price / previous.prev_close - 1) * 100 -
+        previous.change_pct,
+    ) > 0.001
+  )
+    return unavailable("指数价格与涨幅不一致");
+  const calculated = current.change_pct - previous.change_pct;
+  const stored =
+    snapshot.summary?.comparison_slot === previousSlot &&
+    Number.isFinite(current.change_pp) &&
+    Math.abs(current.change_pp - calculated) <= 0.0001;
+  const changePP = Number((stored ? current.change_pp : calculated).toFixed(4));
+  const membership = current.member_reference_sha256;
+  const countComparable =
+    typeof membership === "string" &&
+    /^[a-f0-9]{64}$/.test(membership) &&
+    membership === previous.member_reference_sha256 &&
+    current.member_list_complete === true &&
+    previous.member_list_complete === true &&
+    current.member_count > 0 &&
+    current.member_count === previous.member_count &&
+    current.limit_up_count_state === "observed" &&
+    previous.limit_up_count_state === "observed" &&
+    Number.isInteger(current.limit_up_count) &&
+    current.limit_up_count >= 0 &&
+    current.limit_up_count <= current.member_count &&
+    Number.isInteger(previous.limit_up_count) &&
+    previous.limit_up_count >= 0 &&
+    previous.limit_up_count <= previous.member_count;
+  return {
+    changePP,
+    sealedDelta: countComparable
+      ? current.limit_up_count - previous.limit_up_count
+      : null,
+  };
+}
+
 export function Rotation({
   stages,
   samples,
@@ -1083,29 +1923,142 @@ export function Rotation({
   activeStage: string;
   onSelect: (slot: string, board: string) => void;
 }) {
+  const [metric, setMetric] = useState<"sealed" | "change">("sealed");
+  const [sort, setSort] = useState<MarketSort | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [showChanges, setShowChanges] = useState<boolean | null>(null);
   const limit = stages.findIndex((slot) => slot.key === activeStage);
   const columns = stages.slice(0, limit + 1).filter((slot) => !slot.legacy);
   const bySlot = new Map(
-    columns.map((slot) => [slot.key, stageBoards(samples.get(slot.key))]),
+    columns.map((slot) => [
+      slot.key,
+      new Map(
+        stageBoards(samples.get(slot.key)).map((row) => [
+          row.instrument_id,
+          row,
+        ]),
+      ),
+    ]),
   );
-  const featured = Array.from(
-    new Map<string, Row>(
-      [...columns]
-        .reverse()
-        .flatMap((slot) =>
-          (bySlot.get(slot.key) || [])
-            .slice(0, 4)
-            .map((board): [string, Row] => [board.instrument_id, board]),
-        ),
+  const available = [...columns]
+    .reverse()
+    .find((slot) => bySlot.get(slot.key)?.size);
+  if (columns.length < 2 || !available) return null;
+  const changes = columns.map(
+    (slot, index) =>
+      new Map(
+        index === 0
+          ? []
+          : [...(bySlot.get(slot.key) || [])].map(([id, current]) => [
+              id,
+              rotationCellChange({
+                current,
+                previous: bySlot.get(columns[index - 1].key)?.get(id),
+                snapshot: samples.get(slot.key),
+                previousSnapshot: samples.get(columns[index - 1].key),
+                slot: slot.key,
+                previousSlot: columns[index - 1].key,
+              }),
+            ]),
+      ),
+  );
+  const activeSort = sort || { key: available.key, order: "desc" };
+  const byName = activeSort.key === "name";
+  const rankedRows = [
+    ...new Map<string, Row>(
+      [...bySlot.values()].flatMap((rows) => [...rows.entries()]),
     ).values(),
-  ).slice(0, 12);
-  if (columns.length < 2 || !featured.length) return null;
+  ].map((row) => {
+    const item = bySlot.get(activeSort.key)?.get(row.instrument_id);
+    return {
+      ...row,
+      name: row.name || row.instrument_id,
+      change_pct: item?.change_pct,
+      limit_up_count: item?.limit_up_count,
+    };
+  });
+  const sortBySealed =
+    metric === "sealed" &&
+    activeSort.key !== "auction" &&
+    rankedRows.some((row) => row.limit_up_count != null);
+  const byChange = sortMarketRows(rankedRows, {
+    ...byMove,
+    order: sortBySealed ? "desc" : activeSort.order,
+  });
+  const ordered = byName
+    ? sortMarketRows(rankedRows, activeSort)
+    : sortBySealed
+      ? sortMarketRows(byChange, { ...bySealed, order: activeSort.order })
+      : byChange;
+  const featured = expanded ? ordered : ordered.slice(0, 12);
+  const hasComparable = changes.some((rows) =>
+    featured.some((board) => rows.get(board.instrument_id)?.changePP != null),
+  );
+  const changesVisible = showChanges ?? hasComparable;
+  const changeSort = (key: string) =>
+    setSort({
+      key,
+      order:
+        activeSort.key === key && activeSort.order === "desc" ? "asc" : "desc",
+    });
+  const sortState = (key: string) =>
+    activeSort.key === key
+      ? activeSort.order === "desc"
+        ? ("descending" as const)
+        : ("ascending" as const)
+      : undefined;
   return (
     <Panel
       className="intraday-rotation intraday-ranking"
       title="题材轮动"
-      subtitle="截至当前观察时点 · 点击有数据的单元格查看该时点的题材个股"
+      subtitle="点击时点表头排序，点击单元格查看该时点的题材个股。"
     >
+      <div className="intraday-rotation-toolbar">
+        <div
+          className="intraday-filters"
+          role="group"
+          aria-label="题材轮动排序指标"
+        >
+          <button
+            type="button"
+            className="btn small"
+            aria-pressed={metric === "sealed"}
+            onClick={() => setMetric("sealed")}
+          >
+            涨停家数优先
+          </button>
+          <button
+            type="button"
+            className="btn small"
+            aria-pressed={metric === "change"}
+            onClick={() => setMetric("change")}
+          >
+            按涨幅
+          </button>
+        </div>
+        <small>
+          {byName
+            ? "按题材名称排序"
+            : activeSort.key === "auction"
+              ? "竞价按候选均幅排序"
+              : sortBySealed
+                ? "涨停家数相同按涨幅排，缺档排在末尾"
+                : "按所选时点涨幅排序，缺档排在末尾"}
+        </small>
+        <label className="intraday-rotation-change-toggle">
+          <input
+            type="checkbox"
+            checked={changesVisible}
+            onChange={(event) => setShowChanges(event.target.checked)}
+          />
+          较上一档变化
+        </label>
+        {changesVisible && (
+          <small className="intraday-rotation-change-note">
+            涨幅差按百分点显示；封板差需同一成员范围，缺档不跨档比较。
+          </small>
+        )}
+      </div>
       <div
         className="intraday-table-scroll"
         tabIndex={0}
@@ -1114,10 +2067,26 @@ export function Rotation({
         <table>
           <thead>
             <tr>
-              <th scope="col">行业 / 题材</th>
+              <th scope="col" aria-sort={sortState("name")}>
+                <MarketSortHeader
+                  field="name"
+                  caption="行业 / 题材"
+                  sort={activeSort}
+                  onSort={changeSort}
+                />
+              </th>
               {columns.map((slot) => (
-                <th scope="col" key={slot.key}>
-                  <time>{slot.start}</time>
+                <th scope="col" key={slot.key} aria-sort={sortState(slot.key)}>
+                  {bySlot.get(slot.key)?.size ? (
+                    <MarketSortHeader
+                      field={slot.key}
+                      caption={slot.start}
+                      sort={activeSort}
+                      onSort={changeSort}
+                    />
+                  ) : (
+                    <time>{slot.start}</time>
+                  )}
                   <small>{slot.label}</small>
                 </th>
               ))}
@@ -1130,14 +2099,33 @@ export function Rotation({
                   {board.name || board.instrument_id}
                   <small>{board.kind === "industry" ? "行业" : "概念"}</small>
                 </th>
-                {columns.map((slot) => {
-                  const item = bySlot
-                    .get(slot.key)
-                    ?.find((row) => row.instrument_id === board.instrument_id);
+                {columns.map((slot, index) => {
+                  const item = bySlot.get(slot.key)?.get(board.instrument_id);
                   const snapshot = samples.get(slot.key);
                   const canOpen =
                     item &&
                     (snapshot?.strength_coverage || Array.isArray(item.stocks));
+                  const comparison = changes[index].get(board.instrument_id);
+                  const changeLine = changesVisible && comparison && (
+                    <small
+                      className={`intraday-rotation-change ${tone(comparison.changePP)}`}
+                      title={
+                        comparison.reason ||
+                        `较 ${columns[index - 1].start} 的同来源板块指数涨幅变化`
+                      }
+                    >
+                      {comparison.changePP == null
+                        ? comparison.reason
+                        : `较${columns[index - 1].start} ${delta(comparison.changePP, "百分点")}`}
+                      {comparison.sealedDelta != null && (
+                        <span className={tone(comparison.sealedDelta)}>
+                          {" "}
+                          · 封板{comparison.sealedDelta > 0 ? "+" : ""}
+                          {integer(comparison.sealedDelta)}
+                        </span>
+                      )}
+                    </small>
+                  );
                   return (
                     <td key={slot.key} className={tone(item?.change_pct)}>
                       {canOpen ? (
@@ -1157,9 +2145,13 @@ export function Rotation({
                                 ? `封板 ${evidenceCount(item.limit_up_count, item.limit_up_count_state)} 只`
                                 : "查看个股"}
                           </small>
+                          {changeLine}
                         </button>
                       ) : item ? (
-                        percent(item.change_pct)
+                        <>
+                          {percent(item.change_pct)}
+                          {changeLine}
+                        </>
                       ) : (
                         <small>{snapshot ? "—" : "缺档"}</small>
                       )}
@@ -1171,6 +2163,20 @@ export function Rotation({
           </tbody>
         </table>
       </div>
+      {ordered.length > 12 && (
+        <div className="intraday-expand">
+          <button
+            type="button"
+            className="btn small"
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded
+              ? "收起到前 12 个方向"
+              : `展开全部 ${integer(ordered.length)} 个方向`}
+          </button>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -1293,7 +2299,16 @@ function AnchorDetails({
   );
 }
 
-function StrengthView({
+const directionColumns = [
+  ["rank", "排名"],
+  ["name", "行业 / 题材"],
+  ["change_pct", "板块涨跌幅"],
+  ["up_ratio", "上涨占比"],
+  ["limit_up_count", "涨停家数"],
+  ["broken_count", "炸板"],
+];
+
+export function StrengthView({
   snapshot,
   onStock,
   historyScope,
@@ -1304,52 +2319,126 @@ function StrengthView({
   historyScope: StockHistoryScope;
   requestedBoard?: string;
 }) {
-  const requestedMode = boardModes.find(([key]) =>
-    (snapshot[key] || []).some(
-      (row: Row) => row.instrument_id === requestedBoard,
-    ),
-  )?.[0];
-  const initialBoard =
-    requestedMode &&
-    (snapshot[requestedMode] || []).find(
-      (row: Row) => row.instrument_id === requestedBoard,
-    );
-  const [mode, setMode] = useState<BoardMode>(
-    requestedMode || "strong_sectors",
+  const discoveries = discoveryDirections(
+    snapshot,
+    historyScope.date,
+    historyScope.slot,
   );
+  const discoveredById = new Map(
+    discoveries.map((row) => [row.instrument_id, row]),
+  );
+  const fullBoardsById = new Map(
+    stageBoards(snapshot).map((row) => [row.instrument_id, row]),
+  );
+  const overview = Array.from(
+    new Map<string, Row>(
+      [
+        ...discoveries,
+        ...(snapshot.strength_coverage ? [] : fullBoardsById.values()),
+        ...(snapshot.limit_up_sectors || []),
+        ...(snapshot.strong_sectors || []),
+      ].map((row) => [
+        row.instrument_id,
+        fullBoardsById.get(row.instrument_id) || row,
+      ]),
+    ).values(),
+  );
+  const modes: [DirectionMode, string][] = [["overview", "综合"]];
+  if (snapshot.discovery) modes.push(["discovery", "盘中发现"]);
+  modes.push(...boardModes.filter(([key]) => snapshot[key]?.length));
+  const requestedMode = overview.some(
+    (row) => row.instrument_id === requestedBoard,
+  )
+    ? "overview"
+    : boardModes.find(([key]) =>
+        (snapshot[key] || []).some(
+          (row: Row) => row.instrument_id === requestedBoard,
+        ),
+      )?.[0];
+  const [mode, setMode] = useState<DirectionMode>(requestedMode || "overview");
   const [kind, setKind] = useState<BoardKind>("all");
-  const [selectedBoard, setSelectedBoard] = useState<string | null>(
-    initialBoard?.instrument_id || null,
+  const [discoveryFilter, setDiscoveryFilter] = useState("all");
+  const [selectedBoard, setSelectedBoard] = useState<string | null | undefined>(
+    requestedBoard,
   );
-  const [stockMode, setStockMode] = useState<StockMode>(
-    initialBoard ? "members" : "candidates",
+  const [stockMode, setStockMode] = useState<StockMode>("members");
+  const [sort, setSort] = useState<MarketSort>({
+    key: "limit_up_count",
+    order: "desc",
+  });
+  const source: Row[] =
+    mode === "overview"
+      ? overview
+      : mode === "discovery"
+        ? discoveries.map((row) => fullBoardsById.get(row.instrument_id) || row)
+        : snapshot[mode] || [];
+  const filtered = source.filter(
+    (row) =>
+      (kind === "all" || row.kind === kind) &&
+      (mode !== "discovery" ||
+        discoveryFilter === "all" ||
+        discoveredById.get(row.instrument_id)?.signal === discoveryFilter),
   );
-  const boards = ((snapshot[mode] || []) as Row[]).filter(
-    (board) => kind === "all" || board.kind === kind,
+  const ranked = sortMarketRows(sortMarketRows(filtered, byMove), bySealed).map(
+    (row, i) => ({ ...row, rank: i + 1, name: row.name || row.instrument_id }),
   );
-  const board = boards.find((row) => row.instrument_id === selectedBoard);
-  const members = board
-    ? snapshot.board_stocks?.[board.instrument_id]
-    : undefined;
+  const boards = sortMarketRows(ranked, sort);
+  const board =
+    selectedBoard === undefined
+      ? boards[0]
+      : boards.find((row) => row.instrument_id === selectedBoard);
+  const signal = board && discoveredById.get(board.instrument_id);
+  const members = board && snapshot.board_stocks?.[board.instrument_id];
+  const selectDirection = (id: string | null | undefined) => {
+    setSelectedBoard(id);
+    setStockMode(id === null ? "candidates" : "members");
+  };
+  const changeSort = (key: string) => {
+    if (selectedBoard === undefined && board)
+      setSelectedBoard(board.instrument_id);
+    setSort((current) => ({
+      key,
+      order: current.key === key && current.order === "desc" ? "asc" : "desc",
+    }));
+  };
   const displayedMode =
     stockMode === "members" && !board ? "candidates" : stockMode;
   const poolComplete = snapshot.strength_coverage?.pool_complete === true;
   const breakout = snapshot.ladder?.broken_board;
-  const rowsFor = (value: StockMode): Row[] =>
-    value === "members"
-      ? members?.items || []
-      : value === "broken_stocks"
-        ? board
-          ? board.broken || []
-          : snapshot.broken_stocks?.length
-            ? snapshot.broken_stocks
-            : breakout?.items || []
-        : (board || snapshot)[value] || [];
+  const showBroken = breakout || source.some((row) => row.broken_count != null);
+  const rowsFor = (value: StockMode): Row[] => {
+    if (value === "members") {
+      const items: Row[] = members?.items || board?.stocks || [];
+      if (!items.length) return signal?.stocks || [];
+      const themed = new Map<string, Row>(
+        ((signal?.stocks || []) as Row[]).map((row) => [
+          row.instrument_id,
+          row,
+        ]),
+      );
+      return items.map((row) => {
+        const themes = themed.get(row.instrument_id)?.themes;
+        return !row.themes?.length && themes?.length ? { ...row, themes } : row;
+      });
+    }
+    if (value === "broken_stocks") {
+      return board
+        ? board.broken || []
+        : snapshot.broken_stocks?.length
+          ? snapshot.broken_stocks
+          : breakout?.items || [];
+    }
+    return (
+      (board || snapshot)[value] ||
+      (!board && value === "candidates" ? snapshot.stocks : undefined) ||
+      []
+    );
+  };
   const stockModes: [StockMode, string][] = [
     ...(board ? [["members", "成分个股"] as [StockMode, string]] : []),
     ["candidates", "走强"],
     ["sealed_stocks", "封板"],
-    ...(breakout ? [["broken_stocks", "炸板"] as [StockMode, string]] : []),
+    ...(showBroken ? [["broken_stocks", "炸板"] as [StockMode, string]] : []),
   ];
   const kinds: [BoardKind, string][] = [
     ["all", "全部"],
@@ -1360,12 +2449,12 @@ function StrengthView({
     <div className="intraday-direction-workspace">
       <Panel
         title="盘中方向"
-        subtitle="选中一个板块，在右侧查看成员线索"
+        subtitle="默认按涨停家数排序，同家数按板块涨幅排列。点板块查看个股。"
         className="intraday-ranking intraday-direction-list"
       >
         <div className="intraday-board-toolbar">
           <div className="intraday-filters" role="group" aria-label="榜单口径">
-            {boardModes.map(([value, label]) => (
+            {modes.map(([value, label]) => (
               <button
                 className="btn small"
                 key={value}
@@ -1373,7 +2462,7 @@ function StrengthView({
                 onClick={() => {
                   setMode(value);
                   if (value === "wide_limit_up_sectors") setKind("all");
-                  setSelectedBoard(null);
+                  selectDirection(undefined);
                 }}
               >
                 {label}
@@ -1391,7 +2480,7 @@ function StrengthView({
                 }
                 onClick={() => {
                   setKind(value);
-                  setSelectedBoard(null);
+                  selectDirection(undefined);
                 }}
               >
                 {label}
@@ -1399,6 +2488,34 @@ function StrengthView({
             ))}
           </div>
         </div>
+        {mode === "discovery" && (
+          <>
+            <div
+              className="intraday-discovery-filters intraday-filters"
+              role="group"
+              aria-label="盘中发现变化"
+            >
+              {discoveryFilters.map(([key, label]) => (
+                <button
+                  type="button"
+                  key={key}
+                  className="btn small"
+                  aria-pressed={discoveryFilter === key}
+                  onClick={() => {
+                    setDiscoveryFilter(key);
+                    selectDirection(undefined);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="intraday-intro">
+              {snapshot.discovery.reason ||
+                "与同日上一可比时点对照。走弱回落指原本上涨的方向涨幅明显收窄或翻绿。"}
+            </p>
+          </>
+        )}
         {mode === "wide_limit_up_sectors" && (
           <p className="intraday-intro">
             成员超过 200 只的概念单列，避免宽口径标签淹没更集中的方向。
@@ -1414,34 +2531,44 @@ function StrengthView({
             <table>
               <thead>
                 <tr>
-                  <th scope="col">#</th>
-                  <th scope="col">行业 / 题材</th>
-                  <th scope="col">指数</th>
-                  <th scope="col">上涨占比</th>
-                  <th scope="col">封板</th>
-                  {breakout && <th scope="col">炸板</th>}
+                  {directionColumns
+                    .filter(([key]) => key !== "broken_count" || showBroken)
+                    .map(([key, label]) => (
+                      <th
+                        key={key}
+                        scope="col"
+                        aria-sort={
+                          sort.key === key
+                            ? sort.order === "desc"
+                              ? "descending"
+                              : "ascending"
+                            : undefined
+                        }
+                      >
+                        <MarketSortHeader
+                          field={key}
+                          caption={label}
+                          sort={sort}
+                          onSort={changeSort}
+                        />
+                      </th>
+                    ))}
                 </tr>
               </thead>
               <tbody>
-                {boards.map((row, i) => (
+                {boards.map((row) => (
                   <tr
                     key={row.instrument_id}
-                    data-selected={row.instrument_id === selectedBoard}
+                    data-selected={row.instrument_id === board?.instrument_id}
+                    onClick={() => selectDirection(row.instrument_id)}
                   >
-                    <td>{row.rank ?? i + 1}</td>
+                    <td>{row.rank}</td>
                     <th scope="row">
                       <button
                         className="stock-link"
-                        aria-pressed={row.instrument_id === selectedBoard}
-                        onClick={() => {
-                          if (row.instrument_id !== selectedBoard)
-                            setStockMode("members");
-                          setSelectedBoard(
-                            row.instrument_id === selectedBoard
-                              ? null
-                              : row.instrument_id,
-                          );
-                        }}
+                        aria-pressed={
+                          row.instrument_id === board?.instrument_id
+                        }
                       >
                         {row.name || row.instrument_id}
                         <ArrowUpRight size={13} aria-hidden="true" />
@@ -1452,6 +2579,20 @@ function StrengthView({
                           : row.kind === "concept"
                             ? "概念"
                             : "—"}
+                        {discoveredById.has(row.instrument_id) && (
+                          <span
+                            className="intraday-direction-signal"
+                            data-signal={
+                              discoveredById.get(row.instrument_id)?.signal
+                            }
+                          >
+                            {
+                              DISCOVERY_SIGNALS[
+                                discoveredById.get(row.instrument_id)?.signal
+                              ]
+                            }
+                          </span>
+                        )}
                       </small>
                     </th>
                     <td className={tone(row.change_pct)}>
@@ -1471,7 +2612,7 @@ function StrengthView({
                         <small>占成员 {num(row.limit_up_ratio)}%</small>
                       )}
                     </td>
-                    {breakout && (
+                    {showBroken && (
                       <td>
                         {evidenceCount(
                           row.broken_count,
@@ -1486,8 +2627,12 @@ function StrengthView({
           </div>
         ) : (
           <Empty
-            title="当前口径没有可核验板块"
-            description="可以切换榜单口径或板块类型。"
+            title={
+              mode === "discovery" && discoveryFilter !== "all"
+                ? `本时点暂无${DISCOVERY_SIGNALS[discoveryFilter]}方向`
+                : "当前口径没有可核验板块"
+            }
+            description="可以切换筛选条件查看其他方向。"
           />
         )}
         <details className="intraday-scope">
@@ -1510,10 +2655,7 @@ function StrengthView({
             <h2>{board?.name || "盘中个股线索"}</h2>
           </div>
           {board && (
-            <button
-              className="btn small"
-              onClick={() => setSelectedBoard(null)}
-            >
+            <button className="btn small" onClick={() => selectDirection(null)}>
               全部方向
             </button>
           )}
@@ -1554,17 +2696,28 @@ function StrengthView({
               </strong>
             </span>
             {board.member_date && <span>名单 {board.member_date}</span>}
-            {board.change_pp != null && (
+            {signal && (
+              <span
+                className="intraday-direction-signal"
+                data-signal={signal.signal}
+              >
+                {DISCOVERY_SIGNALS[signal.signal]}
+              </span>
+            )}
+            {(board.change_pp ?? signal?.change_pp) != null && (
               <span>
                 较上轮{" "}
-                <strong className={tone(board.change_pp)}>
-                  {delta(board.change_pp, "百分点")}
+                <strong className={tone(board.change_pp ?? signal?.change_pp)}>
+                  {delta(board.change_pp ?? signal?.change_pp, "百分点")}
                 </strong>
               </span>
             )}
-            {board.amount_delta != null && (
+            {(board.amount_delta ?? signal?.amount_delta) != null && (
               <span>
-                区间新增成交 <strong>{amount(board.amount_delta)}</strong>
+                区间新增成交{" "}
+                <strong>
+                  {amount(board.amount_delta ?? signal?.amount_delta)}
+                </strong>
               </span>
             )}
           </div>
@@ -1635,6 +2788,37 @@ function StrengthView({
         />
       </section>
     </div>
+  );
+}
+
+const captureDomainLabels: Record<string, string> = {
+  stocks: "股票报价",
+  boards: "板块报价",
+  indices: "指数报价",
+  limit_up: "涨停池",
+  limit_break: "炸板池",
+  limit_pools: "封板／炸板状态",
+};
+
+function partialSnapshotNote(snapshot?: Row) {
+  if (snapshot?.quality !== "partial") return "";
+  const gaps = ((snapshot.summary?.gaps || []) as Row[]).flatMap((gap) => {
+    if (!gap.reason) return [];
+    const domain =
+      typeof gap.domain === "string"
+        ? gap.domain.replace(/^boards_\d+$/, "boards")
+        : "";
+    const label = captureDomainLabels[domain];
+    return [
+      label && !String(gap.reason).includes(label)
+        ? `${label}：${gap.reason}`
+        : gap.reason,
+    ];
+  });
+  return (
+    [...new Set(gaps)].join("。") ||
+    snapshot.summary?.reason ||
+    "已有该时点数据，部分报价或来源证据待核验。"
   );
 }
 
@@ -1740,6 +2924,7 @@ export default function IntradayObservation({
   }
 
   const summary = snapshot?.summary;
+  const partialNote = partialSnapshotNote(snapshot);
   const historical = !!today && !!date && date < today;
   const aiStage = aiMarketStage(selectedSlot);
   return (
@@ -1840,6 +3025,7 @@ export default function IntradayObservation({
                   className="intraday-slot"
                   data-current={current}
                   data-available={!!item}
+                  title={partialSnapshotNote(item) || undefined}
                   aria-pressed={selectedSlot === slot.key}
                   onClick={() => {
                     setSelected(slot.key);
@@ -1857,6 +3043,12 @@ export default function IntradayObservation({
             })}
           </div>
         )}
+        {partialNote && (
+          <div className="intraday-coverage-note" role="status">
+            <strong>部分留存</strong>
+            <span>{partialNote}</span>
+          </div>
+        )}
       </section>
       {brief && <BriefCard brief={brief} />}
       {anchor?.slot === "auction" && (
@@ -1864,14 +3056,6 @@ export default function IntradayObservation({
           date={date}
           active={active}
           chartDate={date}
-          onStock={openStock}
-        />
-      )}
-      {!anchor && snapshot && (
-        <IntradayDiscovery
-          key={snapshot.id}
-          snapshot={snapshot}
-          historyScope={historyScope}
           onStock={openStock}
         />
       )}
@@ -1887,7 +3071,9 @@ export default function IntradayObservation({
         ) : snapshot ? (
           <>
             <IntradaySnapshotFeedback snapshot={snapshot} onStock={openStock} />
-            {snapshot.strength_coverage ? (
+            {snapshot.strength_coverage ||
+            discoveryDirections(snapshot, historyScope.date, historyScope.slot)
+              .length > 0 ? (
               <StrengthView
                 key={`${snapshot.id}:${rotationBoard || ""}`}
                 snapshot={snapshot}
@@ -1918,7 +3104,7 @@ export default function IntradayObservation({
               <summary>
                 快照采集范围 · {clock(snapshot.collected_start_at)}–
                 {clock(snapshot.collected_end_at)}（北京时间）
-                {snapshot.quality === "partial" && " · 报价部分缺失"}
+                {snapshot.quality === "partial" && " · 有待核验项"}
               </summary>
               <div className="intraday-facts">
                 {summary?.stock_declared != null && (
@@ -2009,6 +3195,7 @@ export default function IntradayObservation({
         )}
       </div>
       <Rotation
+        key={`${date}:${selectedSlot}`}
         stages={slots}
         samples={samples}
         activeStage={selectedSlot}

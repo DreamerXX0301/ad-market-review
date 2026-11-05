@@ -13,6 +13,7 @@ from app.core import connect
 from app.services.auction_analysis import normalize_snapshot
 from app.services.auction_collection import CHINA, STOCK_CODE, Collector, WindowExpired, canonical, contains_secret
 from app.services.market_outlook import NON_DIRECTION_LABELS
+from app.services.supplement_access import supplement_reader
 from app.services import task_service as tasks
 
 VERSION = 'auction-discovery-v1'
@@ -293,7 +294,48 @@ def _owns_lease(connection, job, now):
             and current['lease_expires_at_ms'] >= int(now.timestamp() * 1000))
 
 
-def read_view(day, *, connection=None):
+def _project_discovery_rows(payload, parent):
+    from app.services.auction_integrity import validate_snapshot
+    from app.services.auction_topic_summary import build_topic_summary
+    from app.services.market_broken_boards import _board_fields
+
+    quotes = [*payload['stocks'], *payload['supplement']['items']]
+    if not quotes:
+        return payload
+    classifications = {}
+    if parent is not None:
+        try:
+            primary = validate_snapshot(parent)
+        except ValueError:
+            pass
+        else:
+            summary = build_topic_summary({**primary,
+                'universe': {'items': [{'instrument_id': row['instrument_id']} for row in quotes]},
+                'quotes': {'items': [{**row, 'state': 'observed'} for row in quotes]}})
+            frozen = payload.get('membership')
+            if frozen is None or isinstance(frozen, dict) and all(
+                    summary.get(key) is not None and summary[key] == frozen.get(key)
+                    for key in ('source_snapshot_id', 'source_sha256')):
+                classifications = summary.get('stock_classifications', {})
+
+    stocks = {}
+    for row in quotes:
+        symbol = row['instrument_id']
+        entry = classifications.get(symbol, {})
+        industries = entry.get('industries', [])[:1]
+        concepts = [tag for tag in entry.get('topics', []) if tag['name'] not in NON_DIRECTION_LABELS][:2]
+        themes = [{'name': tag['name'], 'kind': tag['kind'], 'topic_code': tag['topic_code'],
+                   'member_date': tag['members_observed_date']} for tag in [*industries, *concepts]]
+        stocks[symbol] = {**row, **_board_fields(symbol), 'themes': themes,
+                          'themes_state': 'observed_sample' if themes else 'unknown'}
+    return {**payload, 'stocks': [stocks[row['instrument_id']] for row in payload['stocks']],
+            'directions': [{**group, 'stocks': [stocks[row['instrument_id']] for row in group['stocks']]}
+                           for group in payload['directions']],
+            'supplement': {**payload['supplement'],
+                           'items': [stocks[row['instrument_id']] for row in payload['supplement']['items']]}}
+
+
+def read_view(day, *, connection=None, include_themes=False):
     from app.services.auction_integrity import validate_discovery
     from app.services.auction_retention import retention_status
     from app.services.auction_service import day_value
@@ -313,9 +355,26 @@ def read_view(day, *, connection=None):
                     return _empty(day, 'unavailable', '当天的竞价发现未完成留存。')
             return _empty(day, reason='该日暂无竞价发现记录。')
         row = dict(row)
+        parent = reader.execute('''SELECT * FROM market_auction_snapshot
+            WHERE snapshot_id=? AND job_id=? AND trade_date=?''',
+            (row['primary_snapshot_id'], row['job_id'], day)).fetchone() if include_themes else None
     try:
         payload = validate_discovery(row)
     except ValueError:
         return _empty(day, 'unavailable', '该日竞价发现记录未通过完整性核验。')
+    if include_themes:
+        payload = _project_discovery_rows(payload, dict(parent) if parent is not None else None)
     return {**{key: value for key, value in payload.items() if key not in ('sources', 'evidence', 'requested')},
             **{key: row[key] for key in ('primary_snapshot_id', 'recorded_at_ms', 'content_sha256')}}
+
+
+@supplement_reader
+def read_history(day):
+    from app.services.intraday_stock_detail import history_for_symbols
+
+    view = read_view(day)
+    symbols = list(dict.fromkeys(row['instrument_id'] for row in [*view['stocks'], *view['supplement']['items']]))
+    if not symbols:
+        return {'date': view['date'], 'slot': 'auction', 'as_of': None, 'items': {}}
+    # validate_discovery bounds and checks the union against the frozen requests.
+    return history_for_symbols(view['date'], 'auction', symbols)

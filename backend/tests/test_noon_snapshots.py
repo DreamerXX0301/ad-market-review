@@ -110,6 +110,102 @@ def execute(noon):
     return claimed, service.execute_capture(claimed)
 
 
+@pytest.mark.parametrize(('key', 'component', 'value'), [
+    ('limit_up', 'seal_sample', 0), ('limit_down', 'limit_balance', 100), ('limit_break', 'seal_sample', 100),
+])
+def test_explicit_empty_event_pool_is_observed_and_old_snapshot_is_read_only(noon, key, component, value):
+    _, client, source, _, _, _, _ = noon
+    endpoint = service.NOON_EVENT_POOLS[key]
+    source.hook = lambda path, _: ({
+        'code': 0,
+        'data': {'timestamp': int(NOW.timestamp() * 1000), 'item': [],
+                 'pagination': {'page': 1, 'pages': 0, 'size': 200, 'total': 0}},
+    } if path == endpoint else None)
+    job, _ = execute(noon)
+    saved_calls = list(source.calls)
+    view = client.get('/api/v1/market/noon', params={'date': DAY}).json()['snapshot']
+    pool = view['payload']['events'][key]
+    assert (pool['state'], pool['count'], pool['items']) == ('observed', 0, [])
+    if key == 'limit_up':
+        assert pool['board_summary']['first_board_count'] == pool['board_summary']['multi_board_count'] == 0
+        assert pool['board_summary']['max_confirmed'] is None
+    assert next(row for row in view['workbench']['temperature']['components']
+                if row['key'] == component)['value'] == value
+
+    old_payload = deepcopy(view['payload'])
+    old_payload['events'][key].update(state='unknown', count=None, reason='来源为空')
+    old_text = service.canonical(old_payload).decode()
+    old_sha = sha256(old_text.encode()).hexdigest()
+    archived = {'trade_date': DAY, 'job_id': job['job_id'], 'payload_json': old_text,
+                'content_sha256': old_sha, 'collected_start_at': view['collected_start_at'],
+                'collected_end_at': view['collected_end_at'], 'snapshot_id': view['snapshot_id'],
+                'quality': view['quality']}
+    restored = service._snapshot_view(archived)
+    assert restored['content_sha256'] == old_sha
+    assert restored['payload']['events'][key]['state'] == 'unknown'
+    restored_pool = restored['workbench']['verified_empty_event_pools'][key]
+    assert (restored_pool['state'], restored_pool['count'], restored_pool['items']) == ('observed', 0, [])
+    if key == 'limit_down':
+        assert restored['workbench']['limit_down_source_pool'] == restored_pool
+    assert next(row for row in restored['workbench']['temperature']['components']
+                if row['key'] == component)['value'] == value
+    from app.services.intraday_brief import _noon_anchor
+    if key == 'limit_up':
+        ladder = _noon_anchor(archived)['ladder']
+        assert (ladder['state'], ladder['sealed_count'], ladder['highest_board']) == ('observed', 0, None)
+    if key == 'limit_break':
+        assert _noon_anchor(archived)['ladder']['broken_board'] == {'state': 'observed', 'count': 0}
+
+    receipt = core.raw_dir() / 'noon' / job['job_id'] / f'{key}_page_1.json.gz'
+    receipt.write_bytes(receipt.read_bytes() + b'invalid')
+    unverified = service._snapshot_view(archived)
+    assert 'limit_down_source_pool' not in unverified['workbench']
+    assert 'verified_empty_event_pools' not in unverified['workbench']
+    assert next(row for row in unverified['workbench']['temperature']['components']
+                if row['key'] == component)['value'] is None
+    assert source.calls == saved_calls
+
+
+@pytest.mark.parametrize('key', ['limit_up', 'limit_down', 'limit_break'])
+@pytest.mark.parametrize('broken_field', ['code', 'timestamp', 'pages', 'before_window'])
+def test_inconsistent_empty_event_pool_page_remains_unknown(noon, key, broken_field):
+    _, client, source, _, _, _, _ = noon
+
+    def reply(path, _):
+        if path != service.NOON_EVENT_POOLS[key]:
+            return None
+        pagination = {'page': 1, 'pages': 1 if broken_field == 'pages' else 0, 'size': 200, 'total': 0}
+        stamp = NOW.replace(hour=11, minute=30) if broken_field == 'before_window' else NOW
+        return {'code': 502 if broken_field == 'code' else 0,
+                'data': {'timestamp': None if broken_field == 'timestamp' else int(stamp.timestamp() * 1000),
+                         'item': [], 'pagination': pagination}}
+
+    source.hook = reply
+    execute(noon)
+    snapshot = client.get('/api/v1/market/noon', params={'date': DAY}).json()['snapshot']
+    assert snapshot['payload']['events'][key]['state'] == 'unknown'
+    assert snapshot['payload']['events'][key]['count'] is None
+    assert 'limit_down_source_pool' not in snapshot['workbench']
+    assert 'verified_empty_event_pools' not in snapshot['workbench']
+
+
+def test_empty_event_pools_have_no_temperature_denominator(noon):
+    _, client, source, _, _, _, _ = noon
+    source.hook = lambda path, _: ({
+        'code': 0,
+        'data': {'timestamp': int(NOW.timestamp() * 1000), 'item': [],
+                 'pagination': {'page': 1, 'pages': 0, 'size': 200, 'total': 0}},
+    } if path in service.NOON_EVENT_POOLS.values() else None)
+    execute(noon)
+    snapshot = client.get('/api/v1/market/noon', params={'date': DAY}).json()['snapshot']
+    for key in service.NOON_EVENT_POOLS:
+        pool = snapshot['payload']['events'][key]
+        assert (pool['state'], pool['count'], pool['items']) == ('observed', 0, [])
+    for row in snapshot['workbench']['temperature']['components']:
+        if row['key'] in ('seal_sample', 'limit_balance'):
+            assert row['value'] is None and '分母为零' in row['reason']
+
+
 def test_roundtrip_keeps_missing_times_freezes_review_and_never_publishes_daily(noon, monkeypatch):
     _, client, source, _, context, seen, before = noon
     job, result = execute(noon)

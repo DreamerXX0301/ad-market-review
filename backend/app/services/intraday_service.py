@@ -7,15 +7,17 @@ import re
 from fastapi import HTTPException
 
 from app.adapters.providers import ProviderError
-from app.core import connect, digest, dumps, get_market, new_id, published_dir
+from app.core import connect, data_dir, digest, dumps, get_market, new_id, published_dir
 from app.services import task_service as tasks
 from app.services.increment_access import require_business_unlocked
-from app.services.intraday_discovery import build_intraday_discovery
+from app.services.intraday_discovery import SECTOR_LISTS, build_intraday_discovery
+from app.services.intraday_feedback import attach_feedback_themes, feedback_stock_rows
 from app.services.noon_analysis import INDEX_NAMES, normalize_pool, normalize_quotes, number
 from app.services.noon_collection import (CHINA, WindowExpired, canonical, contains_secret,
-    STOCK_CODE, items, paged, source_time, trading_days)
+    STOCK_CODE, explicit_empty_pool_page, items, paged, source_time, trading_days)
 from app.services.noon_service import _configured, _guard_job
 from app.services.sector_history import _catalog
+from app.services.stock_limit_reference import attach_intraday_references
 
 OPERATION = 'intraday_snapshot'
 LEGACY_VERSION = 'intraday-snapshot-v1'
@@ -117,6 +119,34 @@ def decode_snapshot(row):
     return value
 
 
+def _noon_schedule(connection, day, today):
+    from app.services import automatic_tasks
+
+    receipts = connection.execute("""SELECT e.details_json FROM market_noon_capture c
+        JOIN job_event e USING(job_id)
+        WHERE c.trade_date=? AND c.request_key=? AND e.stage='automatic_schedule' LIMIT 2""",
+        (day, automatic_tasks.request_key('noon', day))).fetchall()
+    if len(receipts) == 1:
+        try:
+            receipt = json.loads(receipts[0]['details_json'])
+            clock = receipt.get('scheduled_time')
+            if (receipt.get('version') == automatic_tasks.VERSION and receipt.get('schedule') == 'noon'
+                    and receipt.get('date') == day and receipt.get('timezone') == 'Asia/Shanghai'
+                    and isinstance(clock, str) and re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', clock)
+                    and '11:31' <= clock < '13:00'):
+                return clock, 'recorded'
+        except (ValueError, TypeError, AttributeError):
+            pass
+    if day == today:
+        try:
+            noon = automatic_tasks._settings(connection)['noon']
+            if noon['enabled']:
+                return noon['time'], 'configuration'
+        except (HTTPException, ValueError, TypeError, AttributeError):
+            pass
+    return None, None
+
+
 def read_view(day=None):
     now = now_china()
     today = now.date().isoformat()
@@ -128,31 +158,43 @@ def read_view(day=None):
         configured = bool(slot and _configured(conn) and tasks.initialization_state(conn)['main_published'])
         busy = configured and conn.execute("SELECT 1 FROM job WHERE status IN ('queued','running') LIMIT 1").fetchone()
         automation = _automation_config(conn)
+        noon_scheduled_at, noon_schedule_source = _noon_schedule(conn, day, today)
     latest = rows[-1] if rows else None
     occupied = slot and any(row['slot'] == slot['key'] for row in rows)
     reason = ('仅在今天的交易观察时段开放采集' if not slot else
               '本时段已提交采集' if occupied else
               '请先初始化行情并配置扶摇数据源' if not configured else
               '已有任务运行或排队，请等工作进程空闲' if busy else None)
-    snapshots = []
-    for row in rows:
-        value = decode_snapshot(row)
-        if value:
-            snapshots.append({k: v for k, v in value.items()
-                              if k not in ('version', 'comparison_input', 'source_checks', 'sealed_pool_input',
-                                           'member_reference')} | {'discovery': build_intraday_discovery(value)})
+    saved = [value for row in rows if (value := decode_snapshot(row))]
+    _restore_legacy_turnover(saved)
+    _attach_saved_stock_references(saved)
+    snapshots = [{k: v for k, v in value.items()
+                  if k not in ('version', 'comparison_input', 'source_checks', 'sealed_pool_input',
+                               'member_reference')} | {'discovery': build_intraday_discovery(value)}
+                 for value in saved]
+    from app.services.intraday_brief import sector_comparison_metadata
+    for snapshot in snapshots:
+        for key in ('sectors', 'strong_sectors', 'limit_up_sectors', 'wide_limit_up_sectors', 'index_only_sectors'):
+            if isinstance(snapshot.get(key), list):
+                snapshot[key] = [{**row, **sector_comparison_metadata(row, source='fuyao')}
+                                 for row in snapshot[key]]
     retained_slots = {row['slot'] for row in rows}
     return dict(date=day, today=today, state=latest['status'] if latest and latest['status'] in ('queued', 'running')
                 else 'available' if snapshots else latest['status'] if latest else 'not_collected',
                 can_capture=bool(slot and configured and not occupied and not busy), reason=reason,
                 latest_job=tasks.task_view(latest['job_id']) if latest else None,
+                noon_scheduled_at=noon_scheduled_at, noon_schedule_source=noon_schedule_source,
                 current_slot=slot, slots=(*SLOTS, *(slot for slot in LEGACY_SLOTS if slot['key'] in retained_slots)),
                 snapshots=snapshots, automation=automation)
 
 
 def _enqueue(connection, key, day, slot, now, *, version=VERSION, authorization=None):
+    from app.services.market_suspensions import VERSION as SUSPENSION_VERSION
+
     identifier = new_id('job')
     parameters = dict(operation=OPERATION, version=version, date=day, slot=slot['key'], source_id='fuyao')
+    if version == VERSION:
+        parameters['suspension_evidence'] = SUSPENSION_VERSION
     if authorization:
         parameters['automation'] = authorization
     signature = digest(parameters)
@@ -263,6 +305,19 @@ class Capture:
         if len(self.gaps) < 30:
             self.gaps.append(dict(domain=name, reason=reason))
 
+    def pool(self, name, endpoint):
+        def verified_empty(body):
+            if not explicit_empty_pool_page(body):
+                return False
+            source = next((row for row in self.checks if row['domain'] == f'{name}_page_1'), {})
+            stamp = source.get('source_time')
+            return (source.get('state') == 'accepted' and isinstance(stamp, str)
+                    and slot_for(self.day, datetime.fromisoformat(stamp), version=self.version) == self.slot)
+
+        midnight = int(datetime.combine(date.fromisoformat(self.day), time(), CHINA).timestamp() * 1000)
+        return paged(self, name, endpoint, {'date_ms': midnight},
+                     verify_empty=verified_empty if self.version == VERSION else None)
+
     def request(self, name, endpoint, params=None, *, dated=False):
         self.guard_window()
         prefix, _, page = name.rpartition('_')
@@ -343,6 +398,10 @@ def _memberships(reference, catalog, day):
     return {code: value for code, value in candidates.items() if code not in duplicates}
 
 
+def _planned_board_codes(catalog):
+    return sorted(catalog, key=lambda code: (catalog[code]['kind'] != 'industry', code))[:MAX_BOARDS]
+
+
 def _prior_closing_cohort(market, calendar, day, *, include_broken=False):
     """Read only exact previous-session events from a verified local publication."""
     from app.services.noon_context import _event_cohorts
@@ -402,7 +461,7 @@ def _noon_baseline(connection, day):
         return None
     pool = value.get('events', {}).get('limit_up', {})
     return dict(id=row['snapshot_id'], slot='noon', slot_label='午评', collected_end_at=row['collected_end_at'],
-                comparison_input={key: value.get(key, ()) for key in ('stocks', 'sectors')},
+                comparison_input={key: value.get(key, ()) for key in ('stocks', 'sectors', 'indices')},
                 sealed_pool_input={'state': pool.get('state'), 'items': pool.get('items', ())})
 
 
@@ -414,10 +473,17 @@ def _saved_slot(connection, day, key):
     return decode_snapshot(row) if row else None
 
 
-def _sample_amount_deltas(stocks, baseline):
+def _optional_turnover_slot(connection, day, key):
+    try:
+        return _saved_slot(connection, day, key)
+    except (HTTPException, ValueError, TypeError):
+        return None
+
+
+def _sample_amount_deltas(stocks, baseline, domain='stocks'):
     if not baseline:
         return {}
-    prior = {row['instrument_id']: row for row in baseline['comparison_input'].get('stocks', ())}
+    prior = {row['instrument_id']: row for row in baseline['comparison_input'].get(domain, ())}
     deltas = {}
     for row in stocks:
         before = prior.get(row['instrument_id'])
@@ -434,21 +500,137 @@ def _sample_amount_deltas(stocks, baseline):
     return deltas
 
 
-def _interval_amount(stocks, baseline, prior_stage, prior_baseline, prior_day):
-    current = _sample_amount_deltas(stocks, baseline)
-    earlier = _sample_amount_deltas(prior_stage['comparison_input']['stocks'], prior_baseline) if prior_stage else {}
+def _amount_comparison(current, earlier, prior_day):
     common = current.keys() & earlier.keys()
     comparable_current = sum(current[key] for key in common) if common else None
     comparable_previous = sum(earlier[key] for key in common) if common else None
-    return dict(state='observed' if current else 'unknown', amount=sum(current.values()) if current else None,
-                previous_amount=comparable_previous, comparison_amount=comparable_current,
+    return dict(previous_amount=comparable_previous, comparison_amount=comparable_current,
                 change_from_previous=comparable_current - comparable_previous if common else None,
-                previous_date=prior_day, comparable_count=len(current), previous_comparable_count=len(common),
-                scope='同股累计成交额差值，昨天对照仅比较两个交易日四个端点均有可核验报价的同一批股票')
+                previous_date=prior_day, comparable_count=len(common))
+
+
+def _interval_amount(stocks, baseline, prior_stage, prior_baseline, prior_day, domain='stocks'):
+    current = _sample_amount_deltas(stocks, baseline, domain)
+    earlier = _sample_amount_deltas(
+        prior_stage['comparison_input'].get(domain, ()), prior_baseline, domain) if prior_stage else {}
+    comparison = _amount_comparison(current, earlier, prior_day)
+    return {**comparison, 'state': 'observed' if current else 'unknown',
+            'amount': sum(current.values()) if current else None,
+            'comparable_count': len(current), 'previous_comparable_count': comparison['comparable_count'],
+            'scope': '累计成交额差值，前一交易日仅比较两个交易日四个端点均有可核验报价的同一批证券'}
+
+
+def _cumulative_amounts(rows):
+    return {row['instrument_id']: value for row in rows
+            if row.get('currency') == 'CNY' and row.get('price_basis') == 'none'
+            and number(row.get('latest_price'), positive=True) is not None
+            and (value := number(row.get('amount'), nonnegative=True)) is not None}
+
+
+def _attach_market_amount(pulse, current, earlier, prior_day):
+    pulse['turnover']['amount_comparison'] = _amount_comparison(
+        _cumulative_amounts(current), _cumulative_amounts(earlier), prior_day)
+
+
+def _attach_saved_stock_references(snapshots):
+    from app.analytics.market import MarketData
+    from app.services.intraday_brief import sector_membership_fingerprint
+    from app.services.noon_membership_context import GENERATION, _day
+
+    references, classifications, member_fingerprints = {}, {}, {}
+    for snapshot in snapshots:
+        identity = snapshot.get('member_reference') or {}
+        generation, end = identity.get('generation'), identity.get('date')
+        if (not GENERATION.fullmatch(str(generation)) or not _day(end) or end >= snapshot['date']):
+            continue
+        source = (generation, end)
+        if source not in references:
+            try:
+                market = get_market()
+                if market.status().get('snapshot_id') != generation:
+                    market = MarketData(data_dir(), snapshot_id=generation)
+                status = market.status()
+                references[source] = (market.reference()
+                                      if (status.get('snapshot_id'), status.get('data_end')) == source else {})
+            except (OSError, ValueError, KeyError, TypeError):
+                references[source] = {}
+        reference = references[source]
+        displayed = [*snapshot.get('stocks', ()), *snapshot.get('candidates', ())]
+        displayed.extend(row for key in SECTOR_LISTS for board in snapshot.get(key, ())
+                         for row in board.get('candidates', ()))
+        displayed.extend(row for board in snapshot.get('board_stocks', {}).values() for row in board.get('items', ()))
+        attach_intraday_references(snapshot, displayed, reference.get('master', {}), reference.get('calendar', ()))
+        pending = [row for row in feedback_stock_rows(snapshot) if 'themes' not in row]
+        boards = [row for key in SECTOR_LISTS for row in snapshot.get(key, ())]
+        if (pending or boards) and reference:
+            key = (generation, snapshot['date'])
+            if key not in classifications:
+                catalog, _, _, _ = _catalog(reference)
+                codes = _planned_board_codes(catalog)
+                members = _memberships(reference, {code: catalog[code] for code in codes}, snapshot['date'])
+                sectors = [{'instrument_id': code, **catalog[code]} for code in members]
+                classifications[key] = (sectors, members)
+            attach_feedback_themes(pending, *classifications[key])
+            sectors, members = classifications[key]
+            kinds = {row['instrument_id']: row['kind'] for row in sectors}
+            for board in boards:
+                code = board.get('instrument_id')
+                proof = members.get(code, {})
+                symbols = proof.get('instrument_ids', [])
+                if (not symbols or proof.get('complete') is not True
+                        or board.get('kind') != kinds.get(code)
+                        or board.get('member_date') != proof.get('date')
+                        or board.get('member_list_complete') is not True
+                        or type(board.get('member_count')) is not int or board['member_count'] != len(symbols)):
+                    continue
+                fingerprint_key = (generation, end, snapshot['date'], code)
+                if fingerprint_key not in member_fingerprints:
+                    member_fingerprints[fingerprint_key] = sector_membership_fingerprint(
+                        generation, end, code, kinds[code], proof['date'], symbols)
+                board['member_reference_sha256'] = member_fingerprints[fingerprint_key]
+
+
+def _restore_legacy_turnover(snapshots):
+    """Use the capture's calendar and exact slot to compare retained stock samples only."""
+    old = []
+    for snapshot in snapshots:
+        if (snapshot['version'] != VERSION
+                or 'amount_comparison' in snapshot.get('market_pulse', {}).get('turnover', {})):
+            continue
+        prior = snapshot.get('relay_feedback', {}).get('prior_session', {}).get('date')
+        if isinstance(prior, str) and prior < snapshot['date'] and snapshot.get('market_pulse', {}).get('turnover'):
+            old.append((prior, snapshot))
+    if old:
+        with connect() as connection:
+            for prior, snapshot in old:
+                earlier = _optional_turnover_slot(connection, prior, snapshot['slot']) or {}
+                _attach_market_amount(snapshot['market_pulse'],
+                                      snapshot['comparison_input']['stocks'],
+                                      earlier.get('comparison_input', {}).get('stocks', ()), prior)
+
+
+def _attach_turnover(snapshot, previous, prior_stage, prior_baseline, prior_day):
+    current = snapshot['comparison_input']
+    earlier = prior_stage['comparison_input'] if prior_stage else {}
+    market = snapshot['market_pulse']
+    _attach_market_amount(market, current['stocks'], earlier.get('stocks', ()), prior_day)
+    indices = _cumulative_amounts(current['indices'])
+    prior_indices = _cumulative_amounts(earlier.get('indices', ()))
+    for row in market['indices']:
+        code = row['instrument_id']
+        row['amount'] = indices.get(code)
+        row['amount_comparison'] = _amount_comparison(
+            {code: indices[code]} if code in indices else {},
+            {code: prior_indices[code]} if code in prior_indices else {}, prior_day)
+        if previous is not None:
+            stage_rows = [entry for entry in current['indices'] if entry['instrument_id'] == code]
+            row['interval_amount'] = _interval_amount(stage_rows, previous, prior_stage, prior_baseline, prior_day,
+                                                       domain='indices')
 
 
 def execute_capture(job, progress=None):
     from app.services.intraday_analysis import build_intraday_rankings, build_intraday_strength, split_recent_listings
+    from app.services.market_suspensions import VERSION as SUSPENSION_VERSION
     from app.services.source_service import client
 
     params = json.loads(job['parameters_json'])
@@ -458,6 +640,8 @@ def execute_capture(job, progress=None):
     slot = next((value for value in slots if value['key'] == params.get('slot')), None)
     authorization = params.get('automation')
     expected = dict(operation=OPERATION, version=version, date=day, slot=params.get('slot'), source_id='fuyao')
+    if version == VERSION and params.get('suspension_evidence') == SUSPENSION_VERSION:
+        expected['suspension_evidence'] = SUSPENSION_VERSION
     if authorization is not None:
         if (version != VERSION or not isinstance(authorization, dict)
                 or set(authorization) != {'revision', 'calendar_sha256'}
@@ -501,7 +685,7 @@ def execute_capture(job, progress=None):
     market = get_market()
     reference = market.reference()
     catalog, _, _, _ = _catalog(reference)
-    codes = sorted(catalog, key=lambda code: (catalog[code]['kind'] != 'industry', code))[:MAX_BOARDS]
+    codes = _planned_board_codes(catalog)
     capture = Capture(job, day, slot, client('fuyao'), progress, REQUEST_BUDGETS[version])
     capture.guard_window()
     if calendar_receipt:
@@ -516,8 +700,7 @@ def execute_capture(job, progress=None):
     pool_inputs = None
     break_inputs = ([], None, False) if has_break_pool else None
     if version != LEGACY_VERSION:
-        midnight = int(datetime.combine(date.fromisoformat(day), time(), CHINA).timestamp() * 1000)
-        pool_inputs = paged(capture, 'limit_up', '/api/a-share/special-data/limit-up-pool', {'date_ms': midnight})
+        pool_inputs = capture.pool('limit_up', '/api/a-share/special-data/limit-up-pool')
     raw_indices, raw_boards = [], []
     try:
         if has_feedback:
@@ -526,7 +709,7 @@ def execute_capture(job, progress=None):
             raw_indices = [row for row in (items(response) or []) if isinstance(row, dict)
                            and isinstance(row.get('thscode'), str) and row['thscode'] in INDEX_NAMES]
         if has_break_pool:
-            break_inputs = paged(capture, 'limit_break', '/api/a-share/special-data/limit-break-pool', {'date_ms': midnight})
+            break_inputs = capture.pool('limit_break', '/api/a-share/special-data/limit-break-pool')
         for offset in range(0, len(codes), 50):
             batch = codes[offset:offset + 50]
             response = capture.request(f'boards_{offset // 50 + 1}', '/api/a-share-index/prices/snapshot',
@@ -572,6 +755,10 @@ def execute_capture(job, progress=None):
         keep = tuple(key for key in keep if key != 'name') + ('high', 'low')
     inputs = {kind: [{k: row[k] for k in keep if k in row and (version != VERSION or row[k] is not None)} for row in rows]
               for kind, rows in (('stocks', stocks), ('sectors', sectors))}
+    if version == VERSION:
+        inputs['indices'] = [{key: row[key] for key in
+                              ('instrument_id', 'latest_price', 'prev_close', 'amount', 'currency', 'price_basis')}
+                             for row in indices]
     snapshot = dict(version=version, id=snapshot_id, date=day, slot=slot['key'], slot_label=slot['label'],
                     collected_start_at=capture.start.isoformat(), collected_end_at=capture.end.isoformat(),
                     quality=quality, stocks=ranked['stocks'], sectors=ranked['sectors'],
@@ -592,11 +779,16 @@ def execute_capture(job, progress=None):
                                                     time.fromisoformat(slot['scheduled_at']), CHINA).isoformat()
         if previous:
             snapshot['summary']['comparison_snapshot_id'] = previous['id']
-        if baseline_slot:
-            prior_day = max((value for value in calendar if value < day), default=None)
+        prior_day = max((value for value in calendar if value < day), default=None)
+        prior_stage = prior_baseline = None
+        if prior_day:
             with connect() as connection:
-                prior_stage = _saved_slot(connection, prior_day, slot['key']) if prior_day else None
-                prior_baseline = _saved_slot(connection, prior_day, baseline_slot) if prior_stage else None
+                prior_stage = _optional_turnover_slot(connection, prior_day, slot['key'])
+                if prior_stage and baseline_slot:
+                    prior_baseline = _optional_turnover_slot(connection, prior_day, baseline_slot)
+        if (prior_baseline and prior_baseline['collected_end_at'] >= prior_stage['collected_start_at']):
+            prior_baseline = None
+        if baseline_slot:
             snapshot['summary']['interval_amount'] = _interval_amount(
                 stocks, previous, prior_stage, prior_baseline, prior_day)
     if pool is not None:
@@ -634,6 +826,8 @@ def execute_capture(job, progress=None):
             break_pool=break_pool, prior_broken_session=prior_session.get('broken'),
             sectors=topic_rows, members=members if has_break_pool else None,
         ))
+        if version == VERSION:
+            _attach_turnover(snapshot, previous, prior_stage, prior_baseline, prior_day)
         comparable_pool = [{'instrument_id': row['instrument_id']} for row in pool['items']
                            if row['instrument_id'] not in conflicts]
         comparable_state = ('partial' if comparable_pool else 'unknown') if conflicts else pool['state']

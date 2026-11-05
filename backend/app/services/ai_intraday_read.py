@@ -19,6 +19,9 @@ _STOCK = ('instrument_id', 'name', 'latest_price', 'change_pct', 'change_pp', 'a
 _DIRECTION = ('instrument_id', 'name', 'kind', 'signal', 'change_pct', 'change_pp',
               'amount_delta', 'member_date', 'up_ratio', 'limit_up_count', 'limit_up_count_state',
               'broken_count', 'broken_count_state')
+_AMOUNT_COMPARISON = ('previous_amount', 'comparison_amount', 'change_from_previous',
+                      'previous_date', 'comparable_count')
+_INTERVAL_AMOUNT = ('amount', *_AMOUNT_COMPARISON, 'previous_comparable_count', 'scope', 'state')
 
 
 def _matches(row, query):
@@ -156,15 +159,23 @@ def _project(snapshot, query, detailed):
                                row.get('instrument_id', '').casefold())]
         if len(exact) == 1:
             samples.extend(_rank(exact))
+    turnover = market.get('turnover') or {}
+    indices = []
+    for row in market.get('indices', ())[:4]:
+        item = _pick_fields(row, ('instrument_id', 'name', 'change_pct', 'amount'))
+        if detailed:
+            for key, fields in (('amount_comparison', _AMOUNT_COMPARISON),
+                                ('interval_amount', _INTERVAL_AMOUNT)):
+                if evidence := _pick_fields(row.get(key), fields):
+                    item[key] = evidence
+        indices.append(item)
     data = {
         'scope': _SCOPE, 'snapshot_quality': snapshot.get('quality'),
         'baseline_slot': summary.get('comparison_slot'),
         'breadth': _pick_fields(market.get('breadth'), _MARKET),
-        'turnover': _pick_fields(market.get('turnover'), ('amount', 'valid')),
-        'interval_amount': _pick_fields(summary.get('interval_amount'), (
-            'amount', 'previous_amount', 'comparison_amount', 'change_from_previous',
-            'previous_date', 'comparable_count', 'previous_comparable_count', 'scope', 'state')),
-        'indices': [_pick_fields(row, ('instrument_id', 'name', 'change_pct')) for row in market.get('indices', ())][:4],
+        'turnover': _pick_fields(turnover, ('amount', 'valid')),
+        'interval_amount': _pick_fields(summary.get('interval_amount'), _INTERVAL_AMOUNT),
+        'indices': indices,
         'ladder': {**_pick_fields(ladder, ('state', 'sealed_count', 'height_state', 'highest_board',
                     'first_board_count', 'multi_board_count', 'unknown_height_count')),
                    'highest_board_samples': _stock_samples(leaders, query, stock_limit),
@@ -180,6 +191,8 @@ def _project(snapshot, query, detailed):
         'stock_samples': _stock_samples(samples, query, stock_limit),
         'sample_note': '方向和个股只返回已存资料中的有限样本，名称或代码未命中时不能认定全市场没有。',
     }
+    if comparison := _pick_fields(turnover.get('amount_comparison'), _AMOUNT_COMPARISON):
+        data['turnover']['amount_comparison'] = comparison
     # Each slot keeps its date and essential facts in a six-slot reply.
     cap = (10 if detailed else 3) * 1024
     discovery = data['direction_discovery']

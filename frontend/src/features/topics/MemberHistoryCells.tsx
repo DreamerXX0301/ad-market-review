@@ -1,6 +1,7 @@
 import type { Row } from "../../lib/api";
 import { integer, percent, tone } from "../../lib/format";
 import { Badge } from "../../components/UI";
+import { carriedReturnDates } from "../../components/stockExtraMetrics";
 
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -14,6 +15,7 @@ export function HistoryReturnCell({
   end,
   priceBasis,
   missingSessions,
+  coverage,
 }: {
   value: unknown;
   reason?: string | null;
@@ -21,15 +23,27 @@ export function HistoryReturnCell({
   end?: string | null;
   priceBasis?: string | null;
   missingSessions?: number | null;
+  coverage?: Row;
 }) {
   const known = finite(value);
+  const carried = known ? carriedReturnDates(coverage) : [];
+  const gaps =
+    known && count(missingSessions) && missingSessions > 0
+      ? `区间缺 ${missingSessions} 日报价`
+      : null;
   const basis =
     priceBasis === "forward_event_affine"
       ? "已核验本地事件前复权端点"
       : priceBasis === "none"
         ? "未复权可比端点"
         : priceBasis || "以服务端核验口径为准";
-  const details = [start && end ? start + " → " + end : null, basis, reason]
+  const details = [
+    start && end ? start + " → " + end : null,
+    basis,
+    reason,
+    ...carried,
+    gaps,
+  ]
     .filter(Boolean)
     .join("；");
   return (
@@ -41,9 +55,10 @@ export function HistoryReturnCell({
         {known ? percent(value) : "—"}
       </span>
       {!known && <small>待核验</small>}
-      {known && count(missingSessions) && missingSessions > 0 && (
-        <small>区间缺 {missingSessions} 日报价</small>
-      )}
+      {carried.map((part) => (
+        <small key={part}>{part}</small>
+      ))}
+      {gaps && !carried.length && <small>{gaps}</small>}
     </div>
   );
 }

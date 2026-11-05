@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.core import connect, get_market
 from app.services import intraday_service as intraday
 from app.services.market_supplement import load_supplement_with_fingerprint
+from app.services.market_suspensions import suspension_status
 from app.services.noon_context import _event_cohorts
 from app.services.stock_summary import STOCK_KINDS, summary_fields
 from app.services.strategy_limits import count_window, quote_index
@@ -15,7 +16,8 @@ from app.services.topic_member_metrics import member_metrics
 
 MAX_SYMBOLS = 32
 POOL_FIELDS = ('public_pools', 'annual_pools', 'annual_down_pools')
-HISTORY_FIELDS = ('change_30d_pct', 'change_30d_reason', 'return_ytd_pct', 'return_ytd_reason',
+HISTORY_FIELDS = ('change_30d_pct', 'change_30d_reason', 'change_30d_coverage',
+                  'return_ytd_pct', 'return_ytd_reason', 'return_ytd_coverage',
                   'last_limit_up_date', 'last_limit_up_complete', 'last_limit_up_reason',
                   'limit_up_1y', 'limit_up_1y_observed', 'limit_up_1y_complete', 'board_label')
 
@@ -29,6 +31,11 @@ def read_history(day, slot, symbols):
     requested = symbols.split(',')
     if len(requested) > MAX_SYMBOLS or not all(intraday.STOCK_CODE.fullmatch(symbol) for symbol in requested):
         raise HTTPException(422, '每次最多读取32个完整股票代码')
+    return history_for_symbols(day, slot, requested)
+
+
+def history_for_symbols(day, slot, requested):
+    """Read history for a validated, bounded set of stock codes."""
     market = get_market()
     status = market.status()
     calendar = market.calendar() if status.get('ready') else []
@@ -40,9 +47,10 @@ def read_history(day, slot, symbols):
     result = {'date': day, 'slot': slot, 'as_of': as_of, 'items': {}}
     if not as_of or slot == 'close' and as_of != day:
         return {**result, 'as_of': None}
+    wanted = set(requested)
     master = {row['instrument_id']: row for row in market.instruments(limit=10000)
               if row.get('kind', row.get('asset_type', 'stock')) in STOCK_KINDS
-              and row['instrument_id'] in requested}
+              and row['instrument_id'] in wanted}
     if not master:
         return result
     daily = market.history_for_instruments(list(master), start=as_of, end=as_of)
@@ -86,6 +94,11 @@ def read_quote(snapshot_id, symbol):
               'quote': None, 'reason': '该快照的开盘、最高、最低或最新价未能完整核验'}
     matches = [quote for quote in snapshot.get('comparison_input', {}).get('stocks', ())
                if quote.get('instrument_id') == symbol]
+    evidence = suspension_status(symbol, day)
+    if (evidence and len(matches) <= 1
+            and not any(_number(quote.get(key)) and quote[key] > 0
+                        for quote in matches for key in ('amount', 'volume'))):
+        return {**result, 'suspension': evidence, 'reason': '该股票当日停牌，无该时点临时日 K'}
     if len(matches) != 1:
         return result
     quote = matches[0]

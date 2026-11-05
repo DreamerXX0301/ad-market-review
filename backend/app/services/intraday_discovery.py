@@ -22,7 +22,7 @@ def _members(snapshot, direction):
         number(row.get('change_pct')) is None, -(number(row.get('change_pct')) or 0),
         row['instrument_id']))
     fields = ('instrument_id', 'name', 'change_pct', 'change_pp', 'amount',
-              'limit_up_state', 'continue_day_cnt', 'themes')
+              'limit_up_state', 'continue_day_cnt', 'themes', 'limit_up_reference_price')
     return [{key: row[key] for key in fields if key in row} for row in ranked[:6]]
 
 

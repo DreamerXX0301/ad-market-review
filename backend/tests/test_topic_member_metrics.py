@@ -186,6 +186,66 @@ def test_no_business_day_quote_never_reuses_yesterdays_close():
     assert row['return_ytd_pct'] is None and row['change_30d_pct'] is None
 
 
+@pytest.fixture
+def verified_suspensions(monkeypatch):
+    from app.services import market_suspensions
+    records = {}
+    monkeypatch.setattr(market_suspensions, 'suspensions_for_date', lambda day: records.get(day, {}))
+
+    def mark(*days, symbol=A):
+        for day in days:
+            records.setdefault(day, {})[symbol] = {'full_session': True, 'source': 'exchange'}
+
+    return mark
+
+
+def test_verified_suspensions_can_carry_exact_30d_and_year_end_comparison_prices(verified_suspensions):
+    market = MetricMarket()
+    end = market.day
+    thirty = market.days[market.days.index(end)-30]
+    prior_year = '2025-12-31'
+    prev_end, prev_thirty = [market.days[market.days.index(day)-1] for day in (end, thirty)]
+    verified_suspensions(end, thirty, prior_year)
+    # A provider's no-trade placeholder stays out of the actual close inputs.
+    for row in market.data[A]:
+        if row['date'] == end:
+            row.update(volume=0, amount=0)
+    market.data[A] = [row for row in market.data[A] if row['date'] not in {prior_year, thirty}]
+    row = evaluate(market, symbols=[A])[A]
+    for prefix, point, actual in (('change_30d', thirty, prev_thirty), ('return_ytd', prior_year, '2025-12-30')):
+        assert row[prefix+'_pct'] == pytest.approx((close_at(market,A,prev_end)/close_at(market,A,actual)-1)*100)
+        coverage = row[prefix+'_coverage']
+        assert (coverage['start'], coverage['end']) == (point, end)
+        assert (coverage['start_price_date'], coverage['end_price_date']) == (actual, prev_end)
+        assert coverage['start_suspension'] and coverage['end_suspension']
+        assert coverage['missing_sessions'] >= 2
+    assert row['return_mtd_pct'] is None
+    assert market.calls['history_for_instruments'] == 1
+    assert market.history_requests[0]['start'] == '2025-12-30'
+
+
+@pytest.mark.parametrize('failure', ['unverified_gap', 'traded_quote', 'duplicate_quote', 'action'])
+def test_suspended_metric_rejects_unverifiable_carry(verified_suspensions, failure):
+    market = MetricMarket()
+    end = market.day
+    previous = market.days[market.days.index(end)-1]
+    verified_suspensions(end)
+    if failure == 'duplicate_quote':
+        placeholder = next(row for row in market.data[A] if row['date'] == end)
+        placeholder['volume'] = 0
+        market.data[A].append(deepcopy(placeholder))
+    elif failure != 'traded_quote':
+        removed = {end, previous} if failure == 'unverified_gap' else {end}
+        market.data[A] = [row for row in market.data[A] if row['date'] not in removed]
+        if failure == 'action':
+            market.events[A] = [action(end)]
+    row = evaluate(market, symbols=[A])[A]
+    for prefix in ('change_30d', 'return_ytd'):
+        assert row[prefix+'_pct'] is None
+        assert not row[prefix+'_coverage']['complete']
+    assert row['return_ytd_reason'] and row['change_30d_reason']
+
+
 def test_full_source_coverage_gives_exact_annual_count_and_latest_trade_session_distance():
     market=MetricMarket();last=market.days[-4]
     supplement=complete_year(market,{market.days[4]:[A],last:[A]})
@@ -351,6 +411,22 @@ def test_metric_cache_hashes_source_content_not_just_publication_timestamp(cache
     second=cached_evaluate(market,source,supplement=changed)
     assert second[A]['last_limit_up_date'] is None
     assert source.calls['history_for_instruments']==2
+
+
+def test_metric_cache_invalidates_when_verified_suspension_archive_is_replaced(
+        cached_market, verified_suspensions, monkeypatch):
+    from app.services import market_suspensions
+    market, source = cached_market()
+    source.data[A] = [row for row in source.data[A] if row['date'] != source.day]
+    assert cached_evaluate(market, source)[A]['change_30d_pct'] is None
+
+    verified_suspensions(source.day)
+    monkeypatch.setattr(market_suspensions, 'suspension_revision', lambda: ('updated-archive',))
+
+    result = cached_evaluate(market, source)[A]
+    assert result['change_30d_pct'] is not None
+    assert result['change_30d_coverage']['end_suspension']
+    assert source.calls['history_for_instruments'] == 2
 
 
 @pytest.mark.parametrize('other_directory,other_snapshot',[('other-data','metric-cache'),('data','other-snapshot')])

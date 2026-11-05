@@ -38,10 +38,12 @@ def history(date: str, slot: str, symbols: str = Query(min_length=9, max_length=
 
 @router.get('/members')
 def members(date: str, slot: str, snapshot_id: str, topic_code: str, board: str = 'all',
-            page: int = Query(1, ge=1, le=10000), limit: int = Query(30, ge=1, le=32)):
+            page: int = Query(1, ge=1, le=10000), limit: int = Query(30, ge=1, le=32),
+            sort: str = 'change_pct', direction: str = 'desc'):
     from app.services.intraday_members import read_members
 
-    return read_members(date, slot, snapshot_id, topic_code, board=board, page=page, limit=limit)
+    return read_members(date, slot, snapshot_id, topic_code, board=board, page=page, limit=limit,
+                        sort=sort, direction=direction)
 
 
 @router.get('/quotes/{snapshot_id}/{symbol}')

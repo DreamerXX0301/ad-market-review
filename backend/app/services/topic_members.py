@@ -147,13 +147,20 @@ def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_or
     output = []; search = query.strip().casefold()
     for ident in sorted(candidates):
         quote = quotes.get(ident); tags = sorted(associated.get(ident, []), key=lambda item: (item['kind'], item['name'], item['topic_id']))
+        stats = historical.get(ident, {})
+        if ident in duplicates:
+            stats = {key: value for key, value in stats.items() if key != 'suspension'}
+        if stats.get('suspension'):
+            quote = None
         matches = [{**{name: item['public'][name] for name in ('topic_id', 'name', 'kind')}, **_membership(item, ident)} for item in chosen if ident in item['members']]
         rate = _number(quote.get('turnover_ratio_pct', quote.get('turnover_rate'))) if quote else None
         if rate is not None and rate < 0: rate = None
         if rate is None and quote:
             rate = _number(turnover.get(ident, {}).get('turnover_rate'))
         item = {**code_info(ident, master), 'close': _number(quote.get('close')) if quote else None, 'change_pct': _number(quote.get('change_pct', quote.get('pct_change'))) if quote else None, 'amount': _number(quote.get('amount')) if quote else None, 'turnover_rate': rate if rate is not None and rate >= 0 else None, 'quote_date': day if quote else None, 'quote_available': quote is not None, 'quote_reason': None if quote else '业务日缺少报价，不使用上一交易日报价替代', 'matched_topics': matches, 'topics': list(dict.fromkeys(tag['name'] for tag in tags if tag['kind'] != 'industry')), 'industries': list(dict.fromkeys(tag['name'] for tag in tags if tag['kind'] == 'industry')), 'price_basis': 'none', **(_membership(chosen[0], ident) if len(chosen) == 1 else {'origin': None, 'manual_override': None, 'provider_member': None})}
-        item.update(historical.get(ident, {}))
+        item.update(stats)
+        if stats.get('suspension'):
+            item['quote_reason'] = '已核实观察日全天停牌'
         board = board_by_id[ident]
         item.update(board=board, board_label=BOARDS.get(board, '未知'),
                     board_scope='当前已核验名录证券代码与交易所分类；不代表历史上市板块身份',

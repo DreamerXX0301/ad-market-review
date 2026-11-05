@@ -1559,44 +1559,64 @@ export function MarketPage({
                     : {}),
                   ...(key === "change_pct" && isGainers
                     ? {
-                        render: (value: unknown, row: Row) => (
-                          <StockEventChange
-                            value={value}
-                            row={row}
-                            date={date}
-                            snapshotId={data?.snapshot_id}
-                          />
-                        ),
+                        render: (value: unknown, row: Row) =>
+                          row.return_30d_observation_suspended === true ? (
+                            <span className="muted" title="所选盘面日已核验全天停牌">
+                              停牌
+                            </span>
+                          ) : (
+                            <StockEventChange
+                              value={value}
+                              row={row}
+                              date={date}
+                              snapshotId={data?.snapshot_id}
+                            />
+                          ),
                       }
                     : {}),
                   ...(key === "change_30d_pct"
                     ? {
-                        render: (value: any, row: Row) => (
-                          <div
-                            title={
-                              row.return_30d_reason ||
-                              `${row.return_30d_start} → ${row.return_30d_end}，按市场交易日端点计算`
-                            }
-                          >
-                            <span className={tone(value)}>
-                              {value == null ? "未排名" : percent(value)}
-                            </span>
-                            {row.return_30d_missing_sessions > 0 && (
-                              <small className="market-gap-note">
-                                区间缺 {row.return_30d_missing_sessions} 日报价
-                                ·{" "}
-                                {value == null
-                                  ? "端点不足，暂未计算"
-                                  : "按已核验端点计算"}
-                              </small>
-                            )}
-                            {value == null && (
-                              <small className="market-gap-note">
-                                {row.return_30d_reason || "数据待核验"}
-                              </small>
-                            )}
-                          </div>
-                        ),
+                        render: (value: any, row: Row) => {
+                          const suspendedEndpoints = [
+                            row.return_30d_start_quote_date &&
+                            row.return_30d_start_quote_date !== row.return_30d_start
+                              ? `起算日停牌，取 ${row.return_30d_start_quote_date} 收盘`
+                              : null,
+                            row.return_30d_end_quote_date &&
+                            row.return_30d_end_quote_date !== row.return_30d_end
+                              ? `观察日停牌，取 ${row.return_30d_end_quote_date} 收盘`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ");
+                          return (
+                            <div
+                              title={
+                                row.return_30d_reason ||
+                                suspendedEndpoints ||
+                                `${row.return_30d_start} → ${row.return_30d_end}，按市场交易日端点计算`
+                              }
+                            >
+                              <span className={tone(value)}>
+                                {value == null ? "未排名" : percent(value)}
+                              </span>
+                              {suspendedEndpoints && (
+                                <small className="market-gap-note">{suspendedEndpoints}</small>
+                              )}
+                              {row.return_30d_missing_sessions > 0 && (
+                                <small className="market-gap-note">
+                                  区间缺 {row.return_30d_missing_sessions} 日实际报价
+                                  {value != null && !suspendedEndpoints && " · 按已核验端点计算"}
+                                </small>
+                              )}
+                              {value == null && (
+                                <small className="market-gap-note">
+                                  {row.return_30d_reason || "数据待核验"}
+                                </small>
+                              )}
+                            </div>
+                          );
+                        },
                       }
                     : {}),
                   ...(key === "net_inflow"

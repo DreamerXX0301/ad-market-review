@@ -8,12 +8,17 @@ from fastapi import HTTPException
 from app.core import connect, data_dir, get_market, published_dir
 from app.services import intraday_service as intraday
 from app.services import noon_membership_context as membership
+from app.services.intraday_stock_detail import history_for_symbols
+from app.services.market_suspensions import suspensions_for_date
 from app.services.noon_analysis import number
 from app.services.strategy_limits import quote_index
+from app.services.stock_limit_reference import attach_intraday_references
 from app.services.supplement_access import supplement_reader
 
 ANCHOR_TABLES = {'auction': 'market_auction_snapshot', 'noon': 'market_noon_snapshot'}
 MEMBER_BOARDS = {'all', 'unknown', *membership.BOARDS}
+HISTORY_SORTS = {'change_30d_pct', 'return_ytd_pct', 'last_limit_up_date', 'limit_up_1y'}
+MEMBER_SORTS = {'rank', 'name', 'change_pct', 'amount', *HISTORY_SORTS}
 AUCTION_BASIS = '与题材名单匹配的本次竞价冻结候选'
 CLOSE_BASIS = '正式收盘代际的已留存成分与当日收盘行情'
 LIVE_BASIS = '采集时冻结代际的已留存成分与该时点报价'
@@ -31,11 +36,37 @@ def _page(base, rows, *, complete, observed, basis, limited=False):
     valid = sum(row['quote_available'] for row in rows)
     filtered = [row for row in rows if base['board'] == 'all' or base['board'] == row['board']]
     filtered.sort(key=lambda row: (row['change_pct'] is None, -(row['change_pct'] or 0), row['instrument_id']))
+    filtered = [{**row, 'rank': rank} for rank, row in enumerate(filtered, 1)]
+    field = base['sort']
+    history = history_for_symbols(base['date'], base['slot'], [row['instrument_id'] for row in filtered]) if filtered and field in HISTORY_SORTS else None
+    if field != 'change_pct' or base['direction'] != 'desc':
+        known, unknown = [], []
+        for row in filtered:
+            values = history['items'].get(row['instrument_id'], {}) if history else row
+            value = values.get(field)
+            if field == 'limit_up_1y' and value is None:
+                value = values.get('limit_up_1y_observed') or None
+            if value is None or value == '':
+                unknown.append(row)
+            else:
+                known.append((value, row))
+        known.sort(key=lambda item: item[0], reverse=base['direction'] == 'desc')
+        filtered = [row for _, row in known] + unknown
     size = base['limit']
     pages = max(1, (len(filtered) + size - 1) // size)
     page = min(base['page'], pages)
+    items = filtered[(page - 1) * size:page * size]
+    suspension = suspensions_for_date(base['date'])
+    for row in items:
+        if not row['quote_available'] and (evidence := suspension.get(row['instrument_id'])):
+            row['trading_status'] = 'suspended'
+            row['suspension'] = evidence
+            row['missing_reason'] = '本日已核验停牌，没有当日成交行情'
+    history_page = None if history is None else {
+        **history, 'items': {row['instrument_id']: history['items'][row['instrument_id']]
+                             for row in items if row['instrument_id'] in history['items']}}
     return _result(base, state='available' if complete and count == valid and not limited else 'partial',
-                   items=filtered[(page - 1) * size:page * size], total=count, matched=len(filtered),
+                   items=items, total=count, matched=len(filtered), history=history_page,
                    page=page, pages=pages, quote_coverage={'valid': valid, 'total': count},
                    members_complete=complete and not limited, membership_as_of=observed,
                    membership_source='fuyao', membership_basis=basis)
@@ -93,7 +124,7 @@ def _auction(base, row):
 
 
 def _noon(base, row):
-    from app.services.noon_sector_views import build_sector_view
+    from app.services.noon_sector_views import sector_member_rows
 
     raw = row['payload_json'].encode()
     if len(raw) > 8 * 1024 * 1024 or sha256(raw).hexdigest() != row['content_sha256']:
@@ -102,9 +133,7 @@ def _noon(base, row):
     if payload.get('date') != base['date'] or payload.get('version') != 'noon-snapshot-v1':
         return _result(base, reason='午评来源身份或日期不符')
     try:
-        sector = build_sector_view(payload, base['topic_code'], snapshot_id=base['snapshot_id'],
-                                   content_sha256=row['content_sha256'], board=base['board'],
-                                   page=base['page'], limit=base['limit'])
+        sector = sector_member_rows(payload, base['topic_code'])
     except HTTPException as error:
         if error.status_code == 404:
             return _result(base, reason=error.detail)
@@ -119,12 +148,8 @@ def _noon(base, row):
         state = {'limit_up': 'sealed', 'limit_break': 'broken'}.get(next(iter(events))) if len(events) == 1 else None
         items.append(_stock(item['instrument_id'], item, valid=item['quote_available'], state=state,
                             height=heights.get(item['instrument_id']) if state == 'sealed' else None))
-    coverage = sector['quote_coverage']
-    state = 'available' if sector['members_complete'] and coverage['valid'] == coverage['total'] else 'partial'
-    return _result(base, state=state, items=items, total=sector['total'], matched=sector['matched'],
-                   page=sector['page'], pages=sector['pages'], quote_coverage=coverage,
-                   members_complete=sector['members_complete'], membership_as_of=sector['membership_as_of'],
-                   membership_source=sector['membership_source'], membership_basis=sector['membership_basis'])
+    return _page(base, items, complete=sector['members_complete'],
+                 observed=sector['membership_as_of'], basis=sector['membership_basis'])
 
 
 def _topic_members(generation, expected_end, code, *, observed=None, reference_sha=None):
@@ -287,17 +312,26 @@ def _live(base, row):
                           else number(samples.get(symbol, {}).get('change_pct')) is not None),
                    state='sealed' if symbol in sealed else 'broken' if symbol in broken else None,
                    height=sealed.get(symbol)) for symbol in symbols]
-    return _page(base, rows, complete=complete, observed=observed, basis=LIVE_BASIS)
+    result = _page(base, rows, complete=complete, observed=observed, basis=LIVE_BASIS)
+    try:
+        reference = market.reference()
+        if market.status().get('data_end') == end:
+            attach_intraday_references(snapshot, result['items'], reference.get('master', {}), reference.get('calendar', ()))
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return result
 
 
 @supplement_reader
-def read_members(day, slot, snapshot_id, topic_code, *, board='all', page=1, limit=30):
+def read_members(day, slot, snapshot_id, topic_code, *, board='all', page=1, limit=30,
+                 sort='change_pct', direction='desc'):
     day = intraday.day_value(day)
     live_slots = {item['key'] for item in (*intraday.SLOTS, *intraday.LEGACY_SLOTS)}
     if (slot not in live_slots | {'auction', 'noon', 'close'} or board not in MEMBER_BOARDS
             or not membership.SECTOR.fullmatch(topic_code)
-            or not 1 <= page <= 10000 or not 1 <= limit <= 32):
-        raise HTTPException(422, '盘中板块、时点或分页参数无效')
+            or not 1 <= page <= 10000 or not 1 <= limit <= 32
+            or sort not in MEMBER_SORTS or direction not in ('asc', 'desc')):
+        raise HTTPException(422, '盘中板块、时点、排序或分页参数无效')
     if slot == 'close':
         valid_id = membership.GENERATION.fullmatch(snapshot_id)
     else:
@@ -306,7 +340,7 @@ def read_members(day, slot, snapshot_id, topic_code, *, board='all', page=1, lim
     if not valid_id:
         raise HTTPException(422, '盘中快照身份无效')
     base = {'date': day, 'slot': slot, 'snapshot_id': snapshot_id, 'topic_code': topic_code,
-            'board': board, 'page': page, 'limit': limit}
+            'board': board, 'page': page, 'limit': limit, 'sort': sort, 'direction': direction}
     if slot == 'close':
         return _close(base)
     row = _snapshot(base)

@@ -223,6 +223,15 @@
   line-height: 1.4;
   white-space: nowrap;
 }
+.entry-header-metric > .badge.warn {
+  color: var(--amber);
+}
+.entry-header-metric > small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
 .entry-header-metric .unknown {
   color: var(--muted);
 }

@@ -114,6 +114,21 @@ assert.ok(
 assert.match(stale, /今日涨幅/);
 assert.ok(!stale.includes("16.22 元"));
 assert.match(stale, /待核验/);
+const suspended = render({
+  ...summary,
+  quote_available: false,
+  quote_date: null,
+  suspension: { state: "suspended", full_session: true },
+  change_30d_coverage: {
+    ...summary.change_30d_coverage,
+    end_suspension: true,
+    end_price_date: "2026-10-22",
+  },
+});
+assert.match(suspended, /badge warn">停牌/);
+assert.match(suspended, /截止日停牌，取 2026-10-22 收盘/);
+assert.match(suspended, /\+72\.12%/);
+assert.doesNotMatch(suspended, /16\.22 元|\+9\.99%/);
 const partial = render({
   ...summary,
   limit_up_ytd: null,

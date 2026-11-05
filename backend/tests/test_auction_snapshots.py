@@ -30,6 +30,22 @@ def quote(code='600001.SH', **changes):
             'auction_yesterday_ratio_pct': 20, 'auction_volume_ratio': 2, **changes}
 
 
+def test_suspension_read_projection_keeps_evidence_scoped_and_rejects_auction_conflicts(monkeypatch):
+    from app.services import market_suspensions
+
+    halted, traded, benchmark, unrelated = '600001.SH', '600002.SH', '600003.SH', '600004.SH'
+    evidence = {'state': 'suspended', 'full_session': True, 'source': 'exchange'}
+    monkeypatch.setattr(market_suspensions, 'suspensions_for_date', lambda day: {
+        key: evidence for key in (halted, traded, benchmark, unrelated)
+    } if day == DAY else {})
+    quotes = [{'instrument_id': halted, 'auction_pct': 0, 'auction_volume': 0, 'auction_amount': 0},
+              {'instrument_id': traded, 'auction_pct': 0, 'auction_volume': 10},
+              {'instrument_id': benchmark}, {'instrument_id': '600005.SH'}]
+    observed = [{'instrument_id': benchmark, 'auction_pct': -2}]
+    assert service.auction_stock_suspensions(DAY, quotes, observed) == {halted: evidence}
+    assert service.auction_stock_suspensions(PREVIOUS, quotes, observed) == {}
+
+
 class FixtureSource:
     key = 'fixture-private-key'
 

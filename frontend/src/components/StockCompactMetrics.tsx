@@ -25,25 +25,36 @@ export default function StockCompactMetrics({
     asOf,
   );
   const quote = stockHeaderQuote(detail, instrumentId, asOf);
-  const close = quote.quoteDate === quote.observed ? quote.price : null;
+  const suspended = !isIndex && view.suspended;
+  const close =
+    !suspended && quote.quoteDate === quote.observed ? quote.price : null;
   const dailyChange = quote.quoteDate === quote.observed ? quote.change : null;
-  const daily = view.daily.known
-    ? view.daily
-    : {
-        value: dailyChange == null ? "待核验" : percent(dailyChange),
-        tone: dailyChange == null ? "muted" : tone(dailyChange),
-        reason: quote.stale
-          ? "观察日没有可核验报价，不用最近旧报价涨幅冒充今日涨幅"
-          : quote.reason,
-        known: dailyChange != null,
-      };
+  const daily =
+    view.daily.known || suspended
+      ? view.daily
+      : {
+          value: dailyChange == null ? "待核验" : percent(dailyChange),
+          tone: dailyChange == null ? "muted" : tone(dailyChange),
+          reason: quote.stale
+            ? "观察日没有可核验报价，不用最近旧报价涨幅冒充今日涨幅"
+            : quote.reason,
+          known: dailyChange != null,
+        };
   const items = [
     {
       label: "今日收盘",
       value:
-        close == null ? "待核验" : `${num(close)} ${isIndex ? "点" : "元"}`,
+        close == null
+          ? suspended
+            ? "—"
+            : "待核验"
+          : `${num(close)} ${isIndex ? "点" : "元"}`,
       tone: "",
-      reason: quote.stale ? "观察日缺少收盘报价" : quote.reason,
+      reason: suspended
+        ? view.daily.reason
+        : quote.stale
+          ? "观察日缺少收盘报价"
+          : quote.reason,
       known: close != null,
     },
     { label: "今日涨幅", ...daily },
@@ -65,7 +76,13 @@ export default function StockCompactMetrics({
           title={item.reason}
         >
           <span>{item.label}</span>
-          <b className={item.known ? item.tone : "unknown"}>{item.value}</b>
+          {suspended && item.label === "今日涨幅" ? (
+            <span className="badge warn">停牌</span>
+          ) : (
+            <b className={item.known ? item.tone : "unknown"}>{item.value}</b>
+          )}
+          {"carried" in item &&
+            item.carried?.map((part) => <small key={part}>{part}</small>)}
         </div>
       ))}
       {isIndex && (

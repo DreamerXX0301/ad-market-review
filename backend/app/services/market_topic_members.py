@@ -99,7 +99,8 @@ def list_members(market, status, day, reference, rows, *, topic_id=None, source_
     turnover = turnover_index(reference, supplement, day)
     valid_quotes = {symbol: row for symbol, row in quotes.items() if symbol not in duplicates and _number(row.get('close')) is not None and row['close'] > 0}
     historical = member_metrics(market, day, members, master, valid_quotes, supplement)
-    quoted_members = [valid_quotes[symbol] for symbol in members if symbol in valid_quotes]
+    quoted_members = [valid_quotes[symbol] for symbol in members
+                      if symbol in valid_quotes and not historical.get(symbol, {}).get('suspension')]
     board_views = {}
     if quoted_members and callable(getattr(market, 'history_for_instruments', None)) and callable(getattr(market, 'status', None)):
         decorated = decorate_board_collections(market, status, day, reference, {'members': quoted_members}, master=master)
@@ -107,8 +108,11 @@ def list_members(market, status, day, reference, rows, *, topic_id=None, source_
                        if 'board_presentation' in row}
     output = []
     for symbol in members:
-        candidate = quotes.get(symbol)
-        quote = candidate if symbol not in duplicates and candidate and _number(candidate.get('close')) is not None and candidate['close'] > 0 else None
+        stats = historical.get(symbol, {})
+        if symbol in duplicates:
+            stats = {key: value for key, value in stats.items() if key != 'suspension'}
+        suspended = bool(stats.get('suspension'))
+        quote = valid_quotes.get(symbol) if not suspended else None
         identity = quote or master.get(symbol, {})
         amount = _number(quote.get('amount')) if quote else None
         own = master.get(symbol, {})
@@ -122,8 +126,8 @@ def list_members(market, status, day, reference, rows, *, topic_id=None, source_
                        'board_scope': '当前已留存证券代码与交易所分类；不是历史身份档，不用于推断历史涨跌停制度',
                        'board_reason': None if board != 'unknown' else '证券身份或代码分类未能确认，不默认归为主板',
                        'quote_date': day if quote else None, 'quote_available': quote is not None,
-                       'quote_reason': None if quote else '该日存在重复报价，无法确认唯一行情' if symbol in duplicates else '该盘面日缺少有效报价，不使用更早或未来报价替代',
-                       'price_basis': 'none', **historical.get(symbol, {}),
+                       'quote_reason': None if quote else '已核实观察日全天停牌' if suspended else '该日存在重复报价，无法确认唯一行情' if symbol in duplicates else '该盘面日缺少有效报价，不使用更早或未来报价替代',
+                       'price_basis': 'none', **stats,
                        **({'board_presentation': board_views[symbol]} if symbol in board_views else {})})
     output.sort(key=lambda row: (row['change_pct'] is None, -row['change_pct'] if row['change_pct'] is not None else 0, row['instrument_id']))
     known = sum(row['quote_available'] for row in output)

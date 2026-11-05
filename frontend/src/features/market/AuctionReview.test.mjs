@@ -8,12 +8,12 @@ const encode = (value) => "data:text/javascript;base64," + Buffer.from(value).to
 const react = import.meta.resolve("react"), runtime = import.meta.resolve("react/jsx-runtime");
 const reactProbe = encode(`import * as React from ${JSON.stringify(react)}; export * from ${JSON.stringify(react)};
 let cursor=0,states={};export function setStates(value){cursor=0;states=value;}
-export function useState(initial){const index=cursor++;return React.useState(Object.hasOwn(states,index)?states[index]:initial==="focus"&&states.auctionScope?states.auctionScope:initial);}`);
-const apiProbe = encode(`let packet=null,close=null,automatic=null,topics=null,feedback=null,resonance=null,discovery=null;export const requests=[];export function setData(value,review,settings=null,topicView=null,feedbackView=null,resonanceView=null,discoveryView=null){packet=value;close=review;automatic=settings;topics=topicView;feedback=feedbackView;resonance=resonanceView;discovery=discoveryView;requests.length=0;}
-export const usePageActive=()=>true;export function useApi(path){requests.push(path);return{data:path?.startsWith('/market/auction?')?packet:path?.startsWith('/market/auction/close-review?')?close:path==='/market/auction/automation'?automatic:path?.startsWith('/market/auction/topic-summary?')?topics:path?.startsWith('/market/auction/feedback?')?feedback:path?.startsWith('/market/auction/resonance?')?resonance:path?.startsWith('/market/auction/discovery?')?discovery:null,loading:false,error:'',reload(){}};}
+export function useState(initial){const index=cursor++;return React.useState(Object.hasOwn(states,index)?states[index]:initial==="focus"&&states.auctionScope?states.auctionScope:initial?.key==="auction_pct"&&states.discoverySort?states.discoverySort:initial);}`);
+const apiProbe = encode(`let packet=null,close=null,automatic=null,topics=null,feedback=null,resonance=null,discovery=null,discoveryHistory=null;export const requests=[];export function setData(value,review,settings=null,topicView=null,feedbackView=null,resonanceView=null,discoveryView=null,historyView=null){packet=value;close=review;automatic=settings;topics=topicView;feedback=feedbackView;resonance=resonanceView;discovery=discoveryView;discoveryHistory=historyView;requests.length=0;}
+export const usePageActive=()=>true;export function useApi(path){requests.push(path);return{data:path?.startsWith('/market/auction?')?packet:path?.startsWith('/market/auction/close-review?')?close:path==='/market/auction/automation'?automatic:path?.startsWith('/market/auction/topic-summary?')?topics:path?.startsWith('/market/auction/feedback?')?feedback:path?.startsWith('/market/auction/resonance?')?resonance:path?.startsWith('/market/auction/discovery?')?discovery:path?.startsWith('/market/auction/discovery/history?')?discoveryHistory:null,loading:false,error:'',reload(){}};}
 export function api(){throw Error('Rendering never reads outside useApi');}export function post(){throw Error('Page rendering must not submit a source task');}export const requestKey=()=> 'fixture-request';`);
 const uiProbe = encode(`import{jsx,jsxs}from ${JSON.stringify(runtime)};export const useToast=()=>()=>{};
-export const Modal=({children})=>jsx('div',{children});export const Badge=({children})=>jsx('span',{children});export const Panel=({title,subtitle,children,actions})=>jsxs('section',{children:[jsx('h2',{children:title}),jsx('p',{children:subtitle}),children,actions]});
+export const Table=()=>null;export const Modal=({children})=>jsx('div',{children});export const Badge=({children})=>jsx('span',{children});export const Panel=({title,subtitle,children,actions})=>jsxs('section',{children:[jsx('h2',{children:title}),jsx('p',{children:subtitle}),children,actions]});
 export const Empty=({title,description})=>jsxs('div',{className:'empty-state',children:[jsx('h3',{children:title}),jsx('p',{children:description})]});export const ErrorBox=({message})=>jsx('p',{role:'alert',children:message});export const Loading=()=>jsx('p',{children:'读取中'});`);
 const replacements = { react: reactProbe, "../../lib/api": apiProbe, "../../components/UI": uiProbe };
 const cache = new Map();
@@ -38,7 +38,7 @@ const original={date:'2026-10-28',state:'retained',recorded_at_ms:Date.parse('20
 const view={date:day,today:day,now:day+'T09:00:00+08:00',state:'not_collected',can_capture:false,capture_window:{allowed:false,reason:'请在09:25后手动采集'}};
 // These legacy one/two-stock fixtures exercise the full association view.
 // Focus-mode folding is covered separately by presentation and browser checks.
-function render(packet,states={},close=null,automatic=null,observedDate=day,topics=null,feedback=null,resonance=null,discovery=null){setData(packet,close,automatic,topics,feedback,resonance,discovery);setStates({auctionScope:"all",...states});return renderToStaticMarkup(createElement(AuctionReview,{date:observedDate,onDate(){},onStock(){},chartDate:'2026-10-28'})).replaceAll(/<!--[^]*?-->/g,'');}
+function render(packet,states={},close=null,automatic=null,observedDate=day,topics=null,feedback=null,resonance=null,discovery=null,history=null){setData(packet,close,automatic,topics,feedback,resonance,discovery,history);setStates({auctionScope:"all",...states});return renderToStaticMarkup(createElement(AuctionReview,{date:observedDate,onDate(){},onStock(){},chartDate:'2026-10-28'})).replaceAll(/<!--[^]*?-->/g,'');}
 let html=render(view);
 assert.match(html,/自动竞价尚未开启/);
 assert.doesNotMatch(html,/样本竞价涨幅中位数|昨日我的原判断/,'empty view cannot invent any snapshot statistics or prior text');
@@ -63,7 +63,7 @@ assert.match(html,/98\.00万元/);
 assert.match(html,/同日基准缺失/);
 assert.match(html,/竞价缺失保持未知/);
 assert.doesNotMatch(html,/9,999|午间临时缺报不应显示/);
-assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",null,`/market/auction/topic-summary?date=${day}`,`/market/auction/feedback?date=${day}`,`/market/auction/discovery?date=${day}`,`/market/auction/resonance?date=${day}`]);
+assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",null,`/market/auction/topic-summary?date=${day}`,`/market/auction/feedback?date=${day}`,`/market/auction/discovery?date=${day}`,null,`/market/auction/resonance?date=${day}`]);
 html=render({...retained,date:'2026-10-28'});
 assert.doesNotMatch(html,/昨日我的原判断|98\.00万元/,'date switch must not leak prior response');
 const discovered = [
@@ -90,6 +90,33 @@ assert.match(html,/-1\.00%/);
 assert.match(html,/0\.00元/);
 assert.match(html,/补查丁/);
 assert.equal((html.match(/名单外甲/g)||[]).length,1);
+// A single deferred, date-scoped history read serves all discovery tables.
+const discoveryHistory={date:day,slot:'auction',as_of:'2026-10-28',items:{
+ '688001.SH':{change_30d_pct:123.45,return_ytd_pct:-6.78,last_limit_up_date:'2026-10-27',last_limit_up_complete:false,limit_up_1y:null,limit_up_1y_observed:7},
+ '688002.SH':{change_30d_pct:9.99,return_ytd_pct:0,limit_up_1y:0,limit_up_1y_complete:true},
+}};
+const detailedDiscovery={...discovery,directions:discovery.directions.map(row=>({...row,stocks:row.stocks.map(stock=>({...stock,board:'star',themes:[{name:'合成行业',kind:'industry',member_date:'2026-10-24'},{name:'合成题材',kind:'concept',member_date:'2026-10-24'}]}))}))};
+html=render(retained,{},null,null,day,null,null,null,detailedDiscovery,discoveryHistory);
+const discoveryTables=html.match(/<table[^>]*auction-discovery-stocks[^]*?<\/table>/g);
+assert.equal(discoveryTables.length,3,'direction, individual and prior-focus discovery tables share the same columns');
+for(const table of discoveryTables){
+ assert.match(table,/<thead><tr><th[^>]*aria-sort="descending"[^>]*>[^]*?按竞价涨幅升序排列/,'auction change is the first column and default descending');
+ for(const caption of ['股票','上市板块','行业 / 概念','昨日板数','竞价额','近30交易日涨幅','年内涨幅','最近一次涨停','近一年涨停次数','来源异动']) assert.ok(table.includes(`按${caption}`),caption+' is sortable');
+}
+assert.match(discoveryTables[0],/科创板/);
+assert.match(discoveryTables[0],/合成行业/);
+assert.match(discoveryTables[0],/合成题材/);
+assert.match(discoveryTables[0],/123\.45%/);
+assert.match(discoveryTables[0],/-6\.78%/);
+assert.match(discoveryTables[0],/≥7 次/,'partial one-year count retains its lower bound');
+assert.match(discoveryTables[0],/>0 次</,'a verified zero count remains zero');
+assert.match(html,/历史指标截至 2026-10-28 收盘/);
+assert.equal(requests.filter(path=>path?.startsWith('/market/auction/discovery/history?')).length,1,'one history request, no per-row network calls');
+html=render(retained,{discoverySort:{key:'auction_pct',order:'asc'}},null,null,day,null,null,null,detailedDiscovery,discoveryHistory);
+let firstTable=html.match(/<table[^>]*auction-discovery-stocks[^]*?<\/table>/)[0];
+assert.ok(firstTable.indexOf('名单外乙')<firstTable.indexOf('名单外甲'),'auction percentage header reverses the row order');
+html=render(retained,{},null,null,day,null,null,null,detailedDiscovery,{...discoveryHistory,date:'2026-10-28'});
+assert.doesNotMatch(html,/123\.45%|≥7 次/,'history metrics never leak from another date');
 html=render(retained,{},null,null,day,null,null,null,{...discovery,date:'2026-10-28'});
 assert.doesNotMatch(html,/合成设备方向|名单外甲|补查丁/,'discovery facts never cross observation dates');
 const discoveryMissing={date:day,state:'not_collected',coverage:{pages:0,candidates:0,valid:0},supplement:{requested:0,remaining:0}};
@@ -121,7 +148,7 @@ html=render(retained,{0:true},{date:day,state:'pending',reason:'等待同日盘�
 assert.match(html,/等待同日盘后增量发布/);
 assert.match(html,/盘后增量完成后自动刷新/);
 assert.match(html,/读取盘后结果/,'the manual refresh fallback remains available');
-assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",`/market/auction/close-review?date=${day}`,`/market/auction/topic-summary?date=${day}`,`/market/auction/feedback?date=${day}`,`/market/auction/discovery?date=${day}`,`/market/auction/resonance?date=${day}`]);
+assert.deepEqual(requests,[`/market/auction?date=${day}`,"/market/auction/automation",`/market/auction/close-review?date=${day}`,`/market/auction/topic-summary?date=${day}`,`/market/auction/feedback?date=${day}`,`/market/auction/discovery?date=${day}`,null,`/market/auction/resonance?date=${day}`]);
 html=render(retained,{0:true},{date:day,state:'partial',posthoc:true,summary:{requested:2,valid:1,missing:1,above_auction:1,below_auction:0,flat:0,median_auction_to_close_pct:2,open_mismatch:1},items:[{instrument_id:'600001.SH',name:'合成观察甲',state:'mismatch',auction_price:9.8,auction_pct:-2,open:10,close:11,auction_to_close_pct:987.65,reason:'开盘价不一致'}]});
 assert.match(html,/开盘价不一致/);
 assert.doesNotMatch(html,/987\.65/,'mismatched opening reference must not display a comparable return');

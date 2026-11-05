@@ -64,10 +64,12 @@ def test_discovery_verifies_new_names_then_reads_independently(isolated):
     def topic_projection(payload):
         codes = [item['instrument_id'] for item in payload['quotes']['items']]
         assert set(codes) == set(OPPORTUNITY_CODES)
+        tag = {'topic_code': '884001.TI', 'kind': 'industry', 'name': '测试行业',
+               'members_observed_date': PREVIOUS}
         return {'source_sha256': 'a' * 64, 'source_snapshot_id': 'market-' + 'b' * 24,
                 'coverage': {'unclassified': 0, 'rejected_groups': 0},
-                'groups': [{'topic_code': '884001.TI', 'kind': 'industry', 'name': '测试行业',
-                            'members_observed_date': PREVIOUS, 'instrument_ids': codes}]}
+                'groups': [{**tag, 'instrument_ids': codes}],
+                'stock_classifications': {code: {'industries': [tag]} for code in codes}}
 
     isolated.monkeypatch.setattr(auction_topic_summary, 'build_topic_summary', topic_projection)
     calls = provider(isolated)
@@ -86,6 +88,9 @@ def test_discovery_verifies_new_names_then_reads_independently(isolated):
     assert view['directions'][0]['stock_count'] == 2
     assert view['directions'][0]['total_auction_amount'] == 220000
     assert view['stocks'][0]['pre_close_price'] == 10
+    assert view['stocks'][0]['themes'] == [{'topic_code': '884001.TI', 'kind': 'industry', 'name': '测试行业',
+                                           'member_date': PREVIOUS}]
+    assert view['directions'][0]['stocks'][0]['themes_state'] == 'observed_sample'
     assert 'evidence' not in view
     with core.connect() as connection:
         validate_snapshots(connection)
@@ -138,6 +143,19 @@ def test_discovery_caps_pages_and_combines_overflow_without_duplicate_ranking(is
     assert view['supplement']['remaining'] == 0
     assert '000104.SZ' in {row['instrument_id'] for row in view['supplement']['items']}
     assert '000104.SZ' not in {row['instrument_id'] for row in view['stocks']}
+    from app.services import intraday_stock_detail
+    observed = []
+
+    def history(day, slot, symbols):
+        observed.append((day, slot, symbols))
+        return {'date': day, 'slot': slot, 'as_of': PREVIOUS, 'items': {}}
+
+    isolated.monkeypatch.setattr(intraday_stock_detail, 'history_for_symbols', history)
+    response = isolated.client.get('/api/v1/market/auction/discovery/history', params={'date': DAY})
+    assert response.status_code == 200, response.text
+    assert response.json()['as_of'] == PREVIOUS
+    assert len(observed) == 1 and observed[0][:2] == (DAY, 'auction')
+    assert observed[0][2] == [row['instrument_id'] for row in [*view['stocks'], *view['supplement']['items']]]
 
 
 def test_discovery_is_retained_and_purged_with_exact_primary(local):

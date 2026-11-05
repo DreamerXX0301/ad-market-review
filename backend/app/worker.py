@@ -21,6 +21,12 @@ logger=logging.getLogger('shixu.worker')
 def _parameters(job):return json.loads(job.get('parameters_json','{}'))
 
 
+def _capture_suspensions(job):
+    from app.services.market_suspension_capture import capture_after_market_snapshot
+
+    capture_after_market_snapshot(job, _parameters(job))
+
+
 def _chart_chain(parameters):
     return (parameters.get('operation')=='sector_charts'
             and parameters.get('initialization_chain') is True
@@ -368,12 +374,15 @@ def dispatch(job):
         result=execute_capture(job,auction_callback)
         tasks.finish(identifier,'no_change' if result.get('status')=='no_change' else 'succeeded' if result.get('quality')=='complete' else 'partial',
                      result.get('message','竞价终态已独立留存，缺口见详情'),lease_owner=job.get('lease_owner'))
+        if result.get('status') != 'no_change':
+            _capture_suspensions(job)
     elif kind=='source_check' and _parameters(job).get('operation')=='intraday_snapshot':
         from app.services.intraday_service import execute_capture
         result=execute_capture(job,lambda stage,percent:tasks.progress(
             identifier,stage,percent,lease_owner=job.get('lease_owner')))
         tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',
                      result.get('message','盘中快照已留存'),lease_owner=job.get('lease_owner'))
+        _capture_suspensions(job)
     elif kind=='source_check' and _parameters(job).get('operation')=='noon_snapshot':
         from app.services.noon_service import execute_capture
         noon_callback=lambda stage,percent,message=None,details=None:tasks.progress(
@@ -381,6 +390,7 @@ def dispatch(job):
         result=execute_capture(job,noon_callback)
         tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',
                      result.get('message','午评快照已独立留存，缺口见详情'),lease_owner=job.get('lease_owner'))
+        _capture_suspensions(job)
     elif kind=='cleanup' and _parameters(job).get('operation')=='workspace_purge':
         from app.services.workspace_purge import execute
         execute(job)

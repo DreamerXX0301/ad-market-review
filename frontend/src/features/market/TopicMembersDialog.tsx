@@ -96,12 +96,18 @@ export function TopicMembersContent({
             className={tone(value)}
             title={
               row.quote_available === false
-                ? "该日缺少可核验报价，未使用其它日报价替代"
+                ? row.quote_reason || "该日缺少可核验报价，未使用其它日报价替代"
                 : `报价日 ${row.quote_date || quoteDate || "未知"}`
             }
           >
             {percent(value)}
           </span>
+          {row.suspension?.full_session === true &&
+            row.quote_available === false && (
+              <span className="badge warn" title={row.quote_reason}>
+                停牌
+              </span>
+            )}
           <MemberDailyLimitBadge row={row} date={quoteDate || date} />
           {quoteDate &&
             row.quote_available === true &&

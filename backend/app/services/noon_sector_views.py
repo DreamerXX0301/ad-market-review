@@ -119,14 +119,8 @@ def close_classifications(payload, symbols):
         payload, proofs, membership._source_id(payload), None, target=sorted(symbols))
 
 
-def build_sector_view(payload, topic_code, *, snapshot_id, content_sha256, board='all', query='',
-                      sort='change_pct', direction='desc', page=1, limit=50):
-    """Join/deduplicate locally; a missing quote is never replaced by a close quote."""
-    if (not isinstance(topic_code, str) or not membership.SECTOR.fullmatch(topic_code)
-            or board not in {'all', 'unknown', *membership.BOARDS} or sort not in SORTS or direction not in ('asc', 'desc')
-            or type(page) is not int or not 1 <= page <= 10000
-            or type(limit) is not int or not 1 <= limit <= 100 or not isinstance(query, str) or len(query) > 100):
-        raise HTTPException(422, '午评板块、筛选或分页参数无效')
+def sector_member_rows(payload, topic_code):
+    """Read the verified member rows before the caller's sorting and pagination."""
     sectors = [row for row in payload.get('sectors') or []
                if isinstance(row, dict) and membership._code(row) == topic_code]
     if len(sectors) != 1:
@@ -155,7 +149,24 @@ def build_sector_view(payload, topic_code, *, snapshot_id, content_sha256, board
                          missing_reason='本份午评没有该股报价；不回退昨日收盘价')
         items.append(value)
     total, valid = len(items), sum(row['quote_available'] for row in items)
-    by_board = Counter(row['board'] for row in items)
+    return {'sector_quote': sector, 'items': items, 'membership_as_of': sector.get('members_observed_date') if proof else None,
+            'membership_source_sha256': source_sha, 'membership_source': 'fuyao',
+            'membership_basis': '午评采集时已留存的名单；股票价格仅来自同份午评，不等同同秒行情',
+            'members_complete': proof['topic'].get('members_complete') is True if proof else False,
+            'state': 'available' if proof else 'unknown', 'unavailable_reason': error,
+            'total': total if proof else None, 'quote_coverage': {'valid': valid, 'total': total} if proof else None}
+
+
+def build_sector_view(payload, topic_code, *, snapshot_id, content_sha256, board='all', query='',
+                      sort='change_pct', direction='desc', page=1, limit=50):
+    """Join/deduplicate locally; a missing quote is never replaced by a close quote."""
+    if (not isinstance(topic_code, str) or not membership.SECTOR.fullmatch(topic_code)
+            or board not in {'all', 'unknown', *membership.BOARDS} or sort not in SORTS or direction not in ('asc', 'desc')
+            or type(page) is not int or not 1 <= page <= 10000
+            or type(limit) is not int or not 1 <= limit <= 100 or not isinstance(query, str) or len(query) > 100):
+        raise HTTPException(422, '午评板块、筛选或分页参数无效')
+    view = sector_member_rows(payload, topic_code)
+    items = view['items']
     needle = query.strip().casefold()
     filtered = [row for row in items if (board == 'all' or row['board'] == board)
                 and (not needle or needle in f"{row['name']} {row['instrument_id']}".casefold())]
@@ -168,20 +179,22 @@ def build_sector_view(payload, topic_code, *, snapshot_id, content_sha256, board
     ordered = known + unknown
     pages = max(1, (len(ordered) + limit - 1) // limit)
     page = min(page, pages)
+    visible = ordered[(page - 1) * limit:page * limit]
+    from app.services.market_suspensions import suspensions_for_date
+    from app.services.noon_service import noon_stock_suspension
+    suspensions = suspensions_for_date(payload['date'])
+    if suspensions:
+        for stock in visible:
+            if (suspension := noon_stock_suspension(stock, suspensions)) is not None:
+                stock['suspension'] = suspension
     previous = (payload.get('calendar') or {}).get('previous_day')
     background_day = previous if membership._day(previous) and previous < payload['date'] else None
     return {'version': 'noon-sector-view-v1', 'snapshot_id': snapshot_id, 'content_sha256': content_sha256,
             'date': payload['date'], 'collected_start_at': payload.get('collected_start_at'),
             'collected_end_at': payload.get('collected_end_at'), 'quote_as_of': payload.get('quote_as_of'),
-            'sector_quote': sector, 'quote_scope': 'noon_snapshot', 'formal_chart_as_of': background_day,
-            'membership_as_of': sector.get('members_observed_date') if proof else None,
-            'membership_source_sha256': source_sha, 'membership_source': 'fuyao',
-            'membership_basis': '午评采集时已留存的名单；股票价格仅来自同份午评，不等同同秒行情',
-            'members_complete': proof['topic'].get('members_complete') is True if proof else False,
-            'state': 'available' if proof else 'unknown', 'unavailable_reason': error,
-            'total': total if proof else None, 'quote_coverage': {'valid': valid, 'total': total} if proof else None,
-            'board_counts': dict(by_board), 'matched': len(ordered), 'page': page, 'pages': pages,
-            'limit': limit, 'items': ordered[(page - 1) * limit:page * limit],
+            **view, 'quote_scope': 'noon_snapshot', 'formal_chart_as_of': background_day,
+            'board_counts': dict(Counter(row['board'] for row in items)), 'matched': len(ordered), 'page': page, 'pages': pages,
+            'limit': limit, 'items': visible,
             'notice': '午间形成中报价不写入正式日K、策略、跟踪或回测；历史图最晚截至前一交易日。'}
 
 

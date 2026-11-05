@@ -1,4 +1,5 @@
 import NoonStockChange from "./NoonStockChange";
+import MarketSuspensionBadge from "./MarketSuspensionBadge";
 import { useRef, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import CopyStockCode from "../../components/CopyStockCode";
@@ -30,6 +31,7 @@ type StockProps = {
   onStock?: (id: string) => void;
   chartDate?: string;
   boardFilter?: NoonBoardFilterValue;
+  stockSuspensions?: Record<string, Row>;
 };
 type SectorProps = {
   onSector?: (row: Row, view?: "chart" | "members") => void;
@@ -57,7 +59,12 @@ function Panel({ children, ...props }: ComponentProps<typeof BasePanel>) {
 function Note({ children }: { children: ReactNode }) {
   return <p className="noon-footnote">{children}</p>;
 }
-function Stock({ row, onStock, chartDate }: StockProps & { row: Row }) {
+function Stock({
+  row,
+  onStock,
+  chartDate,
+  stockSuspensions,
+}: StockProps & { row: Row }) {
   return (
     <>
       {onStock && /^\d{6}\.(SH|SZ|BJ)$/.test(row.instrument_id || "") ? (
@@ -80,6 +87,9 @@ function Stock({ row, onStock, chartDate }: StockProps & { row: Row }) {
       <small className="noon-stock-code-line">
         <CopyStockCode instrumentId={row.instrument_id} />
         <NoonBoardTag row={row} />
+        <MarketSuspensionBadge
+          evidence={stockSuspensions?.[row.instrument_id]}
+        />
       </small>
     </>
   );
@@ -144,6 +154,7 @@ function FeedbackTable({
   current = false,
   onStock,
   chartDate,
+  stockSuspensions,
   boardFilter = "all",
 }: StockProps & {
   rows: Row[];
@@ -247,7 +258,14 @@ function FeedbackTable({
   };
   const cell = (row: Row, key: string) => {
     if (key === "name")
-      return <Stock row={row} onStock={onStock} chartDate={chartDate} />;
+      return (
+        <Stock
+          row={row}
+          onStock={onStock}
+          chartDate={chartDate}
+          stockSuspensions={stockSuspensions}
+        />
+      );
     if (key === "membership") return <MembershipTags row={row} />;
     if (key === "height")
       return heightOf(row) == null ? "—" : `${heightOf(row)}板`;

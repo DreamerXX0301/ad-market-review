@@ -1,4 +1,5 @@
 import NoonStockChange from "./NoonStockChange";
+import MarketSuspensionBadge from "./MarketSuspensionBadge";
 import { useEffect, useState } from "react";
 import type { Row } from "../../lib/api";
 import { useApi } from "../../lib/api";
@@ -344,12 +345,15 @@ export default function NoonSectorDialog({
                       {
                         key: "board",
                         title: "上市板块",
-                        render: (value) => (
-                          <Badge
-                            tone={value === "unknown" ? "warn" : "neutral"}
-                          >
-                            {boardLabel(value)}
-                          </Badge>
+                        render: (value, row) => (
+                          <>
+                            <Badge
+                              tone={value === "unknown" ? "warn" : "neutral"}
+                            >
+                              {boardLabel(value)}
+                            </Badge>{" "}
+                            <MarketSuspensionBadge evidence={row.suspension} />
+                          </>
                         ),
                       },
                       {

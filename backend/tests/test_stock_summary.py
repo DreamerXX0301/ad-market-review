@@ -138,6 +138,29 @@ def test_missing_quote_does_not_reuse_previous_quote_or_return(local):
     assert result['close'] is None and result['return_ytd_pct'] is None and result['return_30d_pct'] is None
 
 
+def test_confirmed_halt_summary_keeps_return_but_never_presents_placeholder_as_daily_quote(local, monkeypatch):
+    from app.services import market_suspensions
+    market, _ = local
+    day = market.day
+    halt = {'state': 'suspended', 'full_session': True}
+    monkeypatch.setattr(market_suspensions, 'suspensions_for_date',
+                        lambda requested: {A: halt} if requested == day else {})
+    placeholder = next(row for row in market.data[A] if row['date'] == day)
+    placeholder.update(volume=0, amount=0)
+
+    result = summary.get_summary(A, day)
+    assert result['suspension'] == halt
+    assert result['quote_available'] is False
+    assert result['quote_date'] is result['close'] is result['change_pct'] is None
+    assert result['return_30d_pct'] is not None
+    assert result['return_30d_coverage']['end_price_date'] == market.days[market.days.index(day)-1]
+
+    placeholder['amount'] = 1
+    conflict = summary.get_summary(A, day)
+    assert 'suspension' not in conflict
+    assert conflict['return_30d_pct'] is None
+
+
 @pytest.mark.parametrize('symbol,board,label', [(A, 'main', '主板'), (C, 'chinext', '创业板'),
     (D, 'star', '科创板'), (E, 'beijing', '北交所')])
 def test_classification_uses_real_identity_once_without_recomputing_members(local, symbol, board, label):

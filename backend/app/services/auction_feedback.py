@@ -1,7 +1,6 @@
 """纯计算冻结名单的前日事件→本次竞价对照；不读取当前行情或外部资料。"""
 from collections import Counter
 from datetime import date
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import math
 import re
 
@@ -9,6 +8,7 @@ from fastapi import HTTPException
 
 from app.core import connect
 from app.services.auction_integrity import validate_snapshot
+from app.services.stock_limit_reference import price_tick, standard_limit_rate, upper_limit_at_rate
 
 VERSION = 'auction-feedback-v1'
 SYMBOL = re.compile(r'[0-9]{6}\.(?:SH|SZ|BJ)\Z')
@@ -39,31 +39,11 @@ def _limit_open_unknown():
             'basis': LIMIT_OPEN_BASIS, 'confirmed_limit_price': False, 'checked_count': 0}
 
 
-def _price_tick(value):
-    number = _number(value, positive=True)
-    if number is None:
-        return None
-    try:
-        exact = Decimal(str(number))
-        rounded = exact.quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
-        return rounded if rounded > 0 and abs(exact - rounded) <= Decimal('.0000001') else None
-    except InvalidOperation:
-        return None
-
-
 def _opening_reference(quote, symbol):
     """A labelled price-reference screen, never proof of today's actual limit."""
-    name = str(quote.get('name') or '').strip().upper()
     # No dated risk-warning regime is frozen. Do not guess it from a name.
-    if not name or name.startswith(('ST', '*ST', 'SST', 'S*ST', 'N', 'C')):
-        return None
-    code, exchange = symbol.split('.')
-    rate = (20 if (exchange == 'SH' and code.startswith(('688', '689'))
-                    or exchange == 'SZ' and code.startswith(('300', '301')))
-            else 10 if (exchange == 'SH' and code.startswith(('600', '601', '603', '605'))
-                        or exchange == 'SZ' and code.startswith(('000', '001', '002', '003')))
-            else 30 if exchange == 'BJ' and code.startswith(('4', '8', '9')) else None)
-    price, previous = _price_tick(quote.get('auction_price')), _price_tick(quote.get('pre_close_price'))
+    rate = standard_limit_rate(symbol, quote.get('name'))
+    price, previous = price_tick(quote.get('auction_price')), price_tick(quote.get('pre_close_price'))
     if (rate is None or quote.get('state') != 'observed' or price is None or previous is None
             or _number(quote.get('auction_pct')) is None
             or _number(quote.get('auction_volume'), positive=True) is None
@@ -73,8 +53,7 @@ def _opening_reference(quote, symbol):
     expected_change = (float(price / previous) - 1) * 100
     if not math.isfinite(expected_change) or abs(expected_change - quote['auction_pct']) > .06:
         return None
-    upper = (previous * (1 + Decimal(rate) / 100)).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)
-    upper = max(upper, previous + Decimal('.01'))
+    upper = upper_limit_at_rate(previous, rate)
     return {'matched': price == upper, 'rate_pct': rate, 'reference_price': float(upper),
             'basis': LIMIT_OPEN_BASIS, 'confirmed_limit_price': False}
 

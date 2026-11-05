@@ -34,7 +34,9 @@ def test_early_history_remains_anchored_to_prior_close(monkeypatch):
 
     def metrics(market, day, symbols, master, quotes, supplement, **kwargs):
         seen.append((day, kwargs['rolling_start'], quotes['688012.SH']['date']))
-        return {symbol: {'change_30d_pct': 5, 'limit_up_1y_observed': 2} for symbol in symbols}
+        return {symbol: {'change_30d_pct': 5, 'change_30d_coverage': {'start_suspension': True},
+                         'return_ytd_coverage': {'end_suspension': True},
+                         'limit_up_1y_observed': 2} for symbol in symbols}
 
     from app.services import supplement_access
     monkeypatch.setattr(supplement_access, 'supplement_access', nullcontext)
@@ -49,6 +51,8 @@ def test_early_history_remains_anchored_to_prior_close(monkeypatch):
     assert early['items']['688012.SH']['limit_up_1y'] is None
     assert early['items']['688012.SH']['limit_up_1y_observed'] == 2
     for result in (early, closing):
+        assert result['items']['688012.SH']['change_30d_coverage']['start_suspension']
+        assert result['items']['688012.SH']['return_ytd_coverage']['end_suspension']
         assert result['items']['688012.SH']['previous_board_count'] == 3
         assert result['items']['688013.SH']['previous_board_count'] is None  # Prior price conflict.
         assert result['items']['688015.SH']['previous_board_count'] is None  # Only today's height exists.
@@ -64,3 +68,36 @@ def test_bad_history_and_quote_scope_rejected():
         with pytest.raises(HTTPException) as error:
             call()
         assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize('quotes,suspended', [
+    ([], True),
+    ([{'amount': 0, 'volume': 0}], True),
+    ([{'amount': 1, 'volume': 0}], False),
+    ([{'amount': 0, 'volume': 1}], False),
+    ([{}, {}], False),
+])
+def test_quote_explains_verified_halt_without_creating_a_candle(monkeypatch, quotes, suspended):
+    symbol, day = '002129.SZ', '2026-11-05'
+    class Connection:
+        def execute(self, *args):
+            return self
+        def fetchone(self):
+            return {'snapshot_id': 'retained'}
+    class Market:
+        def calendar(self):
+            return ['2026-11-04', day]
+    snapshot = {'date': day, 'slot_label': '上午观察', 'collected_end_at': day + 'T11:00:30+08:00',
+                'comparison_input': {'stocks': [{'instrument_id': symbol, **quote} for quote in quotes]}}
+    evidence = {'instrument_id': symbol, 'state': 'suspended', 'source': 'exchange'}
+    monkeypatch.setattr(details, 'connect', lambda: nullcontext(Connection()))
+    monkeypatch.setattr(details.intraday, 'decode_snapshot', lambda row: snapshot)
+    monkeypatch.setattr(details, 'get_market', Market)
+    monkeypatch.setattr(details, 'suspension_status', lambda stock, date: evidence)
+    result = details.read_quote('intraday_' + '1' * 32, symbol)
+    assert result['quote'] is None
+    if suspended:
+        assert result['suspension'] == evidence
+        assert result['reason'] == '该股票当日停牌，无该时点临时日 K'
+    else:
+        assert 'suspension' not in result

@@ -229,8 +229,16 @@ export default function SectorMembersDialog({
               {
                 key: "change_pct",
                 title: "行情日涨幅",
-                render: (value) => (
-                  <span className={tone(value)}>{percent(value)}</span>
+                render: (value, row) => (
+                  <span className="stock-event-change">
+                    <span className={tone(value)}>{percent(value)}</span>
+                    {row.suspension?.full_session === true &&
+                      row.quote_available === false && (
+                        <span className="badge warn" title={row.quote_reason}>
+                          停牌
+                        </span>
+                      )}
+                  </span>
                 ),
               },
               { key: "close", title: "收盘价", render: (value) => num(value) },
@@ -264,6 +272,7 @@ export default function SectorMembersDialog({
                     end={row.change_30d_coverage?.end}
                     priceBasis={row.change_30d_coverage?.price_basis}
                     missingSessions={row.change_30d_coverage?.missing_sessions}
+                    coverage={row.change_30d_coverage}
                   />
                 ),
               },
