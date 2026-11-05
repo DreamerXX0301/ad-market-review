@@ -122,13 +122,17 @@ def configure_automation(payload):
     return {**current, 'slots': SLOTS}
 
 
-def decode_snapshot(row):
+def decode_snapshot(row, *, read_context=None):
     if not row['snapshot_id']:
         return None
-    raw = row['payload_json'].encode()
-    if len(raw) > MAX_PAYLOAD or sha256(raw).hexdigest() != row['content_sha256']:
+    from app.services.intraday_board_changes import _record_payload
+
+    try:
+        value = _record_payload(row, MAX_PAYLOAD, read_context)
+    except json.JSONDecodeError:
+        raise
+    except ValueError:
         raise HTTPException(409, '盘中快照校验失败')
-    value = json.loads(raw)
     if (value.get('version') not in tuple(REQUEST_BUDGETS)
             or value.get('slot') not in {slot['key'] for slot in slots_for_version(value.get('version'))}
             or (value.get('id'), value.get('date'), value.get('slot')) != (
@@ -186,7 +190,7 @@ def read_view(day=None, *, read_context=None):
               '本时段已提交采集' if occupied else
               '请先初始化行情并配置扶摇数据源' if not configured else
               '已有任务运行或排队，请等工作进程空闲' if busy else None)
-    saved = [value for row in rows if (value := decode_snapshot(row))]
+    saved = [value for row in rows if (value := decode_snapshot(row, read_context=read_context))]
     # The response enriches current pool samples in place. Narrative sources
     # retain the original small ladder arrays while sharing immutable quote inputs.
     if read_context is not None:

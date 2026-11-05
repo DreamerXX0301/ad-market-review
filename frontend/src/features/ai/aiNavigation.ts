@@ -35,6 +35,10 @@ export interface AILaunch extends AILaunchContext {
 }
 const safeId = (value: string | null) =>
   value && /^[a-zA-Z0-9_-]{1,200}$/.test(value) ? value : undefined;
+const safeInstrumentId = (value: unknown) =>
+  typeof value === "string" && /^[0-9]{6}\.(SH|SZ|BJ)$/.test(value)
+    ? value
+    : undefined;
 const safeDay = (value: string | null) => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   const date = new Date(`${value}T00:00:00Z`);
@@ -68,16 +72,24 @@ export function upgradeChatLocation(hash: string) {
     return hash;
   const params = new URLSearchParams();
   params.set("ai_kind", route === "research" ? "stock" : "market");
-  for (const key of ["ai_chat", "ai_stock", "ai_report", "ai_day"])
-    if (original.get(key)) params.set(key, original.get(key)!);
+  for (const [key, value] of Object.entries({
+    ai_chat: safeId(original.get("ai_chat")),
+    ai_stock: safeInstrumentId(original.get("ai_stock")),
+    ai_report: safeId(original.get("ai_report")),
+    ai_day: safeDay(original.get("ai_day")),
+  }))
+    if (value) params.set(key, value);
   return `#ai?${params}`;
 }
 
 export function aiLaunchLocation(context: AILaunchContext, launchId?: string) {
   const params = new URLSearchParams({ ai_kind: context.kind });
-  if (context.instrumentId) params.set("ai_stock", context.instrumentId);
-  if (context.reportId) params.set("ai_report", context.reportId);
-  if (context.asOf) params.set("ai_day", context.asOf);
+  const instrumentId = safeInstrumentId(context.instrumentId);
+  const reportId = safeId(context.reportId ?? null);
+  const day = safeDay(context.asOf ?? null);
+  if (instrumentId) params.set("ai_stock", instrumentId);
+  if (reportId) params.set("ai_report", reportId);
+  if (day) params.set("ai_day", day);
   if (
     context.kind === "market" &&
     context.marketStage &&
@@ -94,11 +106,7 @@ export function readAILaunch(hash: string): AILaunch {
     .replace(/^#/, "")
     .split("?", 2);
   const params = new URLSearchParams(route === "ai" ? search : "");
-  const instrument = params.get("ai_stock");
-  const instrumentId =
-    instrument && /^\d{6}\.(SH|SZ|BJ)$/.test(instrument)
-      ? instrument
-      : undefined;
+  const instrumentId = safeInstrumentId(params.get("ai_stock"));
   const reportId = safeId(params.get("ai_report"));
   const asOf = safeDay(params.get("ai_day"));
   const sessionId = safeId(params.get("ai_chat"));

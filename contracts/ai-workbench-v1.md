@@ -18,9 +18,10 @@
 | POST `/sessions` | `SessionCreate` | 202，`{session_id,task_id}`，保存页面锚点并排队首问 |
 | GET `/sessions` | `kind?,instrument_id?,as_of?,cursor?,limit=20` | 历史分页，limit为1—50 |
 | GET `/sessions/{id}` | 无 | `{session,messages,active_task_id,config_matches}`，完整本地历史及同一读取快照中的活动任务和配置绑定状态 |
-| POST `/sessions/{id}/messages` | `{text,consent:true,request_key}` | 202，为本轮问题重新准备工具与协议 |
+| POST `/sessions/{id}/messages` | `{text,consent:true,request_key,attachments?}` | 202，为本轮问题重新准备工具与协议 |
 | PATCH `/sessions/{id}` | `{keep:boolean}` | 保留或取消保留 |
 | DELETE `/sessions/{id}` | 无 | 删除会话正文与来源，保留独立费用记录 |
+| GET `/sessions/{sid}/messages/{mid}/attachments/{aid}` | 无 | 读取同会话原附件；过期或删除后404，不续期 |
 | GET `/tasks/{id}` | 无 | 状态、脱敏原因、usage与费用 |
 | GET `/tasks/{id}/events` | `after>=0`，可带`Last-Event-ID` | SSE回放已有任务事件，不启动生成 |
 | POST `/tasks/{id}/cancel` | 无 | 请求取消；发送后可能已计费 |
@@ -52,7 +53,7 @@ Provider含`provider_id,name,configured,enabled,model,config_revision,verificati
 ```text
 {kind:'stock'|'market',provider_id,consent:true,request_key,
  text?,instrument_id?,report_id?,as_of?,context_digest?,
- expected_config_revision?,expected_model?,allow_web?}
+ expected_config_revision?,expected_model?,allow_web?,attachments?}
 ```
 
 首问最多2000字符；空白兼容使用入口默认问题。instrument/report/as_of只是页面对象锚点；无有效研究、未发布当天日线或没有可发送预览，不妨碍创建对话和查询可用性。报告存在时可以取得其证券与行情截止；这不表示先前完整报告已经发给模型。context_digest保留兼容字段，新链路不要求匹配预览哈希。`allow_web`为旧客户端兼容字段，不控制本轮工具或构成用户模式选项。
@@ -63,6 +64,20 @@ Provider含`provider_id,name,configured,enabled,model,config_revision,verificati
 
 SessionSummary含`session_id,kind,report_id,instrument_id,as_of,provider_id,model,context_digest,keep,created_at_ms,updated_at_ms,expires_at_ms`及可选首问title；列表按更新时间和ID倒序分页，不读消息正文全集。详情另含context，新建为小型`kind:page_anchor`对象，旧会话可保留原完整证据。兼容返回的mode/allow_web只描述旧存储格式，不表示当前轮次是否可联网；实际结果见消息source_context.web。
 
+## 用户附件与多模态输入
+
+新建和续问可提交 `attachments:[{name,media_type,data_base64}]`，允许PNG/JPEG/WebP、PDF、UTF-8 TXT/MD/Markdown/CSV/TSV/JSON及DOCX。每次最多3个、单个5MiB、合计10MiB；每会话原附件合计20MiB。API在解析JSON前逐块限制实际请求体14MiB，拒绝伪装类型、非法路径名、损坏内容与重复附件。文件仅在主动发送后持久化；浏览器草稿只在组件内存，不放localStorage或导出。
+
+PDF最多20页，PDF/DOCX只在本地有界提取正文，不执行宏、脚本或外部关系，不识别其中扫描页、图片或图表；没有可读正文时明确拒绝，提示上传页面图片。一次模型上下文内全部附件提取文字合计最多24KiB，不静默截断假装完整。DOCX解压量、条目、压缩比与XML实体，PDF过滤流、解压量、树深及解析工作量均有独立限制。
+
+当前目录的八项OpenAI模型可接收图片；DeepSeek继续支持提取正文与文字文件，图片发送前后两端都拒绝，不能静默换模型。原图片限1200万像素并真实解码核验；送模型前仅在内存中按方向修正、最长边2048且不超过400万像素缩放，使用 `input_image`，不修改原件。各模型或账号的实际图片能力仍受供应商权限影响。
+
+原附件只保存一次，位于用户 `ai_message.interpretation_json` 的 `user_attachments` 封套，含原字节、SHA、大小、类型和有界正文；没有新表/迁移或公共上传目录。任务只冻结消息引用、元数据和有界正文，worker发送前核对消息归属、SHA与大小，临时装配图片；任务、助手审计与历史GET均不重复回传base64。历史GET的用户消息 `interpretation:null`，额外 `attachments` 只含元数据及受控同源下载地址。下载响应不缓存并禁止MIME嗅探。
+
+每轮仅从既有最近4条/8KiB历史窗口中优先带入较新的附件，总量仍受上述3个/10MiB/24KiB限制；附件不构成无限文件记忆。容量不足的旧附件明确标为未带入，必要时重新上传或另开对话。附件内容属于不可信待分析资料，不能提供新业务授权或改变系统角色，正常股票语义计划和只读工具约束继续执行。
+
+图片每次实际模型请求额外按每张32768输入token作工程保守预留，以输入/缓存写入的较高价格估计；这不是官方图片换算公式或硬费用上限。历史图片再次发送也重新预留，供应商有效usage决定结算，未知仍待核。沿用原最多3次模型请求/轮和共享额度，不自动补发。附件随原会话删除/到期级联清理，账单独立；备份包含附件，已有静态备份不会随活库删除重写。依据见[OpenAI图片输入](https://developers.openai.com/api/docs/guides/images-vision)及[文件输入](https://developers.openai.com/api/docs/guides/file-inputs)，本项目PDF采用本地正文方案。
+
 ## 每轮角色与资料查询
 
 当前角色是A股盘面与个股研究助手，回答应自然、直接、独立判断。明显无关话题简短说明范围；普通招呼可简短回应。通用金融概念不要求为了形式调用行情工具。涉及实际行情、公司或资金事实时，应先查适合的本地工具，不能仅凭旧消息或旧证据声称没有资料。
@@ -71,13 +86,13 @@ SessionSummary含`session_id,kind,report_id,instrument_id,as_of,provider_id,mode
 
 用户说“今天/现在/最新”时，数据工具使用`today`并由服务器实际`Asia/Shanghai`时钟解析。页面as_of不是今天的替代值。工具结果的日期、实际采集窗口、报告期、获取/披露时间分别保存；现在取得的资料不倒填为历史当时可知。
 
-本地工具只由唯一worker内AI控制线程执行。七项已声明能力：
+本地工具只由唯一worker内AI控制线程执行。工具种类和完整参数以[逐轮执行流程](../docs/AI对话执行流程.md)列出的八项能力及冻结协议为准：
 
 | 工具 | 参数 | 范围 |
 | --- | --- | --- |
 | `read_market_data` | `date:'today'|ISO,section` | section为availability/auction/noon/close/overview/fund_flow |
 | `check_data_availability` | `date:'today'|ISO` | 检查资料与阶段，不采集 |
-| `read_stock_research` | `instrument_id`，空串沿用页面证券 | 当前实例已存未过期v2报告，不延长TTL；不存在时仅可回退同股会话旧材料并说明旧日期 |
+| `read_stock_research` | `instrument_id`：完整代码、六位代码或准确证券名，最多80字符；空串沿用页面证券 | 名称与六位代码仅通过本地证券名录精确消歧，未命中或重名保持身份缺口，不借用页面其他证券、不联网；读取当前实例已存未过期v2报告，不延长TTL，不存在时仅可回退同股会话旧材料并说明旧日期 |
 
 `read_stock_trend(date,instrument_id,period,count)` 读取同一已发布代际、未复权的个股日周月K线、有界技术指标、至多30个交易日的可核验收盘涨跌停及同日板块。最近默认 `latest,D,30`，周月默认12根，明确日期不回退，收盘K线不作实时分时。旧冻结工具清单不扩大。
 
@@ -124,7 +139,7 @@ SSE为`text/event-stream`，类型`status/tool/delta/done/error`，事件data含
 
 每会话同一时刻仅一项queued/running任务。本地最多200会话、每会话40条消息，用户和assistant各计一条，不是40轮。历史默认30天，创建、发送及完成等主动活动更新期限；GET和SSE不续期。keep=true免于自动到期；取消保留沿用原期限，原期限已过可立即不可见。运行中的会话不按普通到期清除。
 
-本轮发送最近最多4条已完成消息、总历史最多8KiB，再附当前问题、页面锚点和实际工具结果；不发送全站历史，不做跨会话检索、向量记忆或静默摘要。每次完整Responses payload最多96KiB，包含提示词、工具定义、前序本轮结果、历史和模型参数。当前每轮最多3次模型请求、3次实质资料加2次可用性检查（总5次）及1次搜索；OpenAI可在同个模型响应声明多个独立本地调用，控制线程仍逐项执行。总轮次有限，不承诺每个模型都在一轮完成任意多段查询；达到后基于已读资料结束并说明具体缺口，不无限循环。
+本轮发送最近最多4条已完成消息、总历史最多8KiB，再附当前问题、页面锚点和实际工具结果；不发送全站历史，不做跨会话检索、向量记忆或静默摘要。每次Responses的文字封套最多96KiB，包含提示词、工具定义、前序本轮结果、历史、提取的附件正文和模型参数；已校验图片的base64传输不当作文字token，图片传输另限30MiB。当前每轮最多3次模型请求、3次实质资料加2次可用性检查（总5次）及1次搜索；OpenAI可在同个模型响应声明多个独立本地调用，控制线程仍逐项执行。总轮次有限，不承诺每个模型都在一轮完成任意多段查询；达到后基于已读资料结束并说明具体缺口，不无限循环。
 
 旧证据预览builder仍可构建最多64KiB的context（内容48KiB、单条6KiB、最多64条），用于原历史核对和兼容预览；该大小不代表新会话必须先取得整包材料。更早32KiB/48KiB及JSON指标验证的数字仅描述对应历史版本，不是当前新轮次的固定资料范围。
 
@@ -160,7 +175,8 @@ schema35保存配置、会话和任务；schema36新增`ai_task_event/ai_request
 | 旧会话查今天、新资料、通用概念与专业范围 | 原用户盘面会话查今日竞价、午评与未到收盘通过；通用财经概念和无关问题实际不取数、不联网；原30条历史消息逐字保留 |
 | SSE逐段显示、重连、取消与恢复 | 实际三业务回答首个delta均在任务running时到达；续接、取消、恢复与连续问答回归通过；8组实际GET布局及即时离返阅读位置通过 |
 | 真实工具/网络引用与金融语义对账 | 今日时段数据范围/金额/方向人工抽查通过；原个股会话完成一次自动联网搜索，保存4个原生来源；年报PDF身份与5项金额抽样对账通过，不宣称所有数值和投资结论自动核验 |
-| 发布状态 | 正式127.0.0.1:8788保持原release-v0118；隔离副本验收不表示已部署 |
+| 本轮检查 | 2026-11-06相关后端2806项、前端192个测试文件通过，构建通过；附件专项26项是其中子集与后续边界补充，不重复累计。独立只读审核与浏览器附件/滚动核查完成，浏览器附件传输采用拦截模拟，未新增真实付费模型调用 |
+| 发布状态 | 源码、镜像发行及实例部署分别验收；实际本地提交和恢复包状态见实例私有部署回执，不以本文替代部署结果 |
 
 独立主入口为`#ai`，`ai_chat`用于恢复已有会话，股票/日期/report参数只作启动锚点；快捷入口导航不创建模型任务。历史在左、正文在右，模型选择在输入下方。无标的新会话在成功且有权限的个股研究工具返回有效证据后，可以建立当前个股锚点及分类；旧冻结协议的会话元数据和历史不因此改写。
 

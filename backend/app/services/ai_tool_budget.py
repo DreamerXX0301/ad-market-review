@@ -6,7 +6,6 @@ Argument validation deliberately precedes quota checks: exhaustion cannot make
 an undeclared tool or malformed arguments acceptable.
 """
 from datetime import date
-import re
 
 
 BUDGET_VERSION = 'ai-local-tool-budget-v2'
@@ -59,23 +58,20 @@ def classify_tool(name, args):
             raise ValueError('invalid_tool_arguments')
         _day(args['date'])
         return 'data'
-    if name == 'read_stock_research':
-        if (set(args) != {'instrument_id'} or not isinstance(args['instrument_id'], str)
-                or (args['instrument_id'] != ''
-                    and not re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', args['instrument_id']))):
-            raise ValueError('invalid_tool_arguments')
-        return 'data'
-    if name in ('read_stock_quote', 'read_stock_trend'):
+    if name in ('read_stock_research', 'read_stock_quote', 'read_stock_trend'):
         trend = name == 'read_stock_trend'
-        required = {'date', 'instrument_id', 'period', 'count'} if trend else {'date', 'instrument_id'}
+        required = ({'date', 'instrument_id', 'period', 'count'} if trend else
+                    {'instrument_id'} if name == 'read_stock_research' else {'date', 'instrument_id'})
         if (set(args) != required
                 or not isinstance(args['instrument_id'], str)
                 or len(args['instrument_id']) > 80
                 or any(ord(c)<32 for c in args['instrument_id'])):
             raise ValueError('invalid_tool_arguments')
+        if name == 'read_stock_research' and any(char in args['instrument_id'] for char in ('/', '\\')):
+            raise ValueError('invalid_tool_arguments')
         if trend and (args['period'] not in TREND_PERIODS or args['count'] not in TREND_WINDOWS):
             raise ValueError('invalid_tool_arguments')
-        if not trend or args['date'] != 'latest':
+        if name != 'read_stock_research' and (not trend or args['date'] != 'latest'):
             _day(args['date'])
         return 'data'
     if name == 'read_limit_up_data':

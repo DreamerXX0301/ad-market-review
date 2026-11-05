@@ -11,7 +11,7 @@ import uuid
 import httpx
 from app.adapters.ai_responses import BASE_URLS, ProviderError, error_code, usage_of
 from app.services.ai_catalog import MAX_RESPONSE_BYTES, max_output
-from app.services import ai_web, ai_scope
+from app.services import ai_web, ai_scope, ai_attachments as files
 from app.services.ai_tool_budget import assess_tool, classify_tool, tool_budget
 from app.services.ai_agent_protocol import FINALIZE_SYSTEM_PROMPT, planner_messages
 from app.services.ai_scope_semantic import classify_frozen_read
@@ -39,7 +39,7 @@ class AgentBridge:
 
 
 def payload_for(request,items,tools):
-    payload={'model':request['model'],'input':items,'stream':True,'store':False,
+    payload={'model':request['model'],'input':files.clean_input(items),'stream':True,'store':False,
              'reasoning':{'effort':'low' if request['provider_id']=='openai' else 'none'},
              'max_output_tokens':max_output(request['provider_id']),
              'tools':tools,'parallel_tool_calls':request['provider_id']=='openai' and bool(tools) and not any(tool.get('type')=='web_search' for tool in tools)}
@@ -151,7 +151,8 @@ async def _run(request,key,cancel,bridge):
                        'requested_as_of':query_target,'page_as_of':request['page_anchor'].get('as_of'),
                        'validation':'native_citations_only',**web_source_counts}},
             'tool_traces':traces,'round_protocol':frozen,
-            'used_context':{'seed_messages':request['seed_messages'],'planner_messages':request.get('planner_messages'),
+            'used_context':{'seed_messages':files.redact_input(request['seed_messages']),'planner_messages':files.redact_input(request.get('planner_messages') or []),
+                            'attachment_bindings':request.get('attachment_bindings',[]),
                             'tool_schemas':request['tool_schemas'],
                             'tool_calls':tool_calls,'web_request':web_request}},'response_model':body.get('model')}
     configured=os.environ.get('SHIXU_AI_AGENT_TIMEOUT_SECONDS')
@@ -189,9 +190,10 @@ async def _run(request,key,cancel,bridge):
                 if planning:
                     payload['tool_choice']='required';payload['parallel_tool_calls']=False
                 if restricted:payload['max_output_tokens']=min(payload['max_output_tokens'],256)
-                size=len(json.dumps(payload,ensure_ascii=False,separators=(',',':')).encode())
+                if len(json.dumps(payload,ensure_ascii=False,separators=(',',':')).encode())>files.MAX_MEDIA_WIRE_BYTES:raise ProviderError('input_too_large')
+                size=files.text_payload_bytes(payload)
                 if size>frozen['max_input_bytes']:raise ProviderError('input_too_large')
-                await bridge.exchange('authorize',{'ordinal':ordinal,'input_bytes':size,'hosted_web':hosted},cancel)
+                await bridge.exchange('authorize',{'ordinal':ordinal,'input_bytes':size,'hosted_web':hosted,'attachment_input_tokens':request.get('attachment_input_tokens',0)},cancel)
                 bridge.emit('status',{'state':'running','message':'正在准备回答' if restricted else '正在查询并组织回答'})
                 try:
                     body,text=await stream_response(client,'/v1/responses' if request['provider_id']=='openai' else '/responses',payload,cancel,bridge,emit_text=not restricted and not planning)
@@ -211,8 +213,8 @@ async def _run(request,key,cancel,bridge):
                     await bridge.exchange('receipt',{'ordinal':ordinal,'usage':usage,'reason_code':'refusal'},cancel)
                     raise ProviderError('refusal',usage=usage)
                 if hosted:
-                    web_request={**request,'web_policy':frozen['web_policy'],'requested_as_of':query_target}
-                    try:native=ai_web.native_answer(body,web_request)
+                    native_request={'web_policy':frozen['web_policy'],'requested_as_of':query_target}
+                    try:native=ai_web.native_answer(body,native_request)
                     except ValueError as error:
                         await bridge.exchange('receipt',{'ordinal':ordinal,'usage':usage,'reason_code':str(error)},cancel)
                         raise ProviderError(str(error),usage=usage) from None

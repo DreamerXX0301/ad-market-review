@@ -11,6 +11,9 @@ import {
   Sparkles,
   Square,
   Trash2,
+  Paperclip,
+  FileText,
+  X,
 } from "lucide-react";
 import { requestKey, useApi, usePageActive } from "../../lib/api";
 import { dateTime } from "../../lib/format";
@@ -21,6 +24,13 @@ import { useAIStream } from "./useAIStream";
 import { publishAIChange, subscribeAIChanges } from "./aiTabSync";
 import { useAIChatFollow } from "./useAIChatFollow";
 import { chatLocation, readChatLocation } from "./aiChatLocation";
+import {
+  ATTACHMENT_ACCEPT,
+  attachmentIssue,
+  attachmentSize,
+  readAttachmentFiles,
+} from "./aiAttachments";
+import type { AIDraftAttachment } from "./aiAttachments";
 import {
   aiReason,
   canGenerate,
@@ -78,6 +88,9 @@ export default function AIWorkspace({
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState("");
+  const [attachments, setAttachments] = useState<AIDraftAttachment[]>([]);
+  const [readingFiles, setReadingFiles] = useState(false);
+  const [attachmentError, setAttachmentError] = useState("");
   const [busyDraft, setBusyDraft] = useState(false);
   const [cursor, setCursor] = useState("");
   const [historyRows, setHistoryRows] = useState<AISession[]>([]);
@@ -127,6 +140,9 @@ export default function AIWorkspace({
     mounted.current && generation === viewGeneration.current;
   const attempt = useRef<{ signature: string; key: string } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const fileGeneration = useRef(0);
+  const fileReadGuard = useRef(false);
   const messagesRef = useRef<HTMLDivElement>(null);
   const follow = useAIChatFollow(messagesRef, active, sessionId);
   const followingTask = useRef("");
@@ -345,13 +361,39 @@ export default function AIWorkspace({
     scrolledSession.current = "";
     scrolledAnswerTask.current = "";
   }
+  function clearAttachments() {
+    fileGeneration.current += 1;
+    setAttachments([]);
+    setAttachmentError("");
+  }
+  async function addFiles(files: File[]) {
+    if (!files.length || pending || fileReadGuard.current) return;
+    fileReadGuard.current = true;
+    const generation = fileGeneration.current;
+    setReadingFiles(true);
+    setAttachmentError("");
+    try {
+      const added = await readAttachmentFiles(files, attachments, provider);
+      if (mounted.current && generation === fileGeneration.current)
+        setAttachments((old) => [...old, ...added]);
+    } catch (e: any) {
+      if (mounted.current && generation === fileGeneration.current)
+        setAttachmentError(e.message);
+    } finally {
+      fileReadGuard.current = false;
+      if (mounted.current) setReadingFiles(false);
+    }
+  }
   function newSession(keepDraft = false) {
     viewGeneration.current += 1;
     resetReading();
     setHistoryOpen(false);
     setSessionId("");
     setTaskId("");
-    if (!keepDraft) setText("");
+    if (!keepDraft) {
+      setText("");
+      clearAttachments();
+    }
     setError("");
     setBusyDraft(false);
     setOptimistic(null);
@@ -367,12 +409,15 @@ export default function AIWorkspace({
     !providers.loading &&
     !providers.error &&
     !detail.error;
+  const attachmentProblem = attachmentIssue(attachments, provider);
   async function send() {
     if (
       submitGuard.current ||
       !allowed ||
       pending ||
-      !text.trim() ||
+      readingFiles ||
+      !!attachmentProblem ||
+      (!text.trim() && !attachments.length) ||
       (sessionId && !session)
     )
       return;
@@ -382,10 +427,13 @@ export default function AIWorkspace({
     setError("");
     setBusyDraft(false);
     setStopping(false);
-    const question = text.trim();
+    const question = text.trim() || "请结合附件分析相关股票或盘面。";
+    const attachmentPayload = attachments.length
+      ? { attachments: attachments.map((item) => item.input) }
+      : {};
     follow.resume();
     const payload = sessionId
-      ? { text: question, consent: true }
+      ? { text: question, consent: true, ...attachmentPayload }
       : {
           kind,
           ...(reportId ? { report_id: reportId } : {}),
@@ -396,6 +444,7 @@ export default function AIWorkspace({
           expected_model: provider!.model,
           text: question,
           consent: true,
+          ...attachmentPayload,
         };
     const signature = JSON.stringify({ path: sessionId, ...payload });
     if (attempt.current?.signature !== signature)
@@ -406,6 +455,13 @@ export default function AIWorkspace({
       text: question,
       state: "sending",
       created_at_ms: Date.now(),
+      attachments: attachments.map((item) => ({
+        attachment_id: item.id,
+        name: item.input.name,
+        media_type: item.input.media_type,
+        size: item.size,
+        kind: item.input.media_type.startsWith("image/") ? "image" : "text",
+      })),
     };
     setOptimistic(local);
     try {
@@ -422,6 +478,7 @@ export default function AIWorkspace({
       setSessionId(response.session_id || sessionId);
       setTaskId(response.task_id);
       setText("");
+      clearAttachments();
       attempt.current = null;
       detail.reload();
       reloadHistory();
@@ -709,6 +766,7 @@ export default function AIWorkspace({
                     setSessionId(item.session_id);
                     setTaskId("");
                     setText("");
+                    clearAttachments();
                     setError("");
                     setBusyDraft(false);
                     setDeleting(null);
@@ -853,12 +911,90 @@ export default function AIWorkspace({
         </div>
         <form
           className="ai-composer"
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files"))
+              event.preventDefault();
+          }}
+          onDrop={(event) => {
+            if (event.dataTransfer.files.length) {
+              event.preventDefault();
+              void addFiles(Array.from(event.dataTransfer.files));
+            }
+          }}
           onSubmit={(event) => {
             event.preventDefault();
             void send();
           }}
         >
+          {!!attachments.length && (
+            <div className="ai-draft-attachments" aria-label="待发送附件">
+              {attachments.map((item) => (
+                <div className="ai-attachment-card" key={item.id}>
+                  {item.input.media_type.startsWith("image/") ? (
+                    <img
+                      src={`data:${item.input.media_type};base64,${item.input.data_base64}`}
+                      alt={item.input.name}
+                    />
+                  ) : (
+                    <span className="ai-attachment-icon">
+                      <FileText size={21} aria-hidden="true" />
+                    </span>
+                  )}
+                  <span className="ai-attachment-caption">
+                    <strong title={item.input.name}>{item.input.name}</strong>
+                    <small>
+                      {attachmentSize(item.size)}
+                      {[
+                        "application/pdf",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                      ].includes(item.input.media_type)
+                        ? " · 读取正文"
+                        : ""}
+                    </small>
+                  </span>
+                  <button
+                    type="button"
+                    className="ai-attachment-remove"
+                    aria-label={`移除 ${item.input.name}`}
+                    disabled={pending || readingFiles}
+                    onClick={() => {
+                      setAttachments((old) =>
+                        old.filter((entry) => entry.id !== item.id),
+                      );
+                      setAttachmentError("");
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="ai-composer-box">
+            <input
+              ref={fileRef}
+              type="file"
+              className="ai-file-input"
+              accept={ATTACHMENT_ACCEPT}
+              multiple
+              aria-label="选择图片或文件"
+              disabled={pending || readingFiles}
+              onChange={(event) => {
+                const files = Array.from(event.target.files || []);
+                event.target.value = "";
+                void addFiles(files);
+              }}
+            />
+            <button
+              type="button"
+              className="ai-attach-button"
+              aria-label="添加图片或文件"
+              title="添加图片或文件，也可以拖入或粘贴图片"
+              disabled={pending || readingFiles || attachments.length >= 3}
+              onClick={() => fileRef.current?.click()}
+            >
+              <Paperclip size={20} aria-hidden="true" />
+            </button>
             <textarea
               id={`ai-question-${kind}`}
               aria-label={sessionId ? "继续提问" : "你的问题"}
@@ -875,6 +1011,15 @@ export default function AIWorkspace({
                     : "输入你想了解的行情问题"
               }
               onChange={(event) => setText(event.target.value)}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData.files).filter(
+                  (file) => file.type.startsWith("image/"),
+                );
+                if (files.length) {
+                  event.preventDefault();
+                  void addFiles(files);
+                }
+              }}
               onKeyDown={(event) => {
                 if (
                   event.key === "Enter" &&
@@ -904,7 +1049,13 @@ export default function AIWorkspace({
                 className="btn primary ai-send-button"
                 type="submit"
                 aria-label="发送"
-                disabled={!allowed || !text.trim() || (!!sessionId && !session)}
+                disabled={
+                  !allowed ||
+                  readingFiles ||
+                  !!attachmentProblem ||
+                  (!text.trim() && !attachments.length) ||
+                  (!!sessionId && !session)
+                }
                 title={
                   !canGenerate(provider)
                     ? "请先在模型设置中启用模型"
@@ -915,6 +1066,22 @@ export default function AIWorkspace({
               </button>
             )}
           </div>
+          {(readingFiles || attachmentError || attachmentProblem) && (
+            <p
+              className="ai-attachment-feedback"
+              role={attachmentError || attachmentProblem ? "alert" : "status"}
+            >
+              {readingFiles
+                ? "正在读取附件…"
+                : attachmentError || attachmentProblem}
+            </p>
+          )}
+          {!!attachments.length && !attachmentProblem && (
+            <p className="ai-attachment-help">
+              发送后随对话保存在本机。PDF、DOCX
+              读取正文；扫描件和图表请上传图片。
+            </p>
+          )}
           <div className="ai-composer-footer">
             <div className="ai-model-control">
               <span className="ai-model-select">

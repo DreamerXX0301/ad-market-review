@@ -90,3 +90,30 @@ def test_agent_restore_archives_received_text_and_keeps_child_charge(source,tmp_
         assert task['request_json']=='{}' and task['cost_state']=='pending' and task['reservation_nusd']==123456
         assert json.loads(task['result_json'])['stream_last_seq']==1
         assert db.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_restore_preserves_user_attachment_bytes_and_revokes_outbound_permission(source,tmp_path):
+    """New attachment bodies live in business SQLite, not an untracked folder."""
+    import base64,hashlib
+    raw=b'Synthetic fixture: reported revenue 123, no real business data.'
+    digest=hashlib.sha256(raw).hexdigest()
+    envelope={'response_type':'user_attachments','version':'ai-user-attachments-v1','attachments':[{
+        'attachment_id':'attachment_'+digest[:32],'name':'fixture.txt','media_type':'text/plain',
+        'kind':'text','size':len(raw),'sha256':digest,'data_base64':base64.b64encode(raw).decode(),'text':raw.decode()}]}
+    encoded=json.dumps(envelope,ensure_ascii=False)
+    with connect_sqlite(source/'business/app.sqlite3') as db:
+        db.executescript((ROOT/'backend/app/migrations/035_ai_sessions.sql').read_text())
+        db.executescript((ROOT/'backend/app/migrations/036_ai_stream_events.sql').read_text())
+        db.execute("INSERT INTO ai_session VALUES('file-session','stock',NULL,'600001.SH','2026-10-30','openai','gpt-6.1-sol','fixture','fixture','{}','{}',0,1,2,9999999999999)")
+        db.execute("INSERT INTO ai_task(task_id,operation,session_id,provider_id,model,config_signature,credential_ref,request_key,request_digest,state,created_at_ms,request_json) VALUES('file-task','message','file-session','openai','gpt-6.1-sol','fixture','fixture-ai','file-key','file-digest','queued',1,'{}')")
+        db.execute("INSERT INTO ai_message VALUES('file-message','file-session','file-task','user','分析附件',?,'completed',1)",(encoded,))
+    bundle=tmp_path/'file-bundle';perform_backup(source,bundle)
+    restored=tmp_path/'file-restored';result=perform_restore(bundle,restored)
+    assert result['ai_disabled'] and result['ai_cancelled_tasks']==['file-task']
+    with connect_sqlite(restored/'business/app.sqlite3','ro') as db:
+        actual=db.execute("SELECT interpretation_json FROM ai_message WHERE message_id='file-message'").fetchone()[0]
+        assert actual==encoded
+        attachment=json.loads(actual)['attachments'][0]
+        assert base64.b64decode(attachment['data_base64'])==raw
+        assert hashlib.sha256(base64.b64decode(attachment['data_base64'])).hexdigest()==attachment['sha256']
+        assert db.execute("SELECT state FROM ai_task WHERE task_id='file-task'").fetchone()[0]=='cancelled'

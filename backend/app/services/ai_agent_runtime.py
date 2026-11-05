@@ -4,7 +4,7 @@ import queue
 import re
 from app.core import connect, now_ms, new_id, dumps, digest
 from app.adapters.ai_agent import AgentBridge, perform_agent
-from app.services import ai_service as service, ai_web, ai_scope
+from app.services import ai_service as service, ai_web, ai_scope, ai_attachments as files
 from app.services.ai_catalog import estimated_nusd, max_output
 from app.services.ai_tool_budget import assess_tool, tool_budget
 from app.services.ai_scope_semantic import classify_frozen_read, safe_diagnostic
@@ -104,11 +104,17 @@ class AgentRuntimeMixin:
         if request['round_protocol'].get('version')=='ai-agent-round-v5':
             request['planner_messages']=planner_messages(request)
         with connect() as db:db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(request),task['task_id']))
+        try:
+            files.materialize(request,task['session_id'])
+        except Exception as error:
+            code=getattr(error,'detail',{}).get('reason_code') if isinstance(getattr(error,'detail',None),dict) else 'attachment_invalid'
+            self._fail_unsent(task,code if code in files.ERRORS else 'attachment_invalid')
+            return
         bridge=AgentBridge();cancel=threading.Event()
         self.agent_bridge=bridge
         self.agent_state={'text':'','tool_results':[],'tool_traces':[],'page_anchor':request['page_anchor'],
                           'request_time':request['request_time'],'round_protocol':request['round_protocol'],
-                          'seed_messages':request['seed_messages'],'tool_schemas':request['tool_schemas'],'tool_calls':[],
+                          'seed_messages':files.redact_input(request['seed_messages']),'tool_schemas':request['tool_schemas'],'tool_calls':[],
                           'local_tool_calls':[]}
         with connect() as db:append_event(db,task,'status',{'state':'running','message':'正在读取问题并准备查询资料'})
         future=self.executor.submit(self.agent_transport,request,key,cancel,bridge)
@@ -116,6 +122,7 @@ class AgentRuntimeMixin:
 
     def _agent_authorize(self,task,data):
         ordinal=data.get('ordinal');size=data.get('input_bytes');hosted=data.get('hosted_web') is True
+        image_tokens=data.get('attachment_input_tokens',0)
         if type(ordinal)is not int or not 1<=ordinal<=3 or type(size)is not int or not 0<size<=96*1024:
             return {'_error':'input_too_large'}
         with connect() as db:
@@ -128,12 +135,15 @@ class AgentRuntimeMixin:
                 return {'_error':'agent_tool_limit'}
             metadata=json.loads(current['result_json']);rates=metadata['price_rates']
             trusted=json.loads(current['request_json'])
+            expected=trusted.get('attachment_input_tokens',0)
+            if type(image_tokens)is not int or image_tokens!=expected or not 0<=image_tokens<=3*32768:return {'_error':'attachment_invalid'}
             if hosted and (trusted.get('agent_state') or {}).get('force_summary'):
                 return {'_error':'agent_tool_limit'}
             if hosted and (trusted.get('scope_denied') or not ai_scope.authorize_plan(trusted,trusted.get('accepted_web_plan'))):
                 return {'_error':'stock_scope_required'}
-            reservation=estimated_nusd(current['provider_id'],current['model'],size,max_output(current['provider_id']),rates=rates)
+            reservation=files.estimated_reservation(current['provider_id'],current['model'],size,max_output(current['provider_id']),image_tokens,rates=rates)
             price={'price_rates':rates,'price_version':metadata['price_version']}
+            if image_tokens:price['attachment_pricing']=json.loads(current['request_json'])['attachment_pricing']
             if hosted:
                 if not ai_web.supported(current['provider_id'],current['model']):return {'_error':'web_search_unavailable'}
                 previous=[json.loads(row[0]) for row in db.execute('SELECT price_json FROM ai_request_receipt WHERE task_id=?',(task['task_id'],))]

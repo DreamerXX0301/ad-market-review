@@ -11,6 +11,10 @@ export interface ChatPage {
 }
 const routeFor = (page: ChatPage) =>
   page.pageRoute || (page.kind === "stock" ? "research" : "market");
+const safeInstrumentId = (value: unknown) =>
+  typeof value === "string" && /^[0-9]{6}\.(SH|SZ|BJ)$/.test(value)
+    ? value
+    : undefined;
 export function readChatLocation(hash: string, page: ChatPage) {
   const [route, search = ""] = hash.replace(/^#/, "").split("?", 2);
   if (route !== routeFor(page)) return "";
@@ -58,8 +62,10 @@ export function chatLocation(hash: string, page: ChatPage, id: string) {
       params.delete("ai_stage");
     }
     if (page.asOf || saved.asOf) params.set("ai_day", page.asOf || saved.asOf!);
-    if (page.instrumentId || saved.instrumentId)
-      params.set("ai_stock", page.instrumentId || saved.instrumentId!);
+    const instrumentId =
+      safeInstrumentId(page.instrumentId) ||
+      safeInstrumentId(saved.instrumentId);
+    if (instrumentId) params.set("ai_stock", instrumentId);
     if (page.reportId || saved.reportId)
       params.set("ai_report", page.reportId || saved.reportId!);
   }

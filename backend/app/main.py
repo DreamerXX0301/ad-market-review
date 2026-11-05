@@ -13,16 +13,20 @@ from app.routers import ai
 from app.routers import ai_events
 from app.services.supplement_access import SupplementWriteMiddleware
 from app.services.increment_access import IncrementWorkbenchMiddleware
+from app.services.ai_attachments import AIRequestSizeMiddleware
+from app.startup_warmup import warmup_read_dependencies
 
 @asynccontextmanager
 async def lifespan(app):
     ensure_ready()
+    warmup_read_dependencies()
     yield
 
 app=FastAPI(title=f'{APP_NAME} · A股研究工作台',version=APP_VERSION,lifespan=lifespan)
 app.add_middleware(GZipMiddleware,minimum_size=1024,compresslevel=4)
 app.add_middleware(SupplementWriteMiddleware)
 app.add_middleware(IncrementWorkbenchMiddleware)
+app.add_middleware(AIRequestSizeMiddleware)
 # Register the literal path before platform's /market/{kind} catch-all.
 app.include_router(market_mainlines.router)
 app.include_router(market_sentiment_snapshots.router)

@@ -15,11 +15,35 @@ export interface AIProvider {
   };
   models?: (string | { id: string; name?: string })[];
   discovered_models?: (string | { id: string; name?: string })[];
+  capabilities?: {
+    images: boolean;
+    pdf: boolean;
+    text_files: boolean;
+    max_files: number;
+    max_file_bytes: number;
+    max_total_bytes: number;
+    pdf_mode?: "text_only";
+  };
   limits?: {
     daily_budget_usd: string;
     daily_request_limit: number;
     timeout_seconds: number;
   };
+}
+export interface AIAttachmentInput {
+  name: string;
+  media_type: string;
+  data_base64: string;
+}
+export interface AIAttachment {
+  attachment_id: string;
+  name: string;
+  media_type: string;
+  size: number;
+  kind: "image" | "text";
+  content_url?: string;
+  text_only?: boolean;
+  page_count?: number;
 }
 export interface AIContext extends AIItem {
   kind?: AIKind | "stock_research" | "market_review";
@@ -67,6 +91,7 @@ export interface AIMessage extends AIItem {
   interpretation?: AIItem;
   created_at_ms: number;
   state: string;
+  attachments?: AIAttachment[];
   response_type?: string;
   web?: {
     allowed: boolean;

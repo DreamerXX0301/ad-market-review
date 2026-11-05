@@ -11,6 +11,7 @@ from app.infrastructure.credentials import CredentialStore
 from app.services.ai_catalog import MODELS, OPENAI_MODEL_IDS, MAX_INPUT_BYTES, LEGACY_INPUT_BYTES, PRICE_VERSION, price, usd, estimated_nusd, max_output
 from app.services.ai_validation import PROBE_SCHEMA, output_schema
 from app.services import ai_web
+from app.services import ai_attachments as files
 
 SESSION_TTL = 30 * 86400000
 MAX_SESSIONS = 200
@@ -37,6 +38,7 @@ SYSTEM_PROMPT = '''你是中文股票研究与盘面分析助手。直接回答�
 - follow_up_questions为0至3条可继续讨论的问题，每条非空、最多150字符。没有必要就返回空数组。
 先回答，再解释。篇幅按用户问题需要决定，不为填满条数重复内容。'''
 MESSAGES = {
+ **files.ERRORS,
  'authentication_failed': 'Key未通过认证，请核对配置', 'quota_exhausted': '供应商额度不足，请到官方账户核对',
  'rate_limited': '供应商请求受限，请稍后手动重试', 'model_unavailable': '当前模型不可用',
  'unsupported_parameters': '模型未接受本次结构化输出参数', 'provider_unavailable': '供应商暂时不可用',
@@ -111,7 +113,7 @@ def _provider_view(row, limits):
                        'models': [{'model_id': model['id'], 'id': model['id'], 'name': model['name'], 'price_state': 'reviewed', 'price_version': PRICE_VERSION} for model in MODELS[row['provider_id']]],
                        'discovered_models': [model for model in json.loads(row['models_json'])
                                              if row['provider_id'] != 'openai' or model in OPENAI_MODEL_IDS],
-                       'limits': limits_view(limits)}
+                       'limits': limits_view(limits), 'capabilities': files.capabilities(row['provider_id'], row['model'])}
 
 def _invalidate_tasks(db, *, disabled_provider=None):
     limits = _limits(db)
@@ -233,7 +235,7 @@ def _input_size(row, request, operation):
     else:
         from app.adapters.ai_responses import payload_for
         payload = payload_for({**request, 'provider_id': row['provider_id'], 'model': row['model'], 'operation': operation})
-    return len(dumps(payload).encode())
+    return files.text_payload_bytes(payload)
 
 
 def input_limit(frozen):
@@ -247,7 +249,7 @@ def _enqueue(db, row, limits, operation, key, fingerprint, request, session_id=N
     input_bytes = _input_size(row, request, operation)
     if input_bytes > input_limit(request): fail(422, 'input_too_large', '完整请求与结构化输出约束超过本会话输入上限，请新建会话')
     rates = price(row['provider_id'],row['model'])
-    reservation = estimated_nusd(row['provider_id'], row['model'], input_bytes, max_output(row['provider_id'], operation=='verify'))
+    reservation = files.estimated_reservation(row['provider_id'], row['model'], input_bytes, max_output(row['provider_id'], operation=='verify'), request.get('attachment_input_tokens', 0), rates=rates)
     if request.get('allow_web'):
         if not ai_web.supported(row['provider_id'],row['model']): fail(422, 'web_search_unavailable')
         reservation += ai_web.extra_reservation_nusd(rates, request['web_policy'])
@@ -260,6 +262,7 @@ def _enqueue(db, row, limits, operation, key, fingerprint, request, session_id=N
                (identifier, operation, session_id, row['provider_id'], row['model'], config_signature(row, limits), row['credential_ref'], key, fingerprint, now_ms(), dumps(request), PRICE_VERSION))
     receipt = {'price_rates': rates, 'price_version': PRICE_VERSION}
     if request.get('agent'):receipt.update(agent=True,stream_last_seq=0)
+    if request.get('attachment_input_tokens'):receipt['attachment_pricing']=request['attachment_pricing']
     if request.get('request_time'): receipt['request_time']=request['request_time']
     if request.get('allow_web'): receipt['web_policy'] = request['web_policy']
     db.execute('UPDATE ai_task SET day=?,reservation_nusd=?,result_json=? WHERE task_id=?', (day,reservation,dumps(receipt),identifier))
@@ -422,7 +425,10 @@ def get_session(identifier):
     for row in rows:
         view = {key: row[key] for key in ('message_id','task_id','role','text','state','created_at_ms')}
         interpretation = json.loads(row['interpretation_json']) if row['interpretation_json'] else None
-        if isinstance(interpretation,dict) and interpretation.get('response_type')=='agent_answer':
+        if row['role']=='user' and isinstance(interpretation,dict) and interpretation.get('response_type')=='user_attachments':
+            view['attachments']=files.metadata(files.saved(interpretation),identifier,row['message_id'])
+            view['interpretation']=None
+        elif isinstance(interpretation,dict) and interpretation.get('response_type')=='agent_answer':
             view.update({key:interpretation.get(key) for key in ('response_type','text','source_context','tool_traces','citations','sources','partial')})
             view['interpretation']=None
         elif isinstance(interpretation,dict) and interpretation.get('response_type')=='web_answer':
@@ -578,17 +584,38 @@ def _agent_request(row,session,context,text,history):
     return request
 
 
+def _attachment_fingerprint(payload, prepared, session_id=None):
+    data={key:value for key,value in payload.items() if key not in ('allow_web','attachments')}
+    if prepared:data['attachments']=files.fingerprint(prepared)
+    if session_id:data['session_id']=session_id
+    return digest(data)
+
+
+def _message_history(identifier):
+    # Decode potentially large user files before acquiring a write transaction.
+    with connect() as db:
+        rows=[dict(row) for row in db.execute('SELECT message_id,role,text,state,interpretation_json FROM ai_message WHERE session_id=? ORDER BY created_at_ms,rowid',(identifier,))]
+    total=0;history=[]
+    for row in rows:
+        attachments=files.saved(row['interpretation_json']) if row['role']=='user' else []
+        total+=sum(item['size'] for item in attachments)
+        if row['state']=='completed':history.append({**row,'attachments':attachments})
+    return history[-4:], [row['message_id'] for row in history], total
+
+
 def create_session(payload):
     if payload.get('consent') is not True:fail(422,'consent_required','发送前须同意当前显示服务处理本次问题')
-    _request_key(payload['request_key']);fingerprint=digest({k:v for k,v in payload.items() if k!='allow_web'})
+    prepared=files.prepare(payload.get('attachments',[]))
+    _request_key(payload['request_key']);fingerprint=_attachment_fingerprint(payload,prepared)
     kind=payload['kind']
-    text=(payload.get('text') or '').strip() or ('请复盘当前所选交易日。' if kind=='market' else '请分析当前所选股票。')
+    text=(payload.get('text') or '').strip() or ('请查看我上传的附件。' if prepared else '请复盘当前所选交易日。' if kind=='market' else '请分析当前所选股票。')
     if not 1<=len(text)<=2000:fail(422,'invalid_message','问题须为1至2000字')
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         previous=_existing(db,payload['request_key'],fingerprint)
         if previous:return previous
         row,limits=_eligible_provider(db,payload['provider_id'])
+        files.ensure_supported(row['provider_id'],row['model'],prepared)
         if ((payload.get('expected_config_revision') is not None and payload['expected_config_revision']!=row['config_revision'])
                 or (payload.get('expected_model') is not None and payload['expected_model']!=row['model'])):
             fail(409,'configuration_changed')
@@ -598,34 +625,58 @@ def create_session(payload):
         instrument=payload.get('instrument_id') or (report['instrument_id'] if report else None)
         as_of=payload.get('as_of') or (report['data_cutoff'] if report else day_key())
         context={'kind':'page_anchor','subject':instrument or 'A股市场复盘','instrument_id':instrument,'as_of':as_of,'report_id':payload.get('report_id')}
-        identifier=new_id('ai-session');stamp=now_ms()
+        identifier=new_id('ai-session');stamp=now_ms();message_id=new_id('ai-message')
         session={'session_id':identifier,'kind':kind,'provider_id':row['provider_id'],'model':row['model'],'instrument_id':instrument,'as_of':as_of,'report_id':payload.get('report_id')}
         binding={'version':'ai-session-binding-v1','binding':{'credential_revision':row['credential_revision'],'credential_ref':row['credential_ref']}}
         db.execute('INSERT INTO ai_session(session_id,kind,report_id,instrument_id,as_of,provider_id,model,config_signature,context_digest,context_json,protocol_json,created_at_ms,updated_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                    (identifier,kind,payload.get('report_id'),instrument,as_of,row['provider_id'],row['model'],config_signature(row,limits),digest(context),dumps(context),dumps(binding),stamp,stamp,stamp+SESSION_TTL))
-        request=_agent_request(row,session,context,text,[])
+        request=files.enrich_request(_agent_request(row,session,context,text,[]),[],message_id,prepared)
         result=_enqueue(db,row,limits,'message',payload['request_key'],fingerprint,request,identifier)
-        db.execute('INSERT INTO ai_message VALUES(?,?,?,?,?,?,?,?)',(new_id('ai-message'),identifier,result['task_id'],'user',text,None,'completed',stamp))
+        db.execute('INSERT INTO ai_message VALUES(?,?,?,?,?,?,?,?)',(message_id,identifier,result['task_id'],'user',text,dumps(files.envelope(prepared)) if prepared else None,'completed',stamp))
     return result
 
 
 def send_message(identifier,payload):
     if payload.get('consent') is not True:fail(422,'consent_required','发送前须同意当前显示服务处理本次问题')
-    text=payload['text'].strip()
+    prepared=files.prepare(payload.get('attachments',[]))
+    text=(payload.get('text') or '').strip() or ('请查看我上传的附件。' if prepared else '')
     if not 1<=len(text)<=2000:fail(422,'invalid_message','问题须为1至2000字')
-    _request_key(payload['request_key']);fingerprint=digest({'session_id':identifier,**{k:v for k,v in payload.items() if k!='allow_web'}})
+    _request_key(payload['request_key']);fingerprint=_attachment_fingerprint(payload,prepared,identifier)
+    history,history_ids,total=_message_history(identifier)
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         previous=_existing(db,payload['request_key'],fingerprint)
         if previous:return previous
         session=_session(db,identifier);row,limits=_eligible_provider(db,session['provider_id'])
         if not _bound_session(row,session,limits):fail(409,'configuration_changed','该会话绑定的模型或凭据已变更，请显式新建对话')
+        files.ensure_supported(row['provider_id'],row['model'],prepared)
         if db.execute("SELECT 1 FROM ai_task WHERE session_id=? AND state IN ('queued','running')",(identifier,)).fetchone():fail(409,'session_busy','本轮问题仍在处理')
         if db.execute('SELECT count(*) FROM ai_message WHERE session_id=?',(identifier,)).fetchone()[0]+2>MAX_MESSAGES:fail(409,'message_capacity','该会话已达消息上限，请新建对话')
-        history=[dict(row) for row in db.execute("SELECT role,text FROM ai_message WHERE session_id=? AND state='completed' ORDER BY created_at_ms DESC,rowid DESC LIMIT 4",(identifier,))][::-1]
-        context=json.loads(session['context_json']);request=_agent_request(row,session,context,text,history)
+        current_ids=[row[0] for row in db.execute("SELECT message_id FROM ai_message WHERE session_id=? AND state='completed' ORDER BY created_at_ms,rowid",(identifier,))]
+        if current_ids!=history_ids:fail(409,'session_busy','对话刚更新，请重新打开后发送')
+        if total+sum(item['size'] for item in prepared)>files.MAX_SESSION_BYTES:files.fail('attachment_session_limit')
+        context=json.loads(session['context_json']);message_id=new_id('ai-message')
+        request=files.enrich_request(_agent_request(row,session,context,text,history),history,message_id,prepared)
+        # Reusing an older image still needs a model with visual input support.
+        selected=[item for binding in request['attachment_bindings'] for item in binding['attachments']]
+        files.ensure_supported(row['provider_id'],row['model'],selected)
         result=_enqueue(db,row,limits,'message',payload['request_key'],fingerprint,request,identifier)
         stamp=now_ms()
-        db.execute('INSERT INTO ai_message VALUES(?,?,?,?,?,?,?,?)',(new_id('ai-message'),identifier,result['task_id'],'user',text,None,'completed',stamp))
+        db.execute('INSERT INTO ai_message VALUES(?,?,?,?,?,?,?,?)',(message_id,identifier,result['task_id'],'user',text,dumps(files.envelope(prepared)) if prepared else None,'completed',stamp))
         db.execute('UPDATE ai_session SET updated_at_ms=?,expires_at_ms=? WHERE session_id=?',(stamp,stamp+SESSION_TTL,identifier))
     return result
+
+
+def attachment_content(identifier,message_id,attachment_id):
+    import base64,hashlib,re
+    if not re.fullmatch(r'attachment_[0-9a-f]{32}',attachment_id):files.fail('attachment_not_found',404)
+    with connect() as db:
+        _session(db,identifier)
+        row=db.execute("SELECT interpretation_json FROM ai_message WHERE session_id=? AND message_id=? AND role='user'",(identifier,message_id)).fetchone()
+    items=files.saved(row[0]) if row else []
+    item=next((value for value in items if value['attachment_id']==attachment_id),None)
+    if not item:files.fail('attachment_not_found',404)
+    try:raw=base64.b64decode(item['data_base64'],validate=True)
+    except (ValueError,TypeError):files.fail('attachment_invalid')
+    if len(raw)!=item['size'] or hashlib.sha256(raw).hexdigest()!=item['sha256']:files.fail('attachment_invalid')
+    return raw,files.safe_fields([item])[0]

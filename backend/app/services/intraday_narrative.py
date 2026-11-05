@@ -56,7 +56,7 @@ def _member_change(current, previous):
 
 
 class _Members:
-    def __init__(self, references=None, frame_inputs=None):
+    def __init__(self, references=None, frame_inputs=None, *, read_context=None):
         self.references = {}
         self.original_references = references or {}
         self.frame_inputs = frame_inputs or {}
@@ -64,6 +64,7 @@ class _Members:
         self.quote_indices = {}
         self.pool_indices = {}
         self.pool_conflicts = {}
+        self.read_context = read_context
 
     def reference(self, raw):
         from app.services.intraday_members import _bound_market, _member_provenance
@@ -85,7 +86,7 @@ class _Members:
         key = (frame['slot'], frame['id'], sector['instrument_id'], weakest, sealed_only)
         if key in self.samples:
             return self.samples[key]
-        from app.services.intraday_board_changes import _quotes, _pools, _conflicts
+        from app.services.intraday_board_changes import _quotes, _pools, _conflicts, frame_quotes
         from app.services.intraday_brief import sector_membership_fingerprint
 
         raw, members, master = frame.get('_raw', {}), [], {}
@@ -95,10 +96,14 @@ class _Members:
 
                 original = next((row for row in raw.get('sectors', ()) if
                                  (row.get('topic_code') or row.get('instrument_id')) == sector['instrument_id']), {})
-                proof, _, error = _members(raw, original, {row['instrument_id']: row for row in raw.get('stocks', ())})
+                if self.read_context is not None:
+                    from app.services.intraday_rotation import noon_member_proof
+                    proof, _, error = noon_member_proof(raw, original, self.read_context, direct=True)
+                else:
+                    proof, _, error = _members(raw, original, {row['instrument_id']: row for row in raw.get('stocks', ())})
                 if not error and proof:
                     members = proof['members']
-                quote_frame = {'comparison_input': {'stocks': raw.get('stocks', ())}}
+                quote_frame = raw if 'comparison_input' in raw else {'comparison_input': {'stocks': raw.get('stocks', ())}}
             elif frame['slot'] in ('auction', 'close'):
                 rows = next((row.get('stocks', []) for row in frame.get('sectors', ())
                              if row['instrument_id'] == sector['instrument_id']), [])
@@ -132,7 +137,8 @@ class _Members:
                         and prepared[3] is raw.get('comparison_input')):
                     self.quote_indices[frame_key], self.pool_indices[frame_key], _ = prepared[4]
                 else:
-                    self.quote_indices[frame_key] = _quotes(quote_frame)
+                    self.quote_indices[frame_key] = (frame_quotes(quote_frame, self.read_context)
+                                                     if self.read_context is not None else _quotes(quote_frame))
                     self.pool_indices[frame_key] = _pools(pool_frame)
                 self.pool_conflicts[frame_key] = _conflicts(pool_frame)
             quotes, pools = self.quote_indices[frame_key], self.pool_indices[frame_key]
@@ -461,14 +467,14 @@ def load_frames(day, anchors, displayed_snapshots=None, *, read_context=None):
             'board_changes': value.get('board_changes', {})}
     if noon_row is not None:
         try:
-            payload = brief._verified_noon_payload(noon_row)
-            current = noon_frame(noon_row)
+            payload = brief._verified_noon_payload(noon_row, read_context=shared)
+            current = noon_frame(noon_row, read_cache=shared)
             anchor = next((row for row in anchors if row['slot'] == 'noon' and row['id'] == noon_row['snapshot_id']), None)
             if current:
                 frames['noon'] = {**(anchor or brief._noon_anchor(noon_row)), 'date': day,
                     'display_label': (noon_clock + ' 午评') if noon_clock else '午评',
                     'rotation_sectors': (anchor['rotation_sectors'] if anchor and 'rotation_sectors' in anchor
-                                         else noon_rotation_sectors(current)), '_raw': current,
+                                         else noon_rotation_sectors(current, read_context=shared)), '_raw': current,
                     '_ready': max(brief._stamp(payload['collected_end_at'], day), noon_row['recorded_at_ms']),
                     'source_binding': {'source_id': 'fuyao', 'snapshot_id': noon_row['snapshot_id'], 'content_sha256': noon_row['content_sha256']}}
         except (ValueError, TypeError, KeyError, IndexError, AttributeError):
@@ -502,7 +508,8 @@ def attach_sections(day, briefs, anchors, snapshots=None, *, read_context=None):
     frames = (load_frames(day, anchors, snapshots, read_context=read_context) if read_context is not None
               else load_frames(day, anchors, snapshots))
     shared = read_context if read_context and read_context.get('date') == day else None
-    members = _Members(shared.get('references'), shared.get('frame_inputs')) if shared is not None else _Members()
+    members = (_Members(shared.get('references'), shared.get('frame_inputs'), read_context=shared)
+               if shared is not None else _Members())
     sections = {}
     def matches(item, slot):
         frame = frames.get(slot)

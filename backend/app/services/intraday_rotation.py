@@ -203,7 +203,88 @@ def live_rotation_sectors(snapshot, *, reference=None, identity=None, member_cac
     return result
 
 
-def noon_rotation_sectors(payload):
+def _noon_member_inputs(payload, read_context):
+    """One request's exact stock/member arrays, shared by noon projections.
+
+    Frames wrap the same original arrays without changing them. Distinct parsed
+    rows/arrays cannot hit this cache, even if their dates or source names match.
+    """
+    from app.services import noon_membership_context as membership
+    from app.services.intraday_board_changes import frame_quotes, _quotes
+
+    values = tuple(payload.get(key) for key in ('stocks', 'sectors', 'sector_memberships', 'previous_review'))
+    saved = payload.get('sector_memberships')
+    identity = (saved.get('version'), saved.get('source_snapshot_id')) if isinstance(saved, dict) else ()
+    key = (payload.get('date'), membership._source_id(payload), repr(identity), *(id(value) for value in values))
+    cache = read_context.setdefault('noon_member_inputs', {})
+    entry = cache.get(key)
+    if entry is not None and all(left is right for left, right in zip(entry[0], values)):
+        return entry[1]
+    quotes = membership._quotes(payload)
+    direct = {row['instrument_id']: row for row in payload.get('stocks', ())
+              if isinstance(row, dict) and isinstance(row.get('instrument_id'), str)}
+    if direct.keys() == quotes.keys() and all(direct[code] is row for code, row in quotes.items()):
+        direct = quotes
+    frame = next((entry[3] for entry in read_context.get('noon_frames', {}).values()
+                  if entry[1] is payload or entry[3] is payload), None)
+    quote_index = (frame_quotes(frame, read_context) if frame is not None else
+                   _quotes({'comparison_input': {'stocks': payload.get('stocks', ())}}))
+    inputs = {'payload': payload, 'quotes': quotes, 'direct': direct, 'quote_index': quote_index, 'proofs': {}}
+    if 'sector_memberships' not in payload and membership._source_id(payload):
+        try:
+            topics, source_sha = membership._load_topics(membership._source_id(payload), payload['previous_review']['date'])
+            candidates = {}
+            for topic in topics:
+                candidates.setdefault(topic.get('topic_code'), []).append(topic)
+            inputs['legacy'] = candidates, source_sha
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            inputs['legacy'] = {}, None
+    if len(cache) < 8:
+        cache[key] = values, inputs
+    return inputs
+
+
+def noon_member_proof(payload, sector, read_context, *, direct=False):
+    """Reuse a checked sector proof only inside its original request arrays."""
+    from app.services import noon_membership_context as membership
+    from app.services.noon_sector_views import _members
+
+    inputs = _noon_member_inputs(payload, read_context)
+    quotes = inputs['direct'] if direct else inputs['quotes']
+    coverage = sector.get('member_coverage')
+    claim = (sector.get('instrument_id'), sector.get('topic_code'), sector.get('kind'),
+             sector.get('members_observed_date'), sector.get('member_up'), sector.get('member_down'),
+             tuple(coverage.get(field) for field in ('total', 'valid', 'complete')) if isinstance(coverage, dict) else None)
+    saved = payload.get('sector_memberships')
+    items = saved.get('items') if isinstance(saved, dict) else None
+    frozen = items.get(membership._code(sector)) if isinstance(items, dict) else None
+    digest = frozen.get('sha256') if isinstance(frozen, dict) else None
+    key = id(sector), id(quotes), repr(claim), repr(digest)
+    entry = inputs['proofs'].get(key)
+    if entry is not None and entry[0] is sector:
+        # A repeated proof still checks the frozen member-entry digest. This
+        # also refuses accidental in-place changes to an original member list.
+        if isinstance(frozen, dict):
+            from hashlib import sha256
+            from app.services.noon_collection import canonical
+
+            unsigned = {key: value for key, value in frozen.items() if key != 'sha256'}
+            if sha256(canonical(unsigned)).hexdigest() == digest:
+                return entry[1]
+        elif 'sector_memberships' not in payload:
+            return entry[1]
+    if not direct and 'legacy' in inputs:
+        candidates, source_sha = inputs['legacy']
+        proof, error = membership._verified_members(sector, candidates, quotes, payload['date'])
+        result = proof, source_sha, error
+    else:
+        result = _members(payload, sector, quotes)
+    if len(inputs['proofs']) < MAX_ROTATION_SECTORS * 2:
+        inputs['proofs'][key] = sector, result
+    return result
+
+
+def noon_rotation_sectors(payload, *, read_context=None):
     """Full saved noon prices, without copying member arrays or stock samples into the response."""
     from app.services.intraday_brief import sector_membership_fingerprint
     from app.services import noon_membership_context as membership
@@ -213,12 +294,14 @@ def noon_rotation_sectors(payload):
     if not isinstance(sectors, list) or len(sectors) > MAX_ROTATION_SECTORS:
         return []
     counts = Counter(row.get('topic_code') or row.get('instrument_id') for row in sectors if isinstance(row, dict))
-    quotes = membership._quotes(payload)
+    prepared = _noon_member_inputs(payload, read_context) if read_context is not None else None
+    quotes = prepared['quotes'] if prepared is not None else membership._quotes(payload)
     context = _metric_inputs({**payload, 'slot': 'noon',
-                              'comparison_input': {'stocks': payload.get('stocks', [])}})
+                              'comparison_input': {'stocks': payload.get('stocks', [])}},
+                            quote_index=prepared['quote_index'] if prepared is not None else None)
     generation = membership._source_id(payload)
     legacy_candidates = None
-    if 'sector_memberships' not in payload and generation:
+    if prepared is None and 'sector_memberships' not in payload and generation:
         try:
             topics, _ = membership._load_topics(generation, payload['previous_review']['date'])
             legacy_candidates = {}
@@ -235,7 +318,9 @@ def noon_rotation_sectors(payload):
         if row is None:
             continue
         try:
-            if legacy_candidates is not None:
+            if prepared is not None:
+                proof, _, error = noon_member_proof(payload, sector, read_context)
+            elif legacy_candidates is not None:
                 proof, error = membership._verified_members(sector, legacy_candidates, quotes, payload['date'])
             else:
                 proof, _, error = _members(payload, sector, quotes)

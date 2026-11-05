@@ -125,6 +125,50 @@ const untrusted = readAILaunch(
 assert.equal(untrusted.instrumentId, undefined);
 assert.equal(untrusted.reportId, undefined);
 assert.equal(untrusted.asOf, undefined);
+const malformedStock = "回答未完成，以下仅供核对。后续内容.SH";
+const unsafeStockLink = aiLaunchLocation({
+  ...anchor,
+  instrumentId: malformedStock,
+});
+assert.equal(
+  new URLSearchParams(unsafeStockLink.split("?")[1]).get("ai_stock"),
+  null,
+  "response prose must never become an instrument in a contextual AI link",
+);
+const malformedChat =
+  "#ai?ai_kind=stock&ai_chat=session_fixture&ai_stock=" +
+  encodeURIComponent(malformedStock);
+const sanitizedChat = chatLocation(
+  malformedChat,
+  { kind: "stock", pageRoute: "ai", instrumentId: malformedStock },
+  "session_fixture",
+);
+assert.equal(
+  new URLSearchParams(sanitizedChat.split("?")[1]).get("ai_stock"),
+  null,
+  "neither loading-time URL fallback nor malformed page data may restore prose as a stock",
+);
+assert.equal(
+  new URLSearchParams(
+    chatLocation(
+      malformedChat,
+      { ...anchor, pageRoute: "ai", resolvedSession: true },
+      "session_fixture",
+    ).split("?")[1],
+  ).get("ai_stock"),
+  anchor.instrumentId,
+  "opening an existing chat replaces the polluted anchor with its actual saved identity",
+);
+assert.equal(
+  new URLSearchParams(
+    upgradeChatLocation(
+      "#research?ai_chat=session_fixture&ai_stock=" +
+        encodeURIComponent(malformedStock),
+    ).split("?")[1],
+  ).get("ai_stock"),
+  null,
+  "legacy link upgrades also discard malformed stock anchors",
+);
 for (const [marketStage, clock, phrase] of [
   ["auction", "09:25", /重点名单之外/],
   ["0935", "09:35", /盘中观察快照/],

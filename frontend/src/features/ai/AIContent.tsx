@@ -10,6 +10,7 @@ import {
 } from "./aiState";
 import type { AIContext, AIItem, AIMessage } from "./aiTypes";
 import AIAnswerText from "./AIAnswerText";
+import { attachmentSize, safeAttachmentUrl } from "./aiAttachments";
 
 function CompactReferences({
   evidenceIds,
@@ -120,6 +121,44 @@ export function AIMessageView({
         <strong>{assistant ? "AI" : "你"}</strong>
         <time>{dateTime(message.created_at_ms)}</time>
       </div>
+      {!assistant && !!message.attachments?.length && (
+        <div className="ai-message-attachments" aria-label="消息附件">
+          {message.attachments.map((item) => {
+            const url = safeAttachmentUrl(item.content_url);
+            const body = (
+              <>
+                <span className="ai-attachment-caption">
+                  <strong>{item.name}</strong>
+                  <small>
+                    {attachmentSize(item.size)}
+                    {item.text_only ? " · 已读取正文" : ""}
+                    {item.page_count ? ` · ${item.page_count} 页` : ""}
+                  </small>
+                </span>
+              </>
+            );
+            return url ? (
+              <a
+                className={`ai-attachment-card ${item.kind === "image" ? "is-image" : ""}`}
+                key={item.attachment_id}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                title={`查看 ${item.name}`}
+              >
+                {item.kind === "image" && (
+                  <img src={url} alt={item.name} loading="lazy" />
+                )}
+                {body}
+              </a>
+            ) : (
+              <div className="ai-attachment-card" key={item.attachment_id}>
+                {body}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {incomplete && (
         <p className="ai-incomplete-note">
           {message.state === "cancelled"

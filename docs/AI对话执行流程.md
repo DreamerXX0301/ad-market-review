@@ -100,7 +100,15 @@
 
 前端 `AIAnswerText` 是项目自写的受控Markdown解析器，支持段落、标题、加粗、列表、表格和代码，并做有界渲染；React默认把HTML当文本转义。模型手写的链接/图片不会直接成为可访问的外链或图片，只有后端认可的原生引用生成来源链接。外观和自动滚动分别由CSS、React组件及 `useAIChatFollow` 控制。
 
-当前聊天没有图表、图片或富卡片执行协议。项目其它页面使用图表组件，不等于AI聊天自动支持图表。要做交互财务图、公司卡片或可导出文件，需要额外的结构化数据/组件或导出接口，不能仅靠提示词说“请画图”便视为实现。
+当前支持用户图片/文件输入及受控附件预览，但没有让模型生成可执行图表、任意图片或富卡片的输出协议。项目其它页面使用图表组件，不等于AI聊天自动支持图表。要做交互财务图、公司卡片或可导出文件，需要额外的结构化数据/组件或导出接口，不能仅靠提示词说“请画图”便视为实现。
+
+## 图片、文件与提示词的关系
+
+附件接入是程序能力，不是给提示词写一句“支持文件”就能实现：浏览器在内存准备草稿，API校验大小/类型/真实内容，PDF/DOCX本地提取正文，原件一次保存到对应用户消息；任务只存引用，worker核对归属及SHA后临时装配图片。OpenAI Responses接收 `input_image`；DeepSeek接收可读正文，图片被明确阻断。原件不会重复写入任务和助手审计，历史读取只回元数据及受控同源下载地址。
+
+附件正文作为不可信用户资料进入原有语义计划；文件中“忽略角色”等文字不能改变股票领域、工具权限或成本限制。首阶段允许理解附件与问题，不提前把全站行情、报告或旧助手事实发送出去；之后仍按计划通过的只读工具取数。扫描PDF和内嵌图表没有正文能力，需上传截图；模型识图也可能读错数字，关键行情应与系统来源对账。
+
+有界历史窗口内优先携带最近附件，仍受3个、10MiB和正文24KiB的单轮上限；不会另建向量库、检索服务或进行模型微调。图片的base64不是文字token，按工程预留额外估算，真实usage结算。完整限额、存储、清理与恢复见[附件契约](../contracts/ai-workbench-v1.md#用户附件与多模态输入)。
 
 ## 哪些是程序硬限制，哪些仍依赖模型
 
@@ -131,4 +139,5 @@
 - [逐轮契约](../contracts/ai-agent-round-v1.md)、[提示词v5](../contracts/prompts/ai-agent-round-v5.md)、[工作台契约](../contracts/ai-workbench-v1.md)。
 - [API与入队](../backend/app/routers/ai.py)、[会话上下文](../backend/app/services/ai_service.py)、[计划核验](../backend/app/services/ai_scope_semantic.py)。
 - [执行与账本](../backend/app/services/ai_agent_runtime.py)、[Responses循环](../backend/app/adapters/ai_agent.py)、[本地读取](../backend/app/services/ai_read_tools.py)。
+- [附件校验与正文提取](../backend/app/services/ai_attachments.py)、[附件草稿](../frontend/src/features/ai/aiAttachments.ts)。
 - [Markdown渲染](../frontend/src/features/ai/AIAnswerText.tsx)、[SSE接收](../frontend/src/features/ai/useAIStream.ts)、[滚动跟随](../frontend/src/features/ai/useAIChatFollow.ts)。

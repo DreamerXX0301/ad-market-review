@@ -1,6 +1,8 @@
 """Local AI management and bounded evidence conversations; GET never uses network."""
 from typing import Annotated, Literal
 from fastapi import APIRouter, Query
+from fastapi.responses import Response
+from urllib.parse import quote
 from pydantic import BaseModel, ConfigDict, Field
 from app.services import ai_service as service
 
@@ -25,7 +27,13 @@ class Verification(Request):
     expected_revision: Annotated[int, Field(ge=0)]
     request_key: Annotated[str, Field(min_length=1,max_length=200)]
 
+class Attachment(Request):
+    name: Annotated[str, Field(min_length=1,max_length=160)]
+    media_type: Annotated[str, Field(min_length=1,max_length=120)]
+    data_base64: Annotated[str, Field(min_length=1,max_length=6990508)]
+
 class SessionCreate(Request):
+    attachments: Annotated[list[Attachment], Field(max_length=3)] = []
     allow_web: bool = False
     expected_config_revision: Annotated[int | None, Field(ge=0)] = None
     expected_model: Annotated[str | None, Field(min_length=1,max_length=100)] = None
@@ -40,8 +48,9 @@ class SessionCreate(Request):
     request_key: Annotated[str, Field(min_length=1,max_length=200)]
 
 class MessageCreate(Request):
+    attachments: Annotated[list[Attachment], Field(max_length=3)] = []
     allow_web: bool | None = None
-    text: Annotated[str, Field(min_length=1,max_length=2000)]
+    text: Annotated[str, Field(max_length=2000)] = ''
     consent: bool
     request_key: Annotated[str, Field(min_length=1,max_length=200)]
 
@@ -92,3 +101,13 @@ def task(task_id: str): return service.get_task(task_id)
 
 @router.post('/tasks/{task_id}/cancel')
 def cancel(task_id: str): return service.cancel_task(task_id)
+
+
+@router.get('/sessions/{session_id}/messages/{message_id}/attachments/{attachment_id}')
+def attachment_content(session_id: str, message_id: str, attachment_id: str):
+    raw, metadata = service.attachment_content(session_id, message_id, attachment_id)
+    inline = metadata['kind'] == 'image'
+    return Response(raw, media_type=metadata['media_type'] if inline else 'application/octet-stream', headers={
+        'Content-Disposition': ('inline' if inline else 'attachment') + "; filename*=UTF-8''" + quote(metadata['name'], safe=''),
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox"})

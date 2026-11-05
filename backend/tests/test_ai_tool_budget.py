@@ -33,7 +33,7 @@ def meta(day='today'):
     *[('read_market_data', {'date': '2026-10-30', 'section': section}, 'data')
       for section in ('overview', 'auction', 'noon', 'close', 'fund_flow')],
     *[('read_stock_research', {'instrument_id': code}, 'data')
-      for code in ('', '600001.SH', '000001.SZ', '430001.BJ')],
+      for code in ('', '600001.SH', '000001.SZ', '430001.BJ', '600001', '600001.sh', '合成测试个股')],
 ])
 def test_exact_supported_calls_are_classified(name, args, expected):
     assert classify_tool(name, args) == expected
@@ -51,8 +51,10 @@ def test_exact_supported_calls_are_classified(name, args, expected):
     ('read_market_data', {'date': 'today', 'section': 'availability', 'path': 'fixture'}),
     ('check_data_availability', {}),
     ('check_data_availability', {'date': 'today', 'section': 'availability'}),
-    ('read_stock_research', {'instrument_id': '600001'}),
-    ('read_stock_research', {'instrument_id': '600001.sh'}),
+    ('read_stock_research', {'instrument_id': '股' * 81}),
+    ('read_stock_research', {'instrument_id': '600001.SH\n'}),
+    ('read_stock_research', {'instrument_id': '合成\x00个股'}),
+    ('read_stock_research', {'instrument_id': '../../data'}),
     ('read_stock_research', {'instrument_id': None}),
     ('read_stock_research', {'instrument_id': '', 'sql': 'select 1'}),
 ])
@@ -62,6 +64,26 @@ def test_invalid_or_unknown_calls_never_gain_metadata_allowance(name, args):
     # Quota exhaustion must not turn invalid operations into accepted soft reads.
     with pytest.raises(ValueError, match='invalid_tool_arguments'):
         assess_tool(V4, [call(), call('noon'), call('close'), meta(), call('availability')], name, args)
+
+
+@pytest.mark.parametrize('identifier', ['600001', '合成测试个股'])
+def test_company_name_and_short_code_pass_stock_planning_without_weakening_frozen_enum(identifier):
+    from app.services.ai_read_tools import tool_schemas
+    from app.services.ai_scope_semantic import validate_plan
+    request = {'scope_input': {'current_text': '分析合成测试个股', 'recent_user_texts': [],
+                              'validated_stock_focus': {}},
+               'round_protocol': protocol(), 'tool_schemas': tool_schemas()}
+    planned = {'purpose': 'stock_research', 'current_user_quote': '分析合成测试个股',
+               'context_user_quote': '', 'goal': '阅读已保存的同股公司研究',
+               'reads': [{'name': 'read_stock_research', 'arguments': {'instrument_id': identifier}}],
+               'web_query': '', 'web_reason': ''}
+    result = validate_plan(request, planned)
+    assert result['ok'] and result['reads'] == planned['reads']
+    assert result['scope']['resources_allowed'] is True
+    limited = deepcopy(request)
+    target = next(tool for tool in limited['tool_schemas'] if tool['name'] == 'read_stock_research')
+    target['parameters']['properties']['instrument_id']['enum'] = ['600001.SH']
+    assert validate_plan(limited, planned) == {'_error': 'invalid_tool_arguments'}
 
 
 def test_new_protocol_freezes_explicit_budget_without_increasing_model_requests():

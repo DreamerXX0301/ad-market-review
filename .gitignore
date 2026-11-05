@@ -73,6 +73,8 @@ playwright-report/
 !/docs/third-party/
 /docs/third-party/*
 !/docs/third-party/pypinyin-MIT.txt
+!/docs/third-party/Pillow-MIT-CMU.txt
+!/docs/third-party/pypdf-BSD-3-Clause.txt
 !/docs/自动午评与盘后复盘.md
 !/docs/炸板结构与后续反馈.md
 !/docs/research/

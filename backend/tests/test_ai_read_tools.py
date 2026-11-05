@@ -249,6 +249,105 @@ def test_current_stock_research_reads_same_instance_without_touching_ttl(databas
     assert before == tuple(database.execute('SELECT expires_at_ms,last_accessed_at_ms FROM research_report').fetchone())
 
 
+class ResearchDirectory:
+    def __init__(self, identities):
+        self.identities, self.lookups = identities, []
+
+    def status(self):
+        return {'ready': True, 'snapshot_id': 'directory-fixture'}
+
+    def reference(self):
+        return {}
+
+    def instruments(self, query, limit):
+        self.lookups.append((query, limit))
+        return deepcopy(self.identities)
+
+    def panel(self, *_):
+        pytest.fail('research identity resolution must not read prices')
+
+    def chart(self, *_):
+        pytest.fail('research identity resolution must not read charts')
+
+
+@pytest.mark.parametrize('identifier', ['600001', '合成测试个股'])
+def test_research_resolves_exact_local_name_or_code_without_prices_network_or_ttl_touch(database, monkeypatch, identifier):
+    import httpx
+    value = report(); save_report(database, value)
+    before = tuple(database.execute('SELECT report_json,expires_at_ms,last_accessed_at_ms FROM research_report').fetchone())
+    directory = ResearchDirectory([value['instrument'],
+        {'instrument_id': '600002.SH', 'name': '合成测试个股集团', 'kind': 'stock'}])
+    monkeypatch.setattr(tools, '_market', lambda *_: directory)
+    monkeypatch.setattr(tools, '_heads', lambda: {'daily_raw': {'snapshot_id': 'directory-fixture'}})
+    monkeypatch.setattr(httpx.Client, 'request', lambda *_a, **_kw: pytest.fail('identity resolution must stay offline'))
+    result = tools.execute_read_tool('read_stock_research', {'instrument_id': identifier},
+        page_context={'instrument_id': '600002.SH'})
+    assert result['ok'] and result['evidence'] and result['summary']['instrument_id'] == SYMBOL
+    assert result['summary']['identity_state'] == 'resolved'
+    assert result['source_bindings']['identity_catalog']['instrument_id'] == SYMBOL
+    assert result['source_bindings']['research']['report_id'] == value['report_id']
+    assert directory.lookups == [(identifier, 10000)]
+    assert before == tuple(database.execute('SELECT report_json,expires_at_ms,last_accessed_at_ms FROM research_report').fetchone())
+
+
+def test_research_full_code_does_not_require_directory_and_normalizes_exchange_case(database):
+    value = report(); save_report(database, value)
+    result = tools.execute_read_tool('read_stock_research', {'instrument_id': SYMBOL.lower()})
+    assert result['ok'] and result['evidence'] and result['summary']['instrument_id'] == SYMBOL
+    assert 'identity_catalog' not in result['source_bindings']
+
+
+@pytest.mark.parametrize('identifier,identities,identity_state', [
+    ('合成测试个股', [
+        {'instrument_id': SYMBOL, 'name': '合成测试个股'},
+        {'instrument_id': '600002.SH', 'name': '合成测试个股'}], 'ambiguous'),
+    ('600001', [
+        {'instrument_id': SYMBOL, 'name': '合成测试个股'},
+        {'instrument_id': '600001.SZ', 'name': '另一合成个股'}], 'ambiguous'),
+    ('合成测试', [{'instrument_id': SYMBOL, 'name': '合成测试个股'}], 'not_found'),
+    ('合成测试指数', [{'instrument_id': SYMBOL, 'name': '合成测试指数', 'kind': 'index'}], 'not_found'),
+])
+def test_research_unknown_or_ambiguous_identity_cannot_read_reports_or_borrow_page_stock(monkeypatch, identifier, identities, identity_state):
+    directory = ResearchDirectory(identities)
+    monkeypatch.setattr(tools, '_market', lambda *_: directory)
+    monkeypatch.setattr(tools, '_heads', lambda: {})
+    monkeypatch.setattr(tools, '_connect', lambda *_: pytest.fail('unresolved identity must not read any report'))
+    result = tools.execute_read_tool('read_stock_research', {'instrument_id': identifier},
+        page_context={'instrument_id': SYMBOL})
+    assert result['ok'] and result['state'] == 'unknown' and not result['evidence']
+    assert result['summary']['identity_state'] == identity_state
+    assert result['gaps'][0]['capability'] == 'instrument_identity'
+
+
+def test_research_unavailable_directory_preserves_identity_gap_without_report_io(monkeypatch):
+    monkeypatch.setattr(tools, '_heads', lambda: {})
+    monkeypatch.setattr(tools, '_connect', lambda *_: pytest.fail('missing directory must not read reports'))
+    result = tools.execute_read_tool('read_stock_research', {'instrument_id': '600001'})
+    assert result['ok'] and result['state'] == 'unknown' and not result['evidence']
+    assert result['gaps'][0]['capability'] == 'instrument_identity'
+
+
+def test_research_rejects_directory_generation_change_before_report_io(monkeypatch):
+    directory = ResearchDirectory([report()['instrument']])
+    heads = iter([{'generation': 'before'}, {'generation': 'after'}])
+    monkeypatch.setattr(tools, '_market', lambda *_: directory)
+    monkeypatch.setattr(tools, '_heads', lambda: next(heads))
+    monkeypatch.setattr(tools, '_connect', lambda *_: pytest.fail('changed identity source must not read reports'))
+    result = tools.execute_read_tool('read_stock_research', {'instrument_id': '600001'})
+    assert not result['ok'] and result['state'] == 'error' and not result['evidence']
+    assert 'identity_catalog' not in result['source_bindings']
+
+
+def test_research_resolved_identity_preserves_source_permission(monkeypatch):
+    directory = ResearchDirectory([{**report()['instrument'], 'egress_allowed': False}])
+    monkeypatch.setattr(tools, '_market', lambda *_: directory)
+    monkeypatch.setattr(tools, '_heads', lambda: {})
+    monkeypatch.setattr(tools, '_connect', lambda *_: pytest.fail('denied identity must not read reports'))
+    result = tools.execute_read_tool('read_stock_research', {'instrument_id': '600001'})
+    assert result['ok'] and not result['evidence']
+    assert result['gaps'][0]['capability'] == 'source_permission'
+
+
 def test_company_research_returns_financial_and_ownership_facts_with_separate_dates(database):
     value = report()
     for kind, source, data in (

@@ -98,7 +98,7 @@ def sector_membership_fingerprint(generation, reference_date, code, kind, member
                     'date': member_date, 'code': code, 'kind': kind, 'instrument_ids': sorted(set(symbols))})
 
 
-def _noon_member_metadata(payload, sector, quotes):
+def _noon_member_metadata(payload, sector, quotes, *, read_context=None):
     from app.services import noon_membership_context as membership
     from app.services.noon_sector_views import _members
 
@@ -107,7 +107,11 @@ def _noon_member_metadata(payload, sector, quotes):
     generation = membership._source_id(payload)
     if generation is None:
         return {}
-    proof, _, error = _members(payload, sector, quotes)
+    if read_context is not None:
+        from app.services.intraday_rotation import noon_member_proof
+        proof, _, error = noon_member_proof(payload, sector, read_context, direct=True)
+    else:
+        proof, _, error = _members(payload, sector, quotes)
     sealed, pool_complete = membership._limit_pool(payload, quotes)
     if (error or not proof or not proof['complete'] or not pool_complete
             or sector.get('member_limit_up_state') != 'observed'
@@ -174,11 +178,15 @@ def _auction_anchor(row):
     return _anchor(row, 'auction', market=market, scope=scope, sectors=sectors)
 
 
-def _verified_noon_payload(row):
-    encoded = row['payload_json'].encode()
-    if len(encoded) > MAX_NOON_BYTES or sha256(encoded).hexdigest() != row['content_sha256']:
+def _verified_noon_payload(row, *, read_context=None):
+    from app.services.intraday_board_changes import _record_payload
+
+    try:
+        payload = _record_payload(row, MAX_NOON_BYTES, read_context)
+    except json.JSONDecodeError:
+        raise
+    except ValueError:
         raise ValueError('午评快照正文校验失败')
-    payload = json.loads(encoded)
     if (payload.get('date'), payload.get('version'), payload.get('collected_start_at'), payload.get('collected_end_at')) != (
         row['trade_date'], 'noon-snapshot-v1', row['collected_start_at'], row['collected_end_at'],
     ):
@@ -761,9 +769,9 @@ def read_brief_view(day, *, snapshots=None, include_sections=True, read_context=
         if stored.get('anchor'):
             anchor = stored['anchor']
             if row['slot'] == 'noon':
-                _restore_noon_details(anchor, day)
+                _restore_noon_details(anchor, day, read_context=read_context)
             elif row['slot'] == 'close':
-                closing_context = _restore_close_details(anchor, day)
+                closing_context = _restore_close_details(anchor, day, read_context=read_context)
                 from app.services.intraday_rotation import close_rotation_sectors
                 try:
                     anchor['rotation_sectors'] = close_rotation_sectors(day, anchor['id'], closing_context=closing_context)
@@ -776,7 +784,7 @@ def read_brief_view(day, *, snapshots=None, include_sections=True, read_context=
     return result
 
 
-def _restore_close_details(anchor, day):
+def _restore_close_details(anchor, day, *, read_context=None):
     """Read original closing evidence only; never rewrite the archived brief body."""
     from app.services.intraday_close import closing_data, restore_close_details
     from app.services.intraday_service import decode_snapshot
@@ -784,17 +792,30 @@ def _restore_close_details(anchor, day):
     try:
         context = closing_data(day, anchor['id'])
         previous = previous_row = None
-        with connect() as connection:
-            tables = {row[0] for row in connection.execute('SELECT name FROM sqlite_master WHERE type=\'table\'')}
-            if {'market_intraday_capture', 'job'} <= tables:
-                previous_row = connection.execute('''SELECT c.*,j.finished_at_ms FROM market_intraday_capture c
-                    JOIN job j USING(job_id) WHERE c.trade_date=? AND c.slot='1430'
-                    AND j.status IN ('succeeded','partial') AND length(CAST(c.payload_json AS BLOB))<=?
-                    AND j.finished_at_ms<=?''',
-                    (day, 2 * 1024 * 1024, _stamp(context['published_at'], day))).fetchone()
+        shared = read_context if read_context and read_context.get('date') == day else None
+        if shared is not None:
+            # These are the same original rows read by this GET, not a lookup
+            # cache usable by another connection, date, request or generation.
+            candidates = [row for row in shared.get('rows', ()) if row['trade_date'] == day
+                          and row['slot'] == '1430' and row['status'] in ('succeeded', 'partial')
+                          and isinstance(row['payload_json'], str)
+                          and len(row['payload_json'].encode()) <= 2 * 1024 * 1024
+                          and row['finished_at_ms'] is not None
+                          and row['finished_at_ms'] <= _stamp(context['published_at'], day)]
+            previous_row = candidates[0] if candidates else None
+        else:
+            with connect() as connection:
+                tables = {row[0] for row in connection.execute('SELECT name FROM sqlite_master WHERE type=\'table\'')}
+                if {'market_intraday_capture', 'job'} <= tables:
+                    previous_row = connection.execute('''SELECT c.*,j.finished_at_ms FROM market_intraday_capture c
+                        JOIN job j USING(job_id) WHERE c.trade_date=? AND c.slot='1430'
+                        AND j.status IN ('succeeded','partial') AND length(CAST(c.payload_json AS BLOB))<=?
+                        AND j.finished_at_ms<=?''',
+                        (day, 2 * 1024 * 1024, _stamp(context['published_at'], day))).fetchone()
         if previous_row is not None:
             try:
-                previous = decode_snapshot(previous_row)
+                previous = (decode_snapshot(previous_row, read_context=shared) if shared is not None
+                            else decode_snapshot(previous_row))
             except (ValueError, TypeError, KeyError, HTTPException):
                 previous_row = None
         restore_close_details(anchor, context, previous=previous, previous_row=previous_row)
@@ -803,20 +824,28 @@ def _restore_close_details(anchor, day):
         return None
 
 
-def _restore_noon_details(anchor, day):
+def _restore_noon_details(anchor, day, *, read_context=None):
     """Project original noon pool rows and amounts without modifying stored briefs."""
     from app.services.noon_service import retained_empty_event_pools
 
-    with connect() as connection:
-        row = connection.execute("""SELECT * FROM market_noon_snapshot
-            WHERE trade_date=? AND snapshot_id=? AND collected_start_at=? AND collected_end_at=?
-              AND length(CAST(payload_json AS BLOB))<=?""",
-            (day, anchor.get('id'), anchor.get('collected_start_at'),
-             anchor.get('collected_end_at'), MAX_NOON_BYTES)).fetchone()
+    shared = read_context if read_context and read_context.get('date') == day else None
+    if shared is not None:
+        row = shared.get('noon_row')
+        if row is not None and ((row['trade_date'], row['snapshot_id'], row['collected_start_at'], row['collected_end_at']) != (
+                day, anchor.get('id'), anchor.get('collected_start_at'), anchor.get('collected_end_at'))
+                or len(row['payload_json'].encode()) > MAX_NOON_BYTES):
+            row = None
+    else:
+        with connect() as connection:
+            row = connection.execute("""SELECT * FROM market_noon_snapshot
+                WHERE trade_date=? AND snapshot_id=? AND collected_start_at=? AND collected_end_at=?
+                  AND length(CAST(payload_json AS BLOB))<=?""",
+                (day, anchor.get('id'), anchor.get('collected_start_at'),
+                 anchor.get('collected_end_at'), MAX_NOON_BYTES)).fetchone()
     if row is None:
         return
     try:
-        payload = _verified_noon_payload(row)
+        payload = _verified_noon_payload(row, read_context=shared)
         indices = _noon_indices(payload)
         restored = retained_empty_event_pools(row, payload)
         ladder = _noon_ladder_details({**payload, 'events': {**payload.get('events', {}), **restored}})
@@ -831,14 +860,14 @@ def _restore_noon_details(anchor, day):
     if ladder is not None:
         anchor['ladder'] = ladder
     from app.services.intraday_rotation import noon_rotation_sectors
-    anchor['rotation_sectors'] = noon_rotation_sectors(payload)
+    anchor['rotation_sectors'] = noon_rotation_sectors(payload, read_context=shared)
     sector_metadata = {row.get('topic_code') or row.get('instrument_id'): row for row in payload.get('sectors', [])}
     quotes = {row['instrument_id']: row for row in payload.get('stocks', [])}
     for sector in anchor.get('sectors', []):
         original = sector_metadata.get(sector.get('instrument_id'), {})
         if (original.get('kind') == sector.get('kind') and original.get('change_pct') == sector.get('change_pct')):
             sector.update(sector_comparison_metadata(original, source='fuyao'))
-            sector.update(_noon_member_metadata(payload, original, quotes))
+            sector.update(_noon_member_metadata(payload, original, quotes, read_context=shared))
 
 
 def _noon_ladder_details(payload):

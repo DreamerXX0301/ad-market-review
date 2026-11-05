@@ -30,6 +30,7 @@ const {
   briefDirectionBindings,
   briefSections,
   briefSectionScrollTop,
+  activeBriefSection,
 } = await import(
   "data:text/javascript;base64," + Buffer.from(code).toString("base64")
 );
@@ -284,21 +285,268 @@ assert.equal(
   }),
   0,
 );
+
+const scrollCalls = [];
+const scrollBox = {
+  scrollTop: 0,
+  scrollLeft: 29,
+  clientHeight: 250,
+  scrollHeight: 850,
+  getBoundingClientRect: () => ({ top: 300 }),
+  scrollTo(options) {
+    scrollCalls.push(options);
+    if (options.behavior === "auto") this.scrollTop = options.top;
+  },
+};
+const sectionPositions = [13, 113, 313, 713];
+const sectionNodes = ["auction", "1000", "1430", "close"].map(
+  (slot, index) => ({
+    slot,
+    element: {
+      getBoundingClientRect: () => ({
+        top: 300 + sectionPositions[index] - scrollBox.scrollTop,
+        height: [100, 200, 400, 100][index],
+      }),
+    },
+  }),
+);
+for (const [position, expected] of [
+  [0, "auction"],
+  [100, "1000"],
+  [300, "1430"],
+  [599, "close"],
+  [400, "1430"],
+  [100, "1000"],
+  [0, "auction"],
+]) {
+  scrollBox.scrollTop = position;
+  assert.equal(
+    activeBriefSection(scrollBox, sectionNodes),
+    expected,
+    "scrolling both ways follows the brief's own reading line, including its short last section",
+  );
+}
+assert.equal(activeBriefSection(scrollBox, []), null);
+assert.equal(
+  activeBriefSection({ ...scrollBox, clientHeight: 0 }, sectionNodes),
+  null,
+);
+assert.equal(
+  activeBriefSection(scrollBox, [
+    {
+      slot: "hidden",
+      element: { getBoundingClientRect: () => ({ top: 0, height: 0 }) },
+    },
+    ...sectionNodes,
+  ]),
+  "auction",
+  "hidden sections cannot steal the highlight",
+);
+
+// Drive the component's real handlers with deterministic hook state and layout.
+const encodeModule = (source) =>
+  "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+const hooksURL = encodeModule(`
+  const values = [], effects = [], pending = [];
+  let cursor = 0, effectCursor = 0;
+  export function begin() { cursor = 0; effectCursor = 0; }
+  export function useState(initial) {
+    const index = cursor++;
+    if (!(index in values)) values[index] = initial;
+    return [values[index], value => { values[index] = value; }];
+  }
+  export function useRef(initial) {
+    const index = cursor++;
+    return values[index] ||= { current: initial };
+  }
+  export function useId() { return "brief-test"; }
+  export function useEffect(callback, deps) {
+    const index = effectCursor++, previous = effects[index];
+    if (previous && deps.every((value, i) => Object.is(value, previous.deps[i]))) return;
+    pending.push(() => {
+      previous?.cleanup?.();
+      effects[index] = { deps, cleanup: callback() };
+    });
+  }
+  export function flushEffects() { pending.splice(0).forEach(callback => callback()); }
+  export function dispose() { effects.forEach(effect => effect.cleanup?.()); }
+`);
+const hooks = await import(hooksURL);
+const { default: InteractiveBrief } = await import(
+  encodeModule(
+    code.replace(
+      `from ${JSON.stringify(pathToFileURL(require.resolve("react")).href)}`,
+      `from ${JSON.stringify(hooksURL)}`,
+    ),
+  )
+);
+const frames = new Map();
+let frameId = 0;
+const previousWindow = globalThis.window;
+globalThis.window = {
+  requestAnimationFrame(callback) {
+    frames.set(++frameId, callback);
+    return frameId;
+  },
+  cancelAnimationFrame(id) {
+    frames.delete(id);
+  },
+  matchMedia: () => ({ matches: false }),
+};
+const flushFrames = () => {
+  const callbacks = [...frames.values()];
+  frames.clear();
+  callbacks.forEach((callback) => callback());
+};
+const interactionBrief = {
+  id: "scroll-fixture",
+  slot: "close",
+  date: "2026-11-05",
+  sections: sectionNodes.map(({ slot }) => ({
+    slot,
+    status: "complete",
+    summary: "测试观察",
+    highlights: [],
+  })),
+};
+let scrollProps, timeButtons;
+function renderInteractive(selectedSlot = "close") {
+  hooks.begin();
+  const root = InteractiveBrief({ brief: interactionBrief, selectedSlot });
+  timeButtons = [];
+  function visit(node) {
+    if (!node || typeof node !== "object") return;
+    if (node.props?.className === "ibt-scroll") {
+      scrollProps = node.props;
+      scrollProps.ref.current = scrollBox;
+    }
+    if (node.type === "li" && node.props["data-slot"])
+      node.props.ref(
+        sectionNodes.find((row) => row.slot === node.props["data-slot"])
+          .element,
+      );
+    if (node.type === "button" && node.props["aria-controls"])
+      timeButtons.push(node.props);
+    for (const child of [node.props?.children].flat(Infinity)) visit(child);
+  }
+  visit(root);
+  hooks.flushEffects();
+}
+const activeIndex = () =>
+  timeButtons.findIndex((button) => button["aria-current"] === "step");
+function userScroll(top) {
+  scrollBox.scrollTop = top;
+  scrollProps.onScroll({ target: scrollBox, currentTarget: scrollBox });
+  flushFrames();
+  renderInteractive();
+}
+renderInteractive();
+flushFrames();
+assert.equal(
+  scrollBox.scrollTop,
+  600,
+  "initial current slot scrolls only its own viewport",
+);
+scrollProps.onWheel();
+userScroll(100);
+assert.equal(activeIndex(), 1, "wheel scrolling updates aria-current");
+userScroll(300);
+assert.equal(
+  activeIndex(),
+  2,
+  "scrolling forward updates the active time button",
+);
+userScroll(600);
+assert.equal(
+  activeIndex(),
+  3,
+  "scrolling to the bottom activates the short close section",
+);
+sectionPositions[2] = 613;
+timeButtons[2].onClick();
+userScroll(600);
+assert.equal(
+  activeIndex(),
+  2,
+  "a clicked short section keeps its highlight at a clamped destination",
+);
+scrollProps.onKeyDown({ key: "Home" });
+userScroll(0);
+assert.equal(
+  activeIndex(),
+  0,
+  "keyboard scrolling releases the clicked destination",
+);
+sectionPositions[2] = 313;
+timeButtons[1].onClick();
+assert.deepEqual(scrollCalls.at(-1), {
+  top: 101,
+  left: 29,
+  behavior: "smooth",
+});
+userScroll(101);
+assert.equal(
+  activeIndex(),
+  1,
+  "click-to-scroll remains linked to the requested time",
+);
+scrollProps.onTouchStart();
+userScroll(0);
+assert.equal(activeIndex(), 0, "touch scrolling restores the first section");
+scrollProps.onScroll({ target: {}, currentTarget: scrollBox });
+assert.equal(
+  frames.size,
+  0,
+  "nested scroll events do not change the brief time",
+);
+scrollProps.onScroll({ target: scrollBox, currentTarget: scrollBox });
+scrollProps.onScroll({ target: scrollBox, currentTarget: scrollBox });
+assert.equal(frames.size, 1, "rapid scroll events share one animation frame");
+renderInteractive("1000");
+flushFrames();
+renderInteractive("1000");
+assert.equal(
+  activeIndex(),
+  1,
+  "changing observation time resets the initial brief position",
+);
+scrollProps.onScroll({ target: scrollBox, currentTarget: scrollBox });
+hooks.dispose();
+assert.equal(frames.size, 0, "unmount cancels pending scroll synchronization");
+if (previousWindow === undefined) delete globalThis.window;
+else globalThis.window = previousWindow;
+
 const sevenSlotBrief = {
-  slot: "1000", sections: [
+  slot: "1000",
+  sections: [
     { slot: "1000", summary: "十点观察", highlights: [] },
     { slot: "0935", summary: "开盘五分钟观察", highlights: [] },
     { slot: "auction", summary: "竞价原候选", highlights: [] },
   ],
 };
-assert.deepEqual(briefSections(sevenSlotBrief).map((row) => row.slot), ["auction", "0935", "1000"]);
+assert.deepEqual(
+  briefSections(sevenSlotBrief).map((row) => row.slot),
+  ["auction", "0935", "1000"],
+);
 const earlyHTML = render(sevenSlotBrief, "0935");
 assert.match(earlyHTML, /09:35 开盘观察/);
 assert.match(earlyHTML, /竞价原候选/);
-const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./IntradayBriefCard.tsx", import.meta.url), "utf8"));
-const css = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./IntradayBriefCard.css", import.meta.url), "utf8"));
-assert.doesNotMatch(source, /briefSlotScrollLeft|nav\.scrollTo/, "the fixed time selector has no automatic horizontal scrolling");
-assert.match(css, /\.ibt-slots\s*\{[^}]*grid-template-columns: repeat\(auto-fit/, "time chips wrap in the fixed header instead of hiding later stages");
+const source = await import("node:fs/promises").then((fs) =>
+  fs.readFile(new URL("./IntradayBriefCard.tsx", import.meta.url), "utf8"),
+);
+const css = await import("node:fs/promises").then((fs) =>
+  fs.readFile(new URL("./IntradayBriefCard.css", import.meta.url), "utf8"),
+);
+assert.doesNotMatch(
+  source,
+  /briefSlotScrollLeft|nav\.scrollTo/,
+  "the fixed time selector has no automatic horizontal scrolling",
+);
+assert.match(
+  css,
+  /\.ibt-slots\s*\{[^}]*grid-template-columns: repeat\(auto-fit/,
+  "time chips wrap in the fixed header instead of hiding later stages",
+);
 console.log(
-  "intraday brief timeline: structured/legacy/missing, safe numeric text, zero and internal-only scroll geometry passed",
+  "intraday brief timeline: structured/legacy/missing, safe numeric text, internal scroll tracking and click navigation passed",
 );

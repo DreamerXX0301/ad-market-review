@@ -1430,23 +1430,15 @@
 
 /* A quiet, consistent surface for the standalone assistant. */
 .ai-chat-workspace {
-  --ai-page: #101722;
-  --ai-side: #151e2b;
-  --ai-field: #1b2635;
-  --ai-hover: #202d3e;
-  --ai-line: #2b384a;
-  --ai-selected: #24344b;
+  --ai-page: var(--surface);
+  --ai-side: var(--surface2);
+  --ai-field: var(--surface2);
+  --ai-hover: color-mix(in srgb, var(--blue) 10%, var(--surface2));
+  --ai-line: var(--border);
+  --ai-selected: var(--blue-bg);
   background: var(--ai-page);
   border: 1px solid var(--ai-line);
   border-radius: 18px;
-}
-:root[data-theme="light"] .ai-chat-workspace {
-  --ai-page: #ffffff;
-  --ai-side: #f6f7f9;
-  --ai-field: #ffffff;
-  --ai-hover: #eef1f5;
-  --ai-line: #e4e8ee;
-  --ai-selected: #eaf0fa;
 }
 .ai-chat-sidebar {
   padding: 14px 10px;
@@ -1983,4 +1975,119 @@
 .ai-scroll-latest:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 3px;
+}
+
+/* Attachments share the workbench palette and stay compact above the composer. */
+.ai-file-input {
+  display: none;
+}
+.ai-attach-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 38px;
+  margin: 2px 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  align-self: flex-end;
+}
+.ai-attach-button:hover:not(:disabled) {
+  color: var(--blue);
+  background: var(--ai-hover);
+}
+.ai-attach-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ai-draft-attachments,
+.ai-message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-draft-attachments {
+  padding: 0 0 10px;
+}
+.ai-message-attachments {
+  margin-bottom: 10px;
+}
+.ai-attachment-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  max-width: min(100%, 280px);
+  padding: 8px 10px;
+  border: 1px solid var(--ai-line, var(--border));
+  border-radius: 12px;
+  background: var(--ai-side, var(--surface2));
+  color: var(--text);
+  text-decoration: none;
+}
+a.ai-attachment-card:hover {
+  border-color: var(--blue);
+  text-decoration: none;
+}
+.ai-attachment-card img {
+  width: 42px;
+  height: 42px;
+  border-radius: 7px;
+  object-fit: cover;
+  flex: 0 0 42px;
+}
+.ai-attachment-icon {
+  display: flex;
+  color: var(--blue);
+  padding: 8px 4px;
+}
+.ai-attachment-caption {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+}
+.ai-attachment-caption strong {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-attachment-caption small {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.ai-attachment-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ai-attachment-remove:hover {
+  background: var(--ai-hover);
+  color: var(--text);
+}
+.ai-attachment-feedback,
+.ai-attachment-help {
+  margin: 7px 3px 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.ai-attachment-feedback[role="alert"] {
+  color: var(--amber);
 }

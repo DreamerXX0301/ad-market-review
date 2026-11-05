@@ -17,6 +17,7 @@ const compile = async (path) =>
     },
   ).outputText;
 const helperUrl = encode(await compile("./aiState.ts"));
+const attachmentUrl = encode(await compile("./aiAttachments.ts"));
 const {
   aiReason,
   canGenerate,
@@ -153,12 +154,28 @@ for (const [name, url] of Object.entries({
   "../../lib/format": encode("export const dateTime=value=>String(value);"),
   "./aiState": helperUrl,
   "./AIAnswerText": answerUrl,
+  "./aiAttachments": attachmentUrl,
 }))
   content = content.replaceAll(
     'from "' + name + '"',
     "from " + JSON.stringify(url),
   );
 const { AIMessageView } = await import(encode(content));
+const attachmentMessage = renderToStaticMarkup(createElement(AIMessageView, {
+  context, message: {
+    message_id: "m-attachment", role: "user", text: "研究这份财报", state: "completed", created_at_ms: 1,
+    attachments: [
+      {attachment_id:"a1",name:"公司财报.pdf",media_type:"application/pdf",size:1024,kind:"text",text_only:true,page_count:2,content_url:"/api/v1/ai/sessions/s1/messages/m1/attachments/a1"},
+      {attachment_id:"a2",name:"走势图.png",media_type:"image/png",size:300,kind:"image",content_url:"/api/v1/ai/sessions/s1/messages/m1/attachments/a2"},
+      {attachment_id:"a3",name:"<script>alert(1)</script>",media_type:"image/png",size:300,kind:"image",content_url:"javascript:alert(1)"},
+    ],
+  },
+}));
+assert.match(attachmentMessage, /已读取正文/);
+assert.match(attachmentMessage, /2 页/);
+assert.match(attachmentMessage, /loading="lazy"/);
+assert.ok(!attachmentMessage.includes('javascript:') && !attachmentMessage.includes('<script>'));
+assert.match(attachmentMessage, /研究这份财报/);
 const message = {
   message_id: "m-test",
   role: "assistant",

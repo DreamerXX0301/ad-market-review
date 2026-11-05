@@ -19,16 +19,44 @@ MAX_POOL = 2000
 SCOPE = '对照两份已留存观察，非连续分时；新入池不等于首次涨停，池中缺席不代表开板或跌停解除。'
 
 
-def _binding(snapshot, row):
+def _record_payload(row, maximum, read_cache=None, *, binding_only=False):
+    """Reuse syntax trees only for the identical row/body within one GET.
+
+    Size and the original body SHA are still checked at every entry. Holding
+    both objects prevents identity reuse; a different SQLite row, body string
+    or digest must be parsed again. A small independent binding projection is
+    protected from the display enrichments later attached to live snapshots.
+    """
+    text = row['payload_json']
+    raw = text.encode()
+    digest = row['content_sha256']
+    if len(raw) > maximum or sha256(raw).hexdigest() != digest:
+        raise ValueError('快照原文大小或SHA校验失败')
+    records = read_cache.setdefault('record_payloads', {}) if read_cache is not None else None
+    entry = records.get(id(row)) if records is not None else None
+    if entry is not None and entry[0] is row and entry[1] is text and entry[2] == digest:
+        return entry[4] if binding_only else entry[3]
+    value = json.loads(raw)
+    if records is not None and len(records) < 32:
+        from copy import deepcopy
+
+        binding = {key: deepcopy(value[key]) for key in (
+            'id', 'date', 'slot', 'version', 'collected_start_at', 'collected_end_at',
+            'source_binding', 'source_checks', 'sources') if key in value}
+        records[id(row)] = row, text, digest, value, binding
+        return binding if binding_only else value
+    return value
+
+
+def _binding(snapshot, row, *, read_cache=None):
     if row is None:
         return None
     try:
-        raw = row['payload_json'].encode()
         maximum = 8 * 1024 * 1024 if snapshot.get('slot') == 'noon' else 2 * 1024 * 1024
         digest = row['content_sha256']
-        if not 0 < len(raw) <= maximum or sha256(raw).hexdigest() != digest:
+        if not row['payload_json']:
             return None
-        original = json.loads(raw)
+        original = _record_payload(row, maximum, read_cache, binding_only=True)
         slot = snapshot.get('slot')
         if (original.get('date') != snapshot.get('date') or row['trade_date'] != snapshot.get('date')
                 or row['snapshot_id'] != snapshot.get('id')):
@@ -115,23 +143,28 @@ def _pool_receipt(snapshot, key):
     return False
 
 
-def noon_frame(row):
+def noon_frame(row, *, read_cache=None):
     """The optional lunchtime baseline is read from its original checksummed body."""
     if row is None:
         return None
     try:
-        raw = row['payload_json'].encode()
-        if len(raw) > 8 * 1024 * 1024 or sha256(raw).hexdigest() != row['content_sha256']:
-            return None
-        value = json.loads(raw)
+        value = _record_payload(row, 8 * 1024 * 1024, read_cache)
         if value.get('version') != 'noon-snapshot-v1' or value.get('date') != row['trade_date']:
             return None
+        frames = read_cache.setdefault('noon_frames', {}) if read_cache is not None else None
+        cached = frames.get(id(row)) if frames is not None else None
+        identity = row['snapshot_id'], row['trade_date']
+        if cached is not None and cached[0] is row and cached[1] is value and cached[2] == identity:
+            return cached[3]
         from app.services.noon_service import retained_empty_event_pools
 
         restored = retained_empty_event_pools(row, value)
-        return {**value, 'id': row['snapshot_id'], 'slot': 'noon',
-                'events': {**value.get('events', {}), **restored},
-                'comparison_input': {'stocks': value.get('stocks', ())}}
+        frame = {**value, 'id': row['snapshot_id'], 'slot': 'noon',
+                 'events': {**value.get('events', {}), **restored},
+                 'comparison_input': {'stocks': value.get('stocks', ())}}
+        if frames is not None and len(frames) < 8:
+            frames[id(row)] = row, value, identity, frame
+        return frame
     except (ValueError, TypeError, KeyError):
         return None
 
@@ -226,7 +259,7 @@ def _read_binding(snapshot, row, cache):
            snapshot.get('collected_start_at'), snapshot.get('collected_end_at'), record)
     bindings = cache.setdefault('frame_bindings', {})
     if key not in bindings:
-        bindings[key] = snapshot, row, _binding(snapshot, row)
+        bindings[key] = snapshot, row, _binding(snapshot, row, read_cache=cache)
     return bindings[key][2]
 
 
@@ -313,7 +346,7 @@ def read_noon_row(connection, day):
 def attach_changes(snapshots, rows, noon_row=None, *, read_cache=None):
     records = {row['slot']: row for row in rows}
     by_slot = {snapshot['slot']: snapshot for snapshot in snapshots}
-    noon = noon_frame(noon_row)
+    noon = noon_frame(noon_row, read_cache=read_cache)
     for snapshot in snapshots:
         if snapshot.get('version') not in ('intraday-snapshot-v5', 'intraday-snapshot-v6'):
             continue

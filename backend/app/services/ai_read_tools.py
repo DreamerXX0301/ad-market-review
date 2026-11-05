@@ -45,7 +45,7 @@ def tool_schemas():
           'query': {'type': 'string', 'description': '题材或股票名称、代码，最多80字；整体研究传空串'}},
          ['date', 'slot', 'query']),
         ('read_stock_research', '读取当前实例已保存且未过期的公司研究，包括已核验的主营、财报与现金流、估值市值、股东户数和公告线索。不联网、不延长缓存。instrument_id空串沿用当前页面个股；仅无当前报告时可读同股旧会话材料并明确旧日期。',
-         {'instrument_id': {'type': 'string', 'description': '完整六位代码加.SH/.SZ/.BJ；空串沿用页面个股'}}, ['instrument_id']),
+         {'instrument_id': {'type': 'string', 'description': '证券准确名称、六位代码或完整六位代码加.SH/.SZ/.BJ，最多80字符；名称和六位代码仅经本地名录精确消歧，空串沿用页面个股'}}, ['instrument_id']),
         ('check_data_availability', '只检查指定日已保存资料及北京时间观察阶段，不取新数据、不把工作日猜作已核验交易日。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
         ('read_stock_quote', '按证券名称、六位代码或完整代码，读取本地指定完成交易日的个股原始报价和成交额；名称必须经本地名录消歧，不用不存在的代码或旧日价格代替。不需要先有研究报告，不联网。',
@@ -766,10 +766,42 @@ def _market_detail(result, day, section, query, now):
         result['source_bindings']['published_detail']['supplement_dates'] = [day]
 
 
+def _research_instrument(result, instrument_id, page):
+    """Resolve the same exact local identities as quotes, without reading prices."""
+    term = instrument_id.strip() or page.get('instrument_id') or (page.get('instrument') or {}).get('instrument_id')
+    if not isinstance(term, str) or not 1 <= len(term) <= 80 or any(ord(char) < 32 for char in term):
+        raise ValueError('须提供个股名称或代码，或从个股页面进入')
+    normalized = term.upper()
+    if re.fullmatch(r'[0-9]{6}\.(SH|SZ|BJ)', normalized):
+        return normalized
+    before = _heads()
+    market = _market(before)
+    status = market.status()
+    if not status.get('ready'):
+        _gap(result, 'instrument_identity', '本地证券名录尚不可用，不能核实名称或六位代码；不猜代码或联网补抓')
+        return
+    local = _result('read_stock_research')
+    identity = _stock_identity(local, market, status, term, None, {})
+    if before != _heads():
+        raise HTTPException(409, '读取期间证券名录发布代际变化，请重试')
+    result['summary'].update(_pick_fields(local['summary'], (
+        'requested_instrument', 'identity_state', 'candidates', 'identity_name_scope')))
+    result['gaps'].extend(local['gaps'])
+    if identity is None:
+        return
+    if _denied(identity):
+        _gap(result, 'source_permission', '所选证券名录明确禁止AI处理或外发')
+        return
+    result['source_bindings']['identity_catalog'] = {'heads': before,
+        'instrument_id': identity['instrument_id'],
+        'identity_sha256': digest(_pick_fields(identity, ('instrument_id', 'name', 'kind')))}
+    return identity['instrument_id']
+
+
 def _research(result, instrument_id, page, fallback, now):
-    instrument = instrument_id or page.get('instrument_id') or (page.get('instrument') or {}).get('instrument_id')
-    if not isinstance(instrument, str) or not re.fullmatch(r'\d{6}\.(SH|SZ|BJ)', instrument):
-        raise ValueError('须提供完整个股代码，或从个股页面进入')
+    instrument = _research_instrument(result, instrument_id, page)
+    if instrument is None:
+        return
     connection = _connect(sqlite_path())
     row = None
     if connection is not None:
@@ -787,9 +819,9 @@ def _research(result, instrument_id, page, fallback, now):
             projected = contexts.model_input(fallback)
             result.update(date=fallback['as_of'], state='partial', evidence=projected['evidence'], metrics=projected['metrics'])
             result['source'] = ['saved_session_fallback']
-            result['summary'] = {'instrument_id': instrument, 'as_of': fallback['as_of'], 'material_scope': projected.get('material_scope'),
+            result['summary'].update({'instrument_id': instrument, 'as_of': fallback['as_of'], 'material_scope': projected.get('material_scope'),
                                  'metric_defaults': projected.get('metric_defaults', {}),
-                                 'notice': '当前实例没有未过期研究；仅使用该会话原已保存旧材料，不代表今天或最新资料'}
+                                 'notice': '当前实例没有未过期研究；仅使用该会话原已保存旧材料，不代表今天或最新资料'})
             result['gaps'].extend(projected['gaps'])
             _gap(result, 'current_research', '没有当前可用研究；旧会话回退材料日期明确，未延长TTL')
             result['source_bindings']['fallback'] = {'context_sha256': fallback.get('context_sha256'), 'source_report_id': fallback.get('source_report_id')}
@@ -804,8 +836,8 @@ def _research(result, instrument_id, page, fallback, now):
     result['date'] = report['data_cutoff']
     result['source'] = ['current_instance_saved_research']
     result['source_bindings']['research'] = {'report_id': row['report_id'], 'report_sha256': digest(report), 'expires_at_ms': row['expires_at_ms']}
-    result['summary'] = {'instrument_id': instrument, 'instrument': report['instrument'], 'as_of': result['date'],
-                         'material_window': report.get('material_window'), 'notice': '仅当前已保存研究材料，不证明历史时点可知，不代表今天已重采集'}
+    result['summary'].update({'instrument_id': instrument, 'instrument': report['instrument'], 'as_of': result['date'],
+                         'material_window': report.get('material_window'), 'notice': '仅当前已保存研究材料，不证明历史时点可知，不代表今天已重采集'})
     result['gaps'].extend(contexts._clean(report.get('gaps', [])))
     if report.get('egress_allowed') is False or report.get('ai_processing_allowed') is False:
         _gap(result, 'research_permission', '父报告明确禁止外发或AI处理')
@@ -997,9 +1029,8 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
             raise ValueError('页面或回退资料格式无效')
         now = local_now()
         if name == 'read_stock_research':
-            if set(args) - {'instrument_id'} or not isinstance(args.get('instrument_id', ''), str):
-                raise ValueError('个股工具仅接受instrument_id')
-            _research(result, args.get('instrument_id', ''), page_context or {}, fallback_context or {}, now)
+            classify_tool(name, args)
+            _research(result, args['instrument_id'], page_context or {}, fallback_context or {}, now)
         elif name == 'read_stock_trend':
             classify_tool(name, args)
             day = args['date'] if args['date'] == 'latest' else _day(args['date'], now)

@@ -275,6 +275,30 @@ export function briefSectionScrollTop(
   );
 }
 
+/** The reading line belongs to the brief viewport, independent of page scrolling. */
+export function activeBriefSection(
+  viewport: HTMLElement,
+  sections: Array<{ slot: string; element: HTMLElement }>,
+) {
+  if (viewport.clientHeight <= 0) return null;
+  const visible = sections.filter(
+    ({ element }) => element.getBoundingClientRect().height > 0,
+  );
+  if (!visible.length) return null;
+  if (viewport.scrollTop <= 1) return visible[0].slot;
+  // A short final section cannot always reach the reading line.
+  if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 2)
+    return visible.at(-1)!.slot;
+  const readingTop = viewport.getBoundingClientRect().top + 14;
+  return (
+    visible
+      .filter(
+        ({ element }) => element.getBoundingClientRect().top <= readingTop,
+      )
+      .at(-1)?.slot || visible[0].slot
+  );
+}
+
 function statusLabel(status: string) {
   return status === "missing"
     ? "未留存"
@@ -402,6 +426,12 @@ export default function BriefCard({
   const [active, setActive] = useState(initial);
   const viewport = useRef<HTMLDivElement>(null);
   const targets = useRef(new Map<string, HTMLLIElement>());
+  const scrollFrame = useRef<number | null>(null);
+  const navigation = useRef<{
+    slot: string;
+    top: number;
+    reached: boolean;
+  } | null>(null);
   const id = useId();
   const signature = sections
     .map((section) => `${section.slot}:${section.status}:${section.label}`)
@@ -411,19 +441,60 @@ export default function BriefCard({
     const scroll = viewport.current,
       target = targets.current.get(slot);
     if (!scroll || !target) return;
+    const top = Math.min(
+      briefSectionScrollTop(scroll, target),
+      Math.max(0, scroll.scrollHeight - scroll.clientHeight),
+    );
+    navigation.current = {
+      slot,
+      top,
+      reached: Math.abs(scroll.scrollTop - top) <= 2,
+    };
     setActive(slot);
     scroll.scrollTo({
-      top: briefSectionScrollTop(scroll, target),
+      top,
       left: scroll.scrollLeft,
       behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
         ? "auto"
         : behavior,
     });
   };
+  const syncActiveSection = () => {
+    if (scrollFrame.current !== null) return;
+    scrollFrame.current = window.requestAnimationFrame(() => {
+      scrollFrame.current = null;
+      const scroll = viewport.current;
+      if (!scroll) return;
+      const selected = navigation.current;
+      if (selected && Math.abs(scroll.scrollTop - selected.top) <= 2) {
+        selected.reached = true;
+        setActive(selected.slot);
+        return;
+      }
+      if (selected?.reached) navigation.current = null;
+      const slot = activeBriefSection(
+        scroll,
+        sections.flatMap(({ slot }) => {
+          const element = targets.current.get(slot);
+          return element ? [{ slot, element }] : [];
+        }),
+      );
+      if (slot) setActive(slot);
+    });
+  };
+  const releaseNavigation = () => {
+    navigation.current = null;
+  };
   useEffect(() => {
+    navigation.current = null;
     setActive(initial);
     const frame = window.requestAnimationFrame(() => navigate(initial, "auto"));
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (scrollFrame.current !== null)
+        window.cancelAnimationFrame(scrollFrame.current);
+      scrollFrame.current = null;
+    };
   }, [preferred, brief.slot, brief.id, brief.date, signature]);
 
   const evidence: Row[] = Array.isArray(brief.evidence) ? brief.evidence : [];
@@ -478,6 +549,26 @@ export default function BriefCard({
         tabIndex={0}
         role="region"
         aria-label="分时段简报内容"
+        onScroll={(event) => {
+          if (event.target === event.currentTarget) syncActiveSection();
+        }}
+        onWheel={releaseNavigation}
+        onTouchStart={releaseNavigation}
+        onPointerDown={releaseNavigation}
+        onKeyDown={(event) => {
+          if (
+            [
+              "ArrowUp",
+              "ArrowDown",
+              "PageUp",
+              "PageDown",
+              "Home",
+              "End",
+              " ",
+            ].includes(event.key)
+          )
+            releaseNavigation();
+        }}
       >
         {sections.length ? (
           <ol className="ibt-sections">
