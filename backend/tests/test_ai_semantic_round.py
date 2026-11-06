@@ -129,12 +129,15 @@ def test_semantic_stock_plan_accepts_normal_questions_then_streams_real_tool_res
         runtime.shutdown()
 
 
-@pytest.mark.parametrize('last_slot, expected_options', [('0945', {'include_auction_opening': False}), ('1000', {})])
-def test_auction_read_respects_exact_early_scope_of_accepted_plan(agent_client, monkeypatch, last_slot, expected_options):
+@pytest.mark.parametrize('slots, expected_options', [
+    (('0935',), {'include_auction_opening': False}),
+    (('0935', '0945'), {'include_auction_opening': False}),
+    (('0935', '0945', '1000'), {}),
+])
+def test_auction_read_respects_exact_early_scope_of_accepted_plan(agent_client, monkeypatch, slots, expected_options):
     runtime = AIRuntime(fake)
-    question = '结合竞价和开盘两个观察档分析截至' + last_slot + '的盘面。'
+    question = '结合竞价和盘中观察分析截至' + slots[-1] + '的盘面。'
     auction = market_read('auction')
-    slots = ('0935', '0945') if last_slot == '0945' else ('0935', '0945', '1000')
     reads = [auction, *[{'name': 'read_intraday_data', 'arguments': {'date': 'today', 'slot': slot, 'query': ''}}
                          for slot in slots]]
     actual_options = []

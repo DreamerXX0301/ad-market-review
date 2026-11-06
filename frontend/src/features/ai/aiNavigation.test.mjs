@@ -209,16 +209,22 @@ for (const [marketStage, clock, phrase] of [
   ["0935", "09:35", /盘中观察快照/],
   ["0945", "09:45", /早盘跟踪快照.*竞价、09:35 开盘观察和本档.*只用截至本档/],
   ["1000", "10:00", /盘中观察快照/],
-  ["1430", "14:30", /盘中观察快照/],
+  ["1030", "10:30", /盘中观察快照/],
+  ["1100", "11:00", /盘中观察快照/],
   ["noon", "", /午评快照/],
+  ["1330", "13:30", /盘中观察快照/],
+  ["1400", "14:00", /盘中观察快照/],
+  ["1430", "14:30", /盘中观察快照/],
   ["close", "15:00", /收盘复盘/],
 ]) {
   const context = { kind: "market", asOf: "2026-10-30", marketStage };
   const link = aiLaunchLocation(context);
   const launch = readAILaunch(link);
   assert.equal(launch.marketStage, marketStage);
-  assert.match(aiLaunchQuestion(launch), new RegExp(`2026-10-30 ${clock}`));
-  assert.match(aiLaunchQuestion(launch), phrase);
+  const question = aiLaunchQuestion(launch);
+  assert.match(question, new RegExp(`2026-10-30 ${clock}`));
+  assert.match(question, phrase);
+  assert.match(question, /本地数据/);
   assert.doesNotMatch(link, /ai_chat/);
   assert.doesNotMatch(
     chatLocation(link, { ...context, pageRoute: "ai" }, "sample_chat"),

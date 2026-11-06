@@ -34,7 +34,7 @@ def _usage_valid(usage):
 
 
 def _auction_read_options(request, name, args):
-    """Keep the 09:45-only plan's auction evidence before the 10:00 follow-up."""
+    """Keep early intraday plans from receiving the auction tool's 10:00 follow-up."""
     if name != 'read_market_data' or args.get('section') != 'auction':
         return {}
     today = (request.get('request_time') or {}).get('request_date_bj')
@@ -48,7 +48,7 @@ def _auction_read_options(request, name, args):
     slots = {read['arguments'].get('slot') for read in same_day if read['name'] == 'read_intraday_data'}
     later_market = any(read['name'] == 'read_market_data'
                        and read['arguments'].get('section') in ('noon', 'close', 'overview') for read in same_day)
-    return {'include_auction_opening': False} if '0945' in slots and slots <= {'0935', '0945'} and not later_market else {}
+    return {'include_auction_opening': False} if slots and slots <= {'0935', '0945'} and not later_market else {}
 
 
 def settle_parent(db,task_id):
