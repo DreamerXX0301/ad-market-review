@@ -1561,7 +1561,10 @@ export function MarketPage({
                     ? {
                         render: (value: unknown, row: Row) =>
                           row.return_30d_observation_suspended === true ? (
-                            <span className="muted" title="所选盘面日已核验全天停牌">
+                            <span
+                              className="muted"
+                              title="所选盘面日已核验全天停牌"
+                            >
                               停牌
                             </span>
                           ) : (
@@ -1579,7 +1582,8 @@ export function MarketPage({
                         render: (value: any, row: Row) => {
                           const suspendedEndpoints = [
                             row.return_30d_start_quote_date &&
-                            row.return_30d_start_quote_date !== row.return_30d_start
+                            row.return_30d_start_quote_date !==
+                              row.return_30d_start
                               ? `起算日停牌，取 ${row.return_30d_start_quote_date} 收盘`
                               : null,
                             row.return_30d_end_quote_date &&
@@ -1601,12 +1605,17 @@ export function MarketPage({
                                 {value == null ? "未排名" : percent(value)}
                               </span>
                               {suspendedEndpoints && (
-                                <small className="market-gap-note">{suspendedEndpoints}</small>
+                                <small className="market-gap-note">
+                                  {suspendedEndpoints}
+                                </small>
                               )}
                               {row.return_30d_missing_sessions > 0 && (
                                 <small className="market-gap-note">
-                                  区间缺 {row.return_30d_missing_sessions} 日实际报价
-                                  {value != null && !suspendedEndpoints && " · 按已核验端点计算"}
+                                  区间缺 {row.return_30d_missing_sessions}{" "}
+                                  日实际报价
+                                  {value != null &&
+                                    !suspendedEndpoints &&
+                                    " · 按已核验端点计算"}
                                 </small>
                               )}
                               {value == null && (
