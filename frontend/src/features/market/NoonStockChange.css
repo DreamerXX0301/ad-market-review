@@ -8,5 +8,5 @@
 
 .noon-stock-change .badge {
   padding: 1px 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }

@@ -1,6 +1,18 @@
 .candle-plot {
   position: relative;
 }
+.candle-chart[data-wide-plot] {
+  --chart-type-caption: var(--workbench-type-caption, 12px);
+  --chart-type-label: var(--workbench-type-label, 13px);
+}
+.candle-chart[data-wide-plot] .ohlc-strip {
+  row-gap: 4px;
+  font-size: var(--chart-type-caption);
+  line-height: 1.5;
+}
+.candle-chart[data-wide-plot] :is(.source-line, .chart-bottom) {
+  font-size: var(--chart-type-caption);
+}
 /* A different day's limit/pattern/coverage text must not resize or move the plot.
    Long explanations remain scrollable inside this width-sized information band. */
 .candle-hover-summary {
@@ -32,6 +44,9 @@
   white-space: nowrap;
   overflow: hidden;
 }
+.candle-chart[data-wide-plot] .candle-pane-value {
+  font-size: var(--chart-type-caption);
+}
 .candle-pane-value strong {
   font-weight: 500;
   color: var(--muted);
@@ -42,7 +57,7 @@
 }
 .candle-pane-value time {
   margin-left: auto;
-  font-size: 9px;
+  font-size: var(--chart-type-caption, 9px);
 }
 .candle-pane-boll
   > span:not(.candle-boll-close):not(.candle-pane-reason)::before {
@@ -55,12 +70,12 @@
   background: currentColor;
 }
 .chart-price-basis {
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
   padding: 4px 6px;
 }
 .chart-index-basis {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
   padding: 4px 6px;
 }
 .chart-preferences-button {
@@ -72,7 +87,7 @@
 }
 .chart-preferences-form p {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.8;
 }
 .chart-preferences-form fieldset {
@@ -87,7 +102,7 @@
 .chart-preferences-form legend {
   padding: 0 6px;
   color: var(--subtle);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .chart-preferences-mas {
   display: flex;
@@ -99,7 +114,7 @@
   display: inline-flex;
   gap: 5px;
   align-items: center;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .chart-waves-control {
   display: inline-flex;
@@ -115,7 +130,7 @@
   gap: 8px 14px;
   padding: 7px 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
 }
 .chart-wave-selectors > label {
   display: inline-flex;
@@ -125,11 +140,11 @@
 .chart-wave-selectors select {
   max-width: 330px;
   padding: 4px 6px;
-  font-size: 10px;
+  font-size: var(--chart-type-label, 10px);
 }
 .chart-wave-hint {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--chart-type-caption, 9px);
 }
 .chart-wave-summary {
   margin: 5px 6px;
@@ -138,7 +153,7 @@
   border-radius: 5px;
   background: var(--surface2);
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
   line-height: 1.8;
 }
 .chart-wave-summary p {
@@ -180,7 +195,7 @@
   display: inline-flex;
   gap: 5px;
   align-items: center;
-  font-size: 10px;
+  font-size: var(--chart-type-label, 10px);
   color: var(--subtle);
 }
 .chart-baseline-control {
@@ -188,7 +203,7 @@
   gap: 5px;
   align-items: center;
   color: #c79136;
-  font-size: 10px;
+  font-size: var(--chart-type-label, 10px);
 }
 .chart-baseline-note {
   display: flex;
@@ -196,7 +211,7 @@
   gap: 4px 12px;
   padding: 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
   line-height: 1.7;
 }
 .chart-baseline-note strong {
@@ -216,7 +231,7 @@
   font-weight: 500;
 }
 .candle-limit-status small {
-  font-size: 9px;
+  font-size: var(--chart-type-caption, 9px);
   font-weight: 400;
 }
 .candle-pattern-status {
@@ -224,7 +239,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
 }
 .candle-pattern-status > span {
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
@@ -249,14 +264,14 @@
   flex-wrap: wrap;
   gap: 5px 12px;
   padding: 4px 6px;
-  font-size: 9px;
+  font-size: var(--chart-type-caption, 9px);
   line-height: 1.8;
   color: var(--muted);
 }
 .chart-gap-explanation {
   padding: 5px 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
 }
 .chart-gap-repair {
   display: flex;
@@ -265,7 +280,7 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px 6px;
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
   color: var(--muted);
 }
 .chart-gap-explanation summary {
@@ -380,7 +395,7 @@
 
 .chart-auto-trend-key,
 .chart-auto-trend-empty {
-  font-size: 12px;
+  font-size: var(--chart-type-label, 12px);
   white-space: nowrap;
 }
 
@@ -461,6 +476,17 @@
   justify-content: flex-end;
 }
 
+@media (min-width: 1600px) {
+  .chart-analysis-controls {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .chart-analysis-controls .chart-auto-trend-events {
+    flex-basis: 640px;
+  }
+}
+
 @media (max-width: 760px) {
   .chart-analysis-controls {
     flex-wrap: wrap;
@@ -497,7 +523,7 @@
   gap: 2px;
   padding-right: 6px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--chart-type-caption, 12px);
 }
 
 .chart-auto-trend-explainer strong {
@@ -516,7 +542,7 @@
   text-align: left;
   cursor: pointer;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--chart-type-label, 12px);
 }
 
 .chart-auto-trend-event strong {
@@ -531,7 +557,7 @@
 .chart-auto-trend-heading {
   flex: none;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--chart-type-label, 12px);
   white-space: nowrap;
 }
 

@@ -31,7 +31,7 @@
 }
 .market-date-notice-copy span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
 }
 .market-date-notice .btn {

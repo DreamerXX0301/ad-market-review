@@ -11,11 +11,11 @@
 }
 .auction-height-heading strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .auction-height-heading > span {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
 }
 .auction-height-options {
   display: grid;
@@ -37,7 +37,7 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .auction-height-option b {
   color: var(--blue);
@@ -46,8 +46,8 @@
 .auction-height-option small {
   display: block;
   margin-top: 5px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
 }
 .auction-height-option em {
   font-style: normal;
@@ -74,15 +74,15 @@
   border-radius: 5px;
   color: var(--blue);
   background: color-mix(in srgb, var(--blue) 8%, var(--surface2));
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.6;
   white-space: nowrap;
 }
 .auction-height-sort-note {
   padding: 9px 18px;
   margin: 0;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 @media (max-width: 1450px) {
   .auction-height-options {

@@ -15,9 +15,9 @@
   display: inline-block;
   padding: 3px 6px;
   border-radius: 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.45;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   background: var(--surface3);
   white-space: nowrap;
 }
@@ -35,12 +35,12 @@
   font-weight: 550;
 }
 .amount-activity-cell > small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .amount-activity-dates {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .amount-activity-dates summary,
 .amount-activity-direction-details summary {
@@ -64,8 +64,8 @@
 .amount-activity-summary {
   border-top: 1px solid var(--border);
   padding: 13px 18px;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-label, 11px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .amount-activity-summary-head {
   display: flex;
@@ -78,10 +78,10 @@
 .amount-activity-summary-head strong {
   color: var(--text);
   font-weight: 550;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .amount-activity-summary-head > span {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .amount-activity-summary p {
   line-height: 1.8;
@@ -101,15 +101,15 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .amount-activity-direction-tags small {
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
 }
 .amount-activity-direction-details {
   margin-top: 10px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .amount-activity-direction-details > div {
   display: grid;
@@ -124,13 +124,13 @@
   padding: 10px 12px;
 }
 .amount-activity-direction-details article > strong {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 550;
   color: var(--text);
 }
 .amount-activity-direction-details article > small {
   display: block;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   margin: 6px 0;
 }
 .amount-activity-direction-details ul {
@@ -152,8 +152,8 @@
   color: var(--blue);
 }
 .amount-activity-scope {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 @media (max-width: 680px) {
   .amount-activity-direction-details > div {
@@ -171,8 +171,8 @@
   flex-wrap: wrap;
   gap: 4px 7px;
   align-items: baseline;
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .sector-activity-metric > b {
   color: var(--text);
@@ -183,24 +183,24 @@
   color: var(--blue);
 }
 .sector-activity-metric > .amount-activity-repeat {
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   padding: 2px 4px;
 }
 .sector-activity-metric > small {
   width: 100%;
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
 }
 .sector-activity-date-list {
   margin-top: 10px;
 }
 .sector-activity-date-list > strong {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 500;
   color: var(--text);
 }
 .sector-activity-date-list p {
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   line-height: 1.7;
   margin: 6px 0;
 }
@@ -210,21 +210,21 @@
   border-bottom: 1px solid var(--border);
   display: grid;
   gap: 7px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.7;
 }
 .sector-activity-coverage > strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 550;
 }
 .sector-activity-coverage > div {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 15px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .sector-activity-coverage > small {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }

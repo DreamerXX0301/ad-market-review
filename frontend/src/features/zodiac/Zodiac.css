@@ -99,7 +99,7 @@
   min-width: 240px;
 }
 .zodiac-sort {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-sort small {
   color: var(--muted);
@@ -169,7 +169,7 @@
   border-collapse: separate;
   border-spacing: 0;
   min-width: 100%;
-  font-size: 13px;
+  font-size: var(--workbench-type-label, 13px);
 }
 .zodiac-table th {
   color: var(--muted);
@@ -238,8 +238,8 @@
 .zodiac-identity small,
 .zodiac-metric small,
 .zodiac-page .topic-history-cell small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-metric,
 .zodiac-page .topic-history-cell,
@@ -258,7 +258,7 @@
   white-space: normal;
   display: grid;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-memberships > div {
   display: flex;
@@ -303,7 +303,7 @@
 }
 .zodiac-pagination {
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-mobile-cards {
   display: none;
@@ -312,8 +312,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-editor label:not(.zodiac-check) {
   display: grid;
@@ -379,8 +379,8 @@
   color: var(--muted);
 }
 .zodiac-detail-grid p {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  color: var(--workbench-type-muted, var(--muted));
   margin-top: 10px;
 }
 .zodiac-detail details > summary {
@@ -392,7 +392,7 @@
   overflow-wrap: anywhere;
   max-height: 300px;
   overflow: auto;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-user-text {
   white-space: pre-wrap;
@@ -511,7 +511,7 @@
   background: var(--surface2);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   text-align: left;
   cursor: pointer;
   transition:
@@ -554,7 +554,7 @@
   box-shadow:
     0 12px 36px #0004,
     0 2px 8px #0002;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-select-menu [role="option"] {
   display: flex;
@@ -620,7 +620,7 @@
   margin-bottom: 5px;
 }
 .zodiac-hero p {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-year-panel {
   padding: 16px 18px;
@@ -631,16 +631,16 @@
   margin-bottom: 6px;
 }
 .zodiac-year-panel p {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-year-controls {
   gap: 10px;
 }
 .zodiac-year-controls label {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-scope {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-summary {
   gap: 0;
@@ -654,7 +654,7 @@
   border: 0;
   border-right: 1px solid var(--border);
   border-radius: 0;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-summary > span:last-child {
   border-right: 0;
@@ -664,7 +664,7 @@
   margin-top: 6px;
 }
 .zodiac-summary small {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   margin-top: 3px;
 }
 .zodiac-controls {
@@ -675,7 +675,7 @@
 }
 .zodiac-groups button {
   padding: 7px 11px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   border-radius: 7px;
   transition:
     background 0.15s,
@@ -696,7 +696,7 @@
 }
 .zodiac-filters > input {
   min-height: 36px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   border-radius: 8px;
 }
 .zodiac-table-toolbar {
@@ -707,24 +707,24 @@
   gap: 16px;
 }
 .zodiac-sort label {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-sort .zodiac-select-trigger {
   min-height: 30px;
   padding: 5px 9px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-sort > small {
   margin-left: auto;
   max-width: 360px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.6;
 }
 .zodiac-row-actions .btn {
   background: transparent;
   border-color: transparent;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   padding: 5px 7px;
 }
 .zodiac-row-actions .btn:first-child {
@@ -743,8 +743,8 @@
   padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--workbench-type-label, 12px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .zodiac-column-picker[open] > summary {
   color: var(--accent-secondary);
@@ -755,7 +755,7 @@
   padding: 12px;
 }
 .zodiac-column-picker label {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-column-picker label button:first-of-type {
   margin-left: auto;
@@ -802,12 +802,12 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-editor-context > small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-selection {
   display: flex;
@@ -842,8 +842,8 @@
   color: var(--text);
 }
 .zodiac-selection small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-status-pill {
   display: inline-flex;
@@ -853,7 +853,7 @@
   border: 1px solid
     color-mix(in srgb, var(--accent-secondary) 25%, var(--border));
   border-radius: 20px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   white-space: nowrap;
   background: color-mix(in srgb, var(--accent-secondary) 8%, var(--surface));
 }
@@ -865,13 +865,13 @@
 }
 .zodiac-editor label:not(.zodiac-check) {
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   gap: 8px;
 }
 .zodiac-form-grid em {
   font-style: normal;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   margin-left: 5px;
 }
 .zodiac-form-grid .zodiac-select {
@@ -880,13 +880,13 @@
 .zodiac-form-grid .zodiac-select-trigger,
 .zodiac-form-grid input:not([type="checkbox"]) {
   min-height: 39px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   border-radius: 8px;
 }
 .zodiac-editor textarea {
   border-radius: 8px;
   padding: 12px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.8;
   background: color-mix(in srgb, var(--surface2) 80%, var(--surface));
 }
@@ -906,8 +906,8 @@
   position: absolute;
   bottom: 8px;
   right: 12px;
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
   pointer-events: none;
 }
 .zodiac-editor .zodiac-focus-control {
@@ -933,12 +933,12 @@
   gap: 4px;
 }
 .zodiac-focus-control strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 500;
 }
 .zodiac-focus-control small {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .zodiac-focus-control input {
   appearance: none;
@@ -980,14 +980,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
   cursor: pointer;
   list-style: none;
   padding: 3px 0;
 }
 .zodiac-links-field > summary small {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   margin-left: auto;
 }
 .zodiac-links-field > summary::-webkit-details-marker {
@@ -1000,8 +1000,8 @@
   margin-top: 12px;
 }
 .zodiac-links-field > label > small {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .zodiac-dialog-actions {
   flex: 0 0 auto;
@@ -1012,8 +1012,8 @@
 }
 .zodiac-dialog-actions > small {
   margin-right: auto;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .zodiac-dialog-actions .btn {
   min-width: 72px;
@@ -1051,8 +1051,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-detail-hero > button {
   margin-left: auto;
@@ -1063,8 +1063,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  color: var(--workbench-type-muted, var(--muted));
   margin-top: -6px;
 }
 .zodiac-detail-dates i {
@@ -1093,8 +1093,8 @@
 }
 .zodiac-detail-highlights > div > small {
   display: block;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  color: var(--workbench-type-muted, var(--muted));
   margin-bottom: 10px;
 }
 .zodiac-detail-highlights .zodiac-metric > span {
@@ -1107,8 +1107,8 @@
 }
 .zodiac-detail-highlights .zodiac-metric small,
 .zodiac-detail-highlights .topic-history-cell small {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .zodiac-detail-layout {
   display: grid;
@@ -1135,9 +1135,9 @@
   border: 0;
   border-bottom: 2px solid transparent;
   padding: 11px 0;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   cursor: pointer;
 }
 .zodiac-detail-tabs button.active {
@@ -1158,16 +1158,16 @@
 }
 .zodiac-detail h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--workbench-type-label, 13px);
   font-weight: 600;
 }
 .zodiac-detail-group-head > small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .zodiac-detail-group-head .zodiac-select-trigger {
   min-height: 30px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   padding: 5px 9px;
 }
 .zodiac-detail-grid {
@@ -1183,7 +1183,7 @@
 }
 .zodiac-detail-grid > div > small {
   margin-bottom: 8px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-detail-grid .zodiac-metric > span {
   font-size: 15px;
@@ -1193,8 +1193,8 @@
   align-items: flex-start;
   gap: 6px;
   margin: 12px 0 18px;
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .zodiac-detail-hint svg {
   flex-shrink: 0;
@@ -1222,26 +1222,26 @@
 }
 .zodiac-aside-card .zodiac-memberships {
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-aside-card .zodiac-memberships > div {
   align-items: flex-start;
 }
 .zodiac-detail .zodiac-aside-caption {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   margin-top: 12px;
 }
 .zodiac-relation-pill {
   display: inline-flex;
   padding: 4px 8px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   border-radius: 5px;
   color: var(--accent-secondary);
   background: color-mix(in srgb, var(--accent-secondary) 10%, var(--surface));
 }
 .zodiac-detail .zodiac-user-text {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   color: var(--text);
   line-height: 1.9;
   margin-top: 10px;
@@ -1256,7 +1256,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .zodiac-detail .zodiac-evidence > summary,
 .zodiac-detail .zodiac-detail-section > summary {
@@ -1265,7 +1265,7 @@
   gap: 8px;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-detail .zodiac-evidence > summary::-webkit-details-marker,
 .zodiac-detail .zodiac-detail-section > summary::-webkit-details-marker {
@@ -1287,7 +1287,7 @@
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 10px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   margin-top: 16px;
 }
 .zodiac-evidence dt {
@@ -1298,16 +1298,16 @@
   margin: 0;
 }
 .zodiac-evidence details > summary {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .zodiac-detail-section {
   padding: 15px 0;
   border-top: 1px solid var(--border);
 }
 .zodiac-detail-section > summary > small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .zodiac-section-content {
   padding-top: 14px;
@@ -1317,11 +1317,11 @@
   text-align: center;
   border-radius: 8px;
   background: var(--surface2);
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-inline-empty p {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   margin-top: 5px;
 }
 .zodiac-event-line {
@@ -1329,11 +1329,11 @@
   gap: 10px;
   padding: 8px 0;
   align-items: baseline;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-event-line > span {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   flex-shrink: 0;
 }
 .zodiac-timeline .zodiac-audit {
@@ -1356,21 +1356,21 @@
   min-width: 0;
 }
 .zodiac-audit strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 500;
 }
 .zodiac-audit small {
   display: block;
   margin: 5px 0 7px;
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .zodiac-audit p {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-audit details > summary {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .zodiac-detail pre {
   padding: 12px;
@@ -1558,13 +1558,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-selected-heading small,
 .zodiac-selected-stocks p,
 .zodiac-selection-hint {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
 }
 .zodiac-selected-stocks ul {
@@ -1589,12 +1589,12 @@
   min-width: 0;
 }
 .zodiac-selected-stocks li strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   overflow-wrap: anywhere;
 }
 .zodiac-selected-stocks li small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .zodiac-selected-stocks .icon-btn {
   flex-shrink: 0;
@@ -1605,7 +1605,7 @@
   border: 0;
   background: transparent;
   color: var(--accent-secondary);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   cursor: pointer;
 }
 .modal:has(.zodiac-memberships-panel) {
@@ -1626,8 +1626,8 @@
 }
 .zodiac-memberships-panel header span,
 .zodiac-memberships-panel header small {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .zodiac-memberships-scroll {
   max-height: min(440px, 50dvh);
@@ -1636,13 +1636,13 @@
   padding: 4px 4px 8px 0;
 }
 .zodiac-memberships-panel h3 {
-  font-size: 13px;
+  font-size: var(--workbench-type-label, 13px);
   margin: 16px 0 10px;
 }
 .zodiac-memberships-panel h3 small {
   margin-left: 6px;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  color: var(--workbench-type-muted, var(--muted));
   font-weight: 400;
 }
 .zodiac-memberships-panel section > div {
@@ -1666,8 +1666,8 @@
   padding-top: 14px;
 }
 .zodiac-memberships-panel footer small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
 }
 .zodiac-memberships-panel footer button {
@@ -1703,6 +1703,6 @@
   background: color-mix(in srgb, var(--accent-secondary) 12%, var(--surface));
 }
 .zodiac-input-method small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }

@@ -11,8 +11,8 @@
   line-height: 1.45;
 }
 .nav-item-copy > small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 400;
 }
 .nav-item.active .nav-item-copy > small {

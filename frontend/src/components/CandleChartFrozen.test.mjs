@@ -21,12 +21,17 @@ async function helper(name) {
   );
 }
 const preferences = await helper("./chartPreferences.ts");
-const { chartAutomaticTrendlines } = await helper("./chartAutomaticTrendlines.ts");
+const { chartAutomaticTrendlines } = await helper(
+  "./chartAutomaticTrendlines.ts",
+);
 const { chartBoll, bollCandleValues } = await helper("./chartBoll.ts");
-const { annotationColors, lineLabel, savedLineSettings, levelOriginLabel } = await helper("./chartAnnotations.ts");
+const { annotationColors, lineLabel, savedLineSettings, levelOriginLabel } =
+  await helper("./chartAnnotations.ts");
 const lineLabels = await helper("./chartLineLabelLayout.ts");
-const { chartPaneLayout } = await helper("./chartPaneLayout.ts");
-const { candleChartEndpoint, initialChartResponse } = await helper("./chartEndpoint.ts");
+const { chartHoverSummaryHeight, chartPaneLayout, chartTextSizes } =
+  await helper("./chartPaneLayout.ts");
+const { candleChartEndpoint, initialChartResponse } =
+  await helper("./chartEndpoint.ts");
 const { candleExtremeChange } = await helper("./candleExtremeChange.ts");
 const { chartSessionDistance } = await helper("./chartSessionDistance.ts");
 const { chartPriceBasis } = await helper("./chartPriceBasis.ts");
@@ -63,6 +68,7 @@ let period = "D",
   option,
   allowLive = false,
   annotationViews = [];
+let plotSize = { width: 0, wideViewport: false };
 const settings = preferences.normalizeChartPreferences({
   version: 4,
   stockMas: [],
@@ -78,6 +84,8 @@ const scopeValues = {
   ...React,
   useState: (initial) => {
     const value = typeof initial === "function" ? initial() : initial;
+    if (value && typeof value === "object" && "wideViewport" in value)
+      return [plotSize, () => {}];
     return [value === "D" ? period : value, () => {}];
   },
   useMemo: (fn) => fn(),
@@ -97,7 +105,9 @@ const scopeValues = {
   levelOriginLabel,
   ...lineLabels,
   EMPTY_LINE_IDS: new Set(),
+  chartHoverSummaryHeight,
   chartPaneLayout,
+  chartTextSizes,
   candleChartEndpoint,
   initialChartResponse,
   candleExtremeChange,
@@ -121,10 +131,20 @@ const scopeValues = {
   },
   useChartAnnotations: (_id, _data, enabled) => {
     annotations.push(enabled);
-    return { enabled, visible: enabled ? annotationViews : [], views: enabled ? annotationViews : [], selectedCandidates: [], preview: null, show: true, result: { loading: false }, drawing: false };
+    return {
+      enabled,
+      visible: enabled ? annotationViews : [],
+      views: enabled ? annotationViews : [],
+      selectedCandidates: [],
+      preview: null,
+      show: true,
+      result: { loading: false },
+      drawing: false,
+    };
   },
   chartPalette: () => ({
     text: "#fff",
+    axisText: "#9aacc3",
     line: "#333",
     tooltip: "#111",
     tooltipText: "#dce6f5",
@@ -137,7 +157,13 @@ const scopeValues = {
   }),
   maColors: ["#1", "#2", "#3", "#4", "#5", "#6"],
   defaultChartWindow: () => ({ start: 0, end: 100 }),
-  singlePageDefaultWindow: (_period, bars) => ({ start: 0, end: 100, firstDate: bars[0]?.date || null, sessions: 120, label: "测试冻结显示范围" }),
+  singlePageDefaultWindow: (_period, bars) => ({
+    start: 0,
+    end: 100,
+    firstDate: bars[0]?.date || null,
+    sessions: 120,
+    label: "测试冻结显示范围",
+  }),
   projectEventBaseline: () => ({ price: null, reason: "" }),
   historicalChartEvents: () => [],
   projectHistoricalChartEvent: () => null,
@@ -156,7 +182,8 @@ const scopeValues = {
   chartPriceBasis,
   chartIndicatorAvailability: () => ({ missing: [], reason: "", label: "" }),
   chartDataNotes: () => [],
-  ChartToggle: ({ label, checked }) => jsx("button", { "aria-pressed": checked, children: label }),
+  ChartToggle: ({ label, checked }) =>
+    jsx("button", { "aria-pressed": checked, children: label }),
   confirmedBarLimits: () => [],
   num: (value) => (value == null ? "—" : String(value)),
   percent: (value) => (value == null ? "—" : String(value) + "%"),
@@ -244,7 +271,10 @@ const trendChart = {
   ...chartData,
   snapshot_id: "test-chart-snapshot",
   bars: [
-    ...["2026-10-20", "2026-10-21"].map(date => ({ ...chartData.bars[0], date })),
+    ...["2026-10-20", "2026-10-21"].map((date) => ({
+      ...chartData.bars[0],
+      date,
+    })),
     ...chartData.bars,
   ],
   automatic_trendlines: {
@@ -255,79 +285,146 @@ const trendChart = {
     snapshot_id: "test-chart-snapshot",
     price_basis: "none",
     items: [
-      { line_type: "support", start_date: "2026-10-20", start_price: 8,
-        end_date: "2026-10-22", end_price: 9, confirmed_on: "2026-10-21" },
-      { line_type: "resistance", start_date: "2026-10-21", start_price: 12,
-        end_date: "2026-10-22", end_price: 11, confirmed_on: "2026-10-22" },
+      {
+        line_type: "support",
+        start_date: "2026-10-20",
+        start_price: 8,
+        end_date: "2026-10-22",
+        end_price: 9,
+        confirmed_on: "2026-10-21",
+      },
+      {
+        line_type: "resistance",
+        start_date: "2026-10-21",
+        start_price: 12,
+        end_date: "2026-10-22",
+        end_price: 11,
+        confirmed_on: "2026-10-22",
+      },
     ],
   },
 };
-const trendHtml = renderToStaticMarkup(jsx(Chart, {
-  instrumentId: "000001.SZ",
-  frozenChartsByPeriod: { D: trendChart },
-  showDataNotes: false,
-}));
+const trendHtml = renderToStaticMarkup(
+  jsx(Chart, {
+    instrumentId: "000001.SZ",
+    frozenChartsByPeriod: { D: trendChart },
+    showDataNotes: false,
+  }),
+);
 assert.match(trendHtml, /aria-pressed="true">自动趋势线/);
 assert.match(trendHtml, /上升支撑线/);
 assert.match(trendHtml, /下降压力线/);
 assert.match(trendHtml, /上升支撑线<strong>9<\/strong>/);
 assert.match(trendHtml, /下降压力线<strong>11<\/strong>/);
-const automatic = option.series.filter(row => ["上升支撑线", "下降压力线"].includes(row.name));
-assert.deepEqual(automatic.map(row => row.data), [[8, 8.5, 9], [null, 12, 11]]);
-assert.deepEqual(automatic.map(row => row.lineStyle.type), ["solid", "dashed"]);
+const automatic = option.series.filter((row) =>
+  ["上升支撑线", "下降压力线"].includes(row.name),
+);
+assert.deepEqual(
+  automatic.map((row) => row.data),
+  [
+    [8, 8.5, 9],
+    [null, 12, 11],
+  ],
+);
+assert.deepEqual(
+  automatic.map((row) => row.lineStyle.type),
+  ["solid", "dashed"],
+);
 assert.notEqual(automatic[0].lineStyle.color, automatic[1].lineStyle.color);
 const bothRising = structuredClone(trendChart);
 bothRising.automatic_trendlines.items[1].end_price = 13;
-const risingLines = chartAutomaticTrendlines(bothRising, "000001.SZ", "D").lines;
-assert.deepEqual(risingLines.map(line => line.label), ["上升支撑线", "上升压力线"]);
+const risingLines = chartAutomaticTrendlines(
+  bothRising,
+  "000001.SZ",
+  "D",
+).lines;
+assert.deepEqual(
+  risingLines.map((line) => line.label),
+  ["上升支撑线", "上升压力线"],
+);
 assert.equal(risingLines[0].color, risingLines[1].color);
 assert.notEqual(risingLines[0].stroke, risingLines[1].stroke);
-assert.ok(automatic.every(row => row.xAxisIndex === 0 && row.yAxisIndex === 0 && row.silent));
-assert.ok(!option.series.some(row => row.name === "支撑压力与事件参照"));
+assert.ok(
+  automatic.every(
+    (row) => row.xAxisIndex === 0 && row.yAxisIndex === 0 && row.silent,
+  ),
+);
+assert.ok(!option.series.some((row) => row.name === "支撑压力与事件参照"));
 const layered = structuredClone(trendChart);
 const overlay = layered.automatic_trendlines;
-overlay.near_items = [{
-  line_type: "support", start_date: "2026-10-21", start_price: 8.6,
-  end_date: "2026-10-22", end_price: 9.2, confirmed_on: "2026-10-22",
-}];
-overlay.zones = [{
-  line_type: "support", lower_price: 8.6, upper_price: 9.1,
-  start_date: "2026-10-20", end_date: "2026-10-22", touches: 2,
-}];
-overlay.events = [{
-  line_type: "resistance", scope: "main", state: "wick_cross",
-  date: "2026-10-22", price: 11, line: overlay.items[1],
-}];
-const layeredHtml = renderToStaticMarkup(jsx(Chart, {
-  instrumentId: "000001.SZ",
-  frozenChartsByPeriod: { D: layered },
-  showDataNotes: false,
-}));
+overlay.near_items = [
+  {
+    line_type: "support",
+    start_date: "2026-10-21",
+    start_price: 8.6,
+    end_date: "2026-10-22",
+    end_price: 9.2,
+    confirmed_on: "2026-10-22",
+  },
+];
+overlay.zones = [
+  {
+    line_type: "support",
+    lower_price: 8.6,
+    upper_price: 9.1,
+    start_date: "2026-10-20",
+    end_date: "2026-10-22",
+    touches: 2,
+  },
+];
+overlay.events = [
+  {
+    line_type: "resistance",
+    scope: "main",
+    state: "wick_cross",
+    date: "2026-10-22",
+    price: 11,
+    line: overlay.items[1],
+  },
+];
+const layeredHtml = renderToStaticMarkup(
+  jsx(Chart, {
+    instrumentId: "000001.SZ",
+    frozenChartsByPeriod: { D: layered },
+    showDataNotes: false,
+  }),
+);
 assert.match(layeredHtml, /近端上升支撑线/);
 assert.match(layeredHtml, /水平支撑区/);
 assert.match(layeredHtml, /盘中越过压力，收盘回落/);
-const zoneAreas = option.series.find(row => row.name === "水平观察区").markArea.data;
+const zoneAreas = option.series.find((row) => row.name === "水平观察区")
+  .markArea.data;
 assert.equal(zoneAreas.length, 1);
-assert.match(layeredHtml, new RegExp(`chart-auto-trend-zone-swatch" style="border-color:${zoneAreas[0][0].itemStyle.borderColor}`));
+assert.match(
+  layeredHtml,
+  new RegExp(
+    `chart-auto-trend-zone-swatch" style="border-color:${zoneAreas[0][0].itemStyle.borderColor}`,
+  ),
+);
 const neutralZoneChart = structuredClone(layered);
 const neutralClose = neutralZoneChart.bars.at(-1).close;
 neutralZoneChart.automatic_trendlines.zones[0].upper_price = neutralClose + 0.1;
-const neutralZone = chartAutomaticTrendlines(neutralZoneChart, "000001.SZ", "D").zones[0];
+const neutralZone = chartAutomaticTrendlines(neutralZoneChart, "000001.SZ", "D")
+  .zones[0];
 assert.equal(neutralZone.label, "水平观察区");
 assert.notEqual(neutralZone.color, zoneAreas[0][0].itemStyle.borderColor);
-const historyMarker = option.series.find(row => row.name === "盘中越过压力，收盘回落");
+const historyMarker = option.series.find(
+  (row) => row.name === "盘中越过压力，收盘回落",
+);
 assert.deepEqual(historyMarker.markPoint.data[0].coord, ["2026-10-22", 11]);
 assert.deepEqual(historyMarker.data, []);
 assert.match(layeredHtml, /aria-pressed="false">显示全部旧线/);
 settings.stockShowAllTrendHistory = true;
-const allHistoryHtml = renderToStaticMarkup(jsx(Chart, {
-  instrumentId: "000001.SZ",
-  frozenChartsByPeriod: { D: layered },
-  showDataNotes: false,
-}));
+const allHistoryHtml = renderToStaticMarkup(
+  jsx(Chart, {
+    instrumentId: "000001.SZ",
+    frozenChartsByPeriod: { D: layered },
+    showDataNotes: false,
+  }),
+);
 assert.match(allHistoryHtml, /aria-pressed="true">显示全部旧线/);
 assert.deepEqual(
-  option.series.find(row => row.name === "盘中越过压力，收盘回落").data,
+  option.series.find((row) => row.name === "盘中越过压力，收盘回落").data,
   [null, 12, 11],
 );
 settings.stockShowAllTrendHistory = false;
@@ -336,24 +433,53 @@ annotations.pop();
 paths.pop();
 annotations.pop();
 for (const cycle of ["W", "M"]) {
-  const values = chartAutomaticTrendlines({
-    ...trendChart,
-    period: cycle,
-    automatic_trendlines: { ...trendChart.automatic_trendlines, period: cycle },
-  }, "000001.SZ", cycle);
+  const values = chartAutomaticTrendlines(
+    {
+      ...trendChart,
+      period: cycle,
+      automatic_trendlines: {
+        ...trendChart.automatic_trendlines,
+        period: cycle,
+      },
+    },
+    "000001.SZ",
+    cycle,
+  );
   assert.equal(values.lines.length, 2);
 }
-assert.equal(chartAutomaticTrendlines(trendChart, "600000.SH", "D").available, false);
-assert.equal(chartAutomaticTrendlines(trendChart, "000001.SZ", "W").available, false);
-assert.equal(chartAutomaticTrendlines(trendChart, "000001.SZ", "D", "2026-10-21").available, false);
-for (const [key, value] of [["snapshot_id", "stale"], ["price_basis", "forward_event_affine"]]) {
-  const mismatch = { ...trendChart, automatic_trendlines: { ...trendChart.automatic_trendlines, [key]: value } };
-  assert.equal(chartAutomaticTrendlines(mismatch, "000001.SZ", "D").available, false);
+assert.equal(
+  chartAutomaticTrendlines(trendChart, "600000.SH", "D").available,
+  false,
+);
+assert.equal(
+  chartAutomaticTrendlines(trendChart, "000001.SZ", "W").available,
+  false,
+);
+assert.equal(
+  chartAutomaticTrendlines(trendChart, "000001.SZ", "D", "2026-10-21")
+    .available,
+  false,
+);
+for (const [key, value] of [
+  ["snapshot_id", "stale"],
+  ["price_basis", "forward_event_affine"],
+]) {
+  const mismatch = {
+    ...trendChart,
+    automatic_trendlines: { ...trendChart.automatic_trendlines, [key]: value },
+  };
+  assert.equal(
+    chartAutomaticTrendlines(mismatch, "000001.SZ", "D").available,
+    false,
+  );
 }
 const invalid = structuredClone(trendChart);
 invalid.automatic_trendlines.items[0].confirmed_on = "2026-10-23";
 invalid.automatic_trendlines.items[1].end_date = "2026-10-23";
-assert.equal(chartAutomaticTrendlines(invalid, "000001.SZ", "D").lines.length, 0);
+assert.equal(
+  chartAutomaticTrendlines(invalid, "000001.SZ", "D").lines.length,
+  0,
+);
 paths.pop();
 annotations.pop();
 period = "M";
@@ -443,12 +569,19 @@ renderToStaticMarkup(
     showDataNotes: false,
   }),
 );
-const plotted = option.series.find((row) => row.name === "支撑压力与事件参照").markLine
-  .data[0];
+const plotted = option.series.find((row) => row.name === "支撑压力与事件参照")
+  .markLine.data[0];
 assert.equal(plotted.yAxis, 9.84);
-assert.equal(plotted.label.show, false, "full descriptions belong in the independent label rail");
+assert.equal(
+  plotted.label.show,
+  false,
+  "full descriptions belong in the independent label rail",
+);
 assert.match(plotted.name, /9\.84/);
-assert.ok(option.grid[0].right >= 100, "right rail never covers the last candles");
+assert.ok(
+  option.grid[0].right >= 100,
+  "right rail never covers the last candles",
+);
 assert.ok(option.grid.every((grid) => grid.right === option.grid[0].right));
 assert.equal(
   savedLine.price,
@@ -578,33 +711,120 @@ const noonPreview = {
   trade_date: "2026-10-23",
   previous_trade_date: "2026-10-22",
   collected_end_at: "2026-10-23T03:31:02Z",
-  quote: { instrument_id: "000001.SZ", open: 10.05, high: 11.2, low: 10, latest_price: 10.4, prev_close: chartData.bars.at(-1).close, change_pct: 4 },
+  quote: {
+    instrument_id: "000001.SZ",
+    open: 10.05,
+    high: 11.2,
+    low: 10,
+    latest_price: 10.4,
+    prev_close: chartData.bars.at(-1).close,
+    change_pct: 4,
+  },
 };
 settings.stockShowBoll = true;
-const noonHtml = renderToStaticMarkup(jsx(Chart, {
-  instrumentId: "000001.SZ",
-  instrumentKind: "stock",
-  asOf: "2026-10-22",
-  noonPreview,
-}));
+const noonHtml = renderToStaticMarkup(
+  jsx(Chart, {
+    instrumentId: "000001.SZ",
+    instrumentKind: "stock",
+    asOf: "2026-10-22",
+    noonPreview,
+  }),
+);
 assert.match(noonHtml, /午间未收盘/);
 assert.match(noonHtml, /11:31:02/);
-assert.deepEqual(option.series.find(row => row.name === "K线").data.at(-1), [10.05, 10.4, 10, 11.2]);
-assert.equal(option.series.find(row => row.name === "BOLL K线").data.length, chartData.bars.length);
-assert.match(option.tooltip.formatter([{ axisValue: "2026-10-23" }]), /午间价 <strong>10.4<\/strong>/);
+assert.deepEqual(
+  option.series.find((row) => row.name === "K线").data.at(-1),
+  [10.05, 10.4, 10, 11.2],
+);
+assert.equal(
+  option.series.find((row) => row.name === "BOLL K线").data.length,
+  chartData.bars.length,
+);
+assert.match(
+  option.tooltip.formatter([{ axisValue: "2026-10-23" }]),
+  /午间价 <strong>10.4<\/strong>/,
+);
 const noonTooltip = option.tooltip.formatter([{ axisValue: "2026-10-23" }]);
 assert.match(noonTooltip, /午间涨跌幅 <strong style="color:#f00">4%/);
 const { provisionalNoonBar } = await helper("./noonChartPreview.ts");
 assert.equal(provisionalNoonBar(noonPreview, chartData, "W"), null);
-assert.equal(provisionalNoonBar({ ...noonPreview, previous_trade_date: "2026-10-21" }, chartData, "D"), null);
-assert.equal(provisionalNoonBar({ ...noonPreview, quote: { ...noonPreview.quote, prev_close: 9.95 } }, chartData, "D"), null);
-assert.equal(provisionalNoonBar(noonPreview, { ...chartData, price_basis: "forward_event_affine" }, "D"), null);
+assert.equal(
+  provisionalNoonBar(
+    { ...noonPreview, previous_trade_date: "2026-10-21" },
+    chartData,
+    "D",
+  ),
+  null,
+);
+assert.equal(
+  provisionalNoonBar(
+    { ...noonPreview, quote: { ...noonPreview.quote, prev_close: 9.95 } },
+    chartData,
+    "D",
+  ),
+  null,
+);
+assert.equal(
+  provisionalNoonBar(
+    noonPreview,
+    { ...chartData, price_basis: "forward_event_affine" },
+    "D",
+  ),
+  null,
+);
 
 const anchoredNoonChart = {
   ...chartData,
   price_basis: "forward_event_affine",
   adjustment: { usable: true, anchor: "2026-10-22" },
-  bars: chartData.bars.map(bar => ({ ...bar, raw_close: bar.close })),
+  bars: chartData.bars.map((bar) => ({ ...bar, raw_close: bar.close })),
 };
-assert.equal(provisionalNoonBar(noonPreview, anchoredNoonChart, "D").close, 10.4);
-assert.equal(provisionalNoonBar({ ...noonPreview, quote: { ...noonPreview.quote, prev_close: null } }, anchoredNoonChart, "D"), null);
+assert.equal(
+  provisionalNoonBar(noonPreview, anchoredNoonChart, "D").close,
+  10.4,
+);
+assert.equal(
+  provisionalNoonBar(
+    { ...noonPreview, quote: { ...noonPreview.quote, prev_close: null } },
+    anchoredNoonChart,
+    "D",
+  ),
+  null,
+);
+
+const responsiveChart = (width, wideViewport) => {
+  plotSize = { width, wideViewport };
+  return renderToStaticMarkup(
+    jsx(Chart, {
+      instrumentId: "000001.SZ",
+      instrumentKind: "stock",
+      frozenChartsByPeriod: { D: chartData },
+      showDataNotes: false,
+    }),
+  );
+};
+const compactChart = responsiveChart(1380, false);
+const compactCandles = option.series.find((row) => row.name === "K线").data;
+const compactGrids = option.grid;
+assert.doesNotMatch(compactChart, /data-wide-plot/);
+assert.match(compactChart, /height:82px/);
+assert.ok(option.yAxis.every((axis) => axis.axisLabel.fontSize === 10));
+assert.equal(option.tooltip.textStyle.fontSize, 11);
+assert.doesNotMatch(responsiveChart(1000, true), /data-wide-plot/);
+
+const wideChart = responsiveChart(1510, true);
+assert.match(wideChart, /data-wide-plot="true"/);
+assert.match(wideChart, /height:80px/);
+assert.ok(option.xAxis.every((axis) => axis.axisLabel.fontSize === 12));
+assert.ok(
+  option.yAxis.every(
+    (axis) =>
+      axis.axisLabel.fontSize === 12 && axis.axisLabel.color === "#9aacc3",
+  ),
+);
+assert.deepEqual(option.tooltip.textStyle, { color: "#dce6f5", fontSize: 13 });
+assert.deepEqual(option.grid, compactGrids);
+assert.deepEqual(
+  option.series.find((row) => row.name === "K线").data,
+  compactCandles,
+);

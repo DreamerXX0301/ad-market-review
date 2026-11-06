@@ -8,7 +8,7 @@
 .noon-board-filter > span {
   margin-right: 3px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .noon-board-filter > .btn[aria-pressed="true"] {
   color: var(--blue);
@@ -17,7 +17,7 @@
 }
 .noon-board-filter > small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.5;
   margin-left: 5px;
 }
@@ -29,7 +29,7 @@
   border-radius: 3px;
   color: var(--muted);
   background: color-mix(in srgb, var(--blue) 5%, transparent);
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   font-weight: 400;
   line-height: 1.5;
   white-space: nowrap;

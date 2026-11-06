@@ -30,7 +30,7 @@
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .hot-universe-receipt summary {
   cursor: pointer;

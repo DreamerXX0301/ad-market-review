@@ -27,8 +27,8 @@
 .ladder-intro p,
 .ladder-section-heading p,
 .ladder-main-heading p {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
   margin-top: 4px;
 }
@@ -37,7 +37,7 @@
   align-items: center;
   gap: 5px;
   color: var(--blue);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-overview {
   display: grid;
@@ -55,8 +55,8 @@
 }
 .ladder-overview > div > span {
   display: block;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   margin-bottom: 5px;
 }
 .ladder-overview strong {
@@ -68,14 +68,14 @@
   color: var(--ladder-high);
 }
 .ladder-overview small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 400;
   margin-left: 6px;
 }
 .ladder-overview > p {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.8;
 }
 .ladder-controls {
@@ -96,8 +96,8 @@
 .ladder-view-switch > button {
   border: 0;
   background: transparent;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   padding: 7px 12px;
   border-radius: 4px;
 }
@@ -121,12 +121,12 @@
   gap: 7px;
 }
 .ladder-sort-controls > label {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-sort-controls select {
   height: 30px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .ladder-supplemental-sections {
   display: grid;
@@ -142,7 +142,7 @@
   background: var(--blue-bg);
   padding: 8px 12px;
   border-radius: 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-filter-state > button {
   display: flex;
@@ -151,7 +151,7 @@
   color: var(--blue);
   background: none;
   border: 0;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-board-layout {
   display: grid;
@@ -178,17 +178,17 @@
 }
 .ladder-main-heading h2,
 .ladder-section-heading h2 {
-  font-size: 14px;
+  font-size: var(--workbench-type-title, 14px);
   font-weight: 600;
 }
 .ladder-main-heading > span {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
   white-space: nowrap;
 }
 .ladder-main-heading > select {
   height: 31px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .ladder-height-groups,
 .ladder-theme-groups {
@@ -235,8 +235,8 @@
   line-height: 1.5;
 }
 .ladder-height-rail > span {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-stock-grid,
 .ladder-classification-grid {
@@ -300,15 +300,15 @@
   font-weight: 600;
 }
 .ladder-stock-identity > code {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-stock-identity:hover > strong {
   color: var(--blue);
 }
 .ladder-stock-status {
   gap: 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   flex-shrink: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -319,7 +319,7 @@
   color: var(--red);
   border-radius: 3px;
   padding: 2px 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 600;
   line-height: 1.4;
   white-space: nowrap;
@@ -346,7 +346,7 @@
   color: var(--amber);
   border-radius: 3px;
   padding: 1px 4px;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
 }
 .ladder-stock-topics {
   display: grid;
@@ -361,8 +361,8 @@
 }
 .ladder-attribution-label {
   flex: 0 0 40px;
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
 }
 .ladder-attribution-values {
   display: flex;
@@ -382,13 +382,13 @@
   color: var(--subtle);
   border-radius: 4px;
   padding: 3px 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   text-align: left;
   line-height: 1.3;
 }
 .ladder-stock-theme small {
   color: var(--accent-secondary);
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   white-space: nowrap;
 }
 .ladder-stock-theme:hover,
@@ -399,8 +399,8 @@
 }
 .ladder-more-topics {
   min-width: 0;
-  font-size: 9px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 9px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .ladder-more-topics > summary {
   display: flex;
@@ -421,8 +421,8 @@
 }
 .ladder-no-topic,
 .ladder-source-industry {
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
   line-height: 1.6;
 }
 .ladder-source-industry {
@@ -430,7 +430,7 @@
 }
 .ladder-source-reason {
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -441,7 +441,7 @@
   margin: auto 0 0;
   padding-top: 6px;
   border-top: 1px solid var(--border-soft);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-variant-numeric: tabular-nums;
 }
 .ladder-stock-timing > div {
@@ -463,8 +463,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
 }
 .ladder-stock-secondary b {
   font-weight: 400;
@@ -521,7 +521,7 @@
 }
 .ladder-theme-rail > button:first-child {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   font-weight: 600;
   text-align: left;
   line-height: 1.5;
@@ -534,20 +534,20 @@
   color: var(--blue);
 }
 .ladder-theme-rail > strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 500;
   color: var(--accent-secondary);
 }
 .ladder-theme-rail > span {
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
 }
 .ladder-theme-rail .ladder-member-button {
   display: flex;
   align-items: center;
   gap: 4px;
   color: var(--blue);
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   padding: 0;
   border: 0;
   background: none;
@@ -557,15 +557,15 @@
   align-items: center;
   gap: 8px;
   padding: 11px 15px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   color: var(--subtle);
   cursor: pointer;
   list-style: none;
 }
 .ladder-theme-shortcuts > summary > span {
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   margin-left: auto;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
 }
 .ladder-theme-grid {
   display: grid;
@@ -595,11 +595,11 @@
   padding: 0;
   width: 100%;
   text-align: left;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .ladder-theme-select strong {
   color: var(--accent-secondary);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   white-space: nowrap;
 }
 .ladder-theme-card > div {
@@ -608,8 +608,8 @@
   justify-content: space-between;
   gap: 8px;
   margin-top: 6px;
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
 }
 .ladder-theme-card > div > button {
   display: flex;
@@ -648,17 +648,17 @@
   white-space: nowrap;
 }
 .ladder-section-count small {
-  font-size: 9px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 9px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .ladder-classification-grid {
   padding: 12px;
 }
 .ladder-classification-status {
   border-top: 1px solid var(--border-soft);
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   padding: 9px 14px;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
 }
 .ladder-classification-status > summary {
   display: flex;
@@ -676,16 +676,16 @@
 }
 .ladder-empty-group,
 .ladder-empty-themes {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.8;
   padding: 15px;
 }
 .ladder-evidence {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-evidence > summary {
   display: flex;
@@ -799,17 +799,17 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 7px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   color: var(--blue);
 }
 .ladder-compact-caption > strong {
   color: var(--subtle);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 500;
 }
 .ladder-compact-caption > span {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-coverage-details {
   border: 1px solid var(--border-soft);
@@ -824,8 +824,8 @@
   padding: 8px 12px;
   cursor: pointer;
   list-style: none;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-coverage-details > summary > strong {
   color: var(--subtle);
@@ -862,7 +862,7 @@
   font-size: 17px;
 }
 .ladder-overview > p {
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   line-height: 1.6;
   margin-left: auto;
 }
@@ -888,13 +888,13 @@
 .ladder-display-notice {
   padding: 8px 14px;
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
   border-bottom: 1px solid var(--border-soft);
   background: color-mix(in srgb, var(--accent-secondary) 3%, var(--surface));
 }
 .ladder-other-title {
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   color: var(--text);
   font-weight: 600;
   margin: 0;
@@ -914,8 +914,8 @@
   margin-bottom: 10px;
 }
 .ladder-concept-counts-heading span {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
 }
 .ladder-concept-count-chips button {
   display: inline-flex;

@@ -27,8 +27,8 @@
   display: grid;
   min-width: 0;
   gap: 6px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .boll-parameter-grid > .boll-signal-mode {
   grid-column: span 2;
@@ -40,19 +40,19 @@
   max-width: none;
   height: 34px;
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .boll-filter-switches {
   display: flex;
   flex-wrap: wrap;
   gap: 11px 24px;
   color: var(--subtle);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .boll-rule-preview {
   color: var(--blue);
   line-height: 1.8;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   overflow-wrap: anywhere;
 }
 .boll-condition-editor small {

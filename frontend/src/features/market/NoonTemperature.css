@@ -38,8 +38,8 @@
 }
 .noon-temperature-reading > span,
 .noon-temperature-status small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .noon-temperature-status {
   display: grid;
@@ -48,7 +48,7 @@
 }
 .noon-temperature-status b {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   font-weight: 600;
 }
 .noon-temperature-meter {
@@ -90,15 +90,17 @@
 }
 .noon-temperature-components > div {
   display: grid;
-  grid-template-columns: 105px minmax(35px, 1fr) 27px;
+  grid-template-columns:
+    max(105px, calc(var(--workbench-type-label, 11px) * 7))
+    minmax(35px, 1fr) 27px;
   align-items: center;
   gap: 10px;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-label, 11px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .noon-temperature-components b {
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 500;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -118,8 +120,8 @@
 }
 .noon-temperature-gap,
 .noon-temperature-notice {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
 }
 .noon-temperature-gap {
@@ -132,8 +134,8 @@
   padding-top: 10px;
   margin-top: 12px;
   border-top: 1px solid var(--border-soft);
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
 }
 .noon-temperature-rules summary {

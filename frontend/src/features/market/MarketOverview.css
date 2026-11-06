@@ -1,6 +1,6 @@
 /* Overview index cards keep price returns and turnover changes distinct. */
 .market-overview-indices .index-card-label {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .market-overview-indices .index-price-line {
   display: flex;
@@ -11,7 +11,7 @@
   margin: 4px 0 8px;
 }
 .market-overview-indices .index-price-change {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -22,11 +22,11 @@
   line-height: 1.5;
 }
 .market-overview-indices .index-bottom > .index-current-amount {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 400;
 }
 .market-overview-indices .index-amount-change {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
@@ -35,6 +35,6 @@
     column-gap: 7px;
   }
   .market-overview-indices .index-price-change {
-    font-size: 11px;
+    font-size: var(--workbench-type-label, 11px);
   }
 }

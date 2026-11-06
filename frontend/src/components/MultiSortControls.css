@@ -19,7 +19,7 @@
 .table-multi-sort-heading > span,
 .table-multi-sort p {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .table-multi-sort-heading > button {
   margin-left: auto;
@@ -39,7 +39,7 @@
 .table-multi-sort-levels select {
   width: 145px;
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .table-sort-priority {
   display: inline-flex;
@@ -50,7 +50,7 @@
   border-radius: 5px;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .table-multi-sort p {
   margin: 0;

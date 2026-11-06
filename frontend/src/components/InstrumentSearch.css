@@ -37,11 +37,11 @@
   background: var(--blue-bg);
 }
 .instrument-search-popover strong {
-  font-size: 13px;
+  font-size: var(--workbench-type-label, 13px);
   color: var(--text);
 }
 .instrument-search-popover small {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   margin-left: 9px;
   color: var(--muted);
 }
@@ -49,7 +49,7 @@
   display: inline-block;
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   line-height: 1.4;
   color: var(--blue);
   background: var(--blue-bg);
@@ -69,23 +69,23 @@
 }
 .instrument-search-popover code {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
 }
 .instrument-search-popover .search-hint {
   padding: 13px 11px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.6;
 }
 
 .search-suggestion-heading {
   padding: 10px 12px 6px;
   border-top: 1px solid var(--border-soft);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
 }
 .search-match-label {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   color: var(--muted);
   padding: 2px 5px;
   border: 1px solid var(--border-soft);
@@ -131,5 +131,5 @@
   border-top: 1px solid var(--border);
   background: var(--surface);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }

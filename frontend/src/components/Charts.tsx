@@ -51,7 +51,11 @@ import { chartAutomaticTrendlines } from "./chartAutomaticTrendlines";
 import { candleChange } from "./candleChange";
 import { candleExtremeChange } from "./candleExtremeChange";
 import { bollCandleValues, chartBoll } from "./chartBoll";
-import { chartHoverSummaryHeight, chartPaneLayout } from "./chartPaneLayout";
+import {
+  chartHoverSummaryHeight,
+  chartPaneLayout,
+  chartTextSizes,
+} from "./chartPaneLayout";
 import { chartSinceReturn } from "./chartSinceReturn";
 import { chartSessionDistance } from "./chartSessionDistance";
 import { chartPriceBasis } from "./chartPriceBasis";
@@ -193,6 +197,7 @@ function chartPalette() {
   const light = document.documentElement.dataset.theme === "light";
   return {
     text: light ? "#768298" : "#7d8ba0",
+    axisText: light ? "#586980" : "#9aacc3",
     line: light ? "#e6eaf0" : "#202b3a",
     bg: light ? "#ffffff" : "#111924",
     tooltip: light ? "#ffffff" : "#192332",
@@ -290,7 +295,10 @@ export function CandleChart({
 }) {
   const { preferences, persistent, update, reset } = useChartPreferences();
   const plotRoot = useRef<HTMLDivElement>(null);
-  const [plotWidth, setPlotWidth] = useState(0);
+  const [{ width: plotWidth, wideViewport }, setPlotSize] = useState({
+    width: 0,
+    wideViewport: false,
+  });
   const [railChart, setRailChart] = useState<echarts.ECharts | null>(null);
   const [lineControlsOpen, setLineControlsOpen] = useState(false);
   const [hiddenLineState, setHiddenLineState] = useState<{
@@ -479,11 +487,24 @@ export function CandleChart({
   useEffect(() => {
     const node = plotRoot.current;
     if (!node) return;
-    const measure = () => setPlotWidth(node.getBoundingClientRect().width);
+    const wideScreen = window.matchMedia("(min-width: 1600px)");
+    const measure = () => {
+      const width = node.getBoundingClientRect().width;
+      const wideViewport = wideScreen.matches;
+      setPlotSize((size) =>
+        size.width === width && size.wideViewport === wideViewport
+          ? size
+          : { width, wideViewport },
+      );
+    };
     const observer = new ResizeObserver(measure);
     observer.observe(node);
+    wideScreen.addEventListener("change", measure);
     measure();
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      wideScreen.removeEventListener("change", measure);
+    };
   }, [!!bars.length, result.loading, result.error, frozenMode]);
   const entryHeight = useSinglePageEntry(
     entryRoot,
@@ -810,9 +831,15 @@ export function CandleChart({
   const forwardOption = data?.price_basis_options?.find(
     (item: Row) => item.value === "forward",
   );
+  const {
+    wide: widePlot,
+    axis: axisFontSize,
+    tooltip: tooltipFontSize,
+  } = chartTextSizes(plotWidth, wideViewport);
   const option = useMemo(() => {
     const pal = chartPalette(),
       dates = bars.map((b) => b.date);
+    const axisColor = widePlot ? pal.axisText : pal.text;
     const grids: any[] = [
         { left: 62, right: plotRight, top: 24, height: mainHeight },
       ],
@@ -835,8 +862,8 @@ export function CandleChart({
         boundaryGap: true,
         axisLine: { lineStyle: { color: pal.line } },
         axisLabel: {
-          color: pal.text,
-          fontSize: 10,
+          color: axisColor,
+          fontSize: axisFontSize,
           show: i === grids.length - 1,
           formatter: (v: string) => v.slice(5),
         },
@@ -851,8 +878,8 @@ export function CandleChart({
         ...(i === 0 ? candlePriceAxis(bars, zoomWindow.current) : {}),
         splitNumber: i === 0 ? 4 : 2,
         axisLabel: {
-          color: pal.text,
-          fontSize: 10,
+          color: axisColor,
+          fontSize: axisFontSize,
           formatter: (v: number) =>
             Math.abs(v) >= 1e8
               ? (v / 1e8).toFixed(1) + "亿"
@@ -1248,7 +1275,10 @@ export function CandleChart({
         axisPointer: { type: "cross" },
         backgroundColor: pal.tooltip,
         borderColor: pal.line,
-        textStyle: { color: pal.text, fontSize: 11 },
+        textStyle: {
+          color: widePlot ? pal.tooltipText : pal.text,
+          fontSize: tooltipFontSize,
+        },
         confine: true,
         formatter: (params: any) => {
           const entries = Array.isArray(params) ? params : [params],
@@ -1438,6 +1468,9 @@ export function CandleChart({
     visibleLineLabels,
     plotRight,
     plotWidth,
+    widePlot,
+    axisFontSize,
+    tooltipFontSize,
   ]);
   return (
     <div
@@ -1448,6 +1481,7 @@ export function CandleChart({
       data-default-window-sessions={
         entryFocus ? entryWindow.sessions : undefined
       }
+      data-wide-plot={widePlot || undefined}
       className={"candle-chart" + (entryFocus ? " entry-single-chart" : "")}
     >
       {showStockSummary &&
@@ -1971,7 +2005,7 @@ export function CandleChart({
           tabIndex={0}
           style={{
             height: bars.length
-              ? chartHoverSummaryHeight(plotWidth)
+              ? chartHoverSummaryHeight(plotWidth, widePlot)
               : undefined,
           }}
         >

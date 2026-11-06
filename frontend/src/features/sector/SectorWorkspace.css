@@ -12,7 +12,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   font-weight: 600;
   cursor: pointer;
 }
@@ -33,8 +33,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   flex-wrap: wrap;
 }
 .sector-rule-group header select {
@@ -64,8 +64,8 @@
 .sector-rule-leaf label {
   min-width: 100px;
   flex: 1;
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
   display: grid;
   gap: 5px;
 }
@@ -85,12 +85,12 @@
 .sector-evidence ul {
   padding-left: 18px;
   color: var(--subtle);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.9;
 }
 .sector-evidence summary {
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   color: var(--blue);
   max-width: 370px;
 }
@@ -106,8 +106,8 @@
   text-align: left;
 }
 .sector-asset-name small {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .sector-members-context {
   display: flex;
@@ -116,7 +116,7 @@
   align-items: center;
   margin-bottom: 12px;
   color: var(--subtle);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .modal-backdrop:has(.sector-members-body) {
   z-index: 65;
@@ -148,15 +148,15 @@
   display: flex;
   gap: 9px;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .sector-task-progress b {
   margin-left: auto;
   color: var(--blue);
 }
 .sector-task-progress small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   overflow-wrap: anywhere;
 }
 .sector-task-progress progress {
@@ -189,7 +189,7 @@
   border-radius: 8px;
   color: var(--subtle);
   background: color-mix(in srgb, var(--blue) 6%, var(--surface));
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.7;
 }
 .saved-run-notice.stale {
@@ -203,6 +203,6 @@
   gap: 10px;
   min-height: 145px;
   padding: 22px;
-  font-size: 13px;
-  color: var(--muted);
+  font-size: var(--workbench-type-body, 13px);
+  color: var(--workbench-type-muted, var(--muted));
 }

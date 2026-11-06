@@ -31,15 +31,15 @@
   flex: 1;
 }
 .tracking-picker-caption small {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .tracking-picker-caption strong {
   font-size: 14px;
   font-weight: 600;
 }
 .tracking-picker-total {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--subtle);
   white-space: nowrap;
 }
@@ -103,8 +103,8 @@
   font-weight: 600;
 }
 .tracking-picker-list small {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .tracking-picker-list [aria-selected="true"] {
   color: var(--blue);
@@ -116,8 +116,8 @@
 .tracking-picker-foot {
   margin-top: 8px;
   padding: 9px 10px 2px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   border-top: 1px solid var(--border-soft);
 }
 .tracking-picker-empty {

@@ -58,7 +58,7 @@
 }
 .active-task-heading > span {
   color: var(--subtle);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   padding: 2px 7px;
   border-radius: 5px;
   background: #7894c81c;
@@ -68,7 +68,7 @@
 }
 .active-task-stage {
   color: var(--subtle);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   margin-top: 6px;
 }
 .active-task-stage b {
@@ -79,7 +79,7 @@
 .active-task-message {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   margin-top: 5px;
   overflow-wrap: anywhere;
 }
@@ -102,7 +102,7 @@
   border: 0;
   background: transparent;
   color: #85acff;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   padding: 5px;
   cursor: pointer;
   white-space: nowrap;
@@ -135,7 +135,7 @@
     display: none;
   }
   .active-task-heading strong {
-    font-size: 13px;
+    font-size: var(--workbench-type-body, 13px);
   }
 }
 @media (prefers-reduced-motion: reduce) {

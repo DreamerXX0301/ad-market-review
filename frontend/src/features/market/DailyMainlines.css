@@ -23,7 +23,7 @@
 .daily-mainline-heading p,
 .daily-mainline-caption {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.8;
   margin: 6px 0 0;
 }
@@ -46,7 +46,7 @@
   flex: 1 1 280px;
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.8;
 }
 .daily-mainline-navigation {
@@ -92,7 +92,7 @@
   gap: 8px 24px;
   margin: 18px 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .daily-mainline-summary b {
   color: var(--text);
@@ -121,7 +121,7 @@
 }
 .daily-mainline-focus > header > span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .daily-mainline-focus-body {
   padding: 14px 16px 16px;
@@ -129,7 +129,7 @@
 .daily-mainline-group-height {
   margin: 0 0 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .daily-mainline-stock-name {
   padding: 0;
@@ -162,7 +162,7 @@
 }
 .daily-mainline-source-item {
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
 }
 .daily-mainline-source-heading {
   display: flex;
@@ -172,7 +172,7 @@
 }
 .daily-mainline-known-height {
   color: var(--blue);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   white-space: nowrap;
 }
 .daily-mainline-source-item > .board-tags {
@@ -180,7 +180,7 @@
 }
 .daily-mainline-reason {
   margin: 5px 0 0;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   color: var(--subtle);
   line-height: 1.8;
   min-width: 0;
@@ -196,7 +196,7 @@
 .daily-mainlines details > summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.8;
 }
 .daily-mainline-reason details {
@@ -228,7 +228,7 @@
 .daily-mainline-other > header > span,
 .daily-mainline-individual > header > span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .daily-mainline-other-grid {
   margin-top: 12px;
@@ -263,7 +263,7 @@
 .daily-mainline-missing {
   margin-top: 18px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 @media (max-width: 640px) {
   .daily-mainline-heading {
@@ -299,7 +299,7 @@
   text-align: center;
 }
 .daily-mainline-direction-head {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
 }
 .daily-mainline-direction-row {
@@ -329,7 +329,7 @@
 .daily-mainline-direction-row small {
   margin: 5px 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .daily-mainline-direction-row i {
   display: block;

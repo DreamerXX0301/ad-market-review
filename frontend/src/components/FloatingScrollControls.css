@@ -36,7 +36,7 @@
   justify-content: center;
 }
 .floating-scroll-caption {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -54,7 +54,7 @@
 }
 .floating-scroll-position {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.2;
   padding: 2px 0;
   font-variant-numeric: tabular-nums;

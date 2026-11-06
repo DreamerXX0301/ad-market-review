@@ -25,8 +25,8 @@
 }
 .strategy-batch-heading small {
   display: block;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   margin-top: 5px;
   line-height: 1.6;
 }
@@ -38,7 +38,7 @@
   flex-wrap: wrap;
 }
 .strategy-batch-controls > label {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   color: var(--subtle);
   cursor: pointer;
 }
@@ -68,11 +68,11 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .strategy-batch-progress-heading strong {
   color: var(--accent-secondary);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .strategy-batch-progress-heading span {
   color: var(--subtle);
@@ -80,7 +80,7 @@
 }
 .strategy-batch-progress-heading > .strategy-batch-mode {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   padding: 3px 7px;
   border-radius: 5px;
 }
@@ -93,7 +93,7 @@
   background: color-mix(in srgb, var(--muted) 10%, transparent);
 }
 .strategy-batch-tracking-summary {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.7;
   margin: 9px 0 0;
   color: var(--subtle);
@@ -126,8 +126,8 @@
 }
 .strategy-batch-current > span {
   flex: 1;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   min-width: 160px;
 }
 .strategy-batch-progress > details {
@@ -138,7 +138,7 @@
 .strategy-batch-progress > details > summary {
   color: var(--subtle);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .strategy-batch-items {
   display: grid;
@@ -158,24 +158,24 @@
   min-width: 0;
 }
 .strategy-batch-items strong {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .strategy-batch-items small {
   display: block;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   margin-top: 4px;
   overflow-wrap: anywhere;
 }
 .strategy-batch-sequence {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   width: 18px;
   text-align: center;
 }
 .strategy-batch-item-state {
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   white-space: nowrap;
 }
 .strategy-batch-item-state.succeeded {
@@ -188,8 +188,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   margin-top: 12px;
 }
 .strategy-batch-history select {

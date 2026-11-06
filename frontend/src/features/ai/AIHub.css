@@ -14,7 +14,7 @@
   border-radius: 9px;
   color: var(--text);
   background: var(--surface);
-  font-size: 13px;
+  font-size: var(--workbench-type-label, 13px);
   text-decoration: none;
 }
 .ai-entry-shortcut:hover {

@@ -9,8 +9,8 @@
 .auction-close-groups-note,
 .auction-close-groups-empty {
   margin: 10px 0;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
 }
 .auction-close-groups-scroll {
@@ -27,7 +27,7 @@
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 11px;
+  font-size: var(--workbench-type-body, 11px);
 }
 .auction-close-group-table {
   min-width: 690px;
@@ -111,12 +111,12 @@
   border: 1px solid
     color-mix(in srgb, var(--close-group-color) 30%, transparent);
   border-radius: 3px;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   white-space: nowrap;
 }
 .auction-close-group-coverage {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .auction-close-group-coverage > span {
   display: block;
@@ -178,11 +178,11 @@
   flex: 0 0 auto;
 }
 .auction-close-group-stock .copy-stock-code {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .auction-close-group-status {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -195,8 +195,8 @@
 .auction-close-group-detail-note {
   margin: 0;
   padding: 8px 10px;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   background: var(--surface2);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.6;
 }

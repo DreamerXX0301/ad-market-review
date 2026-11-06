@@ -42,7 +42,7 @@
   gap: 10px 24px;
   padding-bottom: 14px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .noon-feedback-coverage b {
   margin-left: 5px;
@@ -56,7 +56,7 @@
   gap: 8px 14px;
   margin-bottom: 14px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .noon-previous-maximum > strong {
   color: var(--text);
@@ -88,7 +88,7 @@
   justify-content: space-between;
 }
 .noon-feedback-group .noon-feedback-group-head h3 {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   margin: 0;
   line-height: 1.5;
 }
@@ -97,13 +97,13 @@
 .noon-direction-grid h3,
 .noon-watched-groups h3,
 .noon-afternoon-list h3 {
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   font-weight: 600;
   margin: 0 0 10px;
 }
 .noon-feedback-group-head > span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   white-space: nowrap;
 }
 .noon-feedback-group > strong {
@@ -115,7 +115,7 @@
 }
 .noon-feedback-average {
   display: block;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
   line-height: 1.5;
 }
@@ -124,7 +124,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px 8px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   margin-top: 8px;
   font-variant-numeric: tabular-nums;
 }
@@ -135,7 +135,7 @@
   margin-top: 6px;
 }
 .noon-feedback-group .noon-footnote {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   margin: 6px 0 0;
   line-height: 1.5;
 }
@@ -162,7 +162,7 @@
 .noon-feedback-group-stocks > li > div {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .noon-feedback-member-identity {
   display: flex;
@@ -177,7 +177,7 @@
 .noon-feedback-group-stocks small {
   display: inline;
   margin-top: 0;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   color: var(--muted);
 }
 .noon-feedback-member-height {
@@ -186,7 +186,7 @@
   border: 1px solid var(--border-soft);
   border-radius: 3px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   white-space: nowrap;
 }
 .noon-feedback-member-theme {
@@ -197,16 +197,16 @@
 }
 .noon-feedback-theme-origin {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   line-height: 1.4;
 }
 .noon-feedback-member-theme .noon-ladder-clue {
   padding: 1px 4px;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   min-width: 0;
 }
 .noon-feedback-member-theme .noon-ladder-clues-missing {
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   line-height: 1.5;
 }
 @container (max-width: 215px) {
@@ -226,7 +226,7 @@
   }
 }
 .noon-feedback-group-stocks b {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   font-weight: 500;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -266,7 +266,7 @@
 .noon-feedback-pagination {
   justify-content: space-between;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   padding: 12px 0 4px;
 }
 .noon-negative-grid {
@@ -286,7 +286,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 7px 18px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .noon-negative-metrics b {
   font-variant-numeric: tabular-nums;
@@ -325,7 +325,7 @@
   align-items: baseline;
   gap: 9px;
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .noon-ladder-height > strong {
   font-size: 17px;
@@ -334,12 +334,12 @@
   font-variant-numeric: tabular-nums;
 }
 .noon-ladder-height small {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   margin-left: 3px;
 }
 .noon-ladder-height > span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   white-space: nowrap;
 }
 .noon-ladder-height > .noon-copy-control {
@@ -357,7 +357,7 @@
 }
 .noon-copy-control > small {
   color: var(--amber);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .noon-ladder-table-wrap {
   max-height: 340px;
@@ -371,7 +371,7 @@
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .noon-ladder-stock-col {
   width: 112px;
@@ -395,7 +395,7 @@
   z-index: 1;
   background: var(--surface2);
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-label, 10px);
   font-weight: 500;
   height: auto;
 }
@@ -414,7 +414,7 @@
 .noon-ladder-stock-cell small {
   display: block;
   margin-top: 3px;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   color: var(--muted);
 }
 .noon-member-classification {
@@ -438,7 +438,7 @@
   border: 1px solid var(--border-soft);
   border-radius: 4px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.6;
   max-width: 100%;
   overflow-wrap: anywhere;
@@ -452,7 +452,7 @@
 .noon-membership-more,
 .noon-reason-details {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .noon-membership-more > summary,
 .noon-reason-details > summary {
@@ -469,7 +469,7 @@
 .noon-membership-more small {
   flex-basis: 100%;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
 }
 .noon-cross-session .noon-sector-members-chip {
   border: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
@@ -477,7 +477,7 @@
   background: color-mix(in srgb, var(--blue) 6%, transparent);
   color: var(--blue);
   padding: 2px 7px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   white-space: nowrap;
 }
 .noon-ladder-clues {
@@ -497,13 +497,13 @@
   border-radius: 3px;
   background: color-mix(in srgb, var(--muted) 7%, transparent);
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.6;
 }
 .noon-ladder-source {
   min-width: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .noon-ladder-source summary {
   list-style: none;
@@ -527,14 +527,14 @@
 .noon-ladder-source p {
   margin: 4px 0;
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .noon-ladder-source small {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .noon-ladder-clues-missing {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .noon-event-reason-cell {
   white-space: normal !important;
@@ -549,7 +549,7 @@
   gap: 5px 10px;
 }
 .noon-cross-session .noon-sector-chart-link {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -627,7 +627,7 @@
 .noon-direction-heading small {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   margin-top: 5px;
 }
 .noon-direction-ranking > .noon-table-wrap {
@@ -674,7 +674,7 @@
   gap: 8px 16px;
   padding: 10px 0;
   border-block: 1px solid var(--border-soft);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
 }
 .noon-direction-metrics b {
@@ -724,14 +724,14 @@
 }
 .noon-afternoon-index {
   color: var(--blue);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   font-variant-numeric: tabular-nums;
 }
 .noon-afternoon-list h3 {
   line-height: 1.6;
 }
 .noon-afternoon-list p {
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
   line-height: 1.8;
   color: var(--muted);
   margin: 7px 0;
@@ -791,7 +791,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 5px 12px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
   margin-top: 8px;
   color: var(--muted);
@@ -806,5 +806,5 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px 20px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }

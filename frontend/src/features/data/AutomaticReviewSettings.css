@@ -2,7 +2,7 @@
   display: grid;
   gap: 12px;
   padding: 16px 20px;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .intraday-automatic-settings {
   min-width: 0;
@@ -41,20 +41,20 @@
   display: block;
 }
 .automatic-review-toggle strong {
-  font-size: 13px;
+  font-size: var(--workbench-type-label, 13px);
   color: var(--text);
 }
 .automatic-review-toggle small {
   margin-top: 2px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .automatic-review-time {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-top: 12px;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .automatic-review-time input {
   width: 135px;
@@ -70,7 +70,7 @@
 .automatic-review-fixed-time {
   min-width: 92px;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--workbench-type-body, 14px);
   font-variant-numeric: tabular-nums;
 }
 .automatic-review-time input:focus-visible {
@@ -96,7 +96,7 @@
   gap: 7px;
   margin: 0;
   line-height: 1.8;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .automatic-review-policy svg {
   flex-shrink: 0;

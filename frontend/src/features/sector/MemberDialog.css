@@ -76,12 +76,12 @@
   white-space: nowrap;
 }
 .member-context-item small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
 }
 .member-context-item strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
   font-weight: 600;
 }
 .member-dialog-toolbar.member-dialog-fields {
@@ -105,7 +105,7 @@
 }
 .member-dialog-field > span {
   color: var(--subtle);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.4;
   font-weight: 500;
 }
@@ -116,7 +116,7 @@
   height: 40px;
   margin: 0;
   box-sizing: border-box;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .member-dialog-toolbar .member-dialog-search-row {
   align-items: end;

@@ -8,7 +8,7 @@
   width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .auction-resonance-fixed {
   min-width: 720px;
@@ -54,7 +54,7 @@
 .auction-fixed-table td > small {
   display: block;
   margin-top: 3px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .auction-table-group {
   display: flex;
@@ -67,9 +67,9 @@
   border: 1px solid var(--border-soft);
   border-radius: 4px;
   padding: 2px 4px;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   background: var(--surface2);
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   white-space: nowrap;
 }
 .auction-table-kind.industry {
@@ -125,8 +125,8 @@
   margin-bottom: 12px;
 }
 .auction-table-expanded-heading > span {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
 }
 .auction-stock-list-toolbar,
 .auction-stock-list-sort,
@@ -143,8 +143,8 @@
 .auction-stock-list-sort > span,
 .auction-stock-list-boards > span,
 .auction-stock-list-count {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .auction-stock-list-sort button,
 .auction-stock-list-boards button {
@@ -155,10 +155,10 @@
   padding: 5px 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   background: var(--surface);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -182,8 +182,8 @@
 .auction-stock-list-note,
 .auction-stock-list-empty {
   margin: 9px 0 12px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .auction-stock-list-empty {
   padding: 18px 12px;
@@ -227,14 +227,14 @@
   width: 100%;
 }
 .auction-table-stock-footer strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .auction-table-top-mark {
   flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
 }
 @media (max-width: 680px) {
   .auction-fixed-table th,

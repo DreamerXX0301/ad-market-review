@@ -1,6 +1,8 @@
 .intraday-page-reader {
   display: grid;
-  grid-template-columns: 134px minmax(0, 1fr);
+  grid-template-columns:
+    max(134px, calc(var(--workbench-type-label, 11px) * 10.5))
+    minmax(0, 1fr);
   align-items: start;
   gap: 14px;
   min-width: 0;
@@ -43,13 +45,13 @@
   padding: 2px 9px 10px;
 }
 .intraday-directory-heading strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 600;
   color: var(--text);
 }
 .intraday-directory-heading small {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .intraday-directory-items {
   display: grid;
@@ -64,15 +66,15 @@
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   text-align: left;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.6;
   cursor: pointer;
 }
 .intraday-directory-items button > span {
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   font-variant-numeric: tabular-nums;
   opacity: 0.7;
 }

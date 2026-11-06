@@ -52,7 +52,7 @@
 .hot-browse-filter p {
   margin: 0;
   line-height: 1.7;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .hot-browse-row-state {
   display: block;

@@ -1,5 +1,11 @@
+export function chartTextSizes(width: number, wideViewport: boolean) {
+  const wide = wideViewport && width >= 1100;
+  return { wide, axis: wide ? 12 : 10, tooltip: wide ? 13 : 11 };
+}
+
 /** Reserve hover text space by available chart width, never by the selected candle. */
-export function chartHoverSummaryHeight(width: number) {
+export function chartHoverSummaryHeight(width: number, wide = false) {
+  if (wide) return width >= 1500 ? 80 : 100;
   if (!Number.isFinite(width) || width <= 0) return 128;
   if (width >= 1500) return 66;
   if (width >= 1000) return 82;

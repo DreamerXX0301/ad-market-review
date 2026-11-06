@@ -7,11 +7,11 @@
 }
 .backtest-history-tabs .segmented button {
   padding: 5px 9px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .backtest-history-tabs > span {
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
   white-space: nowrap;
 }
 .backtest-history-item {
@@ -64,8 +64,8 @@
 }
 .backtest-history-hint {
   padding: 0 14px 9px;
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
   line-height: 1.6;
 }
 .backtest-history-pagination {
@@ -75,8 +75,8 @@
   gap: 6px;
   padding: 10px 12px;
   border-top: 1px solid var(--border-soft);
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 @media (max-width: 1000px) {
   .run-history > .backtest-history-item {

@@ -70,7 +70,7 @@
 }
 .increment-progress-current span {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   line-height: 1.6;
 }
 .increment-progress-stage-heading {
@@ -85,7 +85,7 @@
   font-variant-numeric: tabular-nums;
 }
 .increment-progress-plan {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.7;
 }
 .increment-progress-dialog progress {
@@ -112,7 +112,7 @@
   gap: 12px;
 }
 .increment-progress-tasks li span {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -145,7 +145,7 @@
 .increment-progress-controls > span {
   flex: 1 1 100%;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 @media (max-width: 600px) {
   .increment-progress-dialog {
@@ -162,7 +162,7 @@
   border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--border));
   border-radius: 10px;
   background: color-mix(in srgb, var(--blue) 5%, var(--surface));
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
 }
 .increment-workspace-summary p {
   margin: 8px 0;

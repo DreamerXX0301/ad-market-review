@@ -55,8 +55,8 @@
   min-width: 0;
 }
 .dragon-tiger-summary span {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .dragon-tiger-summary strong {
   font-size: 25px;
@@ -84,7 +84,7 @@
   min-width: 900px;
   table-layout: fixed;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
 }
 .dragon-tiger-table caption.sr-only {
   position: absolute;
@@ -99,8 +99,8 @@
 }
 .dragon-tiger-table th {
   background: var(--surface2);
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 500;
 }
 .dragon-tiger-table th,
@@ -164,7 +164,7 @@
   color: var(--muted);
 }
 .dragon-tiger-code small {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .dragon-tiger-concepts {
   margin-top: 8px;
@@ -175,8 +175,8 @@
   justify-content: space-between;
   gap: 12px;
   padding: 14px 18px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .dragon-tiger-labels {
   padding: 18px;
@@ -200,7 +200,7 @@
   color: var(--blue);
 }
 .dragon-tiger-labels > button span {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .dragon-tiger-selected {
   padding: 18px;
@@ -208,8 +208,8 @@
   gap: 12px;
 }
 .dragon-tiger-selected > span {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .dragon-tiger-selected dl {
   margin: 4px 0;
@@ -222,7 +222,7 @@
   gap: 12px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 10px;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .dragon-tiger-selected dt {
   color: var(--muted);
@@ -247,8 +247,8 @@
   padding: 20px;
 }
 .dragon-tiger-scope {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.8;
   margin: 0;
   padding: 10px 20px;
@@ -260,8 +260,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
   margin-bottom: 16px;
 }
 .dragon-tiger-record-choice select {
@@ -279,8 +279,8 @@
   gap: 10px;
 }
 .dragon-tiger-seat-summary span {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .dragon-tiger-seat-summary strong {
   font-size: 24px;
@@ -315,7 +315,7 @@
   margin: 0;
   background: var(--surface2);
   padding: 14px 16px;
-  font-size: 14px;
+  font-size: var(--workbench-type-title, 14px);
 }
 .dragon-tiger-seat-side.buy h3 {
   color: var(--red);
@@ -333,7 +333,7 @@
   width: 100%;
   border-collapse: collapse;
   min-width: 500px;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .dragon-tiger-seat-side th,
 .dragon-tiger-seat-side td {
@@ -344,8 +344,8 @@
   white-space: nowrap;
 }
 .dragon-tiger-seat-side th {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 400;
 }
 .dragon-tiger-seat-side th:first-child,
@@ -364,13 +364,13 @@
   border: 1px solid var(--border);
   border-radius: 50%;
   margin-right: 8px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .dragon-tiger-coverage {
   padding: 18px 20px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.9;
 }
 .dragon-tiger-coverage p {
@@ -386,7 +386,7 @@
   padding: 3px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .dragon-tiger-date-strip .retained {
   background: color-mix(in srgb, var(--blue) 14%, var(--surface));
@@ -402,8 +402,8 @@
   flex-wrap: wrap;
   gap: 12px;
   border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 @media (max-width: 1250px) {
   .dragon-tiger-grid {

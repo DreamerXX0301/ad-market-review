@@ -12,13 +12,13 @@
 }
 .data-center-heading > div > span {
   color: var(--blue);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 600;
   letter-spacing: 0.08em;
 }
 .data-center-heading p {
   color: var(--subtle);
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
   margin-top: 3px;
 }
 .data-center .stats-grid {
@@ -50,7 +50,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .data-storage-details > summary,
 .data-storage-details > summary > span {
@@ -63,7 +63,7 @@
   flex-wrap: wrap;
   padding: 11px 16px;
   cursor: pointer;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .data-storage-details > summary > span:first-child {
   color: var(--text);
@@ -81,7 +81,7 @@
   flex-wrap: wrap;
   gap: 8px 16px;
   padding: 8px 0;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   font-variant-numeric: tabular-nums;
 }
 .data-storage-total > strong {
@@ -103,15 +103,15 @@
   font-weight: 400;
 }
 .data-storage-details thead {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .data-storage-details th small,
 .data-storage-details td small {
   display: block;
   margin-top: 3px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .data-storage-details td:last-child,
 .data-storage-details th:last-child {
@@ -122,8 +122,8 @@
 }
 .data-storage-scope {
   margin-top: 10px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
 }
 .data-storage-scope p + p {
@@ -149,16 +149,16 @@
   gap: 10px;
 }
 .data-source-label > div > span {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .data-source-label strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 600;
 }
 .data-source-description {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   flex: 1;
 }
 .data-operations {
@@ -203,7 +203,7 @@
   background: var(--blue-bg);
   color: var(--blue);
   border-radius: 7px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
@@ -230,7 +230,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 7px 14px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   color: var(--subtle);
   font-variant-numeric: tabular-nums;
 }
@@ -250,7 +250,7 @@
 }
 .data-sector-progress small {
   flex-basis: 100%;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   line-height: 1.7;
 }
 .data-sector-job-link {
@@ -258,13 +258,13 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .data-operation h2 {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 14px;
+  font-size: var(--workbench-type-body, 14px);
   margin: 13px 0 7px;
 }
 .data-operation h2 > svg {
@@ -272,7 +272,7 @@
 }
 .data-operation > p {
   color: var(--subtle);
-  font-size: 11px;
+  font-size: var(--workbench-type-body, 11px);
   margin-bottom: 15px;
   flex: 1;
 }
@@ -282,8 +282,8 @@
 }
 .data-operation > small {
   display: block;
-  font-size: 9px;
-  color: var(--muted);
+  font-size: var(--workbench-type-label, 9px);
+  color: var(--workbench-type-muted, var(--muted));
   line-height: 1.7;
   margin-top: 10px;
 }
@@ -299,8 +299,8 @@
   align-items: center;
   gap: 9px 20px;
   padding: 1px 2px 3px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .data-supplement-summary > span:first-child {
   display: flex;
@@ -333,7 +333,7 @@
   margin-top: 7px;
   max-width: 1000px;
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .data-warning-summary {
   border: 1px solid color-mix(in srgb, var(--amber) 28%, var(--border));
@@ -348,7 +348,7 @@
   list-style: none;
   cursor: pointer;
   color: var(--amber);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .data-warning-summary > summary > strong {
   font-weight: 500;
@@ -358,8 +358,8 @@
   gap: 5px;
   align-items: center;
   margin-left: auto;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .data-warning-summary[open] > summary > span > svg,
 .data-task-log-details[open] > summary > svg,
@@ -392,21 +392,21 @@
   align-items: center;
   gap: 5px;
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   cursor: pointer;
   list-style: none;
 }
 .data-task-log-details > summary > span {
   margin-left: auto;
-  color: var(--muted);
-  font-size: 9px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 9px);
 }
 .data-center .task-logs {
   margin-top: 9px;
   max-height: 260px;
 }
 .data-task-published-note {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   margin-top: 12px;
   color: var(--amber);
 }
@@ -415,8 +415,8 @@
   display: flex;
   gap: 6px;
   align-items: baseline;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .data-center-footnote > svg {
   flex-shrink: 0;
@@ -429,6 +429,16 @@
 }
 .data-center summary::-webkit-details-marker {
   display: none;
+}
+@media (min-width: 1600px) {
+  .data-center-heading p,
+  .data-operation > p,
+  .data-source-description {
+    line-height: 1.55;
+  }
+  .data-operation > .btn {
+    min-height: 34px;
+  }
 }
 @media (min-width: 1081px) and (max-width: 1440px) {
   .data-operations {

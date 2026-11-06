@@ -15,7 +15,7 @@
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--chart-type-label, 11px);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -54,7 +54,7 @@
 .chart-choice-caption {
   padding: 6px 9px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .chart-choice-option {
   display: flex;
@@ -71,13 +71,13 @@
 }
 .chart-choice-option strong {
   display: block;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 500;
 }
 .chart-choice-option small {
   display: block;
   margin-top: 3px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.5;
   color: var(--muted);
 }
@@ -105,7 +105,7 @@
   background: transparent;
   color: var(--muted);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--chart-type-label, 10px);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -142,7 +142,7 @@
 }
 .candle-chart .chart-toolbar .segmented > button {
   padding: 5px 12px;
-  font-size: 10px;
+  font-size: var(--chart-type-label, 10px);
 }
 .candle-chart .chart-toolbar .ma-controls {
   gap: 3px;
@@ -156,7 +156,7 @@
   min-height: 33px;
   padding: 6px 10px;
   border-radius: 8px;
-  font-size: 10px;
+  font-size: var(--chart-type-label, 10px);
 }
 .candle-chart .chart-wave-selectors {
   gap: 8px 12px;

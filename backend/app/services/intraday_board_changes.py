@@ -319,6 +319,7 @@ def build_changes(current, previous, *, current_row, previous_row=None, read_cac
                          'amount': quote.get('amount'), 'price_basis': 'none', 'currency': 'CNY',
                          'previous_change_pct': old_quote.get('change_pct') if old_quote else None,
                          'board_count': height, 'continue_day_cnt': height,
+                         **({'themes': sample['themes']} if sample.get('themes') else {}),
                          **({'board_transition': 'resealed'} if key == 'resealed' else {}),
                          **({'limit_down_state': 'sealed'} if key == 'new_limit_down' else
                             {'limit_up_state': 'sealed' if key in ('new_sealed', 'resealed') else 'broken'}),

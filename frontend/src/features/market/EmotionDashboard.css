@@ -21,8 +21,8 @@
 }
 .sentiment-atmosphere > span,
 .sentiment-atmosphere time {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .sentiment-atmosphere > strong {
   font-size: 16px;
@@ -32,7 +32,7 @@
   margin: 0;
   flex: 1;
   min-width: 180px;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
   line-height: 1.7;
   color: var(--subtle);
 }
@@ -86,14 +86,14 @@
   margin-bottom: 17px;
 }
 .sentiment-index-card h3 {
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   font-weight: 600;
   margin: 0 0 5px;
 }
 .sentiment-index-card header span,
 .sentiment-index-coverage {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
 }
 .sentiment-index-card .sentiment-metrics {
@@ -105,7 +105,7 @@
   font-size: 20px;
 }
 .sentiment-index-card .sentiment-metric-label {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .sentiment-index-coverage {
   margin: 16px 0 0;
@@ -119,8 +119,8 @@
   margin: -8px 0 17px;
 }
 .sentiment-cohort-controls button {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
   background: var(--surface2);
   border: 1px solid var(--border-soft);
   padding: 6px 8px;
@@ -134,8 +134,8 @@
 }
 .sentiment-cohort-note {
   margin: 0 0 18px;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  color: var(--workbench-type-muted, var(--muted));
   line-height: 1.8;
 }
 .sentiment-cohort-price-note {
@@ -154,8 +154,8 @@
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.8;
   min-width: 0;
 }
@@ -172,7 +172,7 @@
   background: var(--surface);
 }
 .sentiment-strict-feedback .sentiment-dimension-head h2 {
-  font-size: 13px;
+  font-size: var(--workbench-type-title, 13px);
 }
 .sentiment-strict-feedback .sentiment-metric > strong {
   font-size: 20px;
@@ -186,7 +186,7 @@
   margin: -7px 0 16px;
   border: 0;
   padding: 0;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .sentiment-cohort-evidence dl > div {
   display: flex;
@@ -209,20 +209,20 @@
 }
 .sentiment-empty-groups {
   margin: 9px 4px 0;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .sentiment-cohort-legacy {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 18px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.8;
 }
 .sentiment-cohort-legacy h2 {
   color: var(--text);
-  font-size: 16px;
+  font-size: var(--workbench-type-title, 16px);
   margin: 0 0 20px;
 }
 .sentiment-sources-section {
@@ -243,8 +243,8 @@
   display: inline-flex;
   gap: 6px;
   align-items: center;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-label, 11px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .sentiment-promotion-range > strong {
   font-size: 16px;
@@ -253,8 +253,8 @@
 .sentiment-promotion-range > small {
   flex-basis: 100%;
   line-height: 1.7;
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .sentiment-provenance {
   border: 1px solid var(--border-soft);
@@ -271,8 +271,8 @@
 .sentiment-provenance p,
 .sentiment-provenance > div > span,
 .sentiment-provenance summary {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.8;
 }
 .sentiment-provenance p {
@@ -284,7 +284,7 @@
 .sentiment-provenance dl {
   display: grid;
   gap: 10px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .sentiment-provenance dl > div {
   display: flex;
@@ -313,7 +313,7 @@
 .sentiment-source-table th,
 .sentiment-source-table td {
   padding: 10px 9px;
-  font-size: 10px;
+  font-size: var(--workbench-type-body, 10px);
   line-height: 1.7;
   border-bottom: 1px solid var(--border-soft);
   vertical-align: top;
@@ -342,14 +342,14 @@
   justify-content: space-between;
 }
 .sentiment-snapshot-action strong {
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
 }
 .sentiment-snapshot-action p,
 .sentiment-snapshot-history p,
 .sentiment-snapshot-history small,
 .sentiment-snapshot-detail p {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-body, 11px);
+  color: var(--workbench-type-muted, var(--muted));
   line-height: 1.8;
 }
 .sentiment-snapshot-action p {
@@ -362,8 +362,8 @@
 }
 .sentiment-snapshot-history summary,
 .sentiment-snapshot-detail summary {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--workbench-type-label, 11px);
+  color: var(--workbench-type-muted, var(--muted));
   cursor: pointer;
 }
 .sentiment-snapshot-history summary svg {
@@ -383,7 +383,7 @@
   min-width: 0;
 }
 .sentiment-snapshot-history li strong {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 500;
 }
 .sentiment-snapshot-history small {
@@ -394,12 +394,12 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   color: var(--green);
   margin: 13px 0 0;
 }
 .sentiment-snapshot-detail dl {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.8;
 }
 .sentiment-snapshot-detail dl > div {
@@ -417,7 +417,7 @@
 .sentiment-snapshot-detail pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   max-height: 360px;
   overflow: auto;
 }
@@ -433,7 +433,7 @@
   border-radius: 7px;
 }
 .sentiment-snapshot-axes h3 {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   margin: 0;
 }
 .sentiment-dimension-head {
@@ -443,7 +443,7 @@
   margin-bottom: 22px;
 }
 .sentiment-dimension-head h2 {
-  font-size: 16px;
+  font-size: var(--workbench-type-title, 16px);
   font-weight: 600;
   margin: 0;
   flex: 1;
@@ -471,9 +471,9 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 5px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.6;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .sentiment-metric > strong {
   font-size: clamp(20px, 1.8vw, 27px);
@@ -484,15 +484,15 @@
   overflow-wrap: anywhere;
 }
 .sentiment-metric strong small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 400;
   margin-left: 4px;
 }
 .sentiment-metric-note,
 .sentiment-empty {
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .sentiment-sample {
   display: flex;
@@ -501,8 +501,8 @@
   border-top: 1px solid var(--border-soft);
   margin-top: 20px;
   padding-top: 12px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.6;
 }
 .sentiment-sample b {
@@ -511,8 +511,8 @@
   color: var(--subtle);
 }
 .sentiment-dimension-scope {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   margin: 9px 0 0;
   line-height: 1.7;
 }
@@ -525,8 +525,8 @@
 }
 .sentiment-evidence > summary,
 .sentiment-legacy-observation > summary {
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--workbench-type-label, 12px);
+  color: var(--workbench-type-muted, var(--muted));
   cursor: pointer;
   line-height: 1.7;
 }
@@ -538,13 +538,13 @@
 }
 .sentiment-evidence-body p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
   line-height: 1.8;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   overflow-wrap: anywhere;
 }
 .sentiment-evidence-body h3 {
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   margin: 0 0 8px;
 }
 .sentiment-formula-groups {
@@ -560,7 +560,7 @@
 }
 .sentiment-formula-groups dt,
 .sentiment-formula-groups dd {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.8;
 }
 .sentiment-formula-groups dt {

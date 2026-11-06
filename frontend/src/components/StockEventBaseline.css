@@ -16,7 +16,7 @@
   min-width: 0;
 }
 .stock-event-picker label > span {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -24,11 +24,11 @@
   height: 34px;
   max-width: min(420px, 100%);
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .stock-event-picker > small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 @media (max-width: 640px) {
   .stock-event-picker label {

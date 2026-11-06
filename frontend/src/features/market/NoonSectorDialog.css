@@ -17,11 +17,11 @@
   flex-wrap: wrap;
   gap: 8px 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.7;
 }
 .noon-sector-body .sector-chart-scope {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.8;
 }
 .noon-sector-body .market-members-details > div,
@@ -45,7 +45,7 @@
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .noon-sector-pagination > span {
   margin-right: auto;
@@ -61,12 +61,12 @@
   justify-content: flex-start;
 }
 .noon-sector-quote-heading > span:not(.badge) {
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
 }
 .noon-sector-quote-note {
   margin: 0;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .noon-sector-values .up {
   color: var(--red);
@@ -91,7 +91,7 @@
   background: var(--surface2);
   color: var(--muted);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   cursor: pointer;
 }
 .noon-sector-board-filter > button:hover {
@@ -106,7 +106,7 @@
 .noon-sector-board-filter > span {
   margin-right: 3px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .noon-sector-board-filter > button:focus-visible {
   outline: 2px solid var(--blue);
@@ -114,7 +114,7 @@
 }
 .noon-sector-board-filter > small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.5;
   margin-left: 5px;
 }
@@ -147,7 +147,7 @@
 }
 .noon-sector-embedded .market-members-details {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
 }
 .noon-sector-embedded .market-members-details summary {

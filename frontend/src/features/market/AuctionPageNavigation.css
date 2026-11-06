@@ -1,6 +1,8 @@
 .auction-page-reader {
   display: grid;
-  grid-template-columns: 142px minmax(0, 1fr);
+  grid-template-columns:
+    max(142px, calc(var(--workbench-type-label, 11px) * 11))
+    minmax(0, 1fr);
   align-items: start;
   gap: 18px;
   min-width: 0;
@@ -35,9 +37,9 @@
 .auction-page-directory > strong {
   display: block;
   padding: 0 9px 11px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 500;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .auction-page-directory > div {
   display: grid;
@@ -52,16 +54,16 @@
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.6;
   text-align: left;
   cursor: pointer;
 }
 .auction-page-directory button > span {
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .auction-page-directory button:hover {
   background: var(--surface2);

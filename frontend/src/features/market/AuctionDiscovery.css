@@ -11,7 +11,7 @@
   min-width: 0;
   gap: 12px;
   padding: 13px 16px 16px;
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .auction-discovery-coverage {
   display: flex;
@@ -36,7 +36,7 @@
 }
 .auction-discovery-group h3 {
   margin: 0 0 3px;
-  font-size: 13px;
+  font-size: var(--workbench-type-title, 13px);
 }
 .auction-discovery-extra {
   min-width: 0;
@@ -94,12 +94,12 @@
   min-height: 30px;
 }
 .discovery-distribution-heading > strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .discovery-distribution-heading > small,
 .discovery-distribution-options > small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 .discovery-distribution-heading > button {
   margin-left: auto;
@@ -132,7 +132,7 @@
   background: var(--surface2);
   color: var(--text);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.4;
   cursor: pointer;
 }
@@ -164,7 +164,7 @@
   width: fit-content;
   padding: 4px 0;
   color: var(--blue);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 400;
 }
 .discovery-distribution-more > div {
@@ -189,8 +189,8 @@
   gap: 7px 10px;
   padding: 10px 12px;
   border-top: 1px solid var(--border-soft);
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   font-variant-numeric: tabular-nums;
 }
 .discovery-pagination > span:first-child {
@@ -228,8 +228,8 @@
 .auction-discovery-leader {
   display: block;
   margin-top: 3px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .auction-discovery-stocks .auction-identity {
   min-width: 130px;
@@ -254,7 +254,7 @@
   display: inline-block;
   padding: 3px 6px;
   border-radius: 5px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 600;
 }
 .discovery-theme.industry {
@@ -289,15 +289,15 @@
 .discovery-section-head h3 {
   margin: 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--workbench-type-title, 14px);
   overflow-wrap: anywhere;
 }
 .discovery-section-head p,
 .discovery-section-head span {
   display: block;
   margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
 }
 .discovery-section-head span {
   margin: 0 0 4px;
@@ -366,8 +366,8 @@
 .discovery-direction-table th[scope="row"] > small {
   display: block;
   margin-top: 3px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .discovery-direction-table .stock-link {
   flex-direction: row;

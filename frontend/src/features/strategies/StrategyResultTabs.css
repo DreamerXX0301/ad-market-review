@@ -13,8 +13,8 @@
   gap: 7px;
   padding: 8px 11px;
   min-height: 35px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
   font-weight: 600;
   background: transparent;
   border: 1px solid transparent;
@@ -36,7 +36,7 @@
   border-radius: 5px;
   color: var(--subtle);
   background: color-mix(in srgb, var(--subtle) 10%, transparent);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -76,7 +76,7 @@
   align-items: center;
   padding: 9px 16px;
   color: var(--subtle);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
   background: color-mix(in srgb, var(--blue) 4%, var(--surface));
   border-bottom: 1px solid var(--border-soft);

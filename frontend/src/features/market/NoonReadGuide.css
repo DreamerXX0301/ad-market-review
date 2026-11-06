@@ -1,6 +1,8 @@
 .noon-reading-layout {
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
+  grid-template-columns:
+    max(168px, calc(var(--workbench-type-label, 12px) * 12))
+    minmax(0, 1fr);
   align-items: start;
   gap: 20px;
   min-width: 0;
@@ -23,7 +25,7 @@
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   background: var(--surface);
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   scrollbar-width: thin;
 }
 .noon-read-guide-heading {
@@ -32,7 +34,7 @@
   align-items: center;
   padding: 0 9px;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 600;
 }
 .noon-read-guide-heading svg {
@@ -41,7 +43,7 @@
 .noon-read-guide-intro {
   padding: 0 9px;
   margin: 8px 0 15px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
 }
 .noon-read-guide-list {
@@ -65,9 +67,9 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   font: inherit;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.4;
   text-align: left;
   cursor: pointer;
@@ -90,7 +92,7 @@
   align-items: center;
   justify-content: center;
   min-width: 19px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
 }
@@ -105,7 +107,7 @@
 }
 .noon-read-guide-reference button {
   min-height: 34px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .noon-read-guide-current {
   margin: 17px 9px 0;
@@ -114,21 +116,21 @@
 }
 .noon-read-guide-current > span {
   color: var(--blue);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .noon-read-guide-current p {
   margin: 7px 0;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.7;
 }
 .noon-read-guide-current small {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
 }
 .noon-read-guide-footnote {
   margin: 20px 9px 0;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
   opacity: 0.8;
 }

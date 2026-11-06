@@ -3,13 +3,13 @@
   height: 36px;
   padding: 0 13px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.4;
 }
 :is(.noon-workbench, .noon-sector-body) .btn.small {
   height: 30px;
   padding: 0 10px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 :is(.noon-workbench, .noon-sector-body) .btn:hover:not(:disabled) {
   color: var(--text);
@@ -43,7 +43,7 @@
   min-height: 30px;
   padding: 6px 12px;
   border-radius: 7px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.4;
 }
 :is(.noon-workbench, .noon-sector-body) .segmented > button:hover {
@@ -59,7 +59,7 @@
   :is(input:not([type="checkbox"]), select, textarea) {
   border-color: var(--border);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   background-color: color-mix(in srgb, var(--bg) 20%, var(--surface));
 }
 :is(.noon-workbench, .noon-sector-body)
@@ -87,11 +87,11 @@
   outline-offset: 3px;
 }
 :is(.noon-workbench, .noon-sector-body) :is(table, td) {
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 :is(.noon-workbench, .noon-sector-body) th {
   color: var(--subtle);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 500;
   background: var(--surface2);
 }
@@ -108,7 +108,7 @@
 }
 :is(.noon-workbench, .noon-sector-body)
   :is(.stock-link, .noon-stock-link, .noon-sector-link) {
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
   line-height: 1.6;
   text-underline-offset: 3px;
   border-radius: 3px;
@@ -116,11 +116,11 @@
 .noon-workbench button.noon-sector-members-chip {
   min-height: 26px;
   padding: 3px 9px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   border-radius: 6px;
 }
 .noon-sector-body .stock-link strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 .noon-workbench .noon-sector-members-chip:hover:not(:disabled) {
   background: var(--blue-bg);
@@ -142,7 +142,7 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface2) 42%, var(--surface));
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.7;
 }
 .noon-workbench
@@ -154,7 +154,7 @@
   padding: 0;
   color: var(--subtle);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .noon-workbench
   :is(.noon-details, .noon-source-details, .noon-temperature-rules)[open],
@@ -174,7 +174,7 @@
   border: 1px solid var(--border-soft);
   border-radius: 5px;
   background: var(--surface2);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.5;
 }
 .noon-workbench p.noon-unknown {

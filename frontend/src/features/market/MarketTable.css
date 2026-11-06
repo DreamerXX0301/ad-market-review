@@ -14,9 +14,9 @@
   border: 1px solid var(--muted);
   border-radius: 50%;
   background: transparent;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   padding: 0;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 500;
   line-height: 1;
   vertical-align: middle;
@@ -40,7 +40,7 @@
   background: var(--surface2);
   color: var(--subtle);
   box-shadow: var(--shadow);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.8;
   text-align: left;
   pointer-events: none;
@@ -56,8 +56,8 @@
   padding: 2px 0;
   border: 0;
   background: transparent;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   white-space: nowrap;
 }
 .market-sort-heading.active {

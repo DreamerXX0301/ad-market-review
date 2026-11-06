@@ -11,7 +11,7 @@
   display: inline-block;
   margin: 0 18px 14px;
   color: var(--blue);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .ladder-feedback-overview--compact .ladder-feedback-summary {
   display: grid;
@@ -34,7 +34,7 @@
 }
 .ladder-feedback-topics summary {
   color: var(--blue);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   cursor: pointer;
   width: fit-content;
 }
@@ -52,8 +52,8 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-feedback-total > strong {
   color: var(--text);
@@ -62,8 +62,8 @@
   line-height: 1.3;
 }
 .ladder-feedback-total small {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 400;
 }
 .ladder-feedback-distribution {
@@ -100,8 +100,8 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-feedback-counts i {
   width: 6px;
@@ -122,8 +122,8 @@
   border-top: 1px solid var(--border-soft);
 }
 .ladder-feedback-returns dt {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-feedback-returns dd {
   margin: 7px 0 0;
@@ -134,8 +134,8 @@
   justify-content: space-between;
   gap: 8px;
   margin: 16px 0 0;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .ladder-feedback-decline strong {
   color: var(--text);
@@ -148,7 +148,7 @@
 }
 .ladder-feedback-heights h3 {
   margin: 0 0 8px;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 500;
   color: var(--subtle);
 }
@@ -177,14 +177,14 @@
 }
 .ladder-feedback-heights li strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   font-weight: 500;
 }
 .ladder-feedback-heights li span,
 .ladder-feedback-heights li small,
 .ladder-feedback-heights > p {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.6;
 }
 .ladder-feedback-height-average {

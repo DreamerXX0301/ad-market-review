@@ -107,7 +107,7 @@
 }
 .nav-group-title {
   color: var(--nav-accent);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 600;
   letter-spacing: 0.08em;
 }
@@ -167,7 +167,7 @@
   flex-shrink: 0;
 }
 .breadcrumb {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .topbar h1 {
   font-size: 22px;
@@ -199,7 +199,7 @@
 }
 .section-intro > p {
   color: var(--subtle);
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .panel {
   box-shadow: var(--panel-shadow);
@@ -218,7 +218,7 @@
   );
 }
 .panel-head h2 {
-  font-size: 14px;
+  font-size: var(--workbench-type-body, 14px);
 }
 .panel-head h2::before {
   content: "";
@@ -308,7 +308,7 @@ tbody tr:hover {
   background: color-mix(in srgb, var(--blue) 10%, var(--surface));
 }
 .stock-link strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .badge {
   border-radius: 5px;
@@ -450,5 +450,47 @@ tbody tr:hover {
 @media (prefers-reduced-motion: reduce) {
   .nav-item {
     transition: none;
+  }
+}
+
+/* Readable type scales with the usable CSS viewport, including browser zoom. */
+@media (min-width: 1600px) {
+  :root {
+    --workbench-type-caption: 12px;
+    --workbench-type-label: 13px;
+    --workbench-type-body: 14px;
+    --workbench-type-title: 16px;
+    --workbench-type-muted: var(--subtle);
+  }
+
+  .nav-item {
+    font-size: var(--workbench-type-body);
+  }
+
+  .panel-head h2 {
+    font-size: var(--workbench-type-title);
+  }
+
+  .market-metric-help {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+@media (min-width: 2080px) {
+  :root {
+    --workbench-type-caption: 13px;
+    --workbench-type-label: 14px;
+    --workbench-type-body: 15px;
+    --workbench-type-title: 17px;
+  }
+}
+
+@media (min-width: 2560px) {
+  :root {
+    --workbench-type-caption: 14px;
+    --workbench-type-label: 15px;
+    --workbench-type-body: 16px;
+    --workbench-type-title: 18px;
   }
 }

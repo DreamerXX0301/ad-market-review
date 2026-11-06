@@ -33,13 +33,13 @@
   justify-content: space-between;
   gap: 10px;
   color: var(--blue);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 600;
 }
 
 .intraday-brief-timeline .ibt-eyebrow small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 400;
 }
 
@@ -69,8 +69,8 @@
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface);
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
   font-variant-numeric: tabular-nums;
   line-height: 1.45;
   cursor: pointer;
@@ -96,7 +96,7 @@
 }
 
 .intraday-brief-timeline .ibt-slots small {
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   opacity: 0.8;
   white-space: nowrap;
 }
@@ -167,13 +167,13 @@
   gap: 5px;
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   font-weight: 650;
 }
 
 .intraday-brief-timeline .ibt-section-heading > span {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 
 .intraday-brief-timeline .ibt-section-heading .ibt-active-label {
@@ -185,15 +185,15 @@
 
 .intraday-brief-timeline .ibt-scroll .ibt-summary {
   margin: 0 0 9px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-body, 12px);
   line-height: 1.7;
   white-space: pre-line;
 }
 
 .intraday-brief-timeline .ibt-scroll .ibt-summary.is-legacy {
   color: var(--subtle);
-  font-size: 12px;
+  font-size: var(--workbench-type-body, 12px);
 }
 
 .intraday-brief-timeline .ibt-highlights {
@@ -206,7 +206,9 @@
 
 .intraday-brief-timeline .ibt-highlight {
   display: grid;
-  grid-template-columns: 75px minmax(0, 1fr);
+  grid-template-columns:
+    max(75px, calc(var(--workbench-type-label, 11px) * 6))
+    minmax(0, 1fr);
   align-items: start;
   gap: 9px;
   padding: 8px 10px;
@@ -220,7 +222,7 @@
   align-items: center;
   gap: 4px;
   color: var(--blue);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   font-weight: 600;
   line-height: 1.8;
   white-space: nowrap;
@@ -246,7 +248,7 @@
 .intraday-brief-timeline .ibt-scroll .ibt-highlight p {
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--workbench-type-body, 13px);
   line-height: 1.7;
   white-space: pre-line;
 }
@@ -279,16 +281,16 @@
   align-items: baseline;
   gap: 5px;
   margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.65;
 }
 
 .intraday-brief-timeline .ibt-evidence {
   border-top: 1px solid var(--border);
   padding-top: 11px;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
 }
 
 .intraday-brief-timeline .ibt-evidence summary {
@@ -296,7 +298,7 @@
 }
 
 .intraday-brief-timeline .ibt-evidence summary small {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   margin-left: 5px;
 }
 
@@ -316,8 +318,8 @@
 }
 
 .intraday-brief-timeline .ibt-empty {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 
 @media (max-width: 700px) {

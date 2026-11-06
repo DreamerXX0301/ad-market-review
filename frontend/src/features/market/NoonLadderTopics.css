@@ -13,7 +13,7 @@
 .noon-ladder-topics-row > b {
   padding-top: 5px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   font-weight: 500;
 }
 .noon-ladder-topics-chips {
@@ -31,7 +31,7 @@
   border: 1px solid var(--border-soft);
   border-radius: 5px;
   background: var(--surface);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 .noon-ladder-topic-chip > summary {
   display: flex;
@@ -59,13 +59,13 @@
   content: "▾";
 }
 .noon-ladder-topic-chip > summary > b {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
 .noon-ladder-topic-chip > summary > small {
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   color: var(--muted);
 }
 .noon-ladder-topic-members {
@@ -93,11 +93,11 @@
 }
 .noon-ladder-topic-members small {
   display: block;
-  font-size: 9px;
+  font-size: var(--workbench-type-caption, 9px);
   margin-top: 2px;
 }
 .noon-ladder-topic-members li > b {
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   font-weight: 500;
   color: var(--text);
 }
@@ -105,7 +105,7 @@
 .noon-ladder-topics-note,
 .noon-ladder-topics-empty {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.6;
 }
 .noon-ladder-topic-members p {
@@ -117,7 +117,7 @@
 }
 .noon-ladder-topics-more > summary {
   padding: 5px 3px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   color: var(--blue);
   cursor: pointer;
 }
@@ -137,7 +137,7 @@
   align-items: baseline;
   gap: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   margin-bottom: 8px;
 }
 .noon-ladder-topics-total b {

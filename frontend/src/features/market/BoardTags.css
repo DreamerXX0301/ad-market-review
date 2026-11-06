@@ -13,7 +13,7 @@
     color-mix(in srgb, var(--board-tag-color) 25%, var(--border-soft));
   border-radius: 5px;
   padding: 2px 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.5;
   font-weight: 500;
   white-space: nowrap;
@@ -33,16 +33,16 @@
   --board-tag-color: var(--amber);
 }
 .board-tag.volume {
-  --board-tag-color: var(--muted);
+  --board-tag-color: var(--workbench-type-muted, var(--muted));
   border-style: dashed;
 }
 .board-tags-empty {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .board-tags-more {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
   line-height: 1.7;
 }
 .board-tags-more > summary {

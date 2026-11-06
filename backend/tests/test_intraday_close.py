@@ -85,6 +85,42 @@ def test_original_close_pools_restore_all_details_zero_and_adjacent_changes_with
     assert (directory / 'reference.json').read_bytes() == original
 
 
+def test_close_changes_use_original_members_for_stock_labels_brief_and_ai(source):
+    from app.services.ai_intraday_evidence import attach_change_distributions, membership_inputs
+    from app.services.ai_intraday_read import _change_summary
+    from app.services.intraday_narrative import build_section
+
+    _, _, reference, publish = source
+    concept = {'name': '原题材', 'kind': 'concept', 'member_date': PRIOR}
+    reference['topics'].extend([
+        {'topic_code': code, 'name': name, 'kind': 'concept', 'source': 'fuyao',
+         'observed_date': date, 'members_complete': True, 'instrument_ids': [B]}
+        for code, name, date in [('885001.TI', concept['name'], PRIOR), ('885002.TI', '未来题材', '2026-11-06')]
+    ])
+    publish()
+    context = closing.closing_data(DAY, GENERATION)
+    earlier = live_frame('1430', [A])
+    earlier['stocks'][1]['themes'] = [{'name': '前档专属题材', 'kind': 'concept', 'member_date': PRIOR}]
+    frame = closing.restore_close_details(anchor(), context, previous=earlier, previous_row=raw_row(earlier))
+    change = frame['board_changes']['groups']['new_sealed']['items'][0]
+    expected = [{'name': '原行业', 'kind': 'industry', 'member_date': PRIOR}, concept]
+    assert change['instrument_id'] == B and change['themes'] == expected
+
+    prior = {**earlier, 'source_binding': frame['board_changes']['source_bindings']['previous']}
+    brief = build_section(frame, prior)
+    sealed = next(row for row in brief['highlights'] if row['kind'] == 'sealed')
+    assert sealed['stock_ids'] == [B]
+    assert '本段新入封板1只' in sealed['text'] and '原股票000002' in sealed['text']
+    assert {item['name'] for item in sealed['topic_counts']} == {'原行业', '原题材'}
+
+    sectors, members = membership_inputs(context['reference']['topics'], DAY)
+    attach_change_distributions(frame, earlier, sectors, members, {})
+    group = _change_summary(frame['board_changes'], '', True)['groups']['new_sealed']
+    assert group['samples'][0]['themes'] == expected
+    assert group['classification']['classified'] == 1
+    assert [item['name'] for item in group['classification']['concepts']] == ['原题材']
+
+
 @pytest.mark.parametrize('damage', ['reference_sha', 'prices_sha', 'wrong_day', 'before_close'])
 def test_close_source_does_not_accept_changed_or_unbound_files(source, damage):
     _, directory, _, _ = source

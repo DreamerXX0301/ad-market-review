@@ -20,14 +20,14 @@
 }
 .trade-rules-heading .eyebrow {
   color: var(--blue);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   letter-spacing: 0.12em;
 }
 .trade-rules-intro,
 .trade-rule-placeholder,
 .trade-rule-execution span {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.7;
 }
 .trade-rule-card {
@@ -55,8 +55,8 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--workbench-type-label, 12px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .trade-rule-toggle input {
   width: auto;
@@ -64,8 +64,8 @@
 .trade-rule-logic {
   margin: 16px 0;
   justify-content: space-between;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
 }
 .trade-rule-logic select {
   width: 120px;
@@ -76,13 +76,13 @@
   border-radius: 10px;
   display: grid;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .trade-rule-summary {
   display: grid;
   gap: 10px;
   padding: 16px 0;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .trade-rule-summary > div {
   display: flex;
@@ -97,7 +97,7 @@
 .trade-rule-preserved {
   padding: 12px 0;
   line-height: 1.8;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .trade-rule-preserved small {
   display: block;
@@ -137,7 +137,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   color: var(--subtle);
 }
 .trade-overview-heading svg {
@@ -148,12 +148,12 @@
   background: var(--surface2);
   border: 1px solid var(--border-soft);
   border-radius: 5px;
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .trade-overview-expand {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--blue);
 }
 .trade-overview-grid {
@@ -173,12 +173,12 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
 }
 .trade-overview-side header > span {
   margin-left: auto;
-  font-size: 10px;
-  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  color: var(--workbench-type-muted, var(--muted));
 }
 .trade-overview-side.entry header > svg {
   color: var(--blue);
@@ -187,15 +187,15 @@
   color: var(--amber);
 }
 .trade-overview-side p {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.7;
   margin: 10px 0 4px;
   color: var(--text);
   overflow-wrap: anywhere;
 }
 .trade-overview-side small {
-  color: var(--muted);
-  font-size: 10px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 10px);
 }
 .trade-overview footer {
   padding: 11px 15px;
@@ -204,7 +204,7 @@
   align-items: center;
   gap: 8px;
   border-top: 1px solid var(--border-soft);
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   color: var(--subtle);
 }
 .trade-overview footer b {
@@ -219,7 +219,7 @@
 }
 .trade-overview.compact[open] .trade-overview-expand::after {
   content: "收起规则";
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
 }
 @media (max-width: 640px) {
   .trade-overview {

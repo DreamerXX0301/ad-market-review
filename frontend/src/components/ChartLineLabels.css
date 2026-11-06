@@ -11,7 +11,7 @@
   align-items: center;
   gap: 5px;
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
   white-space: nowrap;
   min-height: 30px;
 }
@@ -19,7 +19,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
   white-space: nowrap;
 }
 .chart-line-options {
@@ -52,7 +52,7 @@
   align-items: baseline;
   gap: 7px;
   padding: 5px 2px;
-  font-size: 11px;
+  font-size: var(--chart-type-label, 11px);
   overflow-wrap: anywhere;
 }
 .chart-line-options > label > span {
@@ -66,7 +66,7 @@
 .chart-line-options small,
 .chart-line-options p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--chart-type-caption, 10px);
   line-height: 1.6;
   margin: 5px 0 0;
 }
@@ -140,7 +140,7 @@
   border-radius: 6px;
   background: var(--surface2);
   color: var(--subtle);
-  font-size: 11px;
+  font-size: var(--chart-type-caption, 11px);
   line-height: 1.7;
   overflow-wrap: anywhere;
   pointer-events: auto;

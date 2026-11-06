@@ -7,7 +7,7 @@
 }
 .market-member-day-change .member-daily-limit .badge {
   padding: 1px 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
 }
 .market-members-inline {
   min-width: 0;
@@ -38,7 +38,7 @@
 .market-members-inline .member-dialog-search-row > .muted {
   flex-basis: 100%;
   padding-bottom: 0;
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .market-members-inline > .table-wrap {
   flex: none;
@@ -90,7 +90,7 @@
   background: transparent;
 }
 .market-members-inline .member-context-item strong {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .market-members-inline .market-members-board-filter button {
   padding: 5px 9px;
@@ -112,12 +112,12 @@
 }
 .market-members-inline .market-member-history small,
 .market-members-inline .market-member-recent small {
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
 }
 .market-members-metric-toggle {
   align-self: flex-end;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 11px);
 }
 @media (max-width: 640px) {
   .market-members-inline {

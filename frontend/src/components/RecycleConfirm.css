@@ -1,6 +1,6 @@
 .recycle-confirm-body {
   padding: 18px 22px;
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   line-height: 1.9;
   color: var(--subtle);
 }
@@ -26,12 +26,12 @@
   background: var(--surface2);
 }
 .strategy-recycle-item strong {
-  font-size: 12px;
+  font-size: var(--workbench-type-label, 12px);
   color: var(--text);
 }
 .strategy-recycle-item p {
   margin-top: 5px;
-  font-size: 10px;
+  font-size: var(--workbench-type-caption, 10px);
   color: var(--muted);
 }
 .strategy-recycle-pagination {
@@ -39,7 +39,7 @@
   justify-content: space-between;
   align-items: center;
   margin-top: 15px;
-  font-size: 11px;
+  font-size: var(--workbench-type-caption, 11px);
   color: var(--muted);
 }
 

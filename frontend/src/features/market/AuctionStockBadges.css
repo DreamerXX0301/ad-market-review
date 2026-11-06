@@ -14,9 +14,9 @@
   padding: 2px 6px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  color: var(--muted);
+  color: var(--workbench-type-muted, var(--muted));
   background: var(--surface2);
-  font-size: 11px;
+  font-size: var(--workbench-type-label, 11px);
   line-height: 1.6;
   white-space: nowrap;
 }
