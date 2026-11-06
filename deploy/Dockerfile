@@ -23,7 +23,7 @@ RUN curl --fail --location --retry 3 "https://www.sqlite.org/2026/${SQLITE_ARCHI
 
 FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE} AS runtime
-ARG APP_VERSION=0.1.22
+ARG APP_VERSION=0.1.23
 ARG VCS_REF=unknown
 ARG BUILD_DATE
 LABEL org.opencontainers.image.title="冒险的梦想家" \

@@ -1,25 +1,25 @@
 # Docker部署
 
-本文对应冒险的梦想家0.1.22发行目标。正式发行后，源码以固定的 [v0.1.22 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.22)为准，镜像标签为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.22`，目标平台为 Linux amd64、arm64。以下链接与命令是本版发行后的安装入口，不表示镜像或附件已经发布。使用前须核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.22)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)的实际结果；完整源码 SHA、镜像摘要及平台检查以本版 `release-image.json` 为准，不沿用旧版提交或成功记录。无需在安装机器构建前后端。
+本文对应冒险的梦想家0.1.23发行目标。正式发行后，源码以固定的 [v0.1.23 标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.23)为准，镜像标签为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.23`，目标平台为 Linux amd64、arm64。以下链接与命令是本版发行后的安装入口，不表示镜像或附件已经发布。使用前须核对[本版 Release](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.23)与[镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)的实际结果；完整源码 SHA、镜像摘要及平台检查以本版 `release-image.json` 为准，不沿用旧版提交或成功记录。无需在安装机器构建前后端。
 
-[0.1.22](../CHANGELOG.md)修复AI涨幅榜前1000样本的分类查询和共享会话同步，继续保留生肖年度池及既有盘面功能。数据库终点为schema36：77张表、53个显式索引、1个视图、146个触发器。从0.1.18/schema34升级，仅在独立恢复副本追加035/036的7张AI表；更早实例按[升级路径](版本升级与回滚.md)补齐缺少的迁移。全部原业务事实、旧迁移SHA及来源闭包须对账。标准备份包含竞价内嵌原件与午评raw/noon闭包，恢复关闭全部已保存自动计划并保留台账和自定义时间；已有AI配置也会关闭并使验证过期。新安装的自动计划与AI同样默认关闭，AI默认预算不代表已授权消费。合入 `master`、发行镜像和服务部署分别留证；已有实例仍须维护窗口最终备份后切换。
+[0.1.23](../CHANGELOG.md)新增盘中观察、竞价发现及 AI 附件，保留原涨幅榜分类查询、共享会话同步、生肖年度池与历史研究。数据库终点为schema39：80张表（含迁移登记表）、53个显式索引、1个视图、149个触发器，共38份迁移。相对正式0.1.22/schema36追加037—039三份迁移；更早实例按[升级路径](版本升级与回滚.md)补齐缺项，已是schema39的试用实例不重复迁移。全部原业务、旧迁移SHA及来源闭包须对账。标准备份包含竞价、竞价发现、盘中快照和简报，以及午评来源闭包与 AI 附件；额外raw/work证据另按恢复清单纳入完整恢复集。恢复关闭全部已保存自动计划并保留台账和自定义时间；已有AI配置也会关闭并使验证过期。新安装的自动计划与AI同样默认关闭，默认预算不代表消费授权。合入 `master`、发行镜像和服务部署分别留证；已有实例须在独立恢复验收与维护窗口最终备份后切换。
 
 ## 全新安装
 
 需要 Docker Engine 或 Docker Desktop，以及 Docker Compose v2；`curl`仅用于可选健康检查。以下命令面向全新安装；已有实例应先阅读[版本升级与回滚](版本升级与回滚.md)，不要直接复用旧实例的卷。默认只绑定本机 `127.0.0.1:8788`；已有服务占用时先设置 `export SHIXU_HTTP_PORT=8789`。
 
-源码仓库及已公开的Release附件可以匿名下载，公开镜像也允许匿名拉取，不要求GitHub登录。独立Compose文件从对应[0.1.22 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.22)获取；须先核对本版正式发行及匿名拉取状态，不必克隆仓库或安装GitHub CLI。
+源码仓库及已公开的Release附件可以匿名下载，公开镜像也允许匿名拉取，不要求GitHub登录。独立Compose文件从对应[0.1.23 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.23)获取；须先核对本版正式发行及匿名拉取状态，不必克隆仓库或安装GitHub CLI。
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
 test ! -e docker-compose.yml && test ! -L docker-compose.yml && \
   curl --fail --location --output docker-compose.yml \
-  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.22/docker-compose.yml'
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.22
+  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.23/docker-compose.yml'
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.23
 ```
 
-上面的下载前置检查会拒绝已有同名文件；已有文件时先核对版本或使用新目录。已持有配套源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录；已安装并配置 `gh` 时可选用 `gh release download v0.1.22 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml`。这些是可选的公开下载方式，不需要将GitHub凭据或数据源Key配置为镜像登录。
+上面的下载前置检查会拒绝已有同名文件；已有文件时先核对版本或使用新目录。已持有配套源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录；已安装并配置 `gh` 时可选用 `gh release download v0.1.23 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml`。这些是可选的公开下载方式，不需要将GitHub凭据或数据源Key配置为镜像登录。
 
 创建一个新的、独立保存的主密钥。镜像中自带生成脚本，不要求宿主安装 Python；脚本遇到已有文件会拒绝覆盖。Docker Desktop 需允许挂载此目录。
 
@@ -29,7 +29,7 @@ key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.22 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.23 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
 
@@ -47,13 +47,13 @@ docker compose --profile worker up -d worker
 docker compose --profile worker ps
 ```
 
-`up -d api` 只运行卷初始化与 API，worker 默认不启用。启动 worker 也不会自动创建首次行情任务；在页面配置数据源，再手动初始化。之后可在北京时间17:00后手动发起盘后增量，或显式保存开启当日自动计划。竞价、午评与盘后开关独立，初始及恢复后关闭；不追补跨日任务。不要另开第二个 worker 或让另一项目共用此业务库。
+`up -d api` 只运行卷初始化与 API，worker 默认不启用。启动 worker 也不会自动创建首次行情任务；在页面配置数据源，再手动初始化。之后可在北京时间17:00后手动发起盘后增量，或显式保存开启当日自动计划。竞价、午评、盘中观察与盘后开关独立，竞价发现也须单独开启；初始及恢复后关闭；不追补跨日任务。不要另开第二个 worker 或让另一项目共用此业务库。
 
 每次在新终端执行 Compose 命令，需要重新设置 `SHIXU_MASTER_KEY_FILE`。默认项目名是 `ad-market-review`，不会沿用开发入口原有项目名。内部 `SHIXU_*` 配置、卷名和容器数据路径保留兼容，不需自行批量改名。
 
-## 已有实例升级到0.1.22
+## 已有实例升级到0.1.23
 
-以目标实例当时实际版本、schema、最新业务、来源闭包及原自动计划为基线。已是schema36时，使用目标实例自己的最新备份和原外置主密钥核验既有AI历史、费用与凭据。仍为0.1.18/schema34时，先从该云端实例的标准业务备份恢复独立候选，再追加035/036并核对原70张表及新增AI默认状态；本地已验收的0.1.22业务包、AI会话和密钥不能覆盖云端数据。新迁移的DeepSeek/OpenAI均关闭且未配置凭据，不通过真实模型验证、取数或历史补跑来完成升级验收。
+以目标实例当时实际版本、完整提交、schema、最新业务和原自动计划为基线。正式0.1.22/schema36使用本实例自己的最新备份及原外置主密钥恢复独立候选，再追加037盘中快照、038累计简报、039竞价发现，核验原77张表与新增3张表。仍为schema34时先补齐035/036，再继续至39；已是schema39的试用实例核对全部38份迁移SHA，不凭应用版本字符串重复迁移。已有AI历史、费用、凭据、生肖和策略结果完整保留；其他实例的业务、AI会话和密钥不能覆盖本实例。不通过真实模型请求、取数或历史补跑完成验收。
 
 预演只启动API。维护窗口停止旧API和唯一worker后重做最终备份，恢复另一套正式卷，核验同一冻结提交的前端、API与worker再切换。原已授权的自动计划只在唯一正式实例恢复；竞价固定触发时间为北京时间09:25:30，午评和盘后沿用该实例自己的时间。新版完整恢复集须包含标准业务、必要raw/work、对应源码及未覆盖的唯一历史资料；通过独立恢复、解压、逐文件SHA和业务对账后，再清理被完整覆盖的旧集与临时副本。详见[当前升级路径](版本升级与回滚.md)。
 
@@ -78,7 +78,7 @@ docker compose config
 
 `.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签及配套Release附件也应绑定同一审核提交，已公开的源码与Release附件可匿名下载；发行写入仍由有权限的维护者执行。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
-已有发行标签不能用于重新发布本次改动，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.22`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，并运行 `python3 scripts/export_schema.py --check` 核对schema36导出，审核后合入 `master`。最终完整提交冻结之前，不从仍在修改的共享目录打包或触发发行。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
+已有发行标签不能用于重新发布本次改动，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.23`；发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，并运行 `python3 scripts/export_schema.py --check` 核对schema39导出，审核后合入 `master`。最终完整提交冻结之前，不从仍在修改的共享目录打包或触发发行。下面命令仅用于已明确授权的发行，版本取自该已审定源码；执行前核对完整提交，避免把后续变动一起发出。
 
 ```bash
 gh workflow run publish-image.yml --repo DreamerXX0301/ad-market-review --ref master -f version="$(cat VERSION)" -F confirm=true
