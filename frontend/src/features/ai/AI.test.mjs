@@ -19,6 +19,7 @@ const compile = async (path) =>
 const helperUrl = encode(await compile("./aiState.ts"));
 const attachmentUrl = encode(await compile("./aiAttachments.ts"));
 const {
+  aiModelSetupGuide,
   aiReason,
   canGenerate,
   sessionMatches,
@@ -64,6 +65,24 @@ for (const change of [
   { verification: { state: "stale" } },
 ])
   assert.equal(canGenerate({ ...provider, ...change }), false);
+const unconfiguredProvider = { ...provider, configured: false, enabled: false };
+assert.equal(aiModelSetupGuide([]).title, "尚未配置 AI 模型");
+assert.match(
+  aiModelSetupGuide([unconfiguredProvider]).description,
+  /API Key.*验证.*启用/,
+);
+assert.equal(aiModelSetupGuide([unconfiguredProvider, provider]), null);
+assert.equal(
+  aiModelSetupGuide([provider], unconfiguredProvider).title,
+  "当前模型尚未配置",
+);
+for (const [change, title] of [
+  [{ verification: { state: "verifying" } }, "正在验证模型"],
+  [{ verification: { state: "stale" } }, "当前模型需要验证"],
+  [{ enabled: false }, "当前模型尚未启用"],
+  [{ model: "unsupported" }, "当前模型暂不可用"],
+])
+  assert.equal(aiModelSetupGuide([{ ...provider, ...change }]).title, title);
 assert.equal(
   sessionMatches(
     { provider_id: "openai", model: "gpt-6.1-sol", context_digest: "old" },
@@ -651,4 +670,61 @@ assert.ok(completedAfterStream.includes("<strong>1</strong><sup"));
 assert.ok(!completedAfterStream.includes("ai-stream-cursor"));
 console.log(
   "Streaming Markdown prefixes/headings/lists/growing tables remain safe; citations appear only after completion passed",
+);
+
+const marketMarkdown = [
+  "**上证 -1.09%**，上涨866家，下跌4,600只，封板24家、5连板、炸板≥3家，缩量 669.90 亿元。",
+  "",
+  "| 项目 | 数值 |",
+  "|---|---:|",
+  "| 涨跌幅 | ＋2.15％ |",
+  "| 上涨/下跌/平盘 | 866 / 4,600 / 106（有效5,572家） |",
+  "| 普通数量 | 1 / 2 / 3 |",
+  "",
+  "- 平盘 +0.00%，涨停0家，区间10-20%，代码002578.SZ，金额4,767亿元。",
+  "- `+4.00%`",
+  "```",
+  "炸板2家，-6.00%",
+  "```",
+].join("\n");
+for (const html of [
+  renderToStaticMarkup(createElement(AIAnswerText, { text: marketMarkdown })),
+  renderStreaming(marketMarkdown),
+]) {
+  for (const [tone, part] of [
+    ["down", "-1.09%"],
+    ["down", "下跌4,600只"],
+    ["down", "缩量 669.90 亿元"],
+    ["up", "上涨866家"],
+    ["up", "封板24家"],
+    ["up", "5连板"],
+    ["up", "＋2.15％"],
+    ["up", "866"],
+    ["down", "4,600"],
+    ["is-board-warning", "炸板≥3家"],
+  ]) {
+    assert.ok(
+      html.includes(`<span class="ai-market-value ${tone}">${part}</span>`),
+      part,
+    );
+  }
+  assert.equal((html.match(/class="ai-market-value /g) || []).length, 10);
+  assert.ok(html.includes("<code>+4.00%</code>"));
+  assert.ok(html.includes("<code>炸板2家，-6.00%</code>"));
+}
+assert.ok(!renderStreaming("上证 -1.09").includes("ai-market-value"));
+const userWithMetrics = renderToStaticMarkup(
+  createElement(AIMessageView, {
+    message: {
+      ...marked,
+      role: "user",
+      text: "涨停24家，-1.09%",
+      state: "completed",
+    },
+    context,
+  }),
+);
+assert.ok(!userWithMetrics.includes("ai-market-value"));
+console.log(
+  "AI market colors apply to streamed and saved Markdown while preserving plain and code text",
 );

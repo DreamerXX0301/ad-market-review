@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from app.core import connect, digest, dumps
 from app.services import task_service as tasks
 from app.services.auction_collection import CHINA, VERSION as SOURCE_VERSION
+from app.services.auction_integrity import TERMINAL_RETRY_POLICY
 
 VERSION = 'auction-automation-v1'
 DISCOVERY_VERSION = 'auction-discovery-v1'
@@ -274,7 +275,8 @@ def creation_authorization(connection, context, day):
     except ValueError:
         discovery = {'enabled': False}
     if discovery['enabled']:
-        authorization['discovery'] = {'version': DISCOVERY_VERSION, 'revision': discovery['revision']}
+        authorization['discovery'] = {'version': DISCOVERY_VERSION, 'revision': discovery['revision'],
+                                      'terminal_retry': TERMINAL_RETRY_POLICY}
     return authorization
 
 

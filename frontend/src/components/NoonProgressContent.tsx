@@ -158,7 +158,7 @@ export function useNoonRunProgress(onFinished?: (task: Row) => void) {
       : null;
   return {
     session,
-    checking: !activity.clock || (!session && !!discoverable),
+    checking: !session && !!discoverable,
     data: currentData,
     error: error || activity.error,
     retry: () => {

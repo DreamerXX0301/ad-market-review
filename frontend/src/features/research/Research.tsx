@@ -353,6 +353,7 @@ export default function Research({
           key={`history:${selected?.instrument_id || "all"}`}
           kind="stock"
           instrumentId={selected?.instrument_id}
+          instrumentName={selected?.name}
         />
       )}
       {report ? (
@@ -390,6 +391,7 @@ export default function Research({
             instrumentId={
               report.instrument?.instrument_id || selected?.instrument_id
             }
+            instrumentName={report.instrument?.name || selected?.name}
             asOf={stockMetricDate(report.data_cutoff) || undefined}
           />
           {report.schema_version !== 2 &&

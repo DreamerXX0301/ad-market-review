@@ -9,7 +9,7 @@ import {
 import { Loading } from "../../components/UI";
 import { usePageActive } from "../../lib/api";
 import {
-  aiMarketQuestion,
+  aiLaunchQuestion,
   readAILaunch,
   upgradeChatLocation,
 } from "./aiNavigation";
@@ -77,7 +77,7 @@ export default function AIHub({ onConfigure }: { onConfigure?: () => void }) {
             instrumentId={launch.instrumentId}
             reportId={launch.reportId}
             asOf={launch.asOf}
-            initialQuestion={aiMarketQuestion(launch)}
+            initialQuestion={aiLaunchQuestion(launch)}
             onConfigure={onConfigure}
             allHistory
             pageRoute="ai"

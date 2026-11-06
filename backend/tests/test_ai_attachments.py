@@ -183,6 +183,75 @@ def test_vision_reaches_planner_and_final_with_separate_reservation_and_history_
     finally:runtime.shutdown()
 
 
+@pytest.mark.parametrize('greeting',['你好?','你好？'])
+def test_resume_is_declined_without_reads_and_greeting_does_not_resend_it(client,monkeypatch,greeting):
+    from app.services.ai_scope_semantic import OUTSIDE_ATTACHMENT_REPLY
+
+    runtime=AIRuntime(fake)
+    calls=[]
+    question='看一下这个'
+    resume_text='Synthetic resume for a backend developer'
+    reply='你好，想看看哪个板块或哪只股票？'
+    async def handler(request):
+        payload=json.loads(request.content)
+        calls.append(payload)
+        serialized=json.dumps(payload['input'],ensure_ascii=False)
+        if len(calls)==1:
+            assert resume_text in serialized and '本轮新上传的附件' in serialized
+            args=planned(question,purpose='outside',context=resume_text)
+            return httpx.Response(200,content=complete([function('plan_stock_task',args,'resume-plan')]))
+        assert resume_text not in serialized and 'report.docx' not in serialized and question not in serialized
+        if len(calls)==2:
+            fields=payload['tools'][0]['parameters']['properties']
+            assert fields['context_user_quote']['enum']==['']
+            args=planned(greeting,purpose='greeting')
+            return httpx.Response(200,content=complete([function('plan_stock_task',args,'greeting-plan')]))
+        return httpx.Response(200,content=complete([final(reply)],reply))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai')
+        response=create(client,[docx(text=resume_text)],question=question)
+        assert response.status_code==202,response.text
+        ids=response.json()
+        assert drive(runtime,ids['task_id'])['state']=='completed'
+        assert len(calls)==1
+        with core.connect() as db:
+            audit=json.loads(db.execute("SELECT interpretation_json FROM ai_message WHERE task_id=? AND role='assistant'",(ids['task_id'],)).fetchone()[0])
+        tool_calls=audit['used_context']['tool_calls']
+        assert len(tool_calls)==1 and tool_calls[0]['name']=='plan_stock_task'
+        assert tool_calls[0]['args']['context_user_quote']==''
+        assert audit['source_context']['tool_results']==[] and not audit['source_context']['web']['used']
+        url='/api/v1/ai/sessions/'+ids['session_id']
+        history=client.get(url).json()
+        assert history['messages'][-1]['text']==OUTSIDE_ATTACHMENT_REPLY
+        assert history['messages'][0]['attachments'][0]['name']=='report.docx'
+        response=client.post(url+'/messages',json={'text':greeting,'consent':True,'request_key':'after-resume'})
+        assert response.status_code==202,response.text
+        assert drive(runtime,response.json()['task_id'])['state']=='completed'
+        assert len(calls)==3
+        assert client.get(url).json()['messages'][-1]['text']==reply
+    finally:runtime.shutdown()
+
+
+@pytest.mark.parametrize('purpose',['outside','stock_research'])
+def test_new_attachment_does_not_relax_resource_plan_validation(client,monkeypatch,purpose):
+    runtime=AIRuntime(fake)
+    question='看看这个文件'
+    async def handler(request):
+        args=planned(question,purpose=purpose,context='附件中的文字',reads=[
+            {'name':'read_market_data','arguments':{'date':'today','section':'overview'}},
+        ])
+        return httpx.Response(200,content=complete([function('plan_stock_task',args,'invalid-attachment-plan')]))
+    mock_network(monkeypatch,handler)
+    try:
+        enable(client,runtime,'openai')
+        response=create(client,[docx(text='附件中的文字')],question=question)
+        assert response.status_code==202,response.text
+        task=drive(runtime,response.json()['task_id'])
+        assert task['state']=='failed' and task['reason_code']=='invalid_tool_arguments'
+    finally:runtime.shutdown()
+
+
 def test_header_and_chunked_body_limits_run_before_route():
     app=FastAPI();called=[]
     @app.post('/api/v1/ai/sessions')

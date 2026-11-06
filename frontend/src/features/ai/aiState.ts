@@ -99,6 +99,36 @@ export const canGenerate = (provider?: AIProvider) =>
   !!provider.enabled &&
   verificationPassed(provider) &&
   selectableModel(provider.provider_id, provider.model);
+export function aiModelSetupGuide(items: AIProvider[], provider?: AIProvider) {
+  const configured = items.find((item) => item.configured);
+  const current = provider || items.find(canGenerate) || configured;
+  if (!current?.configured)
+    return {
+      title: configured ? "当前模型尚未配置" : "尚未配置 AI 模型",
+      description:
+        "在模型设置中选择 OpenAI 或 DeepSeek，填写 API Key，验证通过后启用。",
+    };
+  if (canGenerate(current)) return null;
+  if (!selectableModel(current.provider_id, current.model))
+    return {
+      title: "当前模型暂不可用",
+      description: "请在模型设置中选择受支持的模型，验证通过后启用。",
+    };
+  if (current.verification?.state === "verifying")
+    return {
+      title: "正在验证模型",
+      description: "可在模型设置查看验证进度。通过后启用即可发送。",
+    };
+  if (!verificationPassed(current))
+    return {
+      title: "当前模型需要验证",
+      description: "请在模型设置中检查 API Key 和模型，验证通过后启用。",
+    };
+  return {
+    title: "当前模型尚未启用",
+    description: "请在模型设置中启用已通过验证的模型。",
+  };
+}
 export function sessionMatches(
   session: AISession,
   provider: AIProvider | undefined,

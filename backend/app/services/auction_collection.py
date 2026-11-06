@@ -83,8 +83,11 @@ class Collector:
                 self.callback('正在核验盘前竞价', min(85, 10 + len(self.sources) * 25))
             return body
         except ProviderError as error:
+            code = error.code
+            if isinstance(code, str) and re.fullmatch(r'[0-9]{4}', code):
+                code = int(code)
             record.update(state='failed', http_status=error.status if isinstance(error.status, int) else None,
-                          code=error.code if isinstance(error.code, int) else None)
+                          code=code if type(code) is int else None)
             self.gap(name, '来源请求失败或权限不足，数据保持未知')
             return None
         except WindowExpired:

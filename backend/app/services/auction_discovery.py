@@ -7,11 +7,12 @@ from hashlib import sha256
 import json
 from math import isfinite
 from statistics import median
-from time import monotonic
+from time import monotonic, sleep
 
 from app.core import connect
 from app.services.auction_analysis import normalize_snapshot
-from app.services.auction_collection import CHINA, STOCK_CODE, Collector, WindowExpired, canonical, contains_secret
+from app.services.auction_collection import CAPTURE_END, CHINA, STOCK_CODE, Collector, WindowExpired, canonical, contains_secret
+from app.services.auction_integrity import TERMINAL_RETRY_POLICY, is_retryable_terminal_failure
 from app.services.market_outlook import NON_DIRECTION_LABELS
 from app.services.supplement_access import supplement_reader
 from app.services import task_service as tasks
@@ -29,6 +30,40 @@ SCOPE = '按来源异动找候选，以终态核验报价；题材和行业统�
 class DiscoveryCollector(Collector):
     max_requests = PAGES + 1
     request_options = {'max_attempts': 1, 'timeout': 4.0}
+    retry_delay = 2.0
+
+    def __init__(self, day, adapter, guard, now, *, retry_budget):
+        super().__init__(day, adapter, guard, now)
+        self.retry_budget = retry_budget
+
+    def final_quotes(self, codes):
+        params = {'thscodes': ','.join(codes), 'stage': 'final'}
+        name = 'final_quotes'
+        body = self.request(name, QUOTES, params)
+        if self.retry_budget is None or not is_retryable_terminal_failure(self.sources[-1]):
+            return body
+        self.guard()
+        timeout = self.request_options['timeout']
+        if self.retry_budget() < self.retry_delay + timeout:
+            raise WindowExpired('竞价发现剩余时间不足，未重试终态报价')
+        sleep(self.retry_delay)
+        if self.retry_budget() < timeout:
+            raise WindowExpired('竞价发现剩余时间不足，未重试终态报价')
+
+        # Keep a single logical source so older readers can still verify v1.
+        first = self.sources.pop()
+        previous_count = len(self.sources)
+        try:
+            return self.request(name, QUOTES, params)
+        finally:
+            if len(self.sources) == previous_count:
+                self.sources.append(first)
+            else:
+                retry = self.sources[-1]
+                retry.setdefault('state', 'not_accepted')
+                retry['first_failure'] = first
+                if retry['state'] == 'received':
+                    self.evidence[-1]['first_failure'] = first
 
 
 class AuthorizationEnded(RuntimeError):
@@ -175,7 +210,7 @@ def _build(day, primary, frozen, collector):
     quotes = {}
     if requested:
         try:
-            body = collector.request('final_quotes', QUOTES, {'thscodes': ','.join(requested), 'stage': 'final'})
+            body = collector.final_quotes(requested)
         except (WindowExpired, AuthorizationEnded):
             gaps.append('采集授权或时限已结束，未继续核验终态报价。')
         else:
@@ -213,6 +248,8 @@ def _build(day, primary, frozen, collector):
                 result[flag] = False
                 break
     result.update(sources=collector.sources, evidence=collector.evidence)
+    if collector.retry_budget is not None:
+        result['terminal_retry'] = TERMINAL_RETRY_POLICY
     return result
 
 
@@ -232,6 +269,10 @@ def collect_after_primary(job, primary_snapshot_id, authorization, callback=None
     primary = validate_snapshot(dict(saved))
     frozen = json.loads(saved_job[0])['frozen_inputs']
     deadline = monotonic() + 20
+    window_end = datetime.combine(datetime.fromisoformat(day).date(), CAPTURE_END, CHINA)
+
+    def retry_budget():
+        return min(deadline - monotonic(), (window_end - auction_service.now_china()).total_seconds())
 
     def guard():
         if monotonic() >= deadline or not auction_service.capture_window(day)['allowed']:
@@ -250,7 +291,9 @@ def collect_after_primary(job, primary_snapshot_id, authorization, callback=None
     try:
         guard()
         adapter = client('fuyao')
-        collector = DiscoveryCollector(day, adapter, guard, auction_service.now_china)
+        can_retry = authorization['discovery'].get('terminal_retry') == TERMINAL_RETRY_POLICY
+        collector = DiscoveryCollector(day, adapter, guard, auction_service.now_china,
+                                       retry_budget=retry_budget if can_retry else None)
         if callback:
             callback('正在核验竞价发现', 90)
         payload = _build(day, primary, frozen, collector)
@@ -364,7 +407,15 @@ def read_view(day, *, connection=None, include_themes=False):
         return _empty(day, 'unavailable', '该日竞价发现记录未通过完整性核验。')
     if include_themes:
         payload = _project_discovery_rows(payload, dict(parent) if parent is not None else None)
-    return {**{key: value for key, value in payload.items() if key not in ('sources', 'evidence', 'requested')},
+    reason = payload.get('reason')
+    terminal = next((source for source in payload['sources'] if source['name'] == 'final_quotes'), None)
+    if terminal and terminal.get('state') == 'failed':
+        remaining = (reason or '').replace('部分候选未取得同日有效竞价终态。', '', 1).strip()
+        failure = '竞价终态报价重试后仍失败' if 'first_failure' in terminal else '竞价终态报价请求失败'
+        reason = f'{failure}，本轮待查股票未核验。 {remaining}'.rstrip()
+    return {**{key: value for key, value in payload.items()
+               if key not in ('sources', 'evidence', 'requested', 'terminal_retry')},
+            'reason': reason,
             **{key: row[key] for key in ('primary_snapshot_id', 'recorded_at_ms', 'content_sha256')}}
 
 

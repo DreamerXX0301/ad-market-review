@@ -27,6 +27,7 @@ ARGUMENT_KEYS = {
     'web_query', 'web_reason',
 }
 OUTSIDE_REPLY = '我专注A股行情复盘和上市公司研究，可以分析股票、板块、经营财报及估值。'
+OUTSIDE_ATTACHMENT_REPLY = '这份附件超出了我的分析范围。你可以发上市公司财报、公告或行情截图，我可以帮你解读。'
 CLARIFY_REPLY = '你想了解A股的板块方向，还是某只股票？补充一下分析对象，我再继续。'
 _LOCAL_ONLY = re.compile(r'本系统|本地(?:资料|数据)|系统数据|内部数据')
 _NON_PORTABLE_SCHEMA_KEYS = frozenset(('minLength', 'maxLength', 'minItems', 'maxItems'))
@@ -269,6 +270,11 @@ def validate_plan(request, args, *, diagnostic=None):
     if current != trusted['current_text']:
         return invalid('current_quote', 'args.current_user_quote')
     history = trusted['recent_user_texts']
+    # This terminal decision grants no resources. A new attachment's text
+    # must not turn a valid refusal into an error or become a historical quote.
+    outside_attachment = purpose == 'outside' and request.get('attachment_planner_source') == 'current'
+    if outside_attachment:
+        previous = ''
     if previous and (not history or previous != history[-1]):
         return invalid('context_quote', 'args.context_user_quote')
     reads = args['reads']
@@ -313,6 +319,7 @@ def validate_plan(request, args, *, diagnostic=None):
         'capability_schema_digest': hashlib.sha256(_encoded(request['tool_schemas'])).hexdigest(),
     }
     accepted = deepcopy(args)
+    accepted['context_user_quote'] = previous
     scope['intent_plan_digest'] = hashlib.sha256(_encoded(accepted)).hexdigest()
     web_plan = None
     if query and not local_only:
@@ -321,7 +328,8 @@ def validate_plan(request, args, *, diagnostic=None):
     return {'ok': True, 'scope': scope, 'reads': checked_reads,
             'web_plan': web_plan,
             'web_blocked_by_local_only': bool(query and local_only),
-            'reply': OUTSIDE_REPLY if purpose == 'outside'
+            'reply': OUTSIDE_ATTACHMENT_REPLY if outside_attachment
+                     else OUTSIDE_REPLY if purpose == 'outside'
                      else CLARIFY_REPLY if purpose == 'clarify' else '',
             'accepted_plan': accepted}
 

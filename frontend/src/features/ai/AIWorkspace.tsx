@@ -32,6 +32,7 @@ import {
 } from "./aiAttachments";
 import type { AIDraftAttachment } from "./aiAttachments";
 import {
+  aiModelSetupGuide,
   aiReason,
   canGenerate,
   chatSessionTitle,
@@ -230,15 +231,12 @@ export default function AIWorkspace({
     onBusyChange?.(pending);
   }, [pending, onBusyChange]);
   useEffect(() => {
-    if (!providerId && providers.data?.items.length)
-      setProviderId(
-        (
-          providers.data.items.find(canGenerate) ||
-          providers.data.items.find((item) => item.configured) ||
-          providers.data.items[0]
-        ).provider_id,
-      );
-  }, [providerId, providers.data]);
+    if (providerId || sessionId || !providers.data) return;
+    const preferred =
+      providers.data.items.find(canGenerate) ||
+      providers.data.items.find((item) => item.configured);
+    if (preferred) setProviderId(preferred.provider_id);
+  }, [providerId, sessionId, providers.data]);
   useEffect(() => {
     if (!history.data) return;
     setHistoryRows((old) => {
@@ -409,6 +407,17 @@ export default function AIWorkspace({
     !providers.loading &&
     !providers.error &&
     !detail.error;
+  const modelGuide =
+    !pending && !providers.error && providers.data
+      ? aiModelSetupGuide(providers.data.items, provider)
+      : null;
+  const modelPlaceholder = providers.error
+    ? "模型状态读取失败"
+    : !providers.data
+      ? "正在读取模型…"
+      : providers.data.items.some((item) => item.configured)
+        ? "请选择模型"
+        : "暂无已配置模型";
   const attachmentProblem = attachmentIssue(attachments, provider);
   async function send() {
     if (
@@ -926,6 +935,24 @@ export default function AIWorkspace({
             void send();
           }}
         >
+          {modelGuide && (
+            <div className="ai-model-setup">
+              <SlidersHorizontal size={19} aria-hidden="true" />
+              <div className="ai-model-setup-copy" role="status">
+                <strong>{modelGuide.title}</strong>
+                <p>{modelGuide.description}</p>
+              </div>
+              {onConfigure && (
+                <button
+                  type="button"
+                  className="btn primary small"
+                  onClick={onConfigure}
+                >
+                  前往模型设置
+                </button>
+              )}
+            </div>
+          )}
           {!!attachments.length && (
             <div className="ai-draft-attachments" aria-label="待发送附件">
               {attachments.map((item) => (
@@ -1056,11 +1083,7 @@ export default function AIWorkspace({
                   (!text.trim() && !attachments.length) ||
                   (!!sessionId && !session)
                 }
-                title={
-                  !canGenerate(provider)
-                    ? "请先在模型设置中启用模型"
-                    : undefined
-                }
+                title={modelGuide?.title}
               >
                 <ArrowUp size={20} aria-hidden="true" />
               </button>
@@ -1090,13 +1113,22 @@ export default function AIWorkspace({
                   title="切换模型会开始新对话，当前对话保留在历史"
                   id={`ai-provider-${kind}`}
                   value={providerId}
-                  disabled={pending || providers.loading}
+                  disabled={
+                    pending ||
+                    providers.loading ||
+                    !!providers.error ||
+                    !providers.data?.items.length
+                  }
                   onChange={(event) => {
                     setProviderId(event.target.value);
                     newSession(true);
                   }}
                 >
-                  {!providerId && <option value="">正在读取模型…</option>}
+                  {!providerId && (
+                    <option value="" disabled>
+                      {modelPlaceholder}
+                    </option>
+                  )}
                   {(providers.data?.items || []).map((item) => (
                     <option key={item.provider_id} value={item.provider_id}>
                       {item.name} · {item.model}

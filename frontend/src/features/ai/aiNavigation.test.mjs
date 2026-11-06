@@ -17,7 +17,7 @@ const load = async (file) => {
 };
 const {
   aiLaunchLocation,
-  aiMarketQuestion,
+  aiLaunchQuestion,
   readAILaunch,
   upgradeChatLocation,
 } = await load("./aiNavigation.ts");
@@ -25,6 +25,7 @@ const { chatLocation, readChatLocation } = await load("./aiChatLocation.ts");
 const anchor = {
   kind: "stock",
   instrumentId: "600519.SH",
+  instrumentName: "贵州茅台",
   asOf: "2026-10-30",
   reportId: "report_fixture",
 };
@@ -33,7 +34,27 @@ const opened = readAILaunch(shortcut);
 assert.equal(opened.key, "launch_fixture");
 assert.equal(opened.explicit, true);
 assert.equal(opened.instrumentId, anchor.instrumentId);
+assert.equal(opened.instrumentName, anchor.instrumentName);
 assert.equal(opened.asOf, anchor.asOf);
+assert.match(
+  aiLaunchQuestion(opened),
+  /贵州茅台（600519\.SH）.*行情截至 2026-10-30.*研究报告.*现金流.*估值/,
+);
+const selected = { ...anchor, reportId: undefined, asOf: undefined };
+assert.match(
+  aiLaunchQuestion(readAILaunch(aiLaunchLocation(selected))),
+  /贵州茅台（600519\.SH）.*最新可核验资料/,
+);
+assert.match(
+  aiLaunchQuestion({ ...selected, instrumentName: selected.instrumentId }),
+  /^请研究600519\.SH。/,
+);
+assert.equal(aiLaunchQuestion(readAILaunch("#ai?ai_kind=stock")), "");
+assert.equal(
+  readAILaunch(aiLaunchLocation({ ...anchor, instrumentName: "<img>" }))
+    .instrumentName,
+  undefined,
+);
 assert.ok(
   !shortcut.includes("ai_chat"),
   "opening an entry does not pretend a chat has been created",
@@ -61,6 +82,11 @@ assert.equal(
 assert.equal(
   new URLSearchParams(linked.split("?")[1]).get("ai_launch"),
   "launch_fixture",
+);
+assert.equal(new URLSearchParams(linked.split("?")[1]).get("ai_name"), null);
+assert.equal(
+  readAILaunch(linked + "&ai_name=伪造名称").instrumentName,
+  undefined,
 );
 const changed = chatLocation(
   linked,
@@ -123,6 +149,7 @@ const untrusted = readAILaunch(
   "#ai?ai_stock=bad&ai_report=%2Ftmp%2Fsecret&ai_day=2026-02-30&ai_launch=%3Cscript%3E",
 );
 assert.equal(untrusted.instrumentId, undefined);
+assert.equal(untrusted.instrumentName, undefined);
 assert.equal(untrusted.reportId, undefined);
 assert.equal(untrusted.asOf, undefined);
 const malformedStock = "回答未完成，以下仅供核对。后续内容.SH";
@@ -169,6 +196,14 @@ assert.equal(
   null,
   "legacy link upgrades also discard malformed stock anchors",
 );
+const overview = readAILaunch(
+  aiLaunchLocation({ kind: "market", asOf: "2026-10-30" }),
+);
+assert.match(
+  aiLaunchQuestion(overview),
+  /2026-10-30.*市场情绪.*题材轮动.*涨停梯队/,
+);
+assert.equal(aiLaunchQuestion(readAILaunch("#ai")), "");
 for (const [marketStage, clock, phrase] of [
   ["auction", "09:25", /重点名单之外/],
   ["0935", "09:35", /盘中观察快照/],
@@ -181,27 +216,40 @@ for (const [marketStage, clock, phrase] of [
   const link = aiLaunchLocation(context);
   const launch = readAILaunch(link);
   assert.equal(launch.marketStage, marketStage);
-  assert.match(aiMarketQuestion(launch), new RegExp(`2026-10-30 ${clock}`));
-  assert.match(aiMarketQuestion(launch), phrase);
+  assert.match(aiLaunchQuestion(launch), new RegExp(`2026-10-30 ${clock}`));
+  assert.match(aiLaunchQuestion(launch), phrase);
   assert.doesNotMatch(link, /ai_chat/);
   assert.doesNotMatch(
     chatLocation(link, { ...context, pageRoute: "ai" }, "sample_chat"),
     /ai_stage/,
   );
 }
-const noonQuestion = aiMarketQuestion({kind: "market", asOf: "2026-11-05", marketStage: "noon"});
+const noonQuestion = aiLaunchQuestion({
+  kind: "market",
+  asOf: "2026-11-05",
+  marketStage: "noon",
+});
 assert.match(noonQuestion, /竞价.*全部已存上午盘中观察.*午评本身/);
-assert.doesNotMatch(noonQuestion, /11:30/, "a configured 11:35 noon capture must not be described as 11:30");
+assert.doesNotMatch(
+  noonQuestion,
+  /11:30/,
+  "a configured 11:35 noon capture must not be described as 11:30",
+);
 assert.notEqual(
   readAILaunch("#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=1000").key,
   readAILaunch("#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=1430").key,
 );
+assert.equal(
+  aiLaunchQuestion(
+    readAILaunch("#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=__proto__"),
+  ),
+  aiLaunchQuestion(overview),
+);
 for (const hash of [
-  "#ai?ai_kind=market&ai_day=2026-10-30&ai_stage=__proto__",
   "#ai?ai_kind=market&ai_day=2026-02-30&ai_stage=auction",
   "#ai?ai_kind=stock&ai_day=2026-10-30&ai_stage=1000",
 ])
-  assert.equal(aiMarketQuestion(readAILaunch(hash)), "");
+  assert.equal(aiLaunchQuestion(readAILaunch(hash)), "");
 assert.equal(
   readChatLocation("#ai?ai_chat=%2Ftmp", { kind: "stock", pageRoute: "ai" }),
   "",

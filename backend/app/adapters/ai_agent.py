@@ -243,8 +243,9 @@ async def _run(request,key,cancel,bridge):
                     if result.get('ok') is not True:
                         await plan_error('runtime_plan_rejected','ipc.plan_stock')
                     scope=result['scope'];plan_accepted=True
-                    request['accepted_stock_plan']=args;request['semantic_scope']=scope
-                    tool_calls.append({'name':'plan_stock_task','call_id':call_id,'args':args})
+                    accepted_plan=result.pop('accepted_plan')
+                    request['accepted_stock_plan']=accepted_plan;request['semantic_scope']=scope
+                    tool_calls.append({'name':'plan_stock_task','call_id':call_id,'args':accepted_plan})
                     for nested in result.get('tool_results',[]):
                         name,nargs,nid,value=nested['name'],nested['args'],nested['call_id'],nested['result']
                         classify_tool(name,nargs)

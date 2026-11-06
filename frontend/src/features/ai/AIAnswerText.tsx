@@ -2,6 +2,68 @@ import type { ReactNode } from "react";
 import type { AIItem, AIMessage } from "./aiTypes";
 import { plainText, webAnswerParts } from "./aiState";
 
+const integer = String.raw`\d+(?:[,，]\d{3})*`;
+const number = String.raw`${integer}(?:\.\d+)?`;
+const count = String.raw`[ \t]*(?:至少|约|≥|≤)?[ \t]*${integer}[ \t]*(?:家|只)`;
+const amount = String.raw`[ \t]*(?:约[ \t]*)?${number}[ \t]*(?:万亿|亿|万)?元`;
+const marketValues = new RegExp(
+  [
+    String.raw`(?<![\w.+＋\-−－])[+＋\-−－]${number}[ \t]*(?:[%％]|(?:个)?百分点)`,
+    String.raw`(?<warning>已?(?:新增炸板|炸板|封板打开|新开板|开板)${count}|已(?:炸板|开板)|(?<=[(（])炸板(?=[)）]))`,
+    String.raw`(?<up>已?(?:新封板|新增封板|回封|上涨|高开|封板|首板|连板|涨停|晋级)${count}|放量${amount}|成交(?:同比|环比)?放量|已(?:封板|回封)|(?<=[(（])(?:首板|回封)(?=[)）])|(?<![\w.])\d+(?:连)?板)`,
+    String.raw`(?<down>(?:下跌|低开|跌停|回落)${count}|缩量${amount}|成交(?:同比|环比)?缩量)`,
+  ].join("|"),
+  "gu",
+);
+const breadthLabel = /^(?:上涨\/下跌\/平盘|涨\/跌\/平|高开\/低开\/平开)$/;
+const breadthValues = new RegExp(
+  String.raw`^(${integer})([ \t]*[/／][ \t]*)(${integer})(?=[ \t]*[/／][ \t]*${integer}(?![\d.,，]))`,
+);
+
+function marketText(
+  text: string,
+  start: number,
+  breadth: boolean,
+): ReactNode[] {
+  const value = (part: string, tone: string, offset: number) =>
+    Number(part.match(/\d[\d,，]*(?:\.\d+)?/)?.[0].replace(/[,，]/g, "")) ===
+    0 ? (
+      part
+    ) : (
+      <span
+        className={`ai-market-value ${tone}`}
+        key={`value-${start + offset}`}
+      >
+        {part}
+      </span>
+    );
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  const totals = breadth ? breadthValues.exec(text) : null;
+  if (totals) {
+    const [, up, divider, down] = totals;
+    nodes.push(
+      value(up, "up", 0),
+      divider,
+      value(down, "down", up.length + divider.length),
+    );
+    cursor = totals[0].length;
+  }
+  for (const match of text.matchAll(marketValues)) {
+    const offset = match.index;
+    const groups = match.groups!;
+    const tone = groups.warning
+      ? "is-board-warning"
+      : groups.up || /^[+＋]/.test(match[0])
+        ? "up"
+        : "down";
+    nodes.push(text.slice(cursor, offset), value(match[0], tone, offset));
+    cursor = offset + match[0].length;
+  }
+  nodes.push(text.slice(cursor));
+  return nodes;
+}
+
 // Markdown changes presentation only. Hyperlinks are exclusively native,
 // server-validated citations; model-authored links never become anchors.
 export default function AIAnswerText({
@@ -46,21 +108,40 @@ export default function AIAnswerText({
           !used.has(ref.key) && ref.position >= start && ref.position <= end,
       )
       .map(citationNode);
-  const plain = (start: number, end: number): ReactNode[] => {
+  const plain = (
+    start: number,
+    end: number,
+    highlight: boolean,
+    breadth = false,
+  ): ReactNode[] => {
     const nodes: ReactNode[] = [];
     let cursor = start;
+    const append = (next: number) => {
+      const fragment = value.slice(cursor, next);
+      if (highlight)
+        nodes.push(
+          ...marketText(fragment, cursor, breadth && cursor === start),
+        );
+      else nodes.push(fragment);
+    };
     for (const ref of refs.filter(
       (item) =>
         !used.has(item.key) && item.position >= start && item.position <= end,
     )) {
-      nodes.push(value.slice(cursor, ref.position), citationNode(ref));
+      append(ref.position);
+      nodes.push(citationNode(ref));
       cursor = ref.position;
     }
-    nodes.push(value.slice(cursor, end));
+    append(end);
     return nodes;
   };
-  const inline = (start: number, end: number, depth = 0): ReactNode[] => {
-    if (depth > 2) return plain(start, end);
+  const inline = (
+    start: number,
+    end: number,
+    breadth = false,
+    depth = 0,
+  ): ReactNode[] => {
+    if (depth > 2) return plain(start, end, true, breadth);
     const fragment = value.slice(start, end);
     const pattern = /(\*\*|__)([^\n]+?)\1|`([^`\n]+)`/g;
     const nodes: ReactNode[] = [];
@@ -70,11 +151,11 @@ export default function AIAnswerText({
       if (++count > 200) break;
       const from = start + match.index!,
         to = from + match[0].length;
-      nodes.push(...plain(cursor, from));
+      nodes.push(...plain(cursor, from, true, breadth && cursor === start));
       const width = match[1] ? 2 : 1;
       const children = match[1]
-        ? inline(from + width, to - width, depth + 1)
-        : plain(from + width, to - width);
+        ? inline(from + width, to - width, breadth && from === start, depth + 1)
+        : plain(from + width, to - width, false);
       nodes.push(
         match[1] ? (
           <strong key={`bold-${from}`}>{children}</strong>
@@ -85,7 +166,7 @@ export default function AIAnswerText({
       nodes.push(...remaining(from, to));
       cursor = to;
     }
-    nodes.push(...plain(cursor, end));
+    nodes.push(...plain(cursor, end, true, breadth && cursor === start));
     return nodes;
   };
   const lines: { text: string; start: number; end: number; after: number }[] =
@@ -167,26 +248,38 @@ export default function AIAnswerText({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.start}>
-                  {cells(row).map((cell, n) => {
-                    const spec = separator[n]
-                      ? value.slice(separator[n].start, separator[n].end)
-                      : "";
-                    const align =
-                      spec.startsWith(":") && spec.endsWith(":")
-                        ? "center"
-                        : spec.endsWith(":")
-                          ? "right"
-                          : "left";
-                    return (
-                      <td key={n} style={{ textAlign: align }}>
-                        {inline(cell.start, cell.end)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const rowCells = cells(row);
+                const label = rowCells[0];
+                const breadth =
+                  label &&
+                  breadthLabel.test(
+                    value
+                      .slice(label.start, label.end)
+                      .replace(/[ \t*_]/g, "")
+                      .replaceAll("／", "/"),
+                  );
+                return (
+                  <tr key={row.start}>
+                    {rowCells.map((cell, n) => {
+                      const spec = separator[n]
+                        ? value.slice(separator[n].start, separator[n].end)
+                        : "";
+                      const align =
+                        spec.startsWith(":") && spec.endsWith(":")
+                          ? "center"
+                          : spec.endsWith(":")
+                            ? "right"
+                            : "left";
+                      return (
+                        <td key={n} style={{ textAlign: align }}>
+                          {inline(cell.start, cell.end, breadth && n === 1)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {remaining(line.start, end)}
@@ -219,7 +312,7 @@ export default function AIAnswerText({
       if (index < lines.length) index++;
       blocks.push(
         <pre className="ai-markdown-code" key={line.start}>
-          <code>{plain(start, end)}</code>
+          <code>{plain(start, end, false)}</code>
           {remaining(line.start, lines[index - 1]?.after || end)}
         </pre>,
       );

@@ -366,19 +366,20 @@ def enrich_request(request, history, message_id, current):
             description.append(json.dumps(safe_fields([file])[0], ensure_ascii=False))
             if file['kind'] == 'text':
                 description.append('附件正文：\n' + file['text'])
-        item['content'] += '\n'.join(description)
+        attachment_text = '\n'.join(description)
+        item['content'] += attachment_text
+        if not chosen:
+            # Only the newest material goes to semantic planning. The user's
+            # actual words are sent separately in scope_input.
+            request['attachment_planner_index'] = index
+            request['attachment_planner_text'] = attachment_text
+            request['attachment_planner_source'] = 'current' if source == message_id else 'history'
         chosen.append({'message_id': source, 'input_index': index, 'attachments': safe_fields(files)})
     request['attachment_bindings'] = list(reversed(chosen))
     request['attachment_input_tokens'] = sum(file['kind'] == 'image' for binding in chosen for file in binding['attachments']) * 32768
     request['attachment_pricing'] = {'version': 'image-engineering-reservation-v1', 'tokens_per_image': 32768,
         'basis': 'conservative_engineering_reservation_not_official_conversion', 'actual_usage_settles': True}
     request['attachment_omitted_history'] = omitted
-    if chosen:
-        # Only the newest user-provided material helps the semantic planner.
-        # It remains untrusted content and cannot supply new authorization.
-        newest = chosen[0]
-        request['attachment_planner_index'] = newest['input_index']
-        request['attachment_planner_text'] = items[newest['input_index']]['content']
     return request
 
 

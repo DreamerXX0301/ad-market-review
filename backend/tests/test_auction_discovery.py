@@ -1,10 +1,12 @@
 """Run the authorized auction path against bounded synthetic provider responses."""
 from hashlib import sha256
+import json
 import sqlite3
 
 import pytest
 
 from app import core, worker
+from app.adapters.providers import ProviderError
 from app.services import auction_automation as automation, auction_discovery as discovery, auction_service
 from app.services.auction_integrity import validate_snapshots
 from test_auction_retention import capture, encode, job, local, publication
@@ -19,14 +21,20 @@ def authorize():
         automation.configure_discovery(connection, enabled=True, expected_revision=automation.discovery_settings(connection)['revision'])
 
 
-def provider(isolated, *, mode='real_time', late=False):
+def provider(isolated, *, mode='real_time', late=False, terminal_errors=()):
     source = isolated.source
     original = source.request
     supplemental_calls = []
+    errors = iter(terminal_errors)
 
     def request(path, params=None, *, before_attempt=None, **options):
         if options:
             supplemental_calls.append((path, params, options))
+            if path == discovery.QUOTES:
+                error = next(errors, None)
+                if error is not None:
+                    before_attempt()
+                    raise error
         return original(path, params, before_attempt=before_attempt)
 
     def hook(path, params):
@@ -108,6 +116,122 @@ def test_unverified_discovery_never_loses_primary(isolated, mode, late):
     assert [call[0] for call in calls] == [discovery.OPPORTUNITIES]
     assert discovery.read_view(DAY)['state'] == 'unavailable'
     assert auction_service.read_view(DAY)['state'] == 'available'
+
+
+def test_terminal_request_failure_is_distinct_from_incomplete_quotes(isolated):
+    authorize()
+    isolated.monkeypatch.setattr(discovery, 'sleep', lambda _delay: None)
+    with core.connect() as connection:
+        connection.executemany("""INSERT INTO watchlist_item(instrument_id,source_kind,source_name,
+            added_business_date,event_basis_json,created_at_ms) VALUES(?,'stock','synthetic',?,'{}',?)""",
+            [(f'{index:06d}.SZ', PREVIOUS, int(NOW.timestamp() * 1000) - 1) for index in range(105)])
+    error = ProviderError('Fixture terminal error', code=5003)
+    calls = provider(isolated, terminal_errors=(error, error))
+    auction_service.execute_capture(claim(isolated))
+    assert auction_service.read_view(DAY)['state'] == 'available'
+    assert [call[0] for call in calls] == [discovery.OPPORTUNITIES, discovery.QUOTES, discovery.QUOTES]
+    with core.connect() as connection:
+        stored = json.loads(connection.execute('SELECT payload_json FROM market_auction_discovery').fetchone()[0])
+        assert '部分候选未取得同日有效竞价终态。' in stored['reason']
+        assert stored['sources'][-1]['code'] == 5003
+
+    api = isolated.client.get('/api/v1/market/auction/discovery', params={'date': DAY})
+    assert api.status_code == 200, api.text
+    view = api.json()
+    assert view['state'] == 'unavailable'
+    assert view['coverage']['candidates'] == 2 and view['coverage']['valid'] == 0
+    assert view['supplement']['requested'] > 0 and view['supplement']['valid'] == 0
+    assert '竞价终态报价重试后仍失败，本轮待查股票未核验。' in view['reason']
+    assert '部分候选未取得同日有效竞价终态。' not in view['reason']
+    assert 'sources' not in view and 'evidence' not in view
+
+
+@pytest.mark.parametrize('code', [5002, '5003'])
+def test_terminal_retry_saves_only_verified_retry_response(isolated, code):
+    from app.services.auction_integrity import validate_discovery
+
+    authorize()
+    waits = []
+    isolated.monkeypatch.setattr(discovery, 'sleep', waits.append)
+    calls = provider(isolated, terminal_errors=(ProviderError('Do not save this error message', code=code),))
+    auction_service.execute_capture(claim(isolated))
+    assert waits == [2.0]
+    assert calls[1] == calls[2] == (discovery.QUOTES,
+                                   {'thscodes': ','.join(OPPORTUNITY_CODES), 'stage': 'final'},
+                                   {'max_attempts': 1, 'timeout': 4.0})
+    with core.connect() as connection:
+        validate_snapshots(connection)
+        row = dict(connection.execute('SELECT * FROM market_auction_discovery').fetchone())
+    stored = validate_discovery(row)
+    assert 'Do not save this error message' not in row['payload_json']
+    assert [(source['name'], source['state']) for source in stored['sources']] == [
+        ('opportunities:1', 'received'), ('final_quotes', 'received')]
+    assert stored['sources'][1]['first_failure']['code'] == int(code)
+    assert [source['name'] for source in stored['evidence']] == ['opportunities:1', 'final_quotes']
+    assert len(discovery.read_view(DAY)['stocks']) == 2
+    assert '请求失败' not in (discovery.read_view(DAY)['reason'] or '')
+    stored['sources'][1]['first_failure']['code'] = 4001
+    encoded = encode(stored)
+    with pytest.raises(ValueError, match='retry evidence'):
+        validate_discovery({**row, 'payload_json': encoded.decode(), 'content_sha256': sha256(encoded).hexdigest()})
+
+
+@pytest.mark.parametrize('scenario', ['rate_limit', 'permission', 'legacy', 'deadline', 'authorization_changed'])
+def test_terminal_retry_preserves_existing_guards_and_legacy_budget(isolated, scenario):
+    authorize()
+    if scenario == 'legacy':
+        original = automation.creation_authorization
+
+        def legacy_authorization(*args):
+            proof = original(*args)
+            proof['discovery'].pop('terminal_retry')
+            return proof
+
+        isolated.monkeypatch.setattr(automation, 'creation_authorization', legacy_authorization)
+    if scenario == 'deadline':
+        isolated.clock[0] = NOW.replace(minute=29, second=56)
+
+    def wait(_delay):
+        assert scenario == 'authorization_changed'
+        with core.connect() as connection:
+            automation.configure_discovery(connection, enabled=False,
+                                           expected_revision=automation.discovery_settings(connection)['revision'])
+
+    isolated.monkeypatch.setattr(discovery, 'sleep', wait)
+    code = {'rate_limit': 4001, 'permission': 2003}.get(scenario, 5003)
+    calls = provider(isolated, terminal_errors=(ProviderError('Fixture terminal error', code=code),))
+    auction_service.execute_capture(claim(isolated))
+    assert auction_service.read_view(DAY)['state'] == 'available'
+    assert [call[0] for call in calls] == [discovery.OPPORTUNITIES, discovery.QUOTES]
+    view = discovery.read_view(DAY)
+    assert view['state'] == 'unavailable'
+    assert view['coverage']['candidates'] == 2
+    assert '竞价终态报价请求失败' in view['reason']
+
+
+def test_terminal_retry_does_not_publish_response_arriving_after_auction(isolated):
+    isolated.clock[0] = NOW.replace(minute=29, second=52)
+    authorize()
+    isolated.monkeypatch.setattr(discovery, 'sleep', lambda _delay: None)
+    calls = provider(isolated, terminal_errors=(ProviderError('Fixture terminal error', code=5003),))
+    hook = isolated.source.hook
+
+    def late_response(path, params):
+        if path == discovery.QUOTES and len(calls) == 3:
+            isolated.clock[0] = NOW.replace(minute=30)
+        return hook(path, params)
+
+    isolated.source.hook = late_response
+    auction_service.execute_capture(claim(isolated))
+    assert [call[0] for call in calls] == [discovery.OPPORTUNITIES, discovery.QUOTES, discovery.QUOTES]
+    assert auction_service.read_view(DAY)['state'] == 'available'
+    assert discovery.read_view(DAY)['stocks'] == []
+    with core.connect() as connection:
+        validate_snapshots(connection)
+        stored = json.loads(connection.execute('SELECT payload_json FROM market_auction_discovery').fetchone()[0])
+    assert stored['sources'][-1]['state'] == 'not_accepted'
+    assert stored['sources'][-1]['first_failure']['code'] == 5003
+    assert [source['name'] for source in stored['evidence']] == ['opportunities:1']
 
 
 def test_discovery_caps_pages_and_combines_overflow_without_duplicate_ranking(isolated):

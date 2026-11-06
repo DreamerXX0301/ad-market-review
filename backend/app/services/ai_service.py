@@ -637,12 +637,18 @@ def create_session(payload):
 
 
 def send_message(identifier,payload):
+    from app.services.ai_scope import is_greeting
+
     if payload.get('consent') is not True:fail(422,'consent_required','发送前须同意当前显示服务处理本次问题')
     prepared=files.prepare(payload.get('attachments',[]))
     text=(payload.get('text') or '').strip() or ('请查看我上传的附件。' if prepared else '')
     if not 1<=len(text)<=2000:fail(422,'invalid_message','问题须为1至2000字')
     _request_key(payload['request_key']);fingerprint=_attachment_fingerprint(payload,prepared,identifier)
     history,history_ids,total=_message_history(identifier)
+    # A standalone greeting does not need old attachments or earlier
+    # assistant summaries that might quote their contents.
+    if not prepared and is_greeting(text) and any(item['attachments'] for item in history):
+        history=[]
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         previous=_existing(db,payload['request_key'],fingerprint)

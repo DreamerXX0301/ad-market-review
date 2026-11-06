@@ -12,6 +12,13 @@ from zoneinfo import ZoneInfo
 CHINA = ZoneInfo('Asia/Shanghai')
 SYMBOL = re.compile(r'[0-9]{6}\.(?:SH|SZ|BJ)\Z')
 LIMIT = 4 * 1024 * 1024
+TERMINAL_RETRY_POLICY = 'fuyao-terminal-retry-once-v1'
+
+
+def is_retryable_terminal_failure(source):
+    return (source.get('name') == 'final_quotes' and source.get('state') == 'failed'
+            and type(source.get('code')) is int
+            and source.get('code') in (5002, 5003) and source.get('http_status') in (None, 200))
 
 
 def _canonical(value):
@@ -109,6 +116,9 @@ def validate_discovery(row):
                 or payload.get('state') not in ('available', 'partial', 'unavailable')):
             raise ValueError('Auction discovery date or version differs')
         sources, evidence, codes = (payload[key] for key in ('sources', 'evidence', 'requested'))
+        retry_policy = payload.get('terminal_retry')
+        if retry_policy not in (None, TERMINAL_RETRY_POLICY):
+            raise ValueError('Auction discovery retry policy differs')
         if (any(not isinstance(value, list) for value in (sources, evidence, codes))
                 or len(sources) > 4 or len(evidence) > 4 or len(codes) > 100
                 or any(not isinstance(code, str) or not SYMBOL.fullmatch(code) for code in codes)
@@ -120,13 +130,25 @@ def validate_discovery(row):
         expected['final_quotes'] = ('/api/a-share/auction/snapshot', {'thscodes': ','.join(codes), 'stage': 'final'})
         received, originals = {}, {}
         seen = set()
-        keys = ('name', 'source', 'endpoint', 'params', 'requested_at', 'received_at', 'state', 'bytes', 'sha256')
+        keys = ('name', 'source', 'endpoint', 'params', 'requested_at', 'received_at', 'state', 'bytes', 'sha256',
+                'first_failure')
         for item in sources:
             name = item['name']
             if (name in seen or expected.get(name) != (item.get('endpoint'), item.get('params'))
                     or item.get('source') != 'fuyao' or not _window(item.get('requested_at'), day)):
                 raise ValueError('Auction discovery source request differs')
             seen.add(name)
+            if 'first_failure' in item:
+                first = item['first_failure']
+                if (not retry_policy or name != 'final_quotes' or not codes or not isinstance(first, dict)
+                        or set(first) != {'name', 'source', 'endpoint', 'params', 'requested_at', 'received_at',
+                                          'state', 'http_status', 'code'}
+                        or not is_retryable_terminal_failure(first)
+                        or any(first[key] != item[key] for key in ('source', 'endpoint', 'params'))
+                        or not all(_window(first[key], day) for key in ('requested_at', 'received_at'))
+                        or not datetime.fromisoformat(first['requested_at']) <= datetime.fromisoformat(first['received_at'])
+                        <= datetime.fromisoformat(item['requested_at'])):
+                    raise ValueError('Auction discovery retry evidence differs')
             if item.get('state') == 'received':
                 received[name] = {key: item.get(key) for key in keys}
         total = 0

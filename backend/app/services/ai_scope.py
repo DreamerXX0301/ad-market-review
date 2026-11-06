@@ -15,6 +15,9 @@ PURPOSES=('stock_research','market_review','stock_impact')
 def _clean(text):
     return ''.join(c for c in unicodedata.normalize('NFKC',text or '') if unicodedata.category(c)!='Cf').strip()
 
+def is_greeting(text):
+    return bool(re.fullmatch(r'(?:你好|您好|嗨|hello|hi|谢谢|感谢|早上好|晚上好)[！？!?。,.， ]*',_clean(text),re.I))
+
 _TARGET=re.compile(r'A股|股票|股市|个股|上市公司|大盘|板块|强势股|(?:地产|银行|保险|旅游|消费|科技|软件|白酒|医药|券商|周期|能源|煤炭)股|股价|股指|上证|深证|沪深|创业板|科创板',re.I)
 _DIRECT=re.compile(r'竞价|涨停|跌停|复盘|午盘|午间|盘后|收盘|成交额|净流入|市值|市盈率|市净率|估值|年报|财报|季报|公告|每股|股息|分红|(?<![A-Za-z])(?:PE|PB|MACD|KDJ|BOLL)(?![A-Za-z])|(?:今天|今日|当前|最近|最新).{0,4}(?:大盘|市场)|大盘|板块轮动',re.I)
 _MARKET=re.compile(r'股市|大盘|板块|强势股|竞价|涨停|跌停|复盘|午盘|午间|盘后|收盘|指数|上证|深证|沪深|创业板|科创板|(?:今天|今日|当前|最近|最新).{0,4}市场')
@@ -120,7 +123,7 @@ def _classify(text,focus):
     if target or _DIRECT.search(text) or known:
         if _CONCEPT.search(text):return 'concept',None
         return 'allowed','market_review' if _MARKET.search(text) else 'stock_research'
-    if re.fullmatch(r'(?:你好|您好|嗨|hello|hi|谢谢|感谢|早上好|晚上好)[！!。,.， ]*',text,re.I):return 'greeting',None
+    if is_greeting(text):return 'greeting',None
     return 'unknown',None
 
 def authorize_round(current_text,recent_user_texts=(),validated_stock_focus=None):

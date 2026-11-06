@@ -883,6 +883,12 @@
 .ai-safe-markdown strong {
   font-weight: 650;
 }
+.ai-safe-markdown .ai-market-value {
+  font-weight: 600;
+}
+.ai-safe-markdown .ai-market-value.is-board-warning {
+  color: var(--amber);
+}
 .ai-safe-markdown code {
   font-family: ui-monospace, monospace;
   font-size: 11px;
@@ -1825,6 +1831,36 @@
 .ai-model-settings:hover {
   color: var(--text);
   background: var(--ai-side);
+}
+.ai-model-setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 11px;
+  margin-bottom: 9px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--blue) 32%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--blue) 8%, var(--surface));
+}
+.ai-model-setup > svg {
+  flex-shrink: 0;
+  color: var(--blue);
+}
+.ai-model-setup-copy {
+  flex: 1 1 180px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.ai-model-setup-copy p {
+  margin: 2px 0 0;
+  color: var(--subtle);
+  font-size: 12px;
+}
+.ai-model-setup > button {
+  margin-inline-start: auto;
+  white-space: nowrap;
 }
 .ai-input-hint {
   font-size: 10px;

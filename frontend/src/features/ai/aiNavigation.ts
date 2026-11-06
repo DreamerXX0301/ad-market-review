@@ -24,6 +24,7 @@ export function aiMarketStage(value: unknown): AIMarketStage | undefined {
 export interface AILaunchContext {
   kind: AIKind;
   instrumentId?: string;
+  instrumentName?: string;
   reportId?: string;
   asOf?: string;
   marketStage?: AIMarketStage;
@@ -39,6 +40,11 @@ const safeInstrumentId = (value: unknown) =>
   typeof value === "string" && /^[0-9]{6}\.(SH|SZ|BJ)$/.test(value)
     ? value
     : undefined;
+const safeInstrumentName = (value: unknown) => {
+  if (typeof value !== "string") return undefined;
+  const name = value.trim();
+  return /^[\p{L}\p{N}*＊·.&＆()（） -]{1,60}$/u.test(name) ? name : undefined;
+};
 const safeDay = (value: string | null) => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   const date = new Date(`${value}T00:00:00Z`);
@@ -48,17 +54,39 @@ const safeDay = (value: string | null) => {
     : undefined;
 };
 
-export function aiMarketQuestion({ kind, asOf, marketStage }: AILaunchContext) {
+export function aiLaunchQuestion({
+  kind,
+  asOf,
+  marketStage,
+  instrumentId,
+  instrumentName,
+  reportId,
+}: AILaunchContext) {
   const day = safeDay(asOf ?? null);
-  if (kind !== "market" || !day || !marketStage) return "";
-  const at = `${day} ${marketStages[marketStage]}`;
-  if (marketStage === "auction")
+  if (kind === "stock") {
+    const code = safeInstrumentId(instrumentId);
+    if (!code) return "";
+    const name = safeInstrumentName(instrumentName);
+    const stock = name && name !== code ? `${name}（${code}）` : code;
+    const basis = safeId(reportId ?? null)
+      ? `结合这份${day ? `行情截至 ${day} 的` : ""}个股研究报告和可核验资料`
+      : day
+        ? `以 ${day} 为观察日`
+        : "结合最新可核验资料";
+    return `请研究${stock}。${basis}，分析主营业务、行业景气度、营收利润、现金流、估值和主要风险，标明关键数据的日期和来源。`;
+  }
+  if (!day) return "";
+  const stage = aiMarketStage(marketStage);
+  if (!stage)
+    return `请复盘 ${day} 的 A 股盘面。梳理指数、成交额、市场情绪、行业与题材轮动和涨停梯队，说明当天的主要变化。若收盘数据还未发布，请分析截至最新已留存的时点。`;
+  const at = `${day} ${marketStages[stage]}`;
+  if (stage === "auction")
     return `解读 ${at} 的早盘竞价。昨日高标反馈怎么样？重点名单之外，哪些行业或题材出现多股同步走强？请列出代表股和已核验的竞价涨幅、成交额。`;
-  if (marketStage === "noon")
+  if (stage === "noon")
     return `解读 ${day} 的午评快照。请串联当天竞价、截至午评实际采集时点的全部已存上午盘中观察和午评本身，分析题材走强或走弱、成交变化及涨停梯队反馈。只使用该时点之前的数据，未采到的时段说明缺档。`;
-  if (marketStage === "close")
+  if (stage === "close")
     return `解读 ${at} 的收盘复盘。结合当天竞价、盘中和正式收盘，梳理题材轮动、成交和涨停梯队变化。`;
-  return `解读 ${at} 的盘中观察快照。这个时点哪些方向走强、哪些走弱？结合该时点成交和涨停梯队，有同股报价时再与早盘竞价对照。`;
+  return `解读 ${at} 的盘中观察快照。串联当天竞价到该时点的留存数据，说明哪些方向走强或走弱、成交和涨停梯队如何变化。有同股报价时对照竞价，缺档请说明。`;
 }
 
 /** Old shared links keep their conversation when the chat moves to its own page. */
@@ -88,14 +116,18 @@ export function aiLaunchLocation(context: AILaunchContext, launchId?: string) {
   const reportId = safeId(context.reportId ?? null);
   const day = safeDay(context.asOf ?? null);
   if (instrumentId) params.set("ai_stock", instrumentId);
+  const name =
+    context.kind === "stock" && instrumentId
+      ? safeInstrumentName(context.instrumentName)
+      : undefined;
+  if (name && name !== instrumentId) params.set("ai_name", name);
   if (reportId) params.set("ai_report", reportId);
   if (day) params.set("ai_day", day);
-  if (
-    context.kind === "market" &&
-    context.marketStage &&
-    safeDay(context.asOf ?? null)
-  )
-    params.set("ai_stage", context.marketStage);
+  const stage =
+    context.kind === "market" && day
+      ? aiMarketStage(context.marketStage)
+      : undefined;
+  if (stage) params.set("ai_stage", stage);
   if (launchId) params.set("ai_launch", launchId);
   return `#ai?${params}`;
 }
@@ -113,6 +145,10 @@ export function readAILaunch(hash: string): AILaunch {
   const launchId = safeId(params.get("ai_launch"));
   const kind: AIKind =
     params.get("ai_kind") === "stock" || instrumentId ? "stock" : "market";
+  const instrumentName =
+    kind === "stock" && instrumentId && !sessionId
+      ? safeInstrumentName(params.get("ai_name"))
+      : undefined;
   const marketStage =
     kind === "market" && asOf
       ? aiMarketStage(params.get("ai_stage"))
@@ -130,6 +166,7 @@ export function readAILaunch(hash: string): AILaunch {
   return {
     kind,
     instrumentId,
+    instrumentName,
     reportId,
     asOf,
     marketStage,
@@ -140,6 +177,7 @@ export function readAILaunch(hash: string): AILaunch {
       JSON.stringify([
         kind,
         instrumentId,
+        instrumentName,
         reportId,
         asOf,
         sessionId,

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import ts from "typescript";
 const encode=text=>"data:text/javascript;base64,"+Buffer.from(text).toString("base64");
 const states=[],refs=[],effects=[],listeners=new Map(),requests=[],storage=new Map(),timers=new Map();
-let cursor=0,pending=[],timerId=0,activity={tasks:[],error:""};
+let cursor=0,pending=[],timerId=0,activity={tasks:[],error:"",clock:null};
 const same=(a,b)=>a?.length===b?.length&&a.every((value,i)=>Object.is(value,b[i]));
 globalThis.__noonHooks={useState(initial){const i=cursor++;if(!(i in states))states[i]=typeof initial==="function"?initial():initial;return[states[i],value=>states[i]=typeof value==="function"?value(states[i]):value];},useRef(initial){const i=cursor++;return refs[i]||=( {current:initial});},useEffect(fn,deps){const i=cursor++;if(!effects[i]||!same(effects[i].deps,deps))pending.push(()=>{effects[i]?.cleanup?.();effects[i]={deps,cleanup:fn()};});}};
 globalThis.localStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
@@ -25,7 +25,15 @@ function render(){cursor=0;const result=useNoonRunProgress(value=>finished.push(
 const flush=async()=>{await Promise.resolve();await Promise.resolve();await Promise.resolve();};
 function request(){const found=requests.find(row=>!row.answered&&!row.options.signal.aborted);assert.ok(found,"expected an outstanding GET");found.answered=true;return found;}
 const task=(id,status="running")=>({task_id:id,job_id:id,kind:"source_check",parameters:{operation:"noon_snapshot"},target_date:"2026-10-28",status,created_at_ms:1,progress:42});
-beginNoonRun("2026-10-28","one");render();
+const opening=render();
+assert.equal(opening.session,null);
+assert.equal(opening.checking,false,"opening without a local session keeps background task discovery nonblocking");
+activity={...activity,error:"offline"};
+assert.equal(render().checking,false,"an initial discovery failure does not create a noon lock");
+assert.equal(requests.length,0,"idle discovery does not poll a noon task");
+activity={...activity,error:""};
+beginNoonRun("2026-10-28","one");
+assert.equal(render().session.requestKey,"one","manual submission locks even before the first activity response");
 request().resolve({date:"2026-10-28",state:"not_collected"});await flush();render();
 assert.equal(readNoonRun().requestKey,"one","a GET racing an in-flight POST cannot prove rejection or unlock");
 acceptNoonRun("one",task("job-one","queued"));render();
@@ -36,7 +44,9 @@ assert.equal(render().session.taskId,"job-one","404 and connection failures neve
 assert.match(render().error,/保留锁定/);
 const retry=[...timers.values()][0];timers.clear();retry();request().resolve(task("job-one","succeeded"));await flush();render();render();
 assert.equal(readNoonRun(),null);assert.equal(finished.length,1);assert.equal(finished[0].status,"succeeded");
-activity={tasks:[{...task("remote"),operation:"noon_snapshot",request_key:"remote-key",created_at_ms:1}],error:""};render();render();
+activity={tasks:[{...task("remote"),operation:"noon_snapshot",request_key:"remote-key",created_at_ms:1}],error:""};
+assert.equal(render().checking,true,"a confirmed active task locks while restoring its session");
+assert.equal(render().session.taskId,"remote");
 assert.equal(readNoonRun().taskId,"remote","another page's existing task is discovered without creating work");
 request().resolve(task("remote","paused"));await flush();render();render();
 assert.equal(readNoonRun(),null,"stale running discovery cannot resurrect a directly confirmed terminal task");
@@ -65,4 +75,4 @@ request().resolve({...task("resume-original","succeeded"),logs:[{seq:11,stage:"q
 assert.equal(readNoonRun(),null);assert.equal(finished.at(-1).status,"succeeded");
 assert.ok(requests.every(row=>row.path.startsWith("/tasks/")||row.path.startsWith("/market/noon?")),"restoration only issues local GETs, never submission/resume");
 effects.forEach(effect=>effect?.cleanup?.());globalThis.setTimeout=realTimeout;globalThis.clearTimeout=realClear;
-console.log("Noon progress: pending race, cross-tab discovery, error lock retention, stale response isolation and automatic terminal unlock passed");
+console.log("Noon progress: nonblocking idle discovery, pending race, cross-tab discovery, error lock retention, stale response isolation and automatic terminal unlock passed");

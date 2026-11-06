@@ -296,7 +296,8 @@ class AgentRuntimeMixin:
             if web_plan:updated['accepted_web_plan']=web_plan
             db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(updated),task['task_id']))
         return {'ok':True,'scope':accepted['scope'],'tool_results':outputs,'web_plan':web_plan,
-                'web_gap':web_gap,'reply':accepted['reply'],'force_summary':bool(self.agent_state.get('force_summary'))}
+                'web_gap':web_gap,'reply':accepted['reply'],'force_summary':bool(self.agent_state.get('force_summary')),
+                'accepted_plan':accepted['accepted_plan']}
 
     def _drain_agent(self,task_id):
         if self.agent_bridge is None:return
