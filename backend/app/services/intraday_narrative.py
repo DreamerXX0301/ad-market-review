@@ -10,8 +10,14 @@ from fastapi import HTTPException
 
 from app.services.noon_analysis import number
 
-ADJACENT = {'1000': '0935', '1030': '1000', '1100': '1030', 'noon': '1100', '1330': 'noon',
-            '1400': '1330', '1430': '1400', 'close': '1430'}
+
+def _adjacent(frame):
+    from app.services.intraday_service import SEVEN_SLOT_VERSION, baseline_for_slot
+
+    slot = frame['slot']
+    if slot == 'noon':
+        return '1100'
+    return baseline_for_slot(slot, frame.get('_raw', {}).get('version', SEVEN_SLOT_VERSION))
 
 
 def _count(value, state):
@@ -299,7 +305,7 @@ def build_section(frame, previous, *, members=None):
             result['source_bindings']['auction_members'] = context['member_source_binding']
     sectors = _index(frame.get('rotation_sectors', frame.get('sectors', ())))
     prior = _index(previous.get('rotation_sectors', previous.get('sectors', ()))) if previous else {}
-    comparable = (previous is not None and previous['slot'] == ADJACENT.get(slot)
+    comparable = (previous is not None and previous['slot'] == _adjacent(frame)
                   and frame.get('date') == previous.get('date')
                   and frame.get('source_binding', {}).get('source_id') == previous.get('source_binding', {}).get('source_id') == 'fuyao'
                   and previous.get('collected_end_at', '') < frame.get('collected_start_at', ''))
@@ -531,7 +537,7 @@ def attach_sections(day, briefs, anchors, snapshots=None, *, read_context=None):
                 continue
             frame = frames[key]
             own_cutoff = _stamp(frame.get('published_at', frame['collected_end_at']), day)
-            previous_key = ADJACENT.get(key)
+            previous_key = _adjacent(frame)
             prior = frames.get(previous_key) if previous_key in usable else None
             if prior is not None and prior.get('_ready', own_cutoff + 1) > own_cutoff:
                 prior = None

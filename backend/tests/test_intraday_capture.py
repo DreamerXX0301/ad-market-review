@@ -434,7 +434,7 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert not api.get(url).json()['can_capture']
 
 
-def test_automation_creates_only_during_seven_verified_windows(tmp_path, monkeypatch):
+def test_automation_creates_only_during_eight_verified_windows(tmp_path, monkeypatch):
     from app.services import automatic_tasks, sync_progress
 
     monkeypatch.setenv('SHIXU_DATA_DIR', str(tmp_path))
@@ -460,7 +460,11 @@ def test_automation_creates_only_during_seven_verified_windows(tmp_path, monkeyp
     app.include_router(router)
     api = TestClient(app)
     automation = '/api/v1/market/intraday/automation'
-    assert api.get(automation).json()['enabled'] is False
+    config = api.get(automation).json()
+    assert config['enabled'] is False
+    assert [slot['start'] for slot in config['slots']] == [
+        '09:35', '09:45', '10:00', '10:30', '11:00', '13:30', '14:00', '14:30',
+    ]
     assert service.tick_automatic() is None and not requests
     assert api.put(automation, json={'enabled': True, 'expected_revision': 0}).json()['revision'] == 1
     assert api.put(automation, json={'enabled': False, 'expected_revision': 0}).status_code == 409
@@ -472,7 +476,7 @@ def test_automation_creates_only_during_seven_verified_windows(tmp_path, monkeyp
     with core.connect() as connection:
         connection.execute("UPDATE job SET status='failed' WHERE job_id=?", (other['job_id'],))
 
-    for key in ('09:25', '09:59', '10:01', '11:30', '12:05', '13:00', '15:00'):
+    for key in ('09:25', '09:44', '09:46', '09:48', '09:59', '10:01', '11:30', '12:05', '13:00', '15:00'):
         hour, minute = map(int, key.split(':'))
         clock = clock.replace(hour=hour, minute=minute)
         assert service.tick_automatic() is None

@@ -168,6 +168,14 @@ def test_discovery_and_opening_comparison_are_bound_to_same_day_read_only_source
     actual_tool = ai_read_tools.execute_read_tool('read_market_data', {'date': DAY, 'section': 'auction'})
     assert actual_tool['ok']
     assert any(evidence['kind'] == 'auction_discovery_brief' for evidence in actual_tool['evidence'])
+    earlier_tool = ai_read_tools.execute_read_tool('read_market_data', {'date': DAY, 'section': 'auction'},
+                                                  include_auction_opening=False)
+    earlier_block = next(row for row in earlier_tool['evidence'] if row['kind'] == 'auction_discovery_brief')
+    assert earlier_block['data']['coverage'] == data['coverage']
+    assert earlier_block['data']['directions']['industries'][0]['topic_code'] == data['directions']['industries'][0]['topic_code']
+    assert earlier_block['title'] == '竞价发现'
+    assert 'opening_comparison' not in dumps(earlier_tool) and 'auction_opening' not in dumps(earlier_tool)
+    assert all('开盘首轮' not in row['label'] for row in earlier_tool['metrics'])
     assert brief.build_briefs('2026-10-29')['blocks'] == []
     database.execute("UPDATE market_intraday_capture SET content_sha256='invalid'")
     database.commit()

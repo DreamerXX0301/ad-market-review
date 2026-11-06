@@ -184,7 +184,7 @@ def _auction(payload, metadata, day):
     return _block('auction', day, metadata, data, metric_rows)
 
 
-def _discovery(connection, day, metadata, opening_metadata):
+def _discovery(connection, day, metadata, opening_metadata, *, include_auction_opening=True):
     from app.services.auction_discovery import read_view
 
     view = read_view(day, connection=connection)
@@ -225,9 +225,12 @@ def _discovery(connection, day, metadata, opening_metadata):
                 ('faded', '开盘首轮较竞价涨幅回落'), ('turned_positive', '竞价未涨且开盘首轮转涨')))
         else:
             data['opening_state'] = 'unknown'
-    else:
+    elif include_auction_opening:
         data['opening_state'] = 'not_saved'
-    return _block('auction_discovery', day, metadata, data, metric_rows)
+    block = _block('auction_discovery', day, metadata, data, metric_rows)
+    if not include_auction_opening:
+        block['evidence']['title'] = '竞价发现'
+    return block
 
 
 def _noon(payload, metadata, day):
@@ -293,7 +296,7 @@ def _close(payload, metadata, day):
     return block
 
 
-def build_briefs(day, *, source_path=None, kinds=None, cutoff=None):
+def build_briefs(day, *, source_path=None, kinds=None, cutoff=None, include_auction_opening=True):
     _day(day)
     observe = lambda: fingerprints(day) if source_path is None else fingerprints(day, source_path=source_path)
     before = observe()
@@ -365,10 +368,11 @@ def build_briefs(day, *, source_path=None, kinds=None, cutoff=None):
                 try:
                     if cutoff is not None and discovery['recorded_at_ms'] > int(cutoff.timestamp() * 1000):
                         continue
-                    opening = before.get('auction_opening')
+                    opening = before.get('auction_opening') if include_auction_opening else None
                     if cutoff is not None and opening and opening.get('finished_at_ms', 0) > int(cutoff.timestamp() * 1000):
                         opening = None
-                    result['blocks'].append(_discovery(connection, day, discovery, opening))
+                    result['blocks'].append(_discovery(connection, day, discovery, opening,
+                                                        include_auction_opening=include_auction_opening))
                 except (ValueError, TypeError, KeyError, HTTPException):
                     result['gaps'].append({'capability': 'auction_discovery_brief', 'source': 'saved_auction_discovery',
                                            'state': 'unknown', 'date': day, 'reason': '竞价发现来源未通过核验'})

@@ -33,6 +33,24 @@ def _usage_valid(usage):
             and 0<=(usage.get('reasoning_tokens') or 0)<=usage['output_tokens'])
 
 
+def _auction_read_options(request, name, args):
+    """Keep the 09:45-only plan's auction evidence before the 10:00 follow-up."""
+    if name != 'read_market_data' or args.get('section') != 'auction':
+        return {}
+    today = (request.get('request_time') or {}).get('request_date_bj')
+
+    def day(arguments):
+        value = arguments.get('date')
+        return today if value == 'today' else value
+
+    reads = (request.get('accepted_stock_plan') or {}).get('reads', ())
+    same_day = [read for read in reads if day(read['arguments']) == day(args)]
+    slots = {read['arguments'].get('slot') for read in same_day if read['name'] == 'read_intraday_data'}
+    later_market = any(read['name'] == 'read_market_data'
+                       and read['arguments'].get('section') in ('noon', 'close', 'overview') for read in same_day)
+    return {'include_auction_opening': False} if '0945' in slots and slots <= {'0935', '0945'} and not later_market else {}
+
+
 def settle_parent(db,task_id):
     rows=[dict(row) for row in db.execute('SELECT * FROM ai_request_receipt WHERE task_id=? ORDER BY ordinal',(task_id,))]
     sent=[row for row in rows if row['sent_at_ms'] is not None]
@@ -207,7 +225,8 @@ class AgentRuntimeMixin:
         else:
             with connect() as db:append_event(db,task,'tool',{'name':name,'call_id':call_id,'state':'running','label':'正在查询本地资料'})
             from app.services.ai_read_tools import execute_read_tool
-            result=execute_read_tool(name,args,page_context=request['page_anchor'],fallback_context=request.get('fallback_context'))
+            result=execute_read_tool(name,args,page_context=request['page_anchor'],fallback_context=request.get('fallback_context'),
+                                     **_auction_read_options(request,name,args))
             executed.append({'name':name,'args':args})
             if len(executed)>=tool_budget(request['round_protocol'])['max_reads']:
                 self.agent_state['force_summary']=True

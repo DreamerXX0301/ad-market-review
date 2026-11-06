@@ -129,6 +129,40 @@ def test_semantic_stock_plan_accepts_normal_questions_then_streams_real_tool_res
         runtime.shutdown()
 
 
+@pytest.mark.parametrize('last_slot, expected_options', [('0945', {'include_auction_opening': False}), ('1000', {})])
+def test_auction_read_respects_exact_early_scope_of_accepted_plan(agent_client, monkeypatch, last_slot, expected_options):
+    runtime = AIRuntime(fake)
+    question = '结合竞价和开盘两个观察档分析截至' + last_slot + '的盘面。'
+    auction = market_read('auction')
+    slots = ('0935', '0945') if last_slot == '0945' else ('0935', '0945', '1000')
+    reads = [auction, *[{'name': 'read_intraday_data', 'arguments': {'date': 'today', 'slot': slot, 'query': ''}}
+                         for slot in slots]]
+    actual_options = []
+
+    def local(name, args, *, page_context, fallback_context, **options):
+        if name == 'read_market_data':
+            actual_options.append(options)
+        return fixture_result(name, args)
+
+    monkeypatch.setattr(ai_read_tools, 'execute_read_tool', local)
+
+    async def handler(request):
+        payload = json.loads(request.content)
+        if any(tool.get('name') == 'plan_stock_task' for tool in payload.get('tools', [])):
+            return httpx.Response(200, content=complete([
+                function('plan_stock_task', planned(question, reads=reads), 'early-plan')]))
+        return httpx.Response(200, content=complete([final('已核对各档。')], '已核对各档。'))
+
+    mock_network(monkeypatch, handler)
+    try:
+        enable(agent_client, runtime, 'openai')
+        created = create(agent_client, text=question).json()
+        assert drive(runtime, created['task_id'])['state'] == 'completed'
+        assert actual_options == [expected_options]
+    finally:
+        runtime.shutdown()
+
+
 def test_natural_limit_up_followup_uses_latest_actual_user_not_old_assistant_facts(agent_client, monkeypatch):
     client = agent_client; runtime = AIRuntime(fake); calls = []; reads = []
     first, question = '今天收盘行情数据有了吗？', '六连板是谁？'

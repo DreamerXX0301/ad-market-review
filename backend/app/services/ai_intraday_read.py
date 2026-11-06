@@ -1,4 +1,4 @@
-"""Project at most seven verified, same-day saved intraday snapshots for AI."""
+"""Project bounded, verified same-day intraday snapshots for AI."""
 from datetime import date, datetime, time
 import json
 
@@ -7,8 +7,11 @@ from fastapi import HTTPException
 from app.core import dumps
 from app.services.ai_read_tools import _connect, _gap, _paths, _pick_fields
 from app.services.auction_followup import model_input_allowed
-from app.services.intraday_service import MAX_PAYLOAD, SLOTS, decode_snapshot, slots_for_version
-from app.services.intraday_board_changes import BASELINES, build_changes, noon_frame, read_noon_row
+from app.services.intraday_service import (
+    MAX_PAYLOAD, SEVEN_SLOT_VERSION, SLOTS, VERSION, baseline_for_slot, decode_snapshot,
+    planned_slots_for_day, slots_for_version,
+)
+from app.services.intraday_board_changes import build_changes, noon_frame, read_noon_row
 from app.services.sync_clock import CHINA
 
 _SLOTS = {item['key']: item for item in SLOTS}
@@ -250,7 +253,7 @@ def _project(snapshot, query, detailed):
         data['direction_discovery'].pop('scope', None)
         data.pop('historical_metrics_reason')
         data['sample_note'] = '仅有限样本，未命中不能认定没有。'
-    # Each slot keeps its date and essential facts in a seven-slot reply.
+    # Each slot keeps its date and essential facts in a multi-slot reply.
     cap = (10 if detailed else 3) * 1024
     while len(dumps(data).encode()) > cap:
         if not _omit_sample(data):
@@ -306,6 +309,7 @@ def fill_intraday(result, day, slot, query, now, *, allowed_slots=None, cutoff=N
     from app.services.ai_read_tools import MAX_RESULT_BYTES
     slots = tuple(allowed_slots) if allowed_slots is not None else tuple(_SLOTS) if slot == 'all' else (slot,)
     effective_now = min(now, cutoff) if cutoff is not None else now
+    planned = None
     source = None
     calendar = None
     phase_results = {}
@@ -315,6 +319,9 @@ def fill_intraday(result, day, slot, query, now, *, allowed_slots=None, cutoff=N
             continue
         try:
             connection.execute('BEGIN')
+            source_planned = {item['key'] for item in planned_slots_for_day(connection, day, now=now)}
+            if planned is None:
+                planned = source_planned
             read_context = {}
             decoded = {}
             def read_frame(record, key):
@@ -322,8 +329,8 @@ def fill_intraday(result, day, slot, query, now, *, allowed_slots=None, cutoff=N
                 if identity not in decoded:
                     decoded[identity] = _read_snapshot(connection, record, day, key, effective_now, include_row=True)
                 return decoded[identity]
-            required = tuple(dict.fromkeys((*slots, *(BASELINES[key] for key in slots
-                                                       if BASELINES.get(key) not in (None, 'noon')))))
+            baselines = {baseline_for_slot(key, version) for key in slots for version in (VERSION, SEVEN_SLOT_VERSION)}
+            required = tuple(dict.fromkeys((*slots, *sorted(baselines - {None, 'noon'}))))
             records = _source_rows(connection, day, required)
             source_phases = {}
             if calendar is None:
@@ -340,7 +347,7 @@ def fill_intraday(result, day, slot, query, now, *, allowed_slots=None, cutoff=N
                 try:
                     value, raw_row = read_frame(record, key)
                     previous = previous_row = None
-                    baseline = BASELINES.get(key)
+                    baseline = baseline_for_slot(key, value['version'])
                     if baseline == 'noon':
                         previous_row = read_noon_row(connection, day)
                         previous = noon_frame(previous_row)
@@ -373,13 +380,20 @@ def fill_intraday(result, day, slot, query, now, *, allowed_slots=None, cutoff=N
                 source = label
                 calendar = 'trading_day'
                 phase_results = source_phases
+                planned = source_planned
                 break
             phase_results = {**source_phases, **phase_results}
         finally:
             connection.close()
+    if planned is None:
+        planned = {item['key'] for item in planned_slots_for_day(None, day, now=now)}
     phases = {}
     for key in slots:
+        if slot == 'all' and key not in planned:
+            continue
         state, reason = phase_results.get(key) or _missing_state(None, day, key, effective_now, calendar)
+        if key not in planned and state in ('unknown', 'not_collected'):
+            reason = '所选日未设置此观察档'
         phases[key] = {'phase_state': state, 'time': _SLOTS[key]['start'], 'reason': reason}
         if state in ('unknown', 'not_collected', 'rest_day'):
             _gap(result, 'intraday:' + key, reason, state)
@@ -391,8 +405,8 @@ def fill_intraday(result, day, slot, query, now, *, allowed_slots=None, cutoff=N
     result['state'] = ('available' if all(state == 'available' for state in states)
                        else 'partial' if result['evidence']
                        else states[0] if len(set(states)) == 1 else 'unknown')
-    # Reserve the common tool's evidence-ID namespace overhead. Keep all seven
-    # phases by dropping complete optional samples before its total 24KiB guard.
+    # Reserve the common tool's evidence-ID namespace overhead. Keep every
+    # phase by dropping complete optional samples before its total 24KiB guard.
     if slot == 'all':
         while len(dumps(result).encode()) > MAX_RESULT_BYTES - 512:
             candidates = sorted(result['evidence'], key=lambda row: len(dumps(row['data']).encode()), reverse=True)

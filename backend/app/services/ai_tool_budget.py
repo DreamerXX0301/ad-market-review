@@ -21,7 +21,7 @@ TREND_PERIODS = ('D', 'W', 'M')
 TREND_WINDOWS = ('5', '10', '12', '20', '30', '40', '60')
 DETAIL_SECTIONS = ('indices', 'sectors', 'emotion', 'gainers', 'abnormal', 'dragon_tiger',
                    'auction', 'noon', 'broken_boards', *GAINERS_LOOKUP_MODES)
-INTRADAY_SLOTS = ('all', '0935', '1000', '1030', '1100', '1330', '1400', '1430')
+INTRADAY_SLOTS = ('all', '0935', '0945', '1000', '1030', '1100', '1330', '1400', '1430')
 
 
 def _day(value):

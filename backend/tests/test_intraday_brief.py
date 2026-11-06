@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.services import intraday_brief as brief, market_service, noon_close_service
+from app.services.intraday_service import SEVEN_SLOT_VERSION, VERSION
 
 DAY = '2026-11-04'
 
@@ -94,6 +95,26 @@ def test_cumulative_cutoff_excludes_future_and_late_published_earlier_slots():
     assert [row['status'] for row in output['context']] == ['complete', 'missing', 'missing', 'complete']
     assert '11:00' not in output['body'] and '15:00' not in output['body']
     assert '10:00 开盘首轮' in output['body']
+
+
+def test_cumulative_0945_context_preserves_the_versioned_comparison():
+    opening = {'version': VERSION, **_projection('0935', 10, 2)}
+    followup = {'version': VERSION, **_projection('0945', 20, 3)}
+    first = {'version': VERSION, **_projection('1000', 30, 4)}
+
+    full = brief._brief('1000', [('0935', opening), ('0945', followup), ('1000', first)])
+    rotations = {row['id']: row['text'] for row in full['evidence'] if row['id'].endswith('.rotation')}
+    assert '09:35 开盘观察至09:45 早盘跟踪' in rotations['0945.rotation']
+    assert '09:45 早盘跟踪至10:00 开盘首轮' in rotations['1000.rotation']
+
+    missing = brief._brief('1000', [('0935', opening), ('1000', first)])
+    assert any(row['slot'] == '0945' and row['status'] == 'missing' for row in missing['context'])
+    assert not any(row['id'] == '1000.rotation' for row in missing['evidence'])
+
+    legacy = brief._brief('1000', [('0935', {**opening, 'version': SEVEN_SLOT_VERSION}),
+                                  ('1000', {**first, 'version': SEVEN_SLOT_VERSION})])
+    assert all(row['slot'] != '0945' for row in legacy['context'])
+    assert any('09:35 开盘观察至10:00 开盘首轮' in row['text'] for row in legacy['evidence'])
 
 
 def test_auction_discovery_compares_exact_stocks_and_keeps_evidence_in_cumulative_brief():

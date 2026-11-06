@@ -2073,6 +2073,8 @@ const currentCaptureSlots = [
   { key: "1430", label: "尾盘观察", start: "14:30" },
 ];
 
+const earlyFollowupSlot = { key: "0945", label: "早盘跟踪", start: "09:45" };
+
 export function timelineSlots(view: Row) {
   const source = new Map<string, Row>(
     ((view.slots || []) as Row[]).map((slot) => [slot.key, slot]),
@@ -2082,12 +2084,20 @@ export function timelineSlots(view: Row) {
     /^\d{2}:\d{2}$/.test(view.noon_scheduled_at)
       ? { ...anchorSlots.noon, start: view.noon_scheduled_at }
       : anchorSlots.noon;
+  const snapshots = (view.snapshots || []) as Row[];
   const slots: Row[] = [
     noon,
     anchorSlots.close,
     ...currentCaptureSlots.map((slot) => source.get(slot.key) || slot),
-  ].sort((a, b) => a.start.localeCompare(b.start));
-  for (const row of (view.snapshots || []) as Row[]) {
+  ];
+  if (
+    source.has(earlyFollowupSlot.key) ||
+    snapshots.some((row) => row.slot === earlyFollowupSlot.key)
+  ) {
+    slots.push(source.get(earlyFollowupSlot.key) || earlyFollowupSlot);
+  }
+  slots.sort((a, b) => a.start.localeCompare(b.start));
+  for (const row of snapshots) {
     if (
       row.slot !== "auction" &&
       !slots.some((slot) => slot.key === row.slot)
@@ -3368,7 +3378,11 @@ export default function IntradayObservation({
   const [pending, setPending] = useState(false);
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const lastRequest = useRef<{ slot: string; key: string } | null>(null);
+  const lastRequest = useRef<{
+    date: string;
+    slot: string;
+    key: string;
+  } | null>(null);
   const reload = result.reload;
   const job = view?.latest_job;
   const running = activeStatus(job?.status) || activeStatus(view?.state);
@@ -3421,8 +3435,8 @@ export default function IntradayObservation({
   async function capture() {
     if (pending || submitted || !view?.can_capture) return;
     const slot = view.current_slot?.key || "";
-    if (!lastRequest.current || lastRequest.current.slot !== slot)
-      lastRequest.current = { slot, key: requestKey() };
+    if (lastRequest.current?.date !== date || lastRequest.current.slot !== slot)
+      lastRequest.current = { date, slot, key: requestKey() };
     setPending(true);
     setError("");
     try {

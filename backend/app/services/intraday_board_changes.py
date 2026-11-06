@@ -10,7 +10,6 @@ from app.services.noon_analysis import number
 
 VERSION = 'intraday-board-changes-v1'
 EVIDENCE_VERSION = 'intraday-board-pools-v1'
-BASELINES = {'1000': '0935', '1030': '1000', '1100': '1030', '1330': 'noon', '1400': '1330', '1430': '1400', 'close': '1430'}
 LABELS = {'new_sealed': '较上档新入封板池', 'new_broken': '较上档新增炸板样本',
           'new_limit_down': '较上档新入跌停池', 'opened': '上档封板、本档炸板',
           'resealed': '上档炸板、本档封板'}
@@ -61,9 +60,6 @@ def _binding(snapshot, row, *, read_cache=None):
         if (original.get('date') != snapshot.get('date') or row['trade_date'] != snapshot.get('date')
                 or row['snapshot_id'] != snapshot.get('id')):
             return None
-        if slot not in ('noon', 'close') and (original.get('id') != snapshot.get('id') or original.get('slot') != slot
-                               or row['slot'] != slot or original.get('version') not in ('intraday-snapshot-v5', 'intraday-snapshot-v6')):
-            return None
         start, end = (datetime.fromisoformat(original[key]) for key in ('collected_start_at', 'collected_end_at'))
         if (start.tzinfo is None or end.tzinfo is None or start > end
                 or any(value.astimezone(CHINA).date().isoformat() != snapshot['date'] for value in (start, end))):
@@ -86,7 +82,11 @@ def _binding(snapshot, row, *, read_cache=None):
             if original.get('version') != 'noon-snapshot-v1' or not '11:30' <= start.strftime('%H:%M') <= end.strftime('%H:%M') < '13:00':
                 return None
         else:
-            from app.services.intraday_service import slots_for_version
+            from app.services.intraday_service import MODERN_VERSIONS, slots_for_version
+
+            if (original.get('id') != snapshot.get('id') or original.get('slot') != slot or row['slot'] != slot
+                    or original.get('version') != snapshot.get('version') or original['version'] not in MODERN_VERSIONS):
+                return None
             window = next((value for value in slots_for_version(original['version']) if value['key'] == slot), None)
             if not window or not window['start'] <= start.astimezone(CHINA).strftime('%H:%M') <= end.astimezone(CHINA).strftime('%H:%M') < window['end']:
                 return None
@@ -265,7 +265,9 @@ def _read_binding(snapshot, row, cache):
 
 def build_changes(current, previous, *, current_row, previous_row=None, read_cache=None):
     """Exact differences require complete enumerations; positive cross-pool matches give lower bounds."""
-    baseline = BASELINES.get(current.get('slot'))
+    from app.services.intraday_service import baseline_for_slot
+
+    baseline = baseline_for_slot(current.get('slot'), current.get('version'))
     result = {'version': VERSION, 'scope': SCOPE, 'baseline_slot': baseline, 'state': 'unknown',
               'source_bindings': {}, 'groups': {key: {'label': label, 'state': 'unknown', 'count': None,
                    'items': [], 'omitted_count': 0, 'reason_code': 'missing_adjacent_snapshot'}
@@ -345,13 +347,15 @@ def read_noon_row(connection, day):
 
 
 def attach_changes(snapshots, rows, noon_row=None, *, read_cache=None):
+    from app.services.intraday_service import MODERN_VERSIONS, baseline_for_slot
+
     records = {row['slot']: row for row in rows}
     by_slot = {snapshot['slot']: snapshot for snapshot in snapshots}
     noon = noon_frame(noon_row, read_cache=read_cache)
     for snapshot in snapshots:
-        if snapshot.get('version') not in ('intraday-snapshot-v5', 'intraday-snapshot-v6'):
+        if snapshot.get('version') not in MODERN_VERSIONS:
             continue
-        key = BASELINES.get(snapshot['slot'])
+        key = baseline_for_slot(snapshot['slot'], snapshot['version'])
         prior = noon if key == 'noon' else by_slot.get(key)
         snapshot['board_changes'] = build_changes(snapshot, prior, current_row=records.get(snapshot['slot']),
                                                   previous_row=noon_row if key == 'noon' else records.get(key),

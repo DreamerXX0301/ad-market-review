@@ -7,7 +7,7 @@ import pytest
 
 from app.core import dumps
 from app.services import ai_read_tools, ai_scope_semantic
-from app.services.intraday_service import SLOTS, VERSION
+from app.services.intraday_service import SEVEN_SLOT_VERSION, SLOTS, VERSION
 
 DAY = '2026-11-04'
 
@@ -21,7 +21,7 @@ def source(tmp_path, monkeypatch):
     path = directory / 'app.sqlite3'
     connection = sqlite3.connect(path)
     connection.executescript('''
-        CREATE TABLE job(job_id TEXT PRIMARY KEY,status TEXT,finished_at_ms INTEGER);
+        CREATE TABLE job(job_id TEXT PRIMARY KEY,status TEXT,finished_at_ms INTEGER,parameters_json TEXT);
         CREATE TABLE market_intraday_capture(trade_date TEXT,slot TEXT,job_id TEXT,
             snapshot_id TEXT,content_sha256 TEXT,payload_json TEXT,PRIMARY KEY(trade_date,slot));
     ''')
@@ -58,7 +58,8 @@ def _save(connection, snapshot, *, sha=None):
     raw = dumps(snapshot)
     identity = snapshot['id']
     finished = int(datetime.fromisoformat(snapshot['collected_end_at']).timestamp() * 1000) + 10
-    connection.execute('INSERT INTO job VALUES (?,?,?)', (identity, 'succeeded', finished))
+    connection.execute('INSERT INTO job VALUES (?,?,?,?)',
+                       (identity, 'succeeded', finished, dumps({'version': snapshot.get('version')})))
     connection.execute('INSERT INTO market_intraday_capture VALUES (?,?,?,?,?,?)', (
         snapshot['date'], snapshot['slot'], identity, identity, sha or sha256(raw.encode()).hexdigest(), raw))
     connection.commit()
@@ -69,7 +70,7 @@ def _call(slot='all', query='', day='today'):
 
 
 @pytest.mark.parametrize('dense', [False, True])
-def test_seven_slots_keep_0935_independent_and_fit_existing_tool_budget(source, monkeypatch, dense):
+def test_eight_slots_keep_early_observations_independent_and_fit_existing_tool_budget(source, monkeypatch, dense):
     from app.services import ai_intraday_read
     traces = []
     original_connect = ai_intraday_read._connect
@@ -91,15 +92,16 @@ def test_seven_slots_keep_0935_independent_and_fit_existing_tool_budget(source, 
         _save(source, value)
     before = source.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall()
     result = _call('all')
-    assert result['ok'] and len(result['evidence']) == 7
+    assert result['ok'] and len(result['evidence']) == 8
     assert list(result['summary']['phases']) == [slot['key'] for slot in SLOTS]
     assert set(result['source_bindings']) == {slot['key'] for slot in SLOTS}
     assert all(len(dumps(item['data']).encode()) <= 3 * 1024 for item in result['evidence'])
     assert len(dumps(result).encode()) <= ai_read_tools.MAX_RESULT_BYTES
-    assert sum('SELECT trade_date,slot,snapshot_id,content_sha256,payload_json' in sql for sql in traces) == 7
-    opening = _call('0935')
-    assert len(opening['evidence']) == 1 and opening['evidence'][0]['kind'] == 'intraday:0935'
-    assert opening['evidence'][0]['dates']['collected_end_at'].startswith(DAY + 'T09:35:')
+    assert sum('SELECT trade_date,slot,snapshot_id,content_sha256,payload_json' in sql for sql in traces) == 8
+    for key, clock in (('0935', '09:35'), ('0945', '09:45')):
+        opening = _call(key)
+        assert len(opening['evidence']) == 1 and opening['evidence'][0]['kind'] == 'intraday:' + key
+        assert opening['evidence'][0]['dates']['collected_end_at'].startswith(DAY + 'T' + clock + ':')
     assert source.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall() == before
 
 
@@ -108,6 +110,61 @@ def test_0935_without_real_snapshot_is_missing_not_auction_or_1000(source):
     result = _call('0935')
     assert result['evidence'] == [] and result['source_bindings'] == {}
     assert result['summary']['phases']['0935']['phase_state'] == 'not_collected'
+
+
+def test_0945_without_saved_snapshot_separates_pending_and_missing(source, monkeypatch):
+    _save(source, _snapshot('0935'))
+    monkeypatch.setattr(ai_read_tools, 'local_now', lambda: datetime.fromisoformat(DAY + 'T09:44:59+08:00'))
+    result = _call('0945')
+    assert result['state'] == 'not_due' and result['evidence'] == []
+    monkeypatch.setattr(ai_read_tools, 'local_now', lambda: datetime.fromisoformat(DAY + 'T10:05:00+08:00'))
+    _save(source, _snapshot('1000'))
+    result = _call('0945')
+    assert result['state'] == 'not_collected' and result['evidence'] == []
+
+
+@pytest.mark.parametrize('query_day', [DAY, '2026-11-05'])
+@pytest.mark.parametrize('version, scheduled', [(SEVEN_SLOT_VERSION, False), (VERSION, True)])
+def test_legacy_plan_only_marks_0945_missing_if_it_was_scheduled(source, monkeypatch, version, scheduled, query_day):
+    for slot in ('0935', '1000'):
+        _save(source, {**_snapshot(slot), 'version': version})
+    monkeypatch.setattr(ai_read_tools, 'local_now', lambda: datetime.fromisoformat(query_day + 'T13:40:00+08:00'))
+    result = _call(day=DAY)
+    assert result['ok'] and ('0945' in result['summary']['phases']) is scheduled
+    assert any(row['capability'] == 'intraday:0945' for row in result['gaps']) is scheduled
+    exact = _call('0945', day=DAY)
+    assert exact['evidence'] == []
+    assert (exact['summary']['phases']['0945']['reason'] == '所选日未设置此观察档') is not scheduled
+
+
+@pytest.mark.parametrize('version,with_tracking,baseline,previous_slot,count', [
+    (VERSION, True, '0945', '0945', 1),
+    (VERSION, False, '0945', None, None),
+    (SEVEN_SLOT_VERSION, True, '0935', '0935', 2),
+])
+def test_1000_board_change_reads_the_baseline_of_its_original_capture(source, version, with_tracking,
+                                                                     baseline, previous_slot, count):
+    from test_intraday_board_changes import A, B, C, frame
+
+    def save_pool(key, stage_version, codes):
+        value = _snapshot(key)
+        captured = frame('1000', codes)
+        value['version'] = stage_version
+        value['comparison_input'] = captured['comparison_input']
+        value['board_pool_evidence'] = captured['board_pool_evidence']
+        value['source_checks'] = [{**receipt, 'source_time': value['collected_start_at']}
+                                  for receipt in captured['source_checks']]
+        _save(source, value)
+
+    save_pool('0935', SEVEN_SLOT_VERSION, [A])
+    if with_tracking:
+        save_pool('0945', VERSION, [A, B])
+    save_pool('1000', version, [A, B, C])
+    result = _call('1000')
+    changes = result['evidence'][0]['data']['board_changes']
+    assert changes['baseline_slot'] == baseline
+    assert changes['groups']['new_sealed']['count'] == count
+    assert changes['source_bindings'].get('previous', {}).get('slot') == previous_slot
 
 
 def test_adjacent_board_changes_are_read_from_same_database_and_keep_sha_and_bounded_summary(source, monkeypatch):
@@ -212,6 +269,7 @@ def test_slot_validation_never_sends_bad_source_material(source, corruption):
 def test_natural_language_tools_are_allowed_only_when_frozen():
     for text, name, args in (
         ('研究盘中情况', 'read_intraday_data', {'date': 'today', 'slot': 'all', 'query': ''}),
+        ('看看今天09:45早盘跟踪', 'read_intraday_data', {'date': 'today', 'slot': '0945', 'query': ''}),
         ('看一下竞价情况', 'read_market_data', {'date': 'today', 'section': 'auction'}),
     ):
         request = {'tool_schemas': ai_read_tools.tool_schemas(),

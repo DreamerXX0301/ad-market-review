@@ -516,21 +516,30 @@ assert.equal(frames.size, 0, "unmount cancels pending scroll synchronization");
 if (previousWindow === undefined) delete globalThis.window;
 else globalThis.window = previousWindow;
 
-const sevenSlotBrief = {
+const openingBrief = {
   slot: "1000",
   sections: [
     { slot: "1000", summary: "十点观察", highlights: [] },
     { slot: "0935", summary: "开盘五分钟观察", highlights: [] },
     { slot: "auction", summary: "竞价原候选", highlights: [] },
+    { slot: "0945", summary: "早盘跟踪观察", highlights: [] },
   ],
 };
 assert.deepEqual(
-  briefSections(sevenSlotBrief).map((row) => row.slot),
-  ["auction", "0935", "1000"],
+  briefSections(openingBrief).map((row) => row.slot),
+  ["auction", "0935", "0945", "1000"],
 );
-const earlyHTML = render(sevenSlotBrief, "0935");
+const earlyHTML = render(openingBrief, "0935");
 assert.match(earlyHTML, /09:35 开盘观察/);
 assert.match(earlyHTML, /竞价原候选/);
+assert.match(render(openingBrief, "0945"), /aria-current="step"[^>]*>[^<]*<[^>]+><\/span>09:45 早盘跟踪/);
+assert.deepEqual(
+  briefSections({
+    slot: "0945",
+    body: "09:35 开盘观察 · 开盘复核。\n09:45 早盘跟踪 · 跟踪复核。",
+  }).map(({ slot, summary }) => [slot, summary]),
+  [["0935", "开盘复核。"], ["0945", "跟踪复核。"]],
+);
 const source = await import("node:fs/promises").then((fs) =>
   fs.readFile(new URL("./IntradayBriefCard.tsx", import.meta.url), "utf8"),
 );

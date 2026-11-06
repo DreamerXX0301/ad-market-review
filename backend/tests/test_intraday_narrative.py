@@ -5,6 +5,7 @@ import pytest
 
 from app.services import intraday_narrative as narrative
 from app.services.intraday_brief import sector_comparison_metadata
+from app.services.intraday_service import SEVEN_SLOT_VERSION, VERSION
 
 DAY = '2026-11-05'
 
@@ -18,7 +19,8 @@ def sector(code, name, change, *, count=0, state='observed', **more):
 
 
 def frame(slot, sectors=(), *, sealed=3, broken=2, broken_state='partial', ready=None):
-    clock = {'1000': '10:00', '1030': '10:30', '1100': '11:00', 'noon': '11:35', '1330': '13:30', '1400': '14:00', '1430': '14:30'}[slot]
+    clock = {'0935': '09:35', '0945': '09:45', '1000': '10:00', '1030': '10:30', '1100': '11:00',
+             'noon': '11:35', '1330': '13:30', '1400': '14:00', '1430': '14:30'}[slot]
     at = DAY + 'T' + clock + ':00+08:00'
     return {'slot': slot, 'id': 'original-' + slot, 'date': DAY, 'quality': 'partial',
             'collected_start_at': at, 'collected_end_at': at,
@@ -138,6 +140,36 @@ def test_cumulative_sections_are_computed_once_and_respect_source_ready_cutoff(m
     assert '缺少相邻档' in briefs[1]['sections'][0]['comparison_note']
     assert [row['slot'] for row in briefs[2]['sections']] == ['1000', '1030', '1100']
     assert all(row['body'] == '已留存原始正文' for row in briefs)
+
+
+@pytest.mark.parametrize('version,tracking_available,expected_clock,expected_change', [
+    (VERSION, True, '09:45', 2),
+    (VERSION, False, None, None),
+    (SEVEN_SLOT_VERSION, True, '09:35', 3),
+])
+def test_early_narrative_uses_original_slot_version_without_crossing_gaps(monkeypatch, version, tracking_available,
+                                                                     expected_clock, expected_change):
+    frames = {'0935': frame('0935', [sector('884001.TI', '行业甲', 1)]),
+              '1000': frame('1000', [sector('884001.TI', '行业甲', 4)])}
+    if tracking_available:
+        frames['0945'] = frame('0945', [sector('884001.TI', '行业甲', 2)])
+        frames['0945']['_raw'] = {'version': VERSION}
+    frames['1000']['_raw'] = {'version': version}
+    monkeypatch.setattr(narrative, 'load_frames', lambda *_: frames)
+    current = brief('1000', frames)
+    narrative.attach_sections(DAY, [current], [])
+    assert [section['slot'] for section in current['sections']] == (
+        ['0935', '0945', '1000'] if tracking_available else ['0935', '1000'])
+    if tracking_available:
+        tracking = current['sections'][1]
+        assert tracking['label'] == '09:45 早盘跟踪'
+        assert '较09:35走强1.00个百分点' in tracking['highlights'][0]['text']
+    latest = current['sections'][-1]
+    assert latest['highlights'][0]['change_pp'] == expected_change
+    if expected_clock is None:
+        assert '缺少相邻档' in latest['comparison_note']
+    else:
+        assert f'较{expected_clock}走强' in latest['highlights'][0]['text']
 
 
 @pytest.mark.parametrize('changed', ['snapshot_id', 'source_time', 'not_originally_observed'])

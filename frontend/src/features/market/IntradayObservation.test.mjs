@@ -567,6 +567,20 @@ assert.ok(!timelineSlots({snapshots:[{slot:"auction",label:"早盘竞价"}]}).so
 assert.equal(intradaySelectedSlot("auction", stages, new Map([["auction",{id:"a"}]]), "auction"), "0935", "missing opening data is not substituted with auction data");
 assert.equal(intradaySelectedSlot(null, stages, new Map([["1000",{id:"b"}],["auction",{id:"a"}]]), "auction"), "1000");
 assert.equal(intradaySelectedSlot("0935", stages, new Map([["1000",{id:"b"}]]), "1000"), "0935");
+const plannedFollowup = timelineSlots({
+  slots: [{ key: "0945", label: "早盘跟踪", start: "09:45" }],
+});
+assert.deepEqual(
+  plannedFollowup.slice(0, 3).map(({ key }) => key),
+  ["0935", "0945", "1000"],
+);
+const savedFollowup = timelineSlots({ snapshots: [{ slot: "0945" }] });
+assert.deepEqual(savedFollowup[1], { key: "0945", label: "早盘跟踪", start: "09:45" });
+assert.equal(
+  intradaySelectedSlot("0945", plannedFollowup, new Map([["1000", { id: "later" }]]), "1000"),
+  "0945",
+  "selecting a missing follow-up keeps its own slot instead of borrowing later data",
+);
 assert.equal(
   timelineSlots({ noon_scheduled_at: "11:35" }).find(
     ({ key }) => key === "noon",

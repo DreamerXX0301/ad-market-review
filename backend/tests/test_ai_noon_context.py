@@ -1,5 +1,5 @@
 """Noon AI reads freeze the actual same-day morning prefix, not a later page state."""
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 
 import pytest
@@ -19,7 +19,7 @@ def noon_source(database, monkeypatch):
     save(database, 'market_auction_snapshot', 'auction', auction_payload())
     save(database, 'market_noon_snapshot', 'noon', noon_payload())
     save_close(database)
-    database.executescript('''CREATE TABLE job(job_id TEXT PRIMARY KEY,status TEXT,finished_at_ms INTEGER);
+    database.executescript('''CREATE TABLE job(job_id TEXT PRIMARY KEY,status TEXT,finished_at_ms INTEGER,parameters_json TEXT);
         CREATE TABLE market_intraday_capture(trade_date,slot,job_id,snapshot_id,content_sha256,payload_json);''')
     return database
 
@@ -42,20 +42,20 @@ def call():
 
 
 def test_noon_chains_auction_and_completed_morning_only_without_future_stages(noon_source):
-    for slot in ('0935', '1000', '1030', '1100', '1330', '1430'):
+    for slot in ('0935', '0945', '1000', '1030', '1100', '1330', '1430'):
         stage(noon_source, slot, late=slot == '1030')
     original = noon_source.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall()
     result = call()
     assert result['ok']
     kinds = [row['kind'] for row in result['evidence']]
-    assert kinds == ['auction_brief', 'intraday:0935', 'intraday:1000', 'intraday:1100', 'noon_brief']
+    assert kinds == ['auction_brief', 'intraday:0935', 'intraday:0945', 'intraday:1000', 'intraday:1100', 'noon_brief']
     context = result['summary']['noon_context']
     assert context['cutoff_at'] == DAY + 'T11:36:00+08:00'
     assert context['phases']['1030']['phase_state'] == 'not_collected'
     assert '截至午评' in context['phases']['1030']['reason']
-    assert list(context['phases']) == ['auction', '0935', '1000', '1030', '1100', 'noon']
+    assert list(context['phases']) == ['auction', '0935', '0945', '1000', '1030', '1100', 'noon']
     assert set(result['source_bindings']['intraday']['current_instance']) == {'auction', 'noon'}
-    assert set(result['source_bindings']['noon_morning']) == {'0935', '1000', '1100'}
+    assert set(result['source_bindings']['noon_morning']) == {'0935', '0945', '1000', '1100'}
     assert '1330' not in dumps(result) and '1430' not in dumps(result) and 'noon_close' not in dumps(result)
     assert len(dumps(result).encode()) <= tools.MAX_RESULT_BYTES
     assert noon_source.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall() == original
@@ -77,13 +77,22 @@ def test_each_tool_turn_revalidates_same_noon_cutoff_and_new_source_sha(noon_sou
     assert next(row for row in first['evidence'] if row['kind'] == 'intraday:1100')['data']['breadth']['up'] != 987
 
 
-def test_old_noon_keeps_all_missing_morning_stages_explicit(noon_source):
+def test_current_noon_keeps_all_missing_morning_stages_explicit(noon_source):
     result = call()
     assert [row['kind'] for row in result['evidence']] == ['auction_brief', 'noon_brief']
     context = result['summary']['noon_context']
     assert all(context['phases'][slot]['phase_state'] in ('not_collected', 'unknown')
-               for slot in ('0935', '1000', '1030', '1100'))
+               for slot in ('0935', '0945', '1000', '1030', '1100'))
     assert result['source_bindings']['noon_morning'] == {}
+
+
+def test_historical_noon_omits_a_stage_that_was_not_scheduled(noon_source, monkeypatch):
+    monkeypatch.setattr(tools, 'local_now',
+                        lambda: datetime.fromisoformat(DAY + 'T16:30:00+08:00') + timedelta(days=1))
+    result = call()
+    assert [row['kind'] for row in result['evidence']] == ['auction_brief', 'noon_brief']
+    assert list(result['summary']['noon_context']['phases']) == ['auction', '0935', '1000', '1030', '1100', 'noon']
+    assert not any(row['capability'] == 'intraday:0945' for row in result['gaps'])
 
 
 def test_future_or_other_date_noon_does_not_borrow_current_or_close(noon_source, monkeypatch):
@@ -107,7 +116,7 @@ def test_denied_noon_cannot_open_its_other_morning_materials(noon_source):
 
 
 def test_dense_morning_prefix_keeps_every_stage_within_total_budget(noon_source):
-    for slot in ('0935', '1000', '1030', '1100'):
+    for slot in ('0935', '0945', '1000', '1030', '1100'):
         value = stage(noon_source, slot)
         value['sectors'] = value['strong_sectors'] = [
             {**value['sectors'][0], 'instrument_id': f'{881000 + index}.TI',
@@ -116,6 +125,6 @@ def test_dense_morning_prefix_keeps_every_stage_within_total_budget(noon_source)
                             (dumps(value), digest(value), slot))
     noon_source.commit()
     result = call()
-    assert [row['kind'] for row in result['evidence']] == ['auction_brief', 'intraday:0935', 'intraday:1000',
-        'intraday:1030', 'intraday:1100', 'noon_brief']
+    assert [row['kind'] for row in result['evidence']] == ['auction_brief', 'intraday:0935', 'intraday:0945',
+        'intraday:1000', 'intraday:1030', 'intraday:1100', 'noon_brief']
     assert len(dumps(result).encode()) <= tools.MAX_RESULT_BYTES

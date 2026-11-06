@@ -1,8 +1,9 @@
-"""Worker-owned snapshots for the seven scheduled intraday observations."""
+"""Worker-owned snapshots for scheduled intraday observations."""
 from datetime import date, datetime, time, timedelta
 from hashlib import sha256
 import json
 import re
+from sqlite3 import OperationalError
 
 from fastapi import HTTPException
 
@@ -27,10 +28,11 @@ STRENGTH_VERSION = 'intraday-snapshot-v2'
 FEEDBACK_VERSION = 'intraday-snapshot-v3'
 POOL_VERSION = 'intraday-snapshot-v4'
 SIX_SLOT_VERSION = 'intraday-snapshot-v5'
-VERSION = 'intraday-snapshot-v6'
-MODERN_VERSIONS = (SIX_SLOT_VERSION, VERSION)
+SEVEN_SLOT_VERSION = 'intraday-snapshot-v6'
+VERSION = 'intraday-snapshot-v7'
+MODERN_VERSIONS = (SIX_SLOT_VERSION, SEVEN_SLOT_VERSION, VERSION)
 MAX_BOARDS = 800
-REQUEST_BUDGETS = {LEGACY_VERSION: 25, STRENGTH_VERSION: 27, FEEDBACK_VERSION: 28, POOL_VERSION: 30, SIX_SLOT_VERSION: 30, VERSION: 30}
+REQUEST_BUDGETS = {LEGACY_VERSION: 25, STRENGTH_VERSION: 27, FEEDBACK_VERSION: 28, POOL_VERSION: 30, SIX_SLOT_VERSION: 30, SEVEN_SLOT_VERSION: 30, VERSION: 30}
 MAX_PAYLOAD = 2 * 1024 * 1024
 AUTOMATION_KEY = 'intraday-automation-v1'
 AUTOMATION_CALENDAR_KEY = 'intraday-automation-calendar-v1'
@@ -49,15 +51,28 @@ V5_SLOTS = tuple(dict(key=key, label=label, start=start, end=end, scheduled_at=s
     ('1400', '午后观察', '14:00', '14:01', '14:03'),
     ('1430', '尾盘观察', '14:30', '14:31', '14:33'),
 ))
-SLOTS = (dict(key='0935', label='开盘观察', start='09:35', end='09:38', scheduled_at='09:35', create_until='09:36'), *V5_SLOTS)
+OPENING_SLOT = dict(key='0935', label='开盘观察', start='09:35', end='09:38', scheduled_at='09:35', create_until='09:36')
+V6_SLOTS = (OPENING_SLOT, *V5_SLOTS)
+SLOTS = (OPENING_SLOT,
+         dict(key='0945', label='早盘跟踪', start='09:45', end='09:48', scheduled_at='09:45', create_until='09:46'),
+         *V5_SLOTS)
 V5_BASELINES = {'1030': '1000', '1100': '1030', '1330': 'noon', '1400': '1330', '1430': '1400'}
 
 V6_BASELINES = {'1000': '0935', **V5_BASELINES}
+V7_BASELINES = {**V6_BASELINES, '0945': '0935', '1000': '0945'}
+
+
+def baseline_for_slot(slot, version):
+    if slot == 'close':
+        return '1430'
+    return (V7_BASELINES if version == VERSION else V6_BASELINES).get(slot)
 
 
 def slots_for_version(version):
     if version == VERSION:
         return SLOTS
+    if version == SEVEN_SLOT_VERSION:
+        return V6_SLOTS
     if version == SIX_SLOT_VERSION:
         return V5_SLOTS
     if version in (LEGACY_VERSION, STRENGTH_VERSION, FEEDBACK_VERSION, POOL_VERSION):
@@ -169,6 +184,29 @@ def _noon_schedule(connection, day, today):
     return None, None
 
 
+def planned_slots_for_day(connection, day, *, today=None, now=None, rows=None):
+    now = now if now is not None else now_china()
+    current = day == (today if today is not None else now.date().isoformat())
+    if current and now.strftime('%H:%M') < SLOTS[1]['create_until']:
+        return SLOTS
+    if rows is None and connection is not None:
+        try:
+            rows = connection.execute("""SELECT c.slot, CASE WHEN json_valid(j.parameters_json)
+                THEN json_extract(j.parameters_json, '$.version') END AS capture_version
+                FROM market_intraday_capture c JOIN job j USING(job_id) WHERE c.trade_date=?""", (day,)).fetchall()
+        except OperationalError as exc:
+            if str(exc) in ('no such table: job', 'no such column: j.parameters_json'):
+                rows = connection.execute("""SELECT slot, NULL AS capture_version FROM market_intraday_capture
+                    WHERE trade_date=?""", (day,)).fetchall()
+            elif str(exc) != 'no such table: market_intraday_capture':
+                raise
+    if not rows:
+        return SLOTS if current else V6_SLOTS
+    # A same-day upgrade after the window can still have only legacy captures.
+    scheduled = any(row['slot'] == '0945' or row['capture_version'] == VERSION for row in rows)
+    return SLOTS if scheduled else V6_SLOTS
+
+
 def read_view(day=None, *, read_context=None):
     now = now_china()
     today = now.date().isoformat()
@@ -177,13 +215,16 @@ def read_view(day=None, *, read_context=None):
         read_context.clear()
     slot = slot_for(day, now, creation=True)
     with connect() as conn:
-        rows = conn.execute('''SELECT c.*,j.status,j.created_at_ms,j.finished_at_ms FROM market_intraday_capture c
+        rows = conn.execute('''SELECT c.*,j.status,j.created_at_ms,j.finished_at_ms,
+            CASE WHEN json_valid(j.parameters_json) THEN json_extract(j.parameters_json, '$.version') END
+            AS capture_version FROM market_intraday_capture c
             JOIN job j USING(job_id) WHERE c.trade_date=? ORDER BY j.created_at_ms''', (day,)).fetchall()
         configured = bool(slot and _configured(conn) and tasks.initialization_state(conn)['main_published'])
         busy = configured and conn.execute("SELECT 1 FROM job WHERE status IN ('queued','running') LIMIT 1").fetchone()
         automation = _automation_config(conn)
         noon_scheduled_at, noon_schedule_source = _noon_schedule(conn, day, today)
         noon_row = read_noon_row(conn, day)
+        scheduled_slots = planned_slots_for_day(conn, day, now=now, rows=rows)
     latest = rows[-1] if rows else None
     occupied = slot and any(row['slot'] == slot['key'] for row in rows)
     reason = ('仅在今天的交易观察时段开放采集' if not slot else
@@ -222,7 +263,7 @@ def read_view(day=None, *, read_context=None):
                 can_capture=bool(slot and configured and not occupied and not busy), reason=reason,
                 latest_job=tasks.task_view(latest['job_id']) if latest else None,
                 noon_scheduled_at=noon_scheduled_at, noon_schedule_source=noon_schedule_source,
-                current_slot=slot, slots=(*SLOTS, *(slot for slot in LEGACY_SLOTS if slot['key'] in retained_slots)),
+                current_slot=slot, slots=(*scheduled_slots, *(slot for slot in LEGACY_SLOTS if slot['key'] in retained_slots)),
                 snapshots=snapshots, automation=automation)
 
 
@@ -743,7 +784,8 @@ def execute_capture(job, progress=None):
         raise ValueError('盘中任务冻结参数无效')
     has_feedback = version in (FEEDBACK_VERSION, POOL_VERSION, *MODERN_VERSIONS)
     has_break_pool = version in (POOL_VERSION, *MODERN_VERSIONS)
-    baseline_slot = (V6_BASELINES if version == VERSION else V5_BASELINES).get(slot['key'])
+    baseline_slot = (V5_BASELINES.get(slot['key']) if version == SIX_SLOT_VERSION
+                     else baseline_for_slot(slot['key'], version))
     calendar_receipt = None
     with connect() as conn:
         ledger = conn.execute('SELECT * FROM market_intraday_capture WHERE job_id=?', (job['job_id'],)).fetchone()

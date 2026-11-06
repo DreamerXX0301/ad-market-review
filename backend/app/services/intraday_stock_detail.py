@@ -195,10 +195,11 @@ def read_quote(snapshot_id, symbol):
     vetted.update({key: quote.get(key) if _number(quote.get(key)) else None for key in ('amount', 'volume', 'change_pct')})
     from app.services.chart_patterns import attach_intraday_board_patterns
     from datetime import datetime
-    from app.services.intraday_board_changes import BASELINES, build_changes, _pools, read_noon_row, noon_frame
+    from app.services.intraday_board_changes import build_changes, _pools, read_noon_row, noon_frame
 
     resealed = False
-    if symbol in _pools(snapshot)['limit_up'][0] and (baseline := BASELINES.get(snapshot.get('slot'))) is not None:
+    baseline = intraday.baseline_for_slot(snapshot['slot'], snapshot['version'])
+    if baseline and symbol in _pools(snapshot)['limit_up'][0]:
         cutoff = int(datetime.fromisoformat(snapshot['collected_start_at']).timestamp() * 1000)
         with connect() as connection:
             tables = {value[0] for value in connection.execute('SELECT name FROM sqlite_master WHERE type=\'table\'')}

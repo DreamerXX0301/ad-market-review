@@ -18,7 +18,8 @@ LOGGER = logging.getLogger('shixu.worker')
 MODEL = 'qwen3.5:latest'
 MODEL_URL = 'http://127.0.0.1:11434/api/chat'
 TIMELINE = (
-    ('auction', '09:25 竞价'), ('0935', '09:35 开盘观察'), ('1000', '10:00 开盘首轮'),
+    ('auction', '09:25 竞价'), ('0935', '09:35 开盘观察'),
+    ('0945', '09:45 早盘跟踪'), ('1000', '10:00 开盘首轮'),
     ('1030', '10:30 早盘一小时'), ('1100', '11:00 上午观察'),
     ('noon', '11:30 午评'), ('1330', '13:30 午后首轮'),
     ('1400', '14:00 午后观察'), ('1430', '14:30 尾盘观察'),
@@ -258,7 +259,7 @@ def _compact_live(snapshot):
     # The full verified live detail remains in the existing snapshots API.
     sectors = [_sector(row, quote_source='fuyao') for row in snapshot.get('sectors', []) if _number(row.get('change_pct'))]
     return {
-        'slot': snapshot['slot'], 'id': snapshot['id'], 'quality': snapshot['quality'],
+        'slot': snapshot['slot'], 'id': snapshot['id'], 'quality': snapshot['quality'], 'version': snapshot['version'],
         'collected_end_at': snapshot['collected_end_at'],
         'market': snapshot.get('market_pulse', {}), 'ladder': snapshot.get('ladder', {}),
         'sectors': sectors, 'scope': '同一采集窗口内已核验报价',
@@ -469,6 +470,8 @@ def _read_projection(slot, day, record):
 
 
 def _evidence(projections):
+    from app.services.intraday_service import VERSION, baseline_for_slot
+
     lines = []
     previous = None
     discovery = None
@@ -549,7 +552,9 @@ def _evidence(projections):
                     for row in followup['directions'][:3])
                 add('auction_direction_followup', '竞价发现 · 同题材样本验证', direction_changes + '。')
                 lines[-1]['auction_discovery_sha256'] = discovery['content_sha256']
-        if previous:
+        expected = (baseline_for_slot(slot, VERSION)
+                    if slot in ('0945', '1000') and projection.get('version') == VERSION else None)
+        if previous and (expected is None or previous[0] == expected):
             previous_slot, previous_projection = previous
             prior_sector_changes = previous_projection.get('sector_index') or {
                 row['instrument_id']: row['change_pct'] for row in previous_projection['sectors']}
@@ -574,10 +579,13 @@ def _evidence(projections):
 
 
 def _brief(slot, projections):
+    from app.services.intraday_service import VERSION
+
     observed = dict(projections)
+    has_early_followup = '0945' in observed or any(value.get('version') == VERSION for value in observed.values())
     context = [{'slot': key, 'label': label,
                 'status': observed[key]['quality'] if key in observed else 'missing'}
-               for key, label in TIMELINE[:ORDER[slot] + 1]]
+               for key, label in TIMELINE[:ORDER[slot] + 1] if key != '0945' or has_early_followup]
     evidence = _evidence(projections)
     chosen = []
     for key, _ in projections:

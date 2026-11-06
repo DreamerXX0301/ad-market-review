@@ -103,7 +103,7 @@ def test_missing_original_proof_keeps_prices_and_explains_unknown_metrics(isolat
     assert row['breadth_reason'] and row['broken_count_reason']
 
 
-def test_seven_enriched_slots_share_one_original_proof_and_fit_without_dropping_phases(isolated, monkeypatch):
+def test_eight_enriched_slots_share_one_original_proof_and_fit_without_dropping_phases(isolated, monkeypatch):
     publish(isolated, [topic('884306.TI', members=[A, B], name='合成原行业')])
     for slot in live.SLOTS:
         value = capture(slot['key'])
@@ -120,7 +120,7 @@ def test_seven_enriched_slots_share_one_original_proof_and_fit_without_dropping_
         return connection
     monkeypatch.setattr('app.services.ai_intraday_read._connect', connect)
     result = tools.execute_read_tool('read_intraday_data', {'date': DAY, 'slot': 'all', 'query': ''})
-    assert len(result['evidence']) == 7 and len(core.dumps(result).encode()) <= tools.MAX_RESULT_BYTES
+    assert len(result['evidence']) == 8 and len(core.dumps(result).encode()) <= tools.MAX_RESULT_BYTES
     assert all(len(core.dumps(row['data']).encode()) <= 3 * 1024 for row in result['evidence'])
     for row in result['evidence']:
         if row['data']['sector_samples']:
@@ -229,7 +229,7 @@ def test_close_tool_chains_every_same_day_phase_and_keeps_numeric_facts_when_den
         value = json.loads(json.dumps(value).replace(original_day, DAY))
         connection.execute('INSERT INTO ' + table + ' VALUES(?,?,?,?,?,?)', (identifier, DAY,
             value['collected_start_at'], value['collected_end_at'], core.digest(value), core.dumps(value)))
-    connection.executescript('''CREATE TABLE job(job_id TEXT PRIMARY KEY,status TEXT,finished_at_ms INTEGER);
+    connection.executescript('''CREATE TABLE job(job_id TEXT PRIMARY KEY,status TEXT,finished_at_ms INTEGER,parameters_json TEXT);
         CREATE TABLE market_intraday_capture(trade_date,slot,job_id,snapshot_id,content_sha256,payload_json);''')
     for slot in live.SLOTS:
         value = _snapshot(slot['key'])
@@ -241,7 +241,7 @@ def test_close_tool_chains_every_same_day_phase_and_keeps_numeric_facts_when_den
     before = connection.execute('SELECT payload_json FROM market_intraday_capture ORDER BY slot').fetchall()
     result = tools.execute_read_tool('read_market_data', {'date': DAY, 'section': 'close'})
     kinds = [row['kind'] for row in result['evidence']]
-    assert kinds == ['auction_brief', 'intraday:0935', 'intraday:1000', 'intraday:1030', 'intraday:1100',
+    assert kinds == ['auction_brief', 'intraday:0935', 'intraday:0945', 'intraday:1000', 'intraday:1030', 'intraday:1100',
                      'noon_brief', 'intraday:1330', 'intraday:1400', 'intraday:1430', 'closing_pools_brief']
     assert result['summary']['close_context']['cutoff_at'] == DAY + 'T15:00:00+08:00'
     close = result['evidence'][-1]['data']

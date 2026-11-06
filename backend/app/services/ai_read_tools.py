@@ -36,10 +36,10 @@ MAX_DETAIL_ROWS = 30
 def tool_schemas():
     """Responses function tools; names/arguments never accept filesystem/SQL."""
     specs = [
-        ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。noon自动串同日竞价、截至午评实际结束已完成的上午观察与午评本体；close串联截至原正式收盘的竞价、七档盘中、午评及正式封板/炸板池，缺档保持未知。密集累计按phase_fact_columns解析values/rows和省略计数数组，null未知。auction包含已核验竞价发现和10:00同股开盘对照（如已保存），覆盖只限异动样本。未到时点与已到但未采集分开；成交额不是净流入。',
+        ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。noon自动串同日竞价、截至午评实际结束已完成的上午观察与午评本体；close串联截至原正式收盘的竞价、盘中各档、午评及正式封板/炸板池，缺档保持未知。密集累计按phase_fact_columns解析values/rows和省略计数数组，null未知。auction包含已核验竞价发现和10:00同股开盘对照（如已保存），覆盖只限异动样本。未到时点与已到但未采集分开；成交额不是净流入。',
          {'date': {'type': 'string', 'description': '用户明确日期YYYY-MM-DD，或today；今天不沿用旧页面日期'},
           'section': {'type': 'string', 'enum': list(SECTIONS)}}, ['date', 'section']),
-        ('read_intraday_data', '读取所选日期盘中观察的已保存快照，包含盘中新方向、延续、走弱、板块指数和个股样本、封炸板与成交额，以及相邻时点新增封板/跌停/炸板、封板打开和炸板回封的已核验变化；partial只是下界，unknown不是0，新入池不等于首次涨停。研究盘中情况或盘中轮动且未指定时段用all，一次返回七个时点的有界摘要。指定时点用对应键；北京时间09:35用0935，10:00用1000，10:30用1030，11:00用1100，13:30用1330，14:00用1400，14:30用1430。竞价、午评和收盘用read_market_data。',
+        ('read_intraday_data', '读取所选日期盘中观察的已保存快照，包含盘中新方向、延续、走弱、板块指数和个股样本、封炸板与成交额，以及相邻时点新增封板/跌停/炸板、封板打开和炸板回封的已核验变化；partial只是下界，unknown不是0，新入池不等于首次涨停。研究盘中情况或盘中轮动且未指定时段用all，一次返回各时点有界摘要。指定时点用对应键；北京时间09:35用0935，09:45用0945，10:00用1000，10:30用1030，11:00用1100，13:30用1330，14:00用1400，14:30用1430。竞价、午评和收盘用read_market_data。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'},
           'slot': {'type': 'string', 'enum': list(INTRADAY_SLOTS)},
           'query': {'type': 'string', 'description': '题材或股票名称、代码，最多80字；整体研究传空串'}},
@@ -228,7 +228,7 @@ def _availability(day, now, *, allow_market_calendar=True):
             'calendar_binding': calendar_binding, 'phases': phases}, selected, all_heads
 
 
-def _add_blocks(result, day, selected, kinds, *, cutoff=None):
+def _add_blocks(result, day, selected, kinds, *, cutoff=None, include_auction_opening=True):
     for label, path in _paths():
         wanted = {kind for kind in kinds if selected.get(kind, {}).get('source') == label}
         if not wanted:
@@ -238,7 +238,8 @@ def _add_blocks(result, day, selected, kinds, *, cutoff=None):
             mapping['auction_discovery'] = 'auction'
         if 'close' in wanted:
             mapping['closing_pools'] = 'close'
-        data = briefs.build_briefs(day, source_path=path, kinds=set(mapping), cutoff=cutoff)
+        data = briefs.build_briefs(day, source_path=path, kinds=set(mapping), cutoff=cutoff,
+                                   include_auction_opening=include_auction_opening)
         for block in data['blocks']:
             key = block['evidence']['evidence_id'].split(':')[-1]
             if key not in mapping:
@@ -1019,7 +1020,7 @@ def _bounded(result):
     return result
 
 
-def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
+def execute_read_tool(name, args, *, page_context=None, fallback_context=None, include_auction_opening=True):
     """Execute declared local reads; always return bounded JSON, never collect."""
     result = _result(name if name in {r['name'] for r in tool_schemas()} else 'unknown')
     try:
@@ -1081,7 +1082,9 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
             availability, selected, before = (_availability(day, now, allow_market_calendar=False)
                                                 if section in ('noon', 'close') else _availability(day, now))
             result['summary'] = availability
-            result['source_bindings']['intraday'] = before
+            result['source_bindings']['intraday'] = before if include_auction_opening else {
+                label: {key: value for key, value in source.items() if key != 'auction_opening'}
+                for label, source in before.items()}
             if availability.get('calendar_binding'):
                 result['source_bindings']['calendar'] = availability['calendar_binding']
             result['source'] = sorted({row['source'] for row in selected.values()})
@@ -1096,7 +1099,7 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None):
                     from app.services.ai_noon_context import add_close_context
                     add_close_context(result, day, selected, before, now)
                 elif section != 'overview':
-                    _add_blocks(result, day, selected, kinds)
+                    _add_blocks(result, day, selected, kinds, include_auction_opening=include_auction_opening)
                 for phase in kinds:
                     if availability['phases'][phase]['phase_state'] != 'available':
                         _gap(result, phase, availability['phases'][phase]['reason'], availability['phases'][phase]['phase_state'])

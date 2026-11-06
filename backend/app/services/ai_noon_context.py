@@ -1,7 +1,19 @@
 """A noon read contains only the same recovery source's known morning prefix."""
 from datetime import datetime
 
+from app.services.intraday_brief import ORDER, TIMELINE
 from app.services.sync_clock import CHINA
+
+_BRIEF_STAGE = {'auction_brief': ('auction', 0), 'auction_discovery_brief': ('auction', 1),
+                'noon_brief': ('noon', 0), 'closing_pools_brief': ('close', 0), 'noon_close_brief': ('close', 1)}
+
+
+def _timeline_evidence_order(row):
+    kind = row['kind']
+    if kind.startswith('intraday:'):
+        return ORDER.get(kind.removeprefix('intraday:'), len(ORDER)), 0
+    stage, within_stage = _BRIEF_STAGE.get(kind, (None, 0))
+    return ORDER.get(stage, len(ORDER)), within_stage
 
 
 def add_noon_context(result, day, selected, heads, now):
@@ -42,8 +54,8 @@ def add_noon_context(result, day, selected, heads, now):
     if auction:
         _add_blocks(result, day, {'auction': {**auction, 'source': source}}, ('auction',), cutoff=cutoff)
     morning = _result('read_intraday_data', day)
-    fill_intraday(morning, day, 'all', '', now, allowed_slots=('0935', '1000', '1030', '1100'),
-                  cutoff=cutoff, source_paths=paths)
+    morning_slots = tuple(key for key, _ in TIMELINE[1:ORDER['noon']])
+    fill_intraday(morning, day, 'all', '', now, allowed_slots=morning_slots, cutoff=cutoff, source_paths=paths)
     result['evidence'].extend(morning['evidence'])
     result['gaps'].extend(morning['gaps'])
     result['source_bindings']['noon_morning'] = morning['source_bindings']
@@ -61,9 +73,7 @@ def add_noon_context(result, day, selected, heads, now):
             source_ids={}, reason='截至午评实际时点没有可核验的竞价原文，不以更晚留存补入')
     result['source_bindings']['intraday'] = {source: {key: original[key] for key in ('auction', 'noon')
                                                        if original.get(key) and (key == 'noon' or has_auction)}}
-    order = {'auction_brief': 0, 'auction_discovery_brief': 1, 'intraday:0935': 2, 'intraday:1000': 3,
-             'intraday:1030': 4, 'intraday:1100': 5, 'noon_brief': 6}
-    result['evidence'].sort(key=lambda row: order.get(row['kind'], 7))
+    result['evidence'].sort(key=_timeline_evidence_order)
 
 
 def add_close_context(result, day, selected, heads, now):
@@ -103,15 +113,16 @@ def add_close_context(result, day, selected, heads, now):
     result['source_bindings']['close_intraday'] = stages['source_bindings']
     result['summary']['board_change_scope'] = stages['summary']['board_change_scope']
     phases = {'auction': {'phase_state': 'available' if any(row['kind'] == 'auction_brief' for row in result['evidence']) else 'not_collected'}}
-    for key in ('0935', '1000', '1030', '1100', 'noon', '1330', '1400', '1430'):
-        phases[key] = ({'phase_state': 'available' if any(row['kind'] == 'noon_brief' for row in result['evidence'])
-                       else 'not_collected'} if key == 'noon' else stages['summary']['phases'][key])
+    stage_phases = stages['summary']['phases']
+    for key, _ in TIMELINE[1:-1]:
+        if key == 'noon':
+            phases[key] = {'phase_state': 'available' if any(row['kind'] == 'noon_brief' for row in result['evidence'])
+                           else 'not_collected'}
+        elif key in stage_phases:
+            phases[key] = stage_phases[key]
     phases['close'] = {'phase_state': 'available'}
     result['summary']['close_context'] = {'cutoff_at': cutoff.isoformat(), 'published_at': published.isoformat(),
         'phases': phases, 'scope': '同日原竞价、截至正式收盘时点已完成留存的全部盘中观察、原午评和正式收盘；缺档不补入后来资料。'}
     result['source_bindings']['intraday'] = {source: {key: value for key, value in original.items()
         if key in ('auction', 'noon', 'noon_close', 'closing_pools') and value}}
-    order = {'auction_brief': 0, 'auction_discovery_brief': 1, 'intraday:0935': 2, 'intraday:1000': 3,
-             'intraday:1030': 4, 'intraday:1100': 5, 'noon_brief': 6, 'intraday:1330': 7,
-             'intraday:1400': 8, 'intraday:1430': 9, 'closing_pools_brief': 10, 'noon_close_brief': 11}
-    result['evidence'].sort(key=lambda row: order.get(row['kind'], 12))
+    result['evidence'].sort(key=_timeline_evidence_order)
