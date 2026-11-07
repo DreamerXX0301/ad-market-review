@@ -18,11 +18,11 @@ from desktop_licensing.ledger import Ledger
 from desktop_licensing.protocol import parse_machine_code
 
 _OPTIONS = {
-    "1": ("trial", "7 天试用"),
-    "2": ("monthly", "30 天包月"),
-    "3": ("yearly", "365 天包年"),
-    "4": ("permanent", "永久"),
-    "5": ("daily", "1 天卡（24 小时）"),
+    "1": ("daily", "1 天卡（24 小时）"),
+    "2": ("trial", "7 天试用"),
+    "3": ("monthly", "30 天包月"),
+    "4": ("yearly", "365 天包年"),
+    "5": ("permanent", "永久"),
 }
 
 
@@ -86,7 +86,7 @@ def main(argv=None) -> int:
         machine = input("粘贴 Windows 授权页显示的机器码，再按回车\n").strip()
         for number, (_, label) in _OPTIONS.items():
             print(number, label)
-        selected = input("选择类型，直接回车发 7 天试用 ").strip() or "1"
+        selected = input("选择类型，直接回车选 2（7 天试用） ").strip() or "2"
         if selected not in _OPTIONS:
             raise ValueError("请选择 1 到 5")
         path, expiry = issue_card(args.state_dir.resolve(), args.output_dir, machine, _OPTIONS[selected][0])
