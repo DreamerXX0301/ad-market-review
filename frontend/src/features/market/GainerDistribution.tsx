@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Row } from "../../lib/api";
 import { integer } from "../../lib/format";
+import { classificationReferenceDates } from "./brokenBoardPresentation";
 import "./GainerDistribution.css";
 
 export function distributionRows(value: unknown) {
@@ -21,7 +22,13 @@ export function distributionRows(value: unknown) {
     .slice(0, 5);
 }
 
-export default function GainerDistribution({ data }: { data?: Row }) {
+export default function GainerDistribution({
+  data,
+  classificationReference,
+}: {
+  data?: Row;
+  classificationReference?: unknown;
+}) {
   const [kind, setKind] = useState<"topics" | "industries">("topics");
   if (!data) return null;
   const group = data[kind] || {};
@@ -35,6 +42,7 @@ export default function GainerDistribution({ data }: { data?: Row }) {
       )
       .map((entry) => entry.name),
   );
+  const referenceDates = classificationReferenceDates(classificationReference);
   const hasSample =
     typeof data.sample_count === "number" && data.sample_count > 0;
   return (
@@ -49,6 +57,11 @@ export default function GainerDistribution({ data }: { data?: Row }) {
             原始涨幅排名前 {integer(data.sample_limit)} · 实际{" "}
             {integer(data.sample_count)} 只
           </span>
+          {referenceDates.length > 0 && (
+            <span title="涨幅仍按所选交易日计算。">
+              最新行业概念参考 · 档案 {referenceDates.join("、")}
+            </span>
+          )}
         </div>
         <div className="segmented" aria-label="分布分类">
           {(

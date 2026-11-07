@@ -86,5 +86,6 @@ def execute_research(job_id,progress=None):
             connection.execute('INSERT INTO retention_pin(pin_id,snapshot_id,owner_kind,owner_id,created_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?) ON CONFLICT(snapshot_id,owner_kind,owner_id) DO NOTHING',(new_id('pin'),reference,'research',report_id,created,created+TTL_MS))
         job_status='partial' if source_data['gaps'] else 'succeeded'
         connection.execute("UPDATE job SET status=?,phase='completed',accepted_batches=100,finished_at_ms=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?",(job_status,created,job_id))
-        tasks.append_event(connection,job_id,'completed','指定个股研究已留存；未取得材料保留缺口')
+        tasks.append_event(connection,job_id,'completed','指定个股研究已留存；未取得材料保留缺口',
+                           details={'gap_titles':list(dict.fromkeys(gap['title'] for gap in source_data['gaps']))[:6]})
     return result

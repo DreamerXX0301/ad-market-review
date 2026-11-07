@@ -12,8 +12,14 @@ export type LimitDescription = {
   text: string;
   detail: string;
   source: string;
-  tone: "up" | "down" | "muted" | "warning";
+  tone: "up" | "down" | "muted" | "warning" | "reference";
 };
+type LimitDownPriceReference = {
+  price: number;
+  rate_pct: number;
+  previous_raw_close: number;
+};
+export const LIMIT_DOWN_REFERENCE_LABEL = "收于常规跌停参考价";
 export const PATTERN_BASIS = "verified-source-close-pool-and-raw-ohlc-v1";
 export const BOARD_BASIS = "verified-dated-close-pool-board-events-v1";
 export const INTRADAY_BOARD_BASIS =
@@ -148,6 +154,25 @@ export function barBrokenMarker(bar: Row) {
   if (!confirmedBarPatterns(bar).some((event) => event.kind === "broken_board"))
     return null;
   return { text: "炸", name: bar.noon_provisional ? "盘中炸板" : "收盘炸板" };
+}
+
+/** Use the server's raw-price comparison without changing source-pool states. */
+export function barLimitDownPriceReference(
+  bar?: Row,
+): LimitDownPriceReference | null {
+  const reference = bar?.limit_down_price_reference;
+  if (
+    !reference ||
+    !positive(reference.price) ||
+    !positive(reference.rate_pct) ||
+    !positive(reference.previous_raw_close) ||
+    bar?.noon_provisional ||
+    bar?.intraday_provisional ||
+    confirmedBarLimits(bar).length ||
+    confirmedBarPatterns(bar).length
+  )
+    return null;
+  return reference;
 }
 
 function eventSources(events: Row[]) {
@@ -299,11 +324,22 @@ export function describeBarLimits(
   if (descriptions.length) return descriptions;
   const up = bar.limit_up_state,
     down = bar.limit_down_state;
+  const reference = barLimitDownPriceReference(bar);
+  if (reference) {
+    const absence = down === false ? "已核验的当日跌停来源池未收录此股。" : "";
+    descriptions.push({
+      text: LIMIT_DOWN_REFERENCE_LABEL,
+      detail: `参考价 ${reference.price.toFixed(2)} 元 · 昨收 ${reference.previous_raw_close.toFixed(2)} 元 · 常规跌幅 ${reference.rate_pct}%。依据未复权日线，仅作图表参考。${absence}跌停确认与统计仍以来源池为准。`,
+      source: "价格参考",
+      tone: "reference",
+    });
+  }
   const conflict = Object.values(bar.limit_event_status || {}).includes(
     "conflict",
   );
   if (up === false && down === false)
     return [
+      ...descriptions,
       {
         text: "收盘未入涨跌停池",
         detail:
@@ -313,6 +349,7 @@ export function describeBarLimits(
       },
     ];
   return [
+    ...descriptions,
     {
       text: conflict
         ? "涨跌停状态存在冲突"
@@ -342,15 +379,28 @@ function escapeHtml(value: string) {
 export function limitTooltipHtml(
   bar: Row | undefined,
   period: ChartPeriod,
-  colors: { up: string; down: string; text: string; warning?: string },
+  colors: {
+    up: string;
+    down: string;
+    text: string;
+    warning?: string;
+    reference?: string;
+  },
 ) {
+  const tones = {
+    up: colors.up,
+    down: colors.down,
+    muted: colors.text,
+    warning: colors.warning || "#d89a37",
+    reference: colors.reference || "#a98be8",
+  };
   return [
     ...(bar?.noon_provisional ? [] : describeBarLimits(bar, period)),
     ...describeBarPatterns(bar, period, !bar?.noon_provisional),
   ]
     .map(
       (item) =>
-        `<div style="margin-top:5px;color:${item.tone === "muted" ? colors.text : item.tone === "warning" ? colors.warning || "#d89a37" : colors[item.tone]};max-width:260px;white-space:normal">${escapeHtml(item.text)} · ${escapeHtml(item.source)}<div style="font-size:10px;color:${colors.text}">${escapeHtml(item.detail)}</div></div>`,
+        `<div style="margin-top:5px;color:${tones[item.tone]};max-width:260px;white-space:normal">${escapeHtml(item.text)} · ${escapeHtml(item.source)}<div style="font-size:10px;color:${colors.text}">${escapeHtml(item.detail)}</div></div>`,
     )
     .join("");
 }

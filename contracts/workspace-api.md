@@ -271,6 +271,8 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 `GET /tasks?limit=200&summary=true`供数据中心历史轮询，最多200条小回执，单个SQLite只读事务完成。兼容的默认`GET /tasks`及服务`list_tasks()`仍返回原完整内容；选中某任务继续`GET /tasks/{id}`读取完整日志，不删除或截断审计事实。summary行保留身份、状态、真实进度、日期、duration_ms、摘要和显示用parameters白名单（operation/mode/target_type/strategy_id/window/data_chain_version、明确链标记、来源/板块代码、单板块名称等标量；不含任务冻结大计划、成员或SHA全集）。logs只带chain_authorized/followup_queued/chain_blocked每种最新一条，按真实seq排序，details仅next_task_id/原因；足够恢复待排队/已排队/阻断状态，不能把缺失后续误显示完成。不存在的记录数保持null。完整批次子项不在历史列表展开，精细进度仍从activity与选中详情读取。
 
+盘面补充任务摘要保留冻结的 `year_history`、`recent_days` 和 `revalidate_only` 标量。数据中心用这些字段与父任务标记区分当日盘面增量、历史回补和本地证据核验。
+
 策略列表的 `latest_run` 用于 GET 恢复最近已保存运行；返回页面、刷新浏览器或读取旧结果不创建任务。旧日期、旧规则版本保持原值，不能冒充当前结果；手动刷新失败或尚在运行时保留上次成功结果。浏览器持久设置仅记住个股/板块目标和各自策略ID偏好。
 
 个股策略列表在同一次只读SQLite事务内批量读取本页版本、政策、跟踪、清理阻塞及运行事实，再在事务外核验运行可用性的文件证据；一次请求的事实不跨请求缓存。板块列表同样批量读取当前版本和最近运行，仍独立于个股策略。排序、分页、回收站、政策覆盖和运行准入结果保持原口径。完整周/月的最近完成日仅可缓存纯日历推导，按完整日历内容、观察日、周期区分，最多32项；不缓存候选结果或改变交易日闭合规则。
@@ -283,7 +285,9 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 `POST /sync/market-supplement {revalidate_only:true,request_key?}` 可显式创建本地原始证据重验任务。任务为 `source_check`、`operation=market_supplement`、`source_id=local-cache`，冻结当前业务行情日；不读取来源凭据、不构造远端客户端、不补拉封板/资金/板块行情。它仅探测当年已留存日历中每个交易日的涨停、跌停两批 accepted 回执（总批数为交易日数×2），校验规范化 artifact 与 raw SHA、请求日期、来源及池类型，然后用当前身份与当日原始收盘重新归一化。身份签名变化时不能直接复制旧 items；缺证据、缺报价、错价、空池及隔离项继续保持未知或部分覆盖。
 
-任务进度返回 `actual_completed_batches/actual_total_batches`，补充索引另存 `revalidation` 的 planned/completed/revalidated/missing/failed 批次数；revalidated 包含通过重验的部分池，不表示全池完整。按新签名保存已核验批次，全部处理结束并再次确认任务状态与行情代际后才原子发布索引。正常日增量也会先按同一本年日历探测旧 accepted 证据并在签名变化时离线重验，以保留仍可核验的历史；日增量的远端范围不因此扩展到旧日期。
+任务进度返回 `actual_completed_batches/actual_total_batches`，补充索引另存 `revalidation` 的 planned/completed/revalidated/missing/failed 批次数；revalidated 包含通过重验的部分池，不表示全池完整。按新签名保存已核验批次，全部处理结束并再次确认任务状态与行情代际后才原子发布索引。同一行情代际下，离线重验沿用250个交易日窗口内已发布的往年证据，重验批次仍为本年。
+
+正常日增量会探测本年已验收证据。冻结250交易日保留策略的任务同时按日定位窗口内往年已留存证据，签名变化时用当日原始收盘和原响应离线重验。日增量的来源请求范围仍为目标交易日。年内计数只统计本年，近一年覆盖可使用窗口内的往年证据。
 
 ## 独立板块策略与跟踪
 

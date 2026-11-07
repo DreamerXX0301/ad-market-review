@@ -43,6 +43,10 @@ const replacements = {
     "export default function Members(){return null;}",
   ),
   "./DailyMainlines": mainlineProbe,
+  "../../lib/api": encode("export function usePageActive(){return true;}"),
+  "./IntradayPageNavigation": encode(
+    "export default function Navigation({children}){return children;}",
+  ),
   "./MarketTable": encode(
     `import {jsx} from ${JSON.stringify(runtime)};export function CurrencyCell({value}){return jsx('span',{children:value??'—'});}`,
   ),
@@ -475,9 +479,13 @@ console.log(
   "limit ladder: existing height/theme classifications and focus-only navigation, counts/uncertainty/sorting, dated board tags and source boundaries passed",
 );
 
-const {conceptButtons} = await import(observedRuntime);
+const { conceptButtons } = await import(observedRuntime);
 assert.ok(conceptButtons.length >= 20);
 const changeCount = changes.length;
 conceptButtons.at(-1).onClick();
-assert.equal(changes.length, changeCount+1, "concept click only changes the selected topic; no forced document scroll");
+assert.equal(
+  changes.length,
+  changeCount + 1,
+  "concept click only changes the selected topic; no forced document scroll",
+);
 assert.equal(typeof changes.at(-1), "function");

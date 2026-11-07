@@ -214,11 +214,20 @@ export function brokenBoardTopicKey(input: unknown): string | null {
   ]);
 }
 
-/** Membership is frozen to its stated cohort day, never replaced with today's. */
+export function classificationReferenceDates(input: unknown): string[] {
+  const reference = record(input);
+  const dates = Array.isArray(reference?.dates) ? reference.dates : [];
+  return [...new Set([reference?.date, ...dates].filter(dated))]
+    .sort()
+    .reverse();
+}
+
+/** The cohort day stays fixed. The latest view may explicitly supply a reference archive. */
 export function brokenBoardMembership(
   input: unknown,
   membershipDate: string,
   kind: BrokenBoardMembershipKind,
+  referenceDates: readonly string[] = [],
 ) {
   const row = record(input) || {};
   if (
@@ -234,7 +243,12 @@ export function brokenBoardMembership(
     if (!tag || tag.kind !== kind || !text(tag.name)) continue;
     const key = brokenBoardTopicKey(tag);
     const observed = tag.observed_date ?? tag.source_observed_date;
-    if (!key || !dated(observed) || observed > membershipDate) continue;
+    if (
+      !key ||
+      !dated(observed) ||
+      (observed > membershipDate && !referenceDates.includes(observed))
+    )
+      continue;
     if (!tags.has(key)) tags.set(key, { ...tag, observed_date: observed, key });
   }
   return [...tags.values()];
@@ -244,6 +258,7 @@ export function brokenBoardDistribution(
   input: unknown,
   membershipDate: string,
   kind: BrokenBoardMembershipKind,
+  referenceDates: readonly string[] = [],
 ) {
   if (!Array.isArray(input) || !dated(membershipDate)) return [] as Row[];
   const found = new Map<string, Row>();
@@ -258,7 +273,9 @@ export function brokenBoardDistribution(
       row.observed_count === 0 ||
       row.topics_date !== membershipDate ||
       (row.membership_date != null &&
-        (!dated(row.membership_date) || row.membership_date > membershipDate))
+        (!dated(row.membership_date) ||
+          (row.membership_date > membershipDate &&
+            !referenceDates.includes(row.membership_date))))
     )
       continue;
     const key = brokenBoardTopicKey(row);
@@ -369,15 +386,19 @@ export function brokenBoardFilterItems(
   membershipDate: string,
   selected: { kind: BrokenBoardMembershipKind; key: string } | null,
   board: BrokenBoardBoardFilter = "all",
+  referenceDates: readonly string[] = [],
 ) {
   if (!selected && board === "all") return items;
   return items.filter(
     (row) =>
       (board === "all" || brokenBoardBoard(row) === board) &&
       (!selected ||
-        brokenBoardMembership(row, membershipDate, selected.kind).some(
-          (tag) => tag.key === selected.key,
-        )),
+        brokenBoardMembership(
+          row,
+          membershipDate,
+          selected.kind,
+          referenceDates,
+        ).some((tag) => tag.key === selected.key)),
   );
 }
 

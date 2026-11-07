@@ -487,6 +487,110 @@ def test_memberships_are_frozen_by_event_date_and_aggregated_once_per_cohort(mon
     assert len(market.calls) == 1 and market.ref == before
 
 
+@pytest.mark.parametrize('has_dated_archive', [True, False])
+def test_latest_classification_fills_missing_kinds_only_for_current_broken_stocks(monkeypatch, has_dated_archive):
+    from app.services import market_broken_boards
+
+    market = Market()
+    later_day = '2026-10-27'
+    dated_industry = topic(DAY, name='当日行业', kind='industry', members=[X], code='881001.TI', level=1)
+    prior_concept = topic(PREVIOUS, name='昨日概念', members=[B])
+
+    def resolve(_kind, day, *_args):
+        if day == DAY and not has_dated_archive:
+            return {}, {}
+        return member_archive(day, [dated_industry] if day == DAY else [prior_concept])
+
+    calls = []
+
+    def latest(symbols):
+        calls.append(symbols)
+        common = {'source_observed_date': later_day, 'source': 'fuyao', 'origin': 'provider',
+                  'members_complete': True, 'provider_member': True, 'manual_override': None}
+        concept = {**common, 'topic_id': 'local-concept', 'source_code': '885002.TI', 'name': '最新概念',
+                   'kind': 'concept'}
+        industry = {**common, 'topic_id': 'local-industry', 'source_code': '881002.TI', 'name': '最新行业',
+                    'kind': 'industry', 'classification_level': 1}
+        return {X: [concept, industry], A: [concept], C: [concept, industry]}
+
+    monkeypatch.setattr(market_broken_boards, 'resolve_reference', resolve)
+    strict = build(market, with_memberships=True)
+    result = build(market, with_memberships=True, latest_memberships=latest)
+    assert calls == [[X]]
+    assert result['classification_reference']['date'] == later_day
+    current = result['current']
+    assert current['broken_count'] == strict['current']['broken_count'] == 1
+    assert current['broken_rate_pct'] == strict['current']['broken_rate_pct']
+    own = next(row for row in current['items'] if row['instrument_id'] == X)
+    assert own['topics_date'] == DAY
+    assert own['membership_snapshot_day'] == (DAY if has_dated_archive else None)
+    assert own['topics_state'] == 'reference_partial'
+    assert [(tag['name'], tag['observed_date'], tag['classification_reference']) for tag in own['topics']] == [
+        ('最新概念', later_day, True),
+    ]
+    assert all('topics' not in row for row in current['items'] if row['outcome'] != 'broken')
+    group = current['concept_distribution'][0]
+    assert group['observed_count'] == 1 and group['sample_share_pct'] == 100
+    assert group['topics_date'] == DAY and group['membership_date'] == later_day
+    assert group['membership_snapshot_day'] is None
+    if has_dated_archive:
+        assert [tag['name'] for tag in own['industries']] == ['当日行业']
+        assert current['industry_distribution'] == strict['current']['industry_distribution']
+    else:
+        assert [(tag['name'], tag['observed_date'], tag['classification_reference']) for tag in own['industries']] == [
+            ('最新行业', later_day, True),
+        ]
+        assert current['industry_distribution'][0]['membership_date'] == later_day
+        assert current['membership_summary']['unclassified_count'] == 0
+    assert result['previous_feedback'] == strict['previous_feedback']
+
+
+def test_latest_classification_groups_dated_and_reference_members_of_the_same_board(monkeypatch):
+    from app.services import market_broken_boards
+
+    market = Market()
+    market.history[C][-1].update(close=10.2, change_pct=2.)
+    market.ref['pool_history'][DAY] = market.container(DAY, up=[A], broken=[C, X], down=[B])
+    later_day = '2026-10-27'
+    dated_concept = topic(DAY, name='同源概念', members=[X], code='885001.TI')
+    dated_industry = topic(DAY, name='当日行业', kind='industry', members=[C, X], code='881001.TI')
+    monkeypatch.setattr(market_broken_boards, 'resolve_reference', lambda _kind, day, *_args:
+                        member_archive(day, [dated_concept, dated_industry]))
+
+    def latest(symbols):
+        assert symbols == [C]
+        return {C: [{'source_observed_date': later_day, 'source': 'fuyao', 'provider_member': True,
+                     'topic_id': 'local-concept', 'source_code': '885001.TI', 'name': '同源概念',
+                     'kind': 'concept'}]}
+
+    current = build(market, with_memberships=True, include_feedback=False, latest_memberships=latest)['current']
+    [group] = current['concept_distribution']
+    assert group['observed_count'] == current['membership_summary']['stocks_with_concept'] == 2
+    assert group['sample_share_pct'] == 100 and group['sample_avg_change_pct'] == pytest.approx(2.5)
+    assert group['membership_date'] == later_day and group['membership_snapshot_day'] is None
+
+
+@pytest.mark.parametrize('use_latest_day', [True, False])
+def test_latest_loader_is_skipped_for_complete_classifications_and_historical_views(monkeypatch, use_latest_day):
+    from app.services import market_broken_boards
+
+    market = Market()
+    concepts = [topic(DAY, members=[X])]
+    industries = [topic(DAY, name='当日行业', kind='industry', members=[X], code='881001.TI')]
+
+    def resolve(_kind, day, *_args):
+        return member_archive(day, concepts + industries if use_latest_day else [])
+
+    def latest(_symbols):
+        pytest.fail('unnecessary lookup of current provider memberships')
+
+    monkeypatch.setattr(market_broken_boards, 'resolve_reference', resolve)
+    result = build_analysis(
+        market, market.status(), DAY if use_latest_day else PREVIOUS, market.ref, market.rows(),
+        history_days=1, include_feedback=False, with_memberships=True, latest_memberships=latest)
+    assert 'classification_reference' not in result
+
+
 def test_overview_skips_membership_archives_and_details_without_changing_summary_facts(monkeypatch):
     from app.services import market_service, market_broken_boards, market_feedback, market_top_amount, stock_board_presentation
     market = Market(); member_reads = []
@@ -596,7 +700,7 @@ def test_single_day_detail_route_does_not_build_emotion_or_previous_feedback(mon
         return {'date': DAY, 'snapshot_id': 'market-fixture', 'current': {'items': [], 'state': 'unknown'}}
     monkeypatch.setattr(market_broken_boards, 'build_analysis', build_current)
     monkeypatch.setattr(market_outlook, 'build_market_outlook', lambda *_args, **_kwargs: pytest.fail('single-day detail must not compute outlook'))
-    result = market_service.market_page('broken-boards', DAY)
+    result = market_service.market_page('broken-boards', DAY, include_latest_classification_reference=True)
     assert result['broken_board_analysis']['date'] == DAY
     assert 'market_outlook' not in result and 'sentiment' not in result
     assert calls == [{'history_days': 1, 'include_feedback': False, 'with_memberships': True}]

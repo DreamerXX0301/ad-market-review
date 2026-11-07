@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, date
 import json
 from pathlib import Path
+import re
 from zoneinfo import ZoneInfo
 import duckdb
 
@@ -53,10 +54,29 @@ def load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=Non
         return _load_supplement_with_fingerprint(snapshot_id,dates=dates,fields=fields)
 
 
+def retained_supplement_basis(status):
+    """The existing supplement is reusable across a reference-only publication."""
+    head = _load(_root() / 'head.json', {})
+    base = head.get('snapshot_id')
+    proof = status.get('manifest', {}).get('topic_catalog_additions', {})
+    return base if base and base in (status.get('snapshot_id'), proof.get('supplement_snapshot_id')) else None
+
+
 def _load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=None, status_projection=False):
     root=_root();head=_load(root/'head.json',{})
-    if snapshot_id and head.get('snapshot_id')!=snapshot_id:return {},None
     if not head:return {},None
+    if snapshot_id and head.get('snapshot_id') != snapshot_id:
+        if not head.get('snapshot_id') or not isinstance(snapshot_id, str) or not re.fullmatch(r'market-[0-9a-f]{24}', snapshot_id):
+            return {}, None
+        try:
+            manifest = _load(root.parent / snapshot_id / 'manifest.json', {})
+        except (ValueError, OSError):
+            return {}, None
+        proof = manifest.get('topic_catalog_additions', {})
+        if (manifest.get('summary', {}).get('snapshot_id') != snapshot_id
+                or proof.get('scope') != 'catalog-additions-v1'
+                or proof.get('supplement_snapshot_id') != head.get('snapshot_id')):
+            return {}, None
     relative=head.get('artifact'); path=(root/str(relative)).resolve()
     if not path.is_relative_to(root.resolve()) or not path.is_file() or hash_file(path)!=head.get('sha256'):return {'quality':'unknown','failure_reason':'补充数据索引缺失或校验失败'},None
     result=_load(path,{})
@@ -64,7 +84,10 @@ def _load_supplement_with_fingerprint(snapshot_id=None, *, dates=None, fields=No
     from .supplement_storage import expand_document, expand_status_document
     try:
         if status_projection:
-            return expand_status_document(root, result), None
+            document = expand_status_document(root, result)
+            if snapshot_id and head.get('snapshot_id') != snapshot_id:
+                document['compatible_snapshot_id'] = snapshot_id
+            return document, None
         dates=None if dates is None else tuple(dates);fields=None if fields is None else tuple(fields)
         document=expand_document(root,result,dates=dates,fields=fields)
         fingerprint=('verified-supplement-index-v1',str(root.resolve()),head.get('snapshot_id'),head['sha256'],
@@ -137,9 +160,14 @@ class SupplementCache:
 
 
 def _year_dates(calendar,target):
-    # At most two batches per retained date in this one calendar year; never
-    # discover arbitrary files or silently broaden to other historical years.
+    # Frozen remote history scope and the explicit offline revalidation scope.
     return sorted({day for day in calendar if isinstance(day,str) and day[:4]==target[:4] and day<=target and date.fromisoformat(day).isoformat()==day})
+
+
+def _prior_pool_dates(calendar,target):
+    from .supplement_retention import WINDOW_SESSIONS
+    end=calendar.index(target)+1
+    return [day for day in calendar[max(0,end-WINDOW_SESSIONS):end] if day[:4]<target[:4]]
 
 
 def _pool_signature(day,source,closes,identity_hash,pool_kind=None):
@@ -190,6 +218,13 @@ def revalidate_for_market(market,target,*,progress=None,guard=None,job_id=None):
          'fund_flows':{day:record for day,record in old.get('fund_flows',{}).items() if day in calendar and day<=target},
          'sector_index_history':{day:record for day,record in old.get('sector_index_history',{}).items() if day in calendar and day<=target},
          'failures':[failure for failure in old.get('failures',[]) if failure.get('capability') not in ('year_limitup','year_limitdown','seal_details')]}
+    # This task revalidates only the current year. Carry forward prior-year
+    # evidence already published against the same immutable quote generation.
+    basis=retained_supplement_basis(status)
+    if basis and old.get('snapshot_id')==basis:
+        prior_days=set(_prior_pool_dates(calendar,target))
+        for field in ('annual_pools','annual_down_pools'):
+            doc[field].update({day:record for day,record in old.get(field,{}).items() if day in prior_days})
     stats={'planned_batches':total,'completed_batches':0,'revalidated_batches':0,'missing_batches':0,'failed_batches':0}
     def tick(stage,message):
         if guard:guard()
@@ -331,11 +366,20 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         progress=lambda stage,pct,message=None,details=None: original_progress(stage,int(pct*.55),message,details)
     master=[r for r in market.instruments(limit=10000) if r.get('kind')=='stock']
     identity_hash=digest({r['code']:r['instrument_id'] for r in master})
-    history_dates=_year_dates(calendar,target)
-    dates=history_dates if year_history else [target]
+    year_dates=_year_dates(calendar,target)
+    dates=year_dates if year_history else [target]
+    local_dates=year_dates
+    if retention_policy_version is not None:
+        # Check only known day paths within the retention window. This can
+        # recover orphaned prior-year evidence without a historical API call.
+        accepted=root/'accepted'/'fuyao'
+        prior_days=[day for day in _prior_pool_dates(calendar,target)
+                    if day in old.get('annual_pools',{}) or day in old.get('annual_down_pools',{})
+                    or (accepted/'limitup'/(day+'.json')).is_file() or (accepted/'limitdown'/(day+'.json')).is_file()]
+        local_dates=prior_days+year_dates
     recent=calendar[max(0,calendar.index(target)-max(1,min(int(recent_days),30))+1):calendar.index(target)+1]
     pool_batches=len(dates)*2
-    local_batches=len(history_dates)*2
+    local_batches=len(local_dates)*2
     planned=local_batches+pool_batches+len(recent)+1; done=0
     def tick(label,message=None):
         if guard:guard()
@@ -350,7 +394,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         # Signatures below only inspect these real dates. Predicate pushdown
         # avoids repeatedly materializing every retained year for a one-day
         # increment; no source requests or quote validation rules change.
-        quote_days=set(history_dates+dates+recent)
+        quote_days=set(local_dates+dates+recent)
         quote_days.update(day for day in old.get('public_pools',{}) if day in calendar and day<=target)
         quote_begin=min(quote_days) if quote_days else target
         con.execute('CREATE TABLE quotes AS SELECT instrument_id,date,close FROM read_parquet(?) WHERE date>=? AND date<=?',
@@ -364,7 +408,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
 
         # Probe the bounded calendar, not only the previous head: older accepted
         # evidence can outlive an index that omitted it after a context change.
-        for day in history_dates:
+        for day in local_dates:
             closes=prices(day)
             for kind in ('limitup','limitdown'):
                 if guard:guard()
@@ -380,7 +424,7 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
                 except (ValueError,ProviderError) as error:
                     doc['failures'].append({'capability':spec['failure_capability'],'pool_kind':kind,'date':day,'reason':'签名变化或历史证据无法核验，该日未继承：'+str(error)})
                 done+=1
-                tick('核验本地年内涨跌停证据',day+' · '+spec['label']+' · '+str(done)+'/'+str(local_batches))
+                tick('核验本地涨跌停证据',day+' · '+spec['label']+' · '+str(done)+'/'+str(local_batches))
         for day in old.get('public_pools',{}):
             if day not in calendar or day>target:continue
             if guard:guard()
@@ -393,11 +437,12 @@ def refresh_for_market(market, target, *, year_history=False, recent_days=1, pro
         if dates:
             from app.services.source_service import client
             adapter=client('fuyao')
+            pool_stage='回补年内' if year_history else '同步目标日'
             for day in dates:
                 closes=prices(day)
                 for pool_kind in ('limitup','limitdown'):
                     spec=pool_spec(pool_kind)
-                    tick('回补年内'+spec['label']+'池',day+' · 校验分页、证券身份和收盘价')
+                    tick(pool_stage+spec['label']+'池',day+' · 校验分页、证券身份和收盘价')
                     signature=_pool_signature(day,'fuyao',closes,identity_hash,pool_kind);cached=None
                     try:
                         record=cache.reuse('fuyao',pool_kind,day,signature,allow_partial=True)

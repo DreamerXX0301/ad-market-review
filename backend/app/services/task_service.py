@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from typing import Any
 
@@ -109,11 +110,55 @@ def create_task(kind: str, parameters: dict, target_date: str | None = None, req
     return task_view(identifier)
 
 
+def _completion_display(connection, job, parameters, *, detail=False):
+    if job['status'] != 'partial':
+        return {}
+    job_id = job['job_id']
+    kind, operation = job['kind'], parameters.get('operation')
+    if operation == 'sector_charts':
+        row = connection.execute("""SELECT details_json FROM job_event WHERE job_id=?
+            AND stage='板块历史K线核验完成' ORDER BY seq DESC LIMIT 1""", (job_id,)).fetchone()
+        if row:
+            coverage = json.loads(row[0]).get('coverage', {})
+            total = coverage.get('catalog_count')
+            if (type(total) is int and total > 0 and coverage.get('collection_complete') is True
+                    and coverage.get('available_count') == total and coverage.get('failed_count') == 0):
+                return {'display_status': 'succeeded',
+                        'coverage_summary': f'已验收 {total}/{total} 个板块 · 全窗 {coverage.get("complete_count", "未知")} · 有历史缺口 {coverage.get("partial_count", "未知")} · 失败 0'}
+    elif kind in ('initialise', 'increment', 'topic_init', 'topic_refresh'):
+        module = 'topics' if kind in ('topic_init', 'topic_refresh') else 'daily_raw'
+        published = connection.execute("""SELECT 1 FROM dataset_snapshot WHERE job_id=? AND module=?
+            AND state='published' LIMIT 1""", (job_id, module)).fetchone()
+        if not published:
+            return {}
+        if module == 'daily_raw':
+            return {'display_status': 'succeeded', 'coverage_summary': '主行情已发布；数据缺口和后续步骤可分别查看'}
+        row = connection.execute("""SELECT message FROM job_event WHERE job_id=? AND stage='题材成员完成'
+            ORDER BY seq DESC LIMIT 1""", (job_id,)).fetchone()
+        match = re.fullmatch(r'已保存([0-9]+)/([0-9]+)组题材成员', row[0]) if row else None
+        if match:
+            verified, total = map(int, match.groups())
+            return {'coverage_summary': f'题材成员已验收 {verified}/{total} 组 · 缺口 {total - verified} 组',
+                    **({'display_status': 'succeeded'} if total > 0 and verified == total else {})}
+    elif kind == 'research':
+        row = connection.execute("""SELECT details_json FROM job_event WHERE job_id=? AND stage='completed'
+            ORDER BY seq DESC LIMIT 1""", (job_id,)).fetchone()
+        gaps = json.loads(row[0]).get('gap_titles', []) if row else []
+        if not gaps and detail:
+            gaps = [row[0] for row in connection.execute("""SELECT DISTINCT json_extract(g.value,'$.title')
+                FROM research_report r, json_each(r.report_json,'$.gaps') g WHERE r.job_id=? LIMIT 6""", (job_id,))]
+        gaps = [title for title in gaps[:6] if isinstance(title, str) and title]
+        return {'coverage_summary': '研究已保存；' + ('待补材料 ' + '、'.join(gaps) if gaps else '材料缺口见研究报告')}
+    return {}
+
+
 def task_view(identifier: str, after_seq: int = 0) -> dict:
     with connect() as connection:
         row = connection.execute("SELECT * FROM job WHERE job_id=?", (identifier,)).fetchone()
         if not row:
             raise HTTPException(404, "任务不存在")
+        parameters = json.loads(row['parameters_json'])
+        completion = _completion_display(connection, row, parameters, detail=True)
         events = connection.execute("SELECT * FROM job_event WHERE job_id=? AND seq>? ORDER BY seq", (identifier, after_seq)).fetchall()
         from .collection_controls import protected, estimate
         stop_allowed = not protected(connection, row)
@@ -124,7 +169,8 @@ def task_view(identifier: str, after_seq: int = 0) -> dict:
             workspace = summary(connection, row, children(connection, row))
     item = dict(row)
     item.update(interactive_stop_allowed=stop_allowed, estimate=remaining, workspace=workspace)
-    item.update(task_id=item["job_id"], parameters=json.loads(item.pop("parameters_json")), progress=100 if item["status"] in {"succeeded", "no_change", "partial"} else min(99, item["accepted_batches"]), stage=item["phase"], stage_progress=None)
+    item.pop("parameters_json")
+    item.update(task_id=item["job_id"], parameters=parameters, progress=100 if item["status"] in {"succeeded", "no_change", "partial"} else min(99, item["accepted_batches"]), stage=item["phase"], stage_progress=None, **completion)
     item["logs"] = [{**dict(e), "details": json.loads(e["details_json"])} for e in events]
     for event in item["logs"]:
         event.pop("details_json", None)
@@ -171,7 +217,8 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
     operation = parameters.get('operation')
     title = {
         'initialise': '首次初始化', 'increment': '盘后增量', 'research': '个股研究',
-        'backtest': '策略回测', 'topic_init': '本地题材导入', 'topic_refresh': '题材库同步',
+        'backtest': '策略回测', 'topic_init': '本地题材导入',
+        'topic_refresh': '新增题材同步' if parameters.get('scope') == 'catalog-additions-v1' else '题材库同步',
         'tracking_review': '板块跟踪核对' if target == 'sector' else '个股跟踪核对',
         'selection': '板块策略筛选' if target == 'sector' else '个股策略选股',
         'source_check': {'sector_chart': '单板块历史K线', 'sector_charts': '板块K线尾部增量' if parameters.get('mode') == 'increment' else '全库板块历史K线',
@@ -199,6 +246,7 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
     if item['kind']=='source_check' and operation=='auction_snapshot':
         from .auction_automation import activity_fields
         receipt.update(activity_fields(connection,item['job_id'],parameters=parameters))
+    receipt.update(_completion_display(connection, row, parameters))
     if expand_batch and operation == 'strategy_batch' and item['kind'] == 'source_check':
         from .strategy_batches import _view as batch_view
         batch = batch_view(connection, row)
@@ -219,7 +267,8 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
 
 _SUMMARY_PARAMETERS = ('mode','operation','target_type','strategy_id','window','data_chain_version',
                        'initialization_chain','increment_chain','parent_sync_job_id','previous_chain_job_id',
-                       'topic_code','source_code','source_name','source_id','period','version','plan_version','auto_add')
+                       'year_history','recent_days','revalidate_only',
+                       'topic_code','source_code','source_name','source_id','period','version','plan_version','auto_add','scope')
 
 
 def _summary_task_view(connection,row,observed):

@@ -495,21 +495,19 @@ export default function RuleEvidence({ value }: { value: any }) {
   const events = eventChecks(value);
   const lows = higherLowsChecks(value);
   const bolls = bollChecks(value);
-  if (!events.length && !lows.length && !bolls.length)
-    return <>{summarizeChecks(value)}</>;
   return (
     <details className="historical-check-evidence">
       <summary>
-        {summarizeChecks(value)}
-        <span>
-          {events.length
-            ? "查看事件依据"
-            : bolls.length
-              ? "查看指标依据"
-              : "查看低点依据"}
-        </span>
+        {events.length
+          ? "查看事件依据"
+          : bolls.length
+            ? "查看指标依据"
+            : lows.length
+              ? "查看低点依据"
+              : "查看条件依据"}
       </summary>
       <div>
+        <p>{summarizeChecks(value, false, Infinity)}</p>
         {bolls.map((check, index) => (
           <BollEvidence key={`boll-${index}`} value={check} />
         ))}
@@ -572,7 +570,7 @@ export default function RuleEvidence({ value }: { value: any }) {
               <p>
                 <span className="muted">历史事件：</span>
                 {check.event_checks
-                  ? summarizeChecks(check.event_checks)
+                  ? summarizeChecks(check.event_checks, false, Infinity)
                   : anyMatch
                     ? "尚未绑定事件；范围内逐次完整核验，结果与缺口见说明"
                     : "该位置报价或事件条件尚未核验"}
@@ -580,7 +578,7 @@ export default function RuleEvidence({ value }: { value: any }) {
               {check.checks?.length > 0 && (
                 <p>
                   <span className="muted">当前条件：</span>
-                  {summarizeChecks(check.checks)}
+                  {summarizeChecks(check.checks, false, Infinity)}
                 </p>
               )}
               {check.price_path_checks && (

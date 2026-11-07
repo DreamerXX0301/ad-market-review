@@ -514,7 +514,14 @@ export default function App() {
       case "ladder":
       case "gainers":
       case "abnormal":
-        return <MemoMarketPage route={key} date={date} onStock={openStock} />;
+        return (
+          <MemoMarketPage
+            route={key}
+            date={date}
+            latestDate={bootstrap.data?.data_date}
+            onStock={openStock}
+          />
+        );
       case "dragon-tiger":
         return (
           <DragonTiger date={date} onStock={openStock} onNavigate={navigate} />

@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import pytest
 from fastapi import HTTPException
 
+from app.routers.platform import router
 from app.services.market_rank_distribution import ranking_distribution
 from app.services import market_service as service
 from app.services import stock_memberships, market_history
@@ -107,6 +108,67 @@ def test_latest_manual_changes_are_reread_even_if_rank_price_cache_is_same(monke
     assert len(calls) == 2 and calls[0][0] == ['000001.SH']
     assert ranks[0]['topics'][0]['topic_id'] == 'stale'
     assert second['classification_state'] == 'current_business_partial'
+
+
+def test_latest_page_fills_only_missing_provider_kinds_and_keeps_dated_reads_strict(personal, monkeypatch):
+    market, client = personal
+    client.app.include_router(router)
+    day, old = market.entry, market.days[69]
+    later, newest = market.days[71:73]
+    a, b = '600001.SH', '000001.SZ'
+    source = [tag('dated-industry', '时点行业', [a], 'industry', day),
+              tag('later-industry', '最新行业', [a, b], 'industry', newest),
+              tag('later-concept', '最新概念', [a, b], observed=later),
+              tag('provider-only', '另一来源概念', [b], observed=later)]
+    monkeypatch.setattr(market, 'topics', lambda: deepcopy(source))
+    assert client.post('/api/v1/topics/initialize', json={}).status_code == 200
+    definitions = {entry['name']: entry['topic_id'] for entry in client.get('/api/v1/topics').json()['items']}
+    # A current manual inclusion is no proof of a later provider membership.
+    assert client.post(f'/api/v1/topics/{definitions["另一来源概念"]}/members',
+                       json={'instrument_id': a, 'action': 'include'}).status_code == 200
+    assert client.post('/api/v1/topics', json={'name': '当日人工题材', 'instrument_ids': [a]}).status_code == 200
+
+    status = {'data_end': day, 'snapshot_id': 'fixture'}
+    ranked = [{**row(1), 'instrument_id': a}, {**row(2), 'instrument_id': b}]
+    original = deepcopy(ranked)
+    monkeypatch.setattr(service, 'panel', lambda selected, **_: (market, status, selected or day, {}, []))
+    monkeypatch.setattr(service, 'cached_gainers', lambda *_: (ranked, {}))
+
+    def archive(kind, selected, *_):
+        assert (kind, selected) == ('sectors', old)
+        return {'topics': [tag('old', '历史行业', [a], 'industry', old), *source]}, {
+            'selected_date_available': True, 'source_snapshot_id': 'old-fixture'}
+
+    monkeypatch.setattr(market_history, 'resolve_reference', archive)
+    latest = client.get('/api/v1/market/gainers').json()
+    strict = service.market_page('gainers', day)
+    history = client.get('/api/v1/market/gainers', params={'date': old}).json()
+    lookup = service.market_page('gainers', day, gainers_lookup={'mode': 'related', 'query': '最新概念'})
+
+    assert latest['classification_reference'] == {'date': newest, 'dates': [later, newest]}
+    distribution = latest['ranking_distribution']
+    assert distribution['classification_reference'] == latest['classification_reference']
+    assert distribution['sample_count'] == 2 and distribution['industries']['classified_count'] == 2
+    assert distribution['topics']['classified_count'] == 2
+    first, second = latest['items']
+    assert [item['name'] for item in first['industries']] == ['时点行业']
+    assert {item['name'] for item in first['topics']} == {'时点行业', '最新概念', '当日人工题材'}
+    assert {item['name'] for item in second['topics']} == {'最新行业', '最新概念', '另一来源概念'}
+    reference = next(item for item in first['topics'] if item['name'] == '最新概念')
+    assert reference['observed_date'] == reference['source_observed_date'] == later
+    assert reference['classification_reference'] is True and first['topics_observed_date'] == day
+    assert any(item['name'] == '最新概念' and item['source_observed_date'] == later
+               for item in distribution['topics']['top'])
+    assert [(r['instrument_id'], r['rank'], r['change_30d_pct']) for r in latest['items']] == [
+        (r['instrument_id'], r['rank'], r['change_30d_pct']) for r in strict['items']]
+    assert ranked == original
+    for result in (strict, history):
+        assert 'classification_reference' not in result and 'classification_reference' not in result['ranking_distribution']
+    assert {item['name'] for item in strict['items'][0]['topics']} == {'时点行业', '当日人工题材'}
+    assert strict['items'][1]['topics'] == []
+    assert [item['name'] for item in history['items'][0]['topics']] == ['历史行业']
+    assert history['items'][1]['topics'] == []
+    assert lookup['items'] == [] and lookup['classification_lookup']['state'] == 'unknown'
 
 
 def test_historical_day_uses_archive_once_not_current_manual_members(monkeypatch):

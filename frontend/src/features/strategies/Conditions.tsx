@@ -169,7 +169,11 @@ export function entryLowEvidenceText(check: any): string | null {
       : "事件日最低价待核验")
   );
 }
-export function summarizeChecks(checks: any, onlySatisfied = false): string {
+export function summarizeChecks(
+  checks: any,
+  onlySatisfied = false,
+  limit = 6,
+): string {
   const flatten = (node: any): any[] =>
     Array.isArray(node)
       ? node.flatMap(flatten)
@@ -193,7 +197,7 @@ export function summarizeChecks(checks: any, onlySatisfied = false): string {
   if (!leaves.length)
     return conditionReasonText(checks?.reason) || "未提供逐项依据";
   return leaves
-    .slice(0, 6)
+    .slice(0, limit)
     .map((c) => {
       if (c.type === "hot_universe")
         return `近期热点题材 / 行业 · ${c.result === true ? "满足" : c.result === false ? "未满足" : "待核验"}${c.reason ? "；" + c.reason : ""}`;

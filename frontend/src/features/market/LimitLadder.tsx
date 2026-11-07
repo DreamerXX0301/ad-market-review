@@ -8,7 +8,10 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
+import IntradayPageNavigation from "./IntradayPageNavigation";
+import { intradayReadingProps } from "./intradayReadingNavigation";
 import { integer, percent, tone } from "../../lib/format";
 import {
   Badge,
@@ -367,6 +370,7 @@ function ClassificationSection({
 
 export default function LimitLadder({
   date,
+  latestDate,
   data,
   loading,
   error,
@@ -374,12 +378,14 @@ export default function LimitLadder({
   onStock,
 }: {
   date: string;
+  latestDate?: string;
   data: Row | null;
   loading: boolean;
   error: string;
   onReload: () => void;
   onStock: (id: string) => void;
 }) {
+  const pageActive = usePageActive();
   const [query, setQuery] = useState("");
   const [selectedTopic, setSelectedTopic] = useState<LadderTopic | null>(null);
   const [memberTopic, setMemberTopic] = useState<Row | null>(null);
@@ -480,7 +486,12 @@ export default function LimitLadder({
     </div>
   );
   return (
-    <div className="page-stack limit-ladder">
+    <IntradayPageNavigation
+      className="limit-ladder"
+      scopeKey={date}
+      pageTitle="涨停梯队"
+      pageActive={pageActive}
+    >
       <div className="ladder-intro">
         <div className="ladder-compact-caption">
           <Layers3 size={14} />
@@ -532,7 +543,10 @@ export default function LimitLadder({
       ) : (
         <>
           {view !== "mainlines" && (
-            <div className="ladder-overview">
+            <div
+              {...intradayReadingProps("ladderSummary")}
+              className="ladder-overview"
+            >
               <div>
                 <span>已确认涨停样本</span>
                 <strong>
@@ -659,7 +673,11 @@ export default function LimitLadder({
               </button>
             </div>
           )}
-          <div className="ladder-board-layout" id={baseId + "-main"}>
+          <div
+            {...intradayReadingProps("ladderDetail")}
+            className="ladder-board-layout"
+            id={baseId + "-main"}
+          >
             {view === "height" && (
               <section className="ladder-main">
                 <header className="ladder-main-heading">
@@ -851,6 +869,7 @@ export default function LimitLadder({
           </div>
           {view !== "mainlines" && (
             <div
+              {...intradayReadingProps("ladderEvents")}
               className="ladder-supplemental-sections"
               aria-label="补充事件分类"
             >
@@ -877,7 +896,10 @@ export default function LimitLadder({
               ))}
             </div>
           )}
-          <details className="ladder-evidence">
+          <details
+            {...intradayReadingProps("sources")}
+            className="ladder-evidence"
+          >
             <summary>
               数据与归属详情
               <ChevronDown size={13} />
@@ -923,7 +945,9 @@ export default function LimitLadder({
                       <>
                         {themes.length ? (
                           themes.map((theme, index) => {
-                            const topic = ladderTopics({ topics: [theme] })[0];
+                            const topic = ladderTopics({
+                              topics: [theme],
+                            })[0];
                             return (
                               <div
                                 key={topic?.key || index}
@@ -988,10 +1012,11 @@ export default function LimitLadder({
         <TopicMembersDialog
           topic={memberTopic}
           date={date}
+          latestDate={latestDate}
           onClose={() => setMemberTopic(null)}
           onStock={onStock}
         />
       )}
-    </div>
+    </IntradayPageNavigation>
   );
 }

@@ -1,6 +1,78 @@
 .sources-page {
   gap: 14px;
 }
+.source-editor .settings-dialog-intro .badge {
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+.source-editor-key {
+  display: grid;
+  gap: 7px;
+}
+.source-editor-key label {
+  color: var(--text);
+  font-size: var(--workbench-type-label, 12px);
+  font-weight: 600;
+}
+.source-editor-key .secret-input {
+  border-radius: 8px;
+}
+.source-editor-key .secret-input:focus-within {
+  border-color: var(--blue);
+}
+.source-editor-key .secret-input input {
+  height: 37px;
+  box-shadow: none;
+}
+.source-editor-options {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface2) 45%, var(--surface));
+}
+.source-editor-options > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  font-size: var(--workbench-type-label, 12px);
+  color: var(--text);
+  cursor: pointer;
+}
+.source-editor-options > label + label {
+  border-top: 1px solid var(--border-soft);
+}
+.source-editor-options [role="switch"] {
+  appearance: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 20px;
+  background: var(--surface3);
+  cursor: pointer;
+}
+.source-editor-options [role="switch"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.source-editor-options [role="switch"]:checked {
+  background: var(--primary-fill);
+  border-color: var(--primary-fill);
+}
+.source-editor-options [role="switch"]:checked::after {
+  transform: translateX(14px);
+  background: white;
+}
+.source-editor-options [role="switch"]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
 .sources-tabs {
   display: flex;
   gap: 5px;
@@ -311,7 +383,7 @@
 }
 .sources-supplement-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 0 17px 13px;
   padding: 13px 0;
   border-block: 1px solid var(--border-soft);
@@ -343,6 +415,22 @@
   font-size: var(--workbench-type-caption, 10px);
   color: var(--workbench-type-muted, var(--muted));
   font-weight: 400;
+}
+.sources-supplement-year {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin: 0 17px 12px;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sources-supplement-year > span {
+  display: grid;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.sources-supplement-year small {
+  color: var(--workbench-type-muted, var(--muted));
 }
 .sources-supplement-details {
   border-top: 0;

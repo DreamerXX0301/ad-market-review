@@ -26,7 +26,9 @@ const compile = async (name) =>
     },
   ).outputText;
 const helperSource = encode(await compile("./intradayReadingNavigation.ts"));
-const controlsProbe = encode("export const calls=[];export default function Controls(props){calls.push(props);return null;}");
+const controlsProbe = encode(
+  "export const calls=[];export default function Controls(props){calls.push(props);return null;}",
+);
 const helpers = {
   "../../components/PageScrollEdges": controlsProbe,
   "./emotionNavigation": encode(await compile("./emotionNavigation.ts")),
@@ -154,7 +156,11 @@ function render(entries = available) {
   );
 }
 let html = render();
-assert.deepEqual(floatingControls.at(-1).sections.map(row=>row.id), [brief.id, ladder.id], "floating controls consume the directory’s actual entries");
+assert.deepEqual(
+  floatingControls.at(-1).sections.map((row) => row.id),
+  [brief.id, ladder.id],
+  "floating controls consume the directory’s actual entries",
+);
 assert.equal(floatingControls.at(-1).onNavigate instanceof Function, true);
 assert.match(html, /aria-label="盘中观察页内目录"/);
 assert.match(html, /14:00 午后观察/);
@@ -212,7 +218,7 @@ assert.doesNotMatch(
 );
 assert.match(
   original,
-  /\}, \[scopeKey\]\)/,
+  /\}, \[scopeKey, pageActive, pageTitle\]\)/,
   "same-slot API refresh does not reset directory navigation or page position",
 );
 for (const key of [

@@ -271,17 +271,28 @@ def execute_check(job):
 
 
 def after_sync(job):
-    parameters=json.loads(job['parameters_json'])
-    if job['kind'] not in ('initialise','increment') or parameters.get('listing_status_check_version')!=VERSION:return None
+    topic_publication=job['kind'] in ('topic_init','topic_refresh')
+    if not topic_publication and (job['kind'] not in ('initialise','increment') or json.loads(job['parameters_json']).get('listing_status_check_version')!=VERSION):return None
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         saved=db.execute('SELECT * FROM job WHERE job_id=?',(job['job_id'],)).fetchone()
-        if not saved or saved['status'] not in ('succeeded','partial','no_change') or db.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='listing_status_check_queued'",(job['job_id'],)).fetchone():return None
+        statuses=('succeeded','partial') if topic_publication else ('succeeded','partial','no_change')
+        if not saved or saved['status'] not in statuses or db.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='listing_status_check_queued'",(job['job_id'],)).fetchone():return None
         from .sync_progress import chain_stop_action
         if chain_stop_action(db,saved):return None
-        publication=db.execute("SELECT data_end FROM dataset_snapshot WHERE job_id=? AND module='daily_raw' AND state='published' ORDER BY published_at_ms DESC LIMIT 1",(job['job_id'],)).fetchone()
-        frozen=db.execute("SELECT details_json FROM job_event WHERE job_id=? AND stage='chain_target_frozen' ORDER BY seq LIMIT 1",(job['job_id'],)).fetchone()
-        target=publication[0] if publication else saved['target_date'] or (json.loads(frozen[0]).get('target_date') if frozen else None)
+        # A topic refresh can republish the same business day. Only its own
+        # active generation authorizes a new listing check.
+        publication=db.execute("""SELECT data_end FROM dataset_snapshot
+            WHERE job_id=? AND module='daily_raw' AND state='published'
+            AND (NOT ? OR snapshot_id=(SELECT snapshot_id FROM published_head WHERE module='daily_raw' ORDER BY changed_at_ms DESC LIMIT 1))
+            ORDER BY published_at_ms DESC LIMIT 1""",(job['job_id'],topic_publication)).fetchone()
+        if publication:
+            target=publication[0]
+        elif topic_publication:
+            return None
+        else:
+            frozen=db.execute("SELECT details_json FROM job_event WHERE job_id=? AND stage='chain_target_frozen' ORDER BY seq LIMIT 1",(job['job_id'],)).fetchone()
+            target=saved['target_date'] or (json.loads(frozen[0]).get('target_date') if frozen else None)
         if target is None:return None
         identifier=enqueue(db,'listing-after-sync:'+job['job_id']) if _head(db)['business_date']==target else None
         tasks.append_event(db,job['job_id'],'listing_status_check_queued','已接续本地上市身份核验' if identifier else '旧同步业务日已被新发布取代，不追溯排队',details={'next_task_id':identifier,'target_date':target})
@@ -291,6 +302,11 @@ def after_sync(job):
 def recover_sync_followups():
     with connect() as db:
         rows=[dict(row) for row in db.execute("SELECT * FROM job j WHERE kind IN ('initialise','increment') AND status IN ('succeeded','partial','no_change') AND json_extract(parameters_json,'$.listing_status_check_version')=? AND NOT EXISTS(SELECT 1 FROM job_event e WHERE e.job_id=j.job_id AND e.stage='listing_status_check_queued') ORDER BY created_at_ms LIMIT 20",(VERSION,))]
+        topic=db.execute("""SELECT j.* FROM dataset_snapshot s JOIN job j USING(job_id)
+            WHERE s.snapshot_id=(SELECT snapshot_id FROM published_head WHERE module='daily_raw' ORDER BY changed_at_ms DESC LIMIT 1)
+            AND s.state='published' AND j.kind IN ('topic_init','topic_refresh') AND j.status IN ('succeeded','partial')
+            AND NOT EXISTS(SELECT 1 FROM job_event e WHERE e.job_id=j.job_id AND e.stage='listing_status_check_queued')""").fetchone()
+        if topic:rows.append(dict(topic))
     for job in rows:
         try:after_sync(job)
         except Exception as error:

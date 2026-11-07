@@ -33,6 +33,8 @@ const {
   PatternStatus,
   barLimitMarker,
   barBrokenMarker,
+  barLimitDownPriceReference,
+  LIMIT_DOWN_REFERENCE_LABEL,
   BOARD_BASIS,
   INTRADAY_BOARD_BASIS,
   limitTooltipHtml,
@@ -329,6 +331,61 @@ assert.equal(
   "盘中回封",
 );
 
+const priceReference = { price: 9, rate_pct: 10, previous_raw_close: 10 };
+const referenceBar = {
+  date: "2026-10-21",
+  close: 7.8,
+  low: 7.8,
+  limit_down_price_reference: priceReference,
+};
+assert.deepEqual(barLimitDownPriceReference(referenceBar), priceReference);
+assert.equal(barLimitMarker(referenceBar, "limit_down"), null);
+assert.deepEqual(confirmedBarLimits(referenceBar), []);
+const referenceTip = limitTooltipHtml(referenceBar, "D", colors);
+assert.match(referenceTip, /收于常规跌停参考价/);
+assert.match(referenceTip, /参考价 9\.00 元 · 昨收 10\.00 元/);
+assert.match(referenceTip, /跌停确认与统计仍以来源池为准/);
+assert.doesNotMatch(referenceTip, /参考价 7\.80 元/);
+const sourceAbsentTip = limitTooltipHtml(
+  {
+    ...referenceBar,
+    limit_down_state: false,
+    limit_event_status: { down: "source_absent" },
+  },
+  "D",
+  colors,
+);
+assert.match(sourceAbsentTip, /收于常规跌停参考价/);
+assert.match(sourceAbsentTip, /已核验的当日跌停来源池未收录此股/);
+for (const period of ["W", "M"])
+  assert.doesNotMatch(
+    limitTooltipHtml(referenceBar, period, colors),
+    /收于常规跌停参考价/,
+  );
+for (const bar of [
+  {
+    ...referenceBar,
+    limit_down_price_reference: { ...priceReference, price: NaN },
+  },
+  {
+    ...referenceBar,
+    limit_down_price_reference: { ...priceReference, rate_pct: "10" },
+  },
+  {
+    ...referenceBar,
+    limit_down_price_reference: { ...priceReference, previous_raw_close: 0 },
+  },
+  ...[
+    up,
+    down,
+    broken,
+    resealed,
+    temporary,
+    { intraday_provisional: true },
+  ].map((bar) => ({ ...bar, limit_down_price_reference: priceReference })),
+])
+  assert.equal(barLimitDownPriceReference(bar), null);
+
 // Exercise the real plot branch, proving one marker per closing direction and
 // that the saved limit-marker switch controls all new labels as well.
 const chartSource = await fs.readFile(
@@ -363,8 +420,23 @@ const plot = new Function(
   "period",
   "barLimitMarker",
   "barBrokenMarker",
+  "barLimitDownPriceReference",
+  "LIMIT_DOWN_REFERENCE_LABEL",
   transpile(branches[0].getText(ast)),
 );
+const plotMarkers = (series, bars, palette, supported, shown, period) =>
+  plot(
+    series,
+    bars,
+    palette,
+    supported,
+    shown,
+    period,
+    barLimitMarker,
+    barBrokenMarker,
+    barLimitDownPriceReference,
+    LIMIT_DOWN_REFERENCE_LABEL,
+  );
 const bars = [
   earth,
   {
@@ -376,27 +448,42 @@ const bars = [
   },
 ];
 const series = [];
-plot(series, bars, colors, true, true, "D", barLimitMarker, barBrokenMarker);
+plotMarkers(series, bars, colors, true, true, "D");
 assert.equal(series.length, 2);
 assert.equal(series[0].data.length, 1);
 assert.equal(series[0].data[0].label.formatter, "地天");
 assert.equal(series[1].data.length, 1);
 assert.equal(series[1].data[0].label.formatter, "一字跌");
 const boardSeries = [];
-plot(
+plotMarkers(
   boardSeries,
   [broken, resealed, temporary],
   { ...colors, provisional: "#dfaa44" },
   true,
   true,
   "D",
-  barLimitMarker,
-  barBrokenMarker,
 );
 assert.equal(boardSeries[0].data.length, 1, "回封与原涨停合为一个标记");
 assert.equal(boardSeries[0].data[0].label.formatter, "回封");
 assert.equal(boardSeries.at(-1).name, "炸板");
 assert.equal(boardSeries.at(-1).data.length, 2, "收盘和临时盘中炸板均标记");
+const referenceSeries = [];
+plotMarkers(
+  referenceSeries,
+  [referenceBar, { ...down, limit_down_price_reference: priceReference }],
+  { ...colors, reference: "#b99afa" },
+  true,
+  true,
+  "D",
+);
+assert.equal(referenceSeries[1].data[0].label.formatter, "一字跌");
+assert.equal(referenceSeries[2].label.formatter, "跌?");
+assert.equal(referenceSeries[2].symbol, "emptyCircle");
+assert.notEqual(
+  referenceSeries[2].itemStyle.color,
+  referenceSeries[1].itemStyle.color,
+);
+assert.deepEqual(referenceSeries[2].data, [[referenceBar.date, 7.8]]);
 for (const [supported, shown, period] of [
   [true, false, "D"],
   [false, true, "D"],
@@ -404,15 +491,13 @@ for (const [supported, shown, period] of [
   [true, true, "M"],
 ]) {
   const hidden = [];
-  plot(
+  plotMarkers(
     hidden,
-    bars,
+    [...bars, referenceBar],
     colors,
     supported,
     shown,
     period,
-    barLimitMarker,
-    barBrokenMarker,
   );
   assert.deepEqual(
     hidden,

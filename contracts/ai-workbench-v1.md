@@ -98,7 +98,7 @@ PDF最多20页，PDF/DOCX只在本地有界提取正文，不执行宏、脚本�
 
 `read_stock_trend(date,instrument_id,period,count)` 读取同一已发布代际、未复权的个股日周月K线、有界技术指标、至多30个交易日的可核验收盘涨跌停及同日板块。最近默认 `latest,D,30`，周月默认12根，明确日期不回退，收盘K线不作实时分时。旧冻结工具清单不扩大。
 
-新增：`read_stock_quote(date,instrument_id)`读取名称/代码指定日行情和成交额；`read_limit_up_data(date)`复用涨停梯队明细；`read_market_detail(date,section,query)`复用指数、板块、情绪、近30交易日涨幅榜、监管异动、炸板页面。gainers题材/行业统计使用页面同份前1000、筛选前固定样本，多标签合计可能超过100%；缺分类明确未知。
+`read_stock_quote(date,instrument_id)`读取名称或代码对应的指定日行情和成交额。`read_limit_up_data(date)`复用涨停梯队明细。`read_market_detail(date,section,query)`复用指数、板块、情绪、近30交易日涨幅榜、监管异动和炸板的本地读服务。涨幅榜题材与行业统计使用与页面相同的筛选前固定前1000样本，多标签合计可能超过100%。涨幅榜与炸板结构的 AI 证据只使用截至观察日可核验的归属，缺分类明确未知。公开页面单独披露的 `classification_reference` 不进入工具证据。
 
 新轮冻结`local_tool_budget`版本`ai-local-tool-budget-v2`：实质资料读取最多3次，可用性检查最多2次，总读取最多5次；`max_local_tools=5`仍表示总额。两种availability入口共用同一元数据额度。旧v3及更早缺少新预算的请求仍按其原`max_local_tools`总额（最多3）执行，不扩大冻结范围。预算耗尽返回`state:not_read,reason_code:tool_budget_exhausted`普通缺口，不代表资料不存在；处理完同批合法调用的call_id配对后，下一次仅总结且不新增联网。模型请求仍最多3次，日预算、次数、权限和取消仍独立硬校验。
 

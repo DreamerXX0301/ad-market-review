@@ -24,6 +24,23 @@ export const intradayReadingSections = {
   },
   retrospective: { label: "全天回看", description: "正式收盘后的全天变化" },
   rotation: { label: "题材轮动", description: "各时点题材表现与相邻时点变化" },
+  indexQuotes: { label: "指数概览", description: "各指数的所选日行情" },
+  indexChart: { label: "指数走势", description: "当前指数的历史K线" },
+  marketRanks: { label: "个股榜单", description: "成交额与涨幅前列" },
+  sealRanks: { label: "封板与炸板", description: "炸板样本及封单金额榜单" },
+  ladderSummary: { label: "梯队概况", description: "封板样本和最高连板" },
+  ladderDetail: {
+    label: "梯队明细",
+    description: "当前视图的梯队、题材或当日主线",
+  },
+  ladderEvents: { label: "补充事件", description: "其他涨停及事件分类" },
+  sources: { label: "数据与来源", description: "本页覆盖范围与数据口径" },
+  dataSummary: { label: "数据概况", description: "数据水位与已发布文件" },
+  automatic: { label: "自动计划", description: "竞价、盘中、午评与盘后复盘" },
+  syncActions: { label: "同步操作", description: "初始化、盘后增量及缺口修补" },
+  task: { label: "当前任务", description: "查看执行进度及相关步骤" },
+  dataCoverage: { label: "数据覆盖", description: "查看各数据集实际覆盖" },
+  taskHistory: { label: "同步历史", description: "查看近期执行与缺口" },
 } as const;
 
 export type IntradayReadingKey = keyof typeof intradayReadingSections;

@@ -61,7 +61,7 @@ export default function Topics({
     try {
       await post("/topics/initialize", { request_key: crypto.randomUUID() });
       reload();
-      toast("已导入当前真实来源目录");
+      toast("已登记本机已留存的来源分类");
     } catch (failure: any) {
       setError(failure.message);
     } finally {
@@ -73,9 +73,10 @@ export default function Topics({
     setError("");
     try {
       const task = await post("/sync/topics", {
+        scope: "catalog-additions-v1",
         request_key: crypto.randomUUID(),
       });
-      toast("完整题材同步已提交，数据中心显示实际进度");
+      toast("新增题材同步已提交，数据中心显示实际进度");
       onNavigate?.("data", { task_id: task.task_id || task.job_id });
     } catch (failure: any) {
       setError(failure.message);
@@ -142,13 +143,23 @@ export default function Topics({
           <Badge>不随盘面日期切换</Badge>
         </p>
         <div className="button-group">
-          <button className="btn" disabled={!!busy} onClick={syncLibrary}>
+          <button
+            className="btn"
+            disabled={!!busy}
+            title="对照来源目录，只采集本机尚未留存的分类成员"
+            onClick={syncLibrary}
+          >
             {busy === "sync" ? <Spinner /> : <RefreshCw size={14} />}
-            同步完整题材库
+            同步新增题材
           </button>
-          <button className="btn" disabled={!!busy} onClick={init}>
+          <button
+            className="btn"
+            disabled={!!busy}
+            title="把本机已有档案登记到题材库，无需联网"
+            onClick={init}
+          >
             {busy === "init" ? <Spinner /> : <RefreshCw size={14} />}
-            导入本地题材
+            登记本地题材
           </button>
           <button className="btn primary" onClick={() => setEditor(null)}>
             <Plus size={14} />

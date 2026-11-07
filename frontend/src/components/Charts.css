@@ -258,6 +258,10 @@
 .chart-broken-legend {
   color: var(--warning, #d89a37);
 }
+.candle-limit-status > .reference,
+.chart-limit-reference {
+  color: var(--purple, #b99afa);
+}
 .chart-limit-legend {
   display: flex;
   align-items: baseline;

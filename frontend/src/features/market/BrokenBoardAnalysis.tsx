@@ -21,6 +21,7 @@ import {
   brokenBoardFilterPrevious,
   brokenBoardHeightCounts,
   brokenBoardSortByPrevious,
+  classificationReferenceDates,
   brokenBoardContext,
   brokenBoardCurrentItems,
   brokenBoardDrawdown,
@@ -63,12 +64,14 @@ function MembershipTags({
   row,
   date,
   kind,
+  referenceDates,
 }: {
   row: Row;
   date: string;
   kind: BrokenBoardMembershipKind;
+  referenceDates?: readonly string[];
 }) {
-  const tags = brokenBoardMembership(row, date, kind);
+  const tags = brokenBoardMembership(row, date, kind, referenceDates);
   const render = (tag: Row) => (
     <Badge key={tag.key}>
       <span
@@ -199,12 +202,14 @@ function Distribution({
   data,
   date,
   sampleDate,
+  referenceDates,
   selected,
   onSelect,
 }: {
   data: Row | null | undefined;
   date: string;
   sampleDate: string;
+  referenceDates?: readonly string[];
   selected: TopicFilter;
   onSelect: (next: TopicFilter) => void;
 }) {
@@ -233,6 +238,7 @@ function Distribution({
           data?.[`${kind}_distribution`],
           date,
           kind,
+          referenceDates,
         );
         return (
           <div key={kind} className="broken-board-distribution-row">
@@ -478,6 +484,10 @@ export default function BrokenBoardAnalysis({
   const drawdown = brokenBoardDrawdown(context.current);
   const membershipDate =
     detailMode === "current" ? selectedDate : feedback.previousDate || "";
+  const referenceDates =
+    detailMode === "current" && selectedDate === date
+      ? classificationReferenceDates(detailContext?.classification_reference)
+      : [];
   const allDetailItems =
     detailMode === "current" ? currentItems : feedback.items;
   const eventPrevious =
@@ -491,6 +501,7 @@ export default function BrokenBoardAnalysis({
         membershipDate,
         topicFilter,
         boardFilter,
+        referenceDates,
       ),
       selectedDate,
       heightFilter,
@@ -745,10 +756,10 @@ export default function BrokenBoardAnalysis({
             )}
           </div>
           <p className="broken-board-note">
-            {detailMode === "current"
-              ? `所选日归属 ${membershipDate}`
-              : `炸板日归属 ${membershipDate}`}{" "}
-            · 仅使用该日已留存成员，采集日见标签说明；关联不代表涨跌原因。
+            {referenceDates.length
+              ? `最新行业概念参考 · 档案 ${referenceDates.join("、")}。行情与炸板统计仍按 ${selectedDate}。`
+              : `${detailMode === "current" ? "所选日" : "炸板日"}归属 ${membershipDate} · 仅使用该日已留存成员，采集日见标签说明。`}{" "}
+            关联不代表涨跌原因。
           </p>
           {detailMode === "current" &&
             selectedDate !== date &&
@@ -770,6 +781,7 @@ export default function BrokenBoardAnalysis({
                   data={distributionData}
                   date={membershipDate}
                   sampleDate={selectedDate}
+                  referenceDates={referenceDates}
                   selected={topicFilter}
                   onSelect={(value) =>
                     setTopicSelection({ scope: filterScope, value })
@@ -882,6 +894,7 @@ export default function BrokenBoardAnalysis({
                         row={row}
                         date={membershipDate}
                         kind="industry"
+                        referenceDates={referenceDates}
                       />
                     ),
                   },
@@ -893,6 +906,7 @@ export default function BrokenBoardAnalysis({
                         row={row}
                         date={membershipDate}
                         kind="concept"
+                        referenceDates={referenceDates}
                       />
                     ),
                   },

@@ -1,6 +1,11 @@
 type DataRow = Record<string, any>;
 
 export function dataTaskTitle(task: DataRow) {
+  if (
+    task.kind === "topic_refresh" &&
+    task.parameters?.scope === "catalog-additions-v1"
+  )
+    return "新增题材同步";
   const operation = task.parameters?.operation;
   if (task.kind === "source_check" && operation === "noon_snapshot")
     return "午评快照采集";
@@ -19,8 +24,16 @@ export function dataTaskTitle(task: DataRow) {
       task.parameters?.instrument?.name || task.parameters?.topic_code;
     return `单板块历史K线${name ? " · " + name : ""}`;
   }
-  if (task.kind === "source_check" && operation === "market_supplement")
+  if (task.kind === "source_check" && operation === "market_supplement") {
+    const { revalidate_only, year_history, recent_days, parent_sync_job_id } =
+      task.parameters;
+    if (revalidate_only === true) return "本地涨跌停证据核验";
+    if (year_history === false)
+      return parent_sync_job_id && recent_days === 1
+        ? "当日盘面增量"
+        : "盘面缺口修补";
     return "盘面细节与年内涨跌停回补";
+  }
   return (
     task.title ||
     (
@@ -481,14 +494,130 @@ export function filterGapDiagnosisStocks(
     });
 }
 
+export function supplementCoverageView(value: DataRow | null | undefined) {
+  const date = value?.target_date || null;
+  const range = (
+    label: string,
+    covered: unknown,
+    expected: unknown,
+    observedCount?: unknown,
+    unit = "日",
+  ) => {
+    const total = countOrUnknown(expected);
+    const verified = countOrUnknown(covered);
+    const seen = countOrUnknown(observedCount);
+    const known =
+      !!date &&
+      total !== null &&
+      total > 0 &&
+      verified !== null &&
+      verified <= total;
+    const observed =
+      known && seen !== null && seen >= verified && seen <= total ? seen : null;
+    const missing = known ? total - verified : null;
+    const unverified =
+      observed !== null && verified !== null ? observed - verified : null;
+    const unreceived =
+      observed !== null && total !== null ? total - observed : null;
+    const notes = [
+      unverified ? `${unverified} 日未验完整` : null,
+      unreceived ? `${unreceived} 日未取得` : null,
+    ].filter(Boolean);
+    return {
+      label,
+      covered: known ? verified : null,
+      total: known ? total : null,
+      missing,
+      gapLabel:
+        missing === null
+          ? "覆盖待核验"
+          : missing === 0
+            ? "已验收"
+            : notes.join(" · ") || `${missing} ${unit}待核验`,
+    };
+  };
+  const up = range(
+    "年内涨停",
+    value?.annual_covered_days,
+    value?.annual_expected_days,
+    value?.annual_observed_days,
+  );
+  const down = range(
+    "年内跌停",
+    value?.annual_down_covered_days,
+    value?.annual_down_expected_days,
+    value?.annual_down_observed_days,
+  );
+  const sector = range(
+    "板块日行情",
+    value?.sector_index_rows,
+    value?.sector_index_catalog_count,
+    undefined,
+    "组",
+  );
+  const missing = [up, down, sector]
+    .filter((entry) => entry.missing !== null && entry.missing > 0)
+    .map((entry) => `${entry.label} ${entry.gapLabel}`);
+  if (date && value?.seal_complete !== true) missing.unshift("封板明细待核验");
+  if (date && sector.missing === null) missing.push("板块日行情覆盖待核验");
+  const year = value?.rolling_year;
+  return {
+    date,
+    up,
+    down,
+    sector,
+    missing: missing.join(" · "),
+    rolling:
+      year?.end === date && typeof year?.start === "string"
+        ? {
+            start: year.start,
+            end: year.end,
+            pools: [
+              range(
+                "涨停",
+                year.up?.covered_days,
+                year.up?.expected_days,
+                year.up?.observed_days,
+              ),
+              range(
+                "跌停",
+                year.down?.covered_days,
+                year.down?.expected_days,
+                year.down?.observed_days,
+              ),
+            ],
+          }
+        : null,
+    fundLabel:
+      value?.fund_flow_complete === true
+        ? "已核验"
+        : value?.fund_flow_retired === true
+          ? "当前未采集"
+          : date
+            ? "待核验"
+            : "暂无档案",
+  };
+}
+
 /** Server Beijing time is authoritative; missing clock metadata never opens sync. */
 export function incrementWindowView(window: DataRow | null | undefined) {
   const allowed = window?.increment_allowed === true;
+  const cutoff =
+    window?.timezone === "Asia/Shanghai" &&
+    typeof window.cutoff === "string" &&
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(window.cutoff)
+      ? window.cutoff
+      : null;
   return {
     allowed,
+    cutoff,
     reason: allowed
-      ? "北京时间18:00后可运行，行情完成后追加行业与概念板块K线尾部，再衔接目标日盘面补充。"
+      ? "已到盘后安全时间，可提交手动增量。"
       : window?.reason || "正在确认北京时间盘后更新窗口，请稍后重试。",
-    label: allowed ? "开始盘后增量" : "18:00后可运行",
+    label: allowed
+      ? "开始盘后增量"
+      : cutoff
+        ? cutoff + " 后可运行"
+        : "等待盘后窗口",
   };
 }

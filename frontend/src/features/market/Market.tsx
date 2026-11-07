@@ -2,7 +2,9 @@ import { StockEventBadges } from "./BoardTags";
 import AbnormalMonitor from "./AbnormalMonitor";
 import { useEffect, useState } from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
-import { list, useApi } from "../../lib/api";
+import { list, useApi, usePageActive } from "../../lib/api";
+import IntradayPageNavigation from "./IntradayPageNavigation";
+import { intradayReadingProps } from "./intradayReadingNavigation";
 import type { Row } from "../../lib/api";
 import {
   createStockNavigation,
@@ -249,6 +251,7 @@ export function MarketOverview({
   onStock: (id: string, navigation?: StockNavigation) => void;
   indicesOnly?: boolean;
 }) {
+  const pageActive = usePageActive();
   const [selected, setSelected] = useState("000001.SH");
   const result = useApi<Row>(
     date
@@ -276,23 +279,32 @@ export function MarketOverview({
         </Panel>
       </div>
     );
+  const pageTitle = indicesOnly ? "指数行情" : "盘面总览";
   return (
-    <div className="page-stack">
+    <IntradayPageNavigation
+      scopeKey={pageTitle + date}
+      pageTitle={pageTitle}
+      pageActive={pageActive}
+    >
       {!indicesOnly && <AIEntry key={date} kind="market" asOf={date} />}
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
-      <MarketDataCoverage
-        coverage={data?.data_coverage}
-        loading={result.loading}
-      />
-      <IndexCards
-        indices={indices}
-        selected={selected}
-        onSelect={setSelected}
-      />
+      <div {...intradayReadingProps("sources")}>
+        <MarketDataCoverage
+          coverage={data?.data_coverage}
+          loading={result.loading}
+        />
+      </div>
+      <div {...intradayReadingProps("indexQuotes")}>
+        <IndexCards
+          indices={indices}
+          selected={selected}
+          onSelect={setSelected}
+        />
+      </div>
       {!indicesOnly && (
-        <div className="summary-strip">
+        <div {...intradayReadingProps("market")} className="summary-strip">
           <Stat
             label="沪深京总成交额"
             value={marketMoney(data?.total_amount)}
@@ -337,7 +349,10 @@ export function MarketOverview({
           />
         </div>
       )}
-      <div className={indicesOnly ? "" : "market-layout"}>
+      <div
+        {...intradayReadingProps("indexChart")}
+        className={indicesOnly ? "" : "market-layout"}
+      >
         <Panel
           title={
             <>
@@ -378,26 +393,30 @@ export function MarketOverview({
         )}
       </div>
       {!indicesOnly && data && (
-        <LadderFeedbackOverview
-          compact
-          rows={data.feedback || []}
-          firstBoardRows={data.first_board_feedback || []}
-          firstBoardCoverage={data.first_board_feedback_coverage || {}}
-          date={date}
-          snapshotId={data.snapshot_id}
-        />
+        <div {...intradayReadingProps("prior")}>
+          <LadderFeedbackOverview
+            compact
+            rows={data.feedback || []}
+            firstBoardRows={data.first_board_feedback || []}
+            firstBoardCoverage={data.first_board_feedback_coverage || {}}
+            date={date}
+            snapshotId={data.snapshot_id}
+          />
+        </div>
       )}
       {!indicesOnly && data?.broken_board_analysis && (
-        <BrokenBoardSummary
-          data={data.broken_board_analysis}
-          date={date}
-          snapshotId={data.snapshot_id}
-          onStock={onStock}
-        />
+        <div {...intradayReadingProps("broken")}>
+          <BrokenBoardSummary
+            data={data.broken_board_analysis}
+            date={date}
+            snapshotId={data.snapshot_id}
+            onStock={onStock}
+          />
+        </div>
       )}
       {!indicesOnly && (
         <>
-          <div className="two-col">
+          <div {...intradayReadingProps("marketRanks")} className="two-col">
             <Panel title="成交额 TOP 10 · 个股" subtitle="当日成交最活跃的标的">
               <SortableMarketTable
                 sortScope="仅对成交额TOP10已入选样本重排，不重新计算全市场TOP10"
@@ -493,7 +512,7 @@ export function MarketOverview({
               />
             </Panel>
           </div>
-          <div className="two-col">
+          <div {...intradayReadingProps("sealRanks")} className="two-col">
             <Panel
               title="炸板池前五"
               subtitle="当日炸板池样本 · 按开板次数、成交额排序"
@@ -603,7 +622,7 @@ export function MarketOverview({
           </div>
         </>
       )}
-    </div>
+    </IntradayPageNavigation>
   );
 }
 const pageDetails: Record<
@@ -684,10 +703,12 @@ const pageDetails: Record<
 export function MarketPage({
   route,
   date,
+  latestDate,
   onStock,
 }: {
   route: string;
   date: string;
+  latestDate?: string;
   onStock: (id: string, navigation?: StockNavigation) => void;
 }) {
   const info = pageDetails[route];
@@ -892,6 +913,7 @@ export function MarketPage({
     return (
       <LimitLadder
         date={date}
+        latestDate={latestDate}
         data={data}
         loading={result.loading}
         error={result.error}
@@ -1115,6 +1137,7 @@ export function MarketPage({
     return (
       <SectorExplorer
         date={date}
+        latestDate={latestDate}
         data={data}
         loading={result.loading}
         error={result.error}
@@ -1319,7 +1342,11 @@ export function MarketPage({
           </div>
         )}
         {isGainers && (
-          <GainerDistribution key={date} data={data?.ranking_distribution} />
+          <GainerDistribution
+            key={date}
+            data={data?.ranking_distribution}
+            classificationReference={data?.classification_reference}
+          />
         )}
         {isSector && (
           <>
@@ -1772,6 +1799,7 @@ export function MarketPage({
           }
           topic={memberTopic}
           date={date}
+          latestDate={latestDate}
           onClose={() => setMemberTopic(null)}
           onStock={onStock}
         />

@@ -40,7 +40,7 @@
   padding-bottom: 0;
   font-size: var(--workbench-type-label, 11px);
 }
-.market-members-inline > .table-wrap {
+.market-members-body.market-members-inline > .table-wrap {
   flex: none;
   min-height: 0;
   max-height: none;

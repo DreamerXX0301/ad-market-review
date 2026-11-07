@@ -97,6 +97,25 @@ def test_warm_metadata_survives_bulk_byte_eviction_without_decoding_old_rows(pub
     assert historical not in calls and unused not in calls and calls
 
 
+def test_rolling_coverage_counts_both_unverified_and_unreceived_dates(published, monkeypatch):
+    root, document, cache = published
+    earlier, before_year = '2025-10-27', '2025-10-24'
+    document['annual_pools'][earlier] = {'date': earlier, 'complete': False, 'items': []}
+    cache.publish(document)
+    market = SimpleNamespace(status=lambda: {'snapshot_id': 'status-fixture'},
+                             calendar=lambda: [before_year, earlier, FIRST, PREVIOUS, DAY])
+    monkeypatch.setattr(core, 'get_market', lambda: market)
+    actual = source_service.supplement_status()
+    assert actual == full_status(monkeypatch)
+    assert actual['annual_covered_days'] == 2
+    assert actual['rolling_year'] == {
+        'start': earlier, 'end': DAY,
+        'up': {'expected_days': 4, 'observed_days': 3, 'covered_days': 2},
+        'down': {'expected_days': 4, 'observed_days': 1, 'covered_days': 1},
+    }
+    assert source_service._rolling_pool_coverage({}, [FIRST, PREVIOUS, DAY], DAY) is None
+
+
 @pytest.mark.parametrize('change', ['missing', 'same-size', 'symlink'])
 def test_old_unselected_history_corruption_still_invalidates_status_after_warming(published, monkeypatch, tmp_path, change):
     root, _, _ = published

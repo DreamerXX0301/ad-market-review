@@ -6,6 +6,7 @@ neither a percentage change nor the currently displayed adjusted chart is proof.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import math
@@ -240,6 +241,44 @@ def _raw_quotes(rows, until):
     return {day: None if day in conflicts else row for day, (_, row) in found.items()}, conflicts
 
 
+def _regular_board_rate(symbol, day):
+    code, exchange = symbol.split('.')
+    if exchange == 'SH' and code.startswith(('600', '601', '603', '605')):
+        return Decimal('0.10')
+    if exchange == 'SZ' and code.startswith(('000', '001', '002', '003')):
+        return Decimal('0.10')
+    if exchange == 'SH' and code.startswith(('688', '689')) and day >= '2019-07-22':
+        return Decimal('0.20')
+    if exchange == 'SZ' and code.startswith(('300', '301')) and day >= '2020-08-24':
+        return Decimal('0.20')
+    if exchange == 'BJ' and code.startswith(('4', '8', '920')) and day >= '2021-11-15':
+        return Decimal('0.30')
+    return None
+
+
+def _down_price_reference(quote, previous, *, day, instrument, symbol, closing):
+    pool_states = (closing.get(kind, {}) for kind in ('up', 'down', 'broken'))
+    if previous is None or any(item.get('state') is True or item.get('status') == 'conflict' for item in pool_states):
+        return None
+    if instrument.get('is_st_date', instrument.get('identity_date')) == day and instrument.get('is_st') is True:
+        return None
+    row, prices = quote['row'], quote['prices']
+    if row.get('corporate_action_coverage_known') is not True or row.get('corporate_action') is not False:
+        return None
+    rate = _regular_board_rate(symbol, day)
+    if rate is None:
+        return None
+    prior_close = previous['prices']['close']
+    lower = min((prior_close * (1 - rate)).quantize(TICK, rounding=ROUND_HALF_UP), prior_close - TICK)
+    upper = max((prior_close * (1 + rate)).quantize(TICK, rounding=ROUND_HALF_UP), prior_close + TICK)
+    if prices['close'] != lower or prices['high'] > upper:
+        return None
+    if any(other != rate and min((prior_close * (1 - other)).quantize(TICK, rounding=ROUND_HALF_UP),
+                                 prior_close - TICK) == lower for other in RATES):
+        return None
+    return {'price': float(lower), 'rate_pct': float(rate * 100), 'previous_raw_close': float(prior_close)}
+
+
 def attach_chart_patterns(chart, *, raw_rows=(), calendar=(), closing_states=None, evaluation_dates=None):
     """Attach to the caller-owned chart copy; never fetch, persist, or adjust prices."""
     bars = chart.get('bars', [])
@@ -270,14 +309,33 @@ def attach_chart_patterns(chart, *, raw_rows=(), calendar=(), closing_states=Non
             instrument.get('kind') != 'stock' or not re.fullmatch(r'\d{6}\.(SH|SZ|BJ)', symbol) or
             any(key in instrument and (not isinstance(instrument[key], str) or instrument[key].upper() != symbol) for key in ('instrument_id', 'thscode'))):
         identity_reason = '缺少确定的行情代际或明确一致的股票身份，形态保持未知'
-    daily = {}; events = []
-    for day in dates:
+    period = chart.get('period', 'D')
+    reference_days = ({bar['date'] for bar in bars if not bar.get('noon_provisional') and not bar.get('intraday_provisional')}
+                      if period == 'D' and evaluation_dates is None and not identity_reason else set())
+    listing = instrument.get('list_date')
+    try:
+        valid_listing = isinstance(listing, str) and date.fromisoformat(listing).isoformat() == listing
+    except ValueError:
+        valid_listing = False
+    raw_dates = sorted(raw) if reference_days and valid_listing else []
+    daily = {}; events = []; references = {}
+    for index, day in enumerate(dates):
         row = raw.get(day)
         quote, reason = _quote(row, symbol)
         if day in conflicts:
             reason = '同一交易日原始OHLC或成交量重复冲突'
         if identity_reason:
             reason = identity_reason
+        if (day in reference_days and not reason and raw_dates and index >= 5 and listing <= dates[index - 5]
+                and quote['prices']['close'] == quote['prices']['low']):
+            previous_day = dates[index - 1]
+            # A known raw quote omitted by the market calendar invalidates adjacency.
+            if raw_dates[bisect_right(raw_dates, previous_day)] == day:
+                previous, _ = _quote(raw.get(previous_day), symbol)
+                reference = _down_price_reference(quote, previous, day=day, instrument=instrument, symbol=symbol,
+                                                  closing=closing_states.get(day, {}))
+                if reference is not None:
+                    references[day] = reference
         states = {}; day_events = []
         for kind, label in KINDS.items():
             direction = 'down' if kind == 'one_price_limit_down' else 'up'
@@ -306,7 +364,6 @@ def attach_chart_patterns(chart, *, raw_rows=(), calendar=(), closing_states=Non
                                   'price_tick': float(TICK), 'calculation_version': event_basis}}
             events.append(event); day_events.append(event)
         daily[day] = {'states': states, 'events': day_events}
-    period = chart.get('period', 'D')
     if period == 'D':
         for bar in bars:
             day = bar['date']; item = daily.get(day, {'states': {kind: _state(None, '该日不在已留存市场交易日历中') for kind in KINDS}, 'events': []})
@@ -316,6 +373,8 @@ def attach_chart_patterns(chart, *, raw_rows=(), calendar=(), closing_states=Non
                 event.update(bar_date=day, chart_price=_number(bar.get('low' if event['kind'] == 'earth_to_sky' else 'close')))
                 attached.append(dict(event))
             bar.update(pattern_events=attached, pattern_status=item['states'])
+            if day in references:
+                bar['limit_down_price_reference'] = references[day]
     else:
         monthly = period == 'M'
         key = (lambda day: day[:7]) if monthly else (lambda day: date.fromisoformat(day).isocalendar()[:2])

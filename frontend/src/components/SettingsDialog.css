@@ -1,0 +1,73 @@
+.modal:has(.settings-dialog-body) {
+  width: var(--settings-dialog-width, 510px);
+  max-height: min(90dvh, 740px);
+  border-radius: 14px;
+}
+.modal:has(.settings-dialog-body) > .modal-title {
+  flex-shrink: 0;
+  padding: 12px 20px;
+  border-bottom-color: var(--border-soft);
+  background: var(--surface2);
+}
+.modal > form:has(> .settings-dialog-body) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.modal .settings-dialog-body {
+  min-height: 0;
+  gap: 14px;
+  padding: 16px 20px;
+}
+.settings-dialog-intro,
+.settings-dialog-field-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+.settings-dialog-intro {
+  color: var(--muted);
+  font-size: var(--workbench-type-label, 11px);
+  line-height: 1.5;
+}
+.settings-dialog-field-title {
+  justify-content: space-between;
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-dialog-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 10px);
+  line-height: 1.6;
+}
+.settings-dialog-note > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--blue);
+}
+.modal .settings-dialog-footer {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
+  border-top-color: var(--border-soft);
+  background: var(--surface2);
+}
+.settings-dialog-footer > .btn {
+  min-height: 34px;
+}
+@media (max-width: 480px) {
+  .modal:has(.settings-dialog-body) > .modal-title,
+  .modal .settings-dialog-body,
+  .modal .settings-dialog-footer {
+    padding-inline: 14px;
+  }
+}

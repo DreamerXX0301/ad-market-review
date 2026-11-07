@@ -63,7 +63,12 @@ globalThis.__active = true;
 globalThis.__setting = {
   enabled: false,
   revision: 3,
-  slots: [{ start: "09:35" }, { start: "09:45" }, { start: "10:00" }, { start: "14:30" }],
+  slots: [
+    { start: "09:35" },
+    { start: "09:45" },
+    { start: "10:00" },
+    { start: "14:30" },
+  ],
 };
 globalThis.__response = { enabled: true, revision: 4 };
 globalThis.__calls = [];
@@ -75,7 +80,7 @@ function render() {
 }
 let html = render();
 assert.match(html, /id="intraday-automatic-settings"/);
-assert.match(html, /09:35 · 09:45 · 10:00 · 14:30/);
+assert.match(html, /09:35<\/li><li>09:45<\/li><li>10:00<\/li><li>14:30/);
 await controls.find((row) => row.type === "checkbox").onChange();
 assert.deepEqual(globalThis.__calls, [
   ["/market/intraday/automation", { enabled: true, expected_revision: 3 }],

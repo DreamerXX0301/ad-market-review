@@ -168,6 +168,85 @@ assert.ok(
   requests.every((path) => path === null),
   "present observation uses its original report",
 );
+const archiveDate = "2026-10-28";
+const latestArchiveDate = "2026-10-31";
+const archiveConcept = {
+  source: "synthetic",
+  kind: "concept",
+  topic_code: "synthetic-topic",
+  name: "档案概念",
+  observed_date: archiveDate,
+};
+const latestConcept = {
+  ...archiveConcept,
+  topic_code: "latest-topic",
+  name: "最新档案概念",
+  observed_date: latestArchiveDate,
+};
+const unlistedConcept = {
+  ...archiveConcept,
+  topic_code: "unlisted-topic",
+  name: "未列出概念",
+  observed_date: "2026-10-29",
+};
+const archiveConcepts = [archiveConcept, latestConcept, unlistedConcept];
+const archivedData = {
+  ...data,
+  classification_reference: {
+    date: latestArchiveDate,
+    dates: [archiveDate, archiveDate, "2026-11-31"],
+  },
+  current: {
+    ...data.current,
+    items: [
+      {
+        ...items[0],
+        topics_date: day,
+        topics_state: "dated_partial",
+        topics: archiveConcepts,
+      },
+      ...items.slice(1),
+    ],
+    concept_distribution: archiveConcepts.map((concept) => ({
+      ...concept,
+      topics_date: day,
+      membership_date: concept.observed_date,
+      observed_count: 1,
+    })),
+  },
+};
+const archived = render({}, archivedData);
+assert.match(archived.html, /最新行业概念参考 · 档案 2026-10-31、2026-10-28/);
+assert.match(archived.html, /行情与炸板统计仍按 2026-10-27/);
+assert.match(archived.html, /档案概念 <b>关联1只<\/b>/);
+assert.match(archived.html, /成员采集 2026-10-28[^>]*>档案概念<\/span>/);
+assert.match(archived.html, /最新档案概念 <b>关联1只<\/b>/);
+assert.match(archived.html, /成员采集 2026-10-31[^>]*>最新档案概念<\/span>/);
+assert.doesNotMatch(archived.html, /未列出概念|2026-11-31/);
+const filteredArchive = render(
+  {
+    2: {
+      scope: filterScope,
+      value: {
+        kind: "concept",
+        key: JSON.stringify(["synthetic", "concept", "synthetic-topic", null]),
+      },
+    },
+  },
+  archivedData,
+);
+assert.deepEqual(
+  filteredArchive.table.rows.map((r) => r.instrument_id),
+  ["600001.SH"],
+);
+assert.doesNotMatch(
+  render({ 0: "previous" }, archivedData).html,
+  /最新行业概念参考|档案概念/,
+);
+assert.doesNotMatch(
+  render({}, { ...archivedData, classification_reference: undefined }).html,
+  /最新行业概念参考|档案概念/,
+);
 result = render({
   3: { scope: filterScope, value: "star" },
   4: { scope: filterScope, value: "2" },

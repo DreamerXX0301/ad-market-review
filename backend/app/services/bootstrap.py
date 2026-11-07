@@ -10,7 +10,7 @@ from app.services import task_service as tasks
 from app.analytics.market_storage import load_reference
 
 
-def register_market(status: dict, job_id: str, callback=None):
+def register_market(status: dict, job_id: str, callback=None, *, completion=None):
     start, end = status["data_begin"], status["data_end"]
     previous_day = business_date()
     if previous_day and previous_day > end:
@@ -64,6 +64,7 @@ def register_market(status: dict, job_id: str, callback=None):
             lineage["derived_view"] = {"calculation": "统一后端日周聚合和指标；基于此不可变输入按需计算", "algorithm": status.get("algorithm_version"), "materialized_indicator_rows": False}
         identifier = module + "-" + generation.removeprefix("market-")
         snapshots[module] = publish_snapshot(module=module, job_id=job_id, start=begin, end=finish, artifacts=[artifact,*shared.get(file,[])], quality=quality, missing=missing, lineage=lineage, price_basis="none" if module in ("daily_raw", "analysis_bars", "indicators") else "not_applicable", algorithm=status.get("algorithm_version", "raw-v1"), snapshot_id=identifier, activate=False)
+    receipt = completion or {'status': 'partial', 'message': '行情模块已成组发布；辅助字段缺口保留待核验', 'details': {}}
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         state = connection.execute("SELECT status FROM job WHERE job_id=?", (job_id,)).fetchone()
@@ -72,8 +73,8 @@ def register_market(status: dict, job_id: str, callback=None):
         for module, snapshot in snapshots.items():
             connection.execute("INSERT INTO published_head(module,scope_key,snapshot_id,changed_at_ms) VALUES(?,?,?,?) ON CONFLICT(module,scope_key) DO UPDATE SET snapshot_id=excluded.snapshot_id,changed_at_ms=excluded.changed_at_ms", (module,'CN_A',snapshot,now_ms()))
         connection.execute("INSERT INTO business_clock(singleton,business_date,calendar_snapshot_id,changed_at_ms) VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET business_date=excluded.business_date,calendar_snapshot_id=excluded.calendar_snapshot_id,changed_at_ms=excluded.changed_at_ms", (end, snapshots["calendar"], now_ms()))
-        connection.execute("UPDATE job SET status='partial',phase='published',accepted_batches=100,finished_at_ms=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?",(now_ms(),job_id))
-        tasks.append_event(connection,job_id,'published','行情模块已成组发布；辅助字段缺口保留待核验')
+        connection.execute("UPDATE job SET status=?,phase='published',accepted_batches=100,finished_at_ms=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?",(receipt['status'],now_ms(),job_id))
+        tasks.append_event(connection,job_id,'published',receipt['message'],details=receipt['details'])
     from app.domain.workspace import seed_workspace
     try:
         seed_workspace()

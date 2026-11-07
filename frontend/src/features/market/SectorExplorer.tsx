@@ -312,6 +312,7 @@ function RankingValue({ row, field }: { row: Row; field: string }) {
 /** Reuse the published sector read model and shared membership view, without new collection. */
 export default function SectorExplorer({
   date,
+  latestDate,
   data,
   loading,
   error,
@@ -319,6 +320,7 @@ export default function SectorExplorer({
   onStock,
 }: {
   date: string;
+  latestDate?: string;
   data: Row | null;
   loading: boolean;
   error: string;
@@ -490,25 +492,25 @@ export default function SectorExplorer({
               行业分类
             </button>
           </div>
-          <label className="sector-explorer-source">
-            <span>来源与层级</span>
-            <select
-              aria-label="选择同源分类与行业层级"
-              value={effectiveGroup}
-              onChange={(e) => {
-                setGroupKey(e.target.value);
-                setSort(null);
-              }}
-              disabled={!groups.length}
-            >
-              {!groups.length && <option value="">等待读取</option>}
-              {groups.map((item) => (
-                <option key={item.key} value={item.key}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {groups.length > 1 && (
+            <label className="sector-explorer-source">
+              <span>来源与层级</span>
+              <select
+                aria-label="选择同源分类与行业层级"
+                value={effectiveGroup}
+                onChange={(e) => {
+                  setGroupKey(e.target.value);
+                  setSort(null);
+                }}
+              >
+                {groups.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="sector-explorer-search">
             <input
               className="search-input"
@@ -701,7 +703,9 @@ export default function SectorExplorer({
                               </button>
                               {row.members_available === false && (
                                 <small className="market-gap-note">
-                                  该日历史成员缺档
+                                  {date === latestDate
+                                    ? "历史家数待核验"
+                                    : "该日历史成员缺档"}
                                 </small>
                               )}
                             </div>
@@ -828,6 +832,7 @@ export default function SectorExplorer({
                   key={scope + selectedId}
                   topic={selected}
                   date={date}
+                  latestDate={latestDate}
                   onStock={onStock}
                   compact
                 />

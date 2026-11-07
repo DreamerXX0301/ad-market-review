@@ -84,12 +84,57 @@ def supplement_status():
     from app.core import get_market
     from app.services.market_supplement import load_supplement_status
     from app.services.sector_history import sector_prices_for_date
+    from app.services.supplement_policy import FUND_FLOW_RETIRED
     market=get_market();status=market.status();doc=load_supplement_status(status.get('snapshot_id'))
     day=doc.get('target_date');pool=doc.get('public_pools',{}).get(day,{})
     flow=doc.get('fund_flows',{}).get(day,{})
     coverage=doc.get('annual_coverage',{}); down=doc.get('annual_down_coverage',{})
     sectors=sector_prices_for_date(doc,day) if day else {}
-    return {'source_id':'akshare-public','name':'AKShare同源公开补充','mode':'supplement','tier':'免Key免费','target_date':day,'quality':doc.get('quality','not_synced'),'seal_rows':len(pool.get('items',[])),'seal_complete':pool.get('complete',False),'fund_flow_rows':len(flow.get('items',[])),'fund_flow_complete':flow.get('complete',False),'sector_index_rows':len(sectors.get('items',[])),'sector_index_catalog_count':sectors.get('coverage',{}).get('catalog_count'),'sector_index_complete':sectors.get('complete') is True,'annual_covered_days':coverage.get('covered_days',0),'annual_expected_days':coverage.get('expected_days',0),'annual_complete':coverage.get('complete',False),'annual_down_observed_days':down.get('observed_days',0),'annual_down_covered_days':down.get('covered_days',0),'annual_down_expected_days':down.get('expected_days',0),'annual_down_complete':down.get('complete',False),'failures':doc.get('failures',[])[-5:],'description':'公开来源补充封板与行业资金；扶摇历史池补充年内涨跌停，按日期的指数历史补充行业与概念日行情。板块行情和历史成员分别核验，不以当前成员回填历史。失败保留缺口，完整批次可缓存复用。','seal_sequence_available':False}
+    rolling = _rolling_pool_coverage(doc, market.calendar(), day) if day and callable(getattr(market, 'calendar', None)) else None
+    return {'source_id': 'akshare-public', 'name': 'AKShare同源公开补充', 'mode': 'supplement', 'tier': '免Key免费',
+            'target_date': day, 'quality': doc.get('quality', 'not_synced'),
+            'seal_rows': len(pool.get('items', [])), 'seal_complete': pool.get('complete', False),
+            'fund_flow_rows': len(flow.get('items', [])), 'fund_flow_complete': flow.get('complete', False),
+            'fund_flow_retired': doc.get('fund_flow_policy') == FUND_FLOW_RETIRED,
+            'sector_index_rows': len(sectors.get('items', [])),
+            'sector_index_catalog_count': sectors.get('coverage', {}).get('catalog_count'),
+            'sector_index_complete': sectors.get('complete') is True,
+            'annual_observed_days': coverage.get('observed_days', 0),
+            'annual_covered_days': coverage.get('covered_days', 0), 'annual_expected_days': coverage.get('expected_days', 0),
+            'annual_complete': coverage.get('complete', False),
+            'annual_down_observed_days': down.get('observed_days', 0),
+            'annual_down_covered_days': down.get('covered_days', 0), 'annual_down_expected_days': down.get('expected_days', 0),
+            'annual_down_complete': down.get('complete', False),
+            'rolling_year': rolling,
+            'failures': doc.get('failures', [])[-5:], 'failure_reason': doc.get('failure_reason'),
+            'description': '公开接口补充封板明细，扶摇补充年内涨跌停和板块日行情。行业资金只展示已核验净流入证据。板块日行情与成员档案分别核验。',
+            'seal_sequence_available': False}
+
+
+def _rolling_pool_coverage(doc, calendar, day):
+    from datetime import date, timedelta
+
+    anchor = date.fromisoformat(day)
+    try:
+        anniversary = anchor.replace(year=anchor.year - 1)
+    except ValueError:
+        anniversary = anchor.replace(year=anchor.year - 1, day=28)
+    start = (anniversary + timedelta(days=1)).isoformat()
+    # Without a calendar covering the full window, the expected total is unknown.
+    if not calendar or min(calendar) > start or day not in calendar:
+        return None
+    expected = {value for value in calendar if start <= value <= day}
+    result = {'start': start, 'end': day}
+    for key, field in (('up', 'annual_pools'), ('down', 'annual_down_pools')):
+        states = doc.get('limit_pool_days', {}).get(field)
+        if states is None:
+            states = {value: 'complete' if record.get('complete') is True else 'partial'
+                      for value, record in doc.get(field, {}).items()
+                      if isinstance(record, dict) and record.get('items') is not None}
+        observed = expected.intersection(states)
+        result[key] = {'expected_days': len(expected), 'observed_days': len(observed),
+                       'covered_days': sum(states[value] == 'complete' for value in observed)}
+    return result
 
 
 def configure(identifier, payload):

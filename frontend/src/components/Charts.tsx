@@ -83,6 +83,8 @@ import { chartDataNotes } from "./dataNotePresentation";
 import {
   barLimitMarker,
   barBrokenMarker,
+  barLimitDownPriceReference,
+  LIMIT_DOWN_REFERENCE_LABEL,
   LimitStatus,
   PatternStatus,
   limitCoverageText,
@@ -203,6 +205,7 @@ function chartPalette() {
     tooltip: light ? "#ffffff" : "#192332",
     tooltipText: light ? "#34435a" : "#dce6f5",
     provisional: light ? "#875b12" : "#efba55",
+    reference: light ? "#7754b4" : "#b99afa",
     up: light ? "#d85151" : "#ed6865",
     down: light ? "#119573" : "#39bd9b",
     bollUpper: light ? "#ce4147" : "#f07178",
@@ -1135,6 +1138,34 @@ export function CandleChart({
           clip: false,
           z: 8,
         });
+      const priceReferences = bars.flatMap((bar) =>
+        barLimitDownPriceReference(bar) ? [[bar.date, bar.low]] : [],
+      );
+      if (priceReferences.length)
+        series.push({
+          name: LIMIT_DOWN_REFERENCE_LABEL,
+          type: "scatter",
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          data: priceReferences,
+          symbol: "emptyCircle",
+          symbolSize: 7,
+          symbolOffset: [0, 8],
+          itemStyle: { color: pal.reference, opacity: 1 },
+          label: {
+            show: true,
+            formatter: "跌?",
+            position: "bottom",
+            distance: 2,
+            fontSize: 10,
+            fontWeight: 600,
+            color: pal.reference,
+          },
+          labelLayout: { hideOverlap: true },
+          tooltip: { show: false },
+          clip: false,
+          z: 8,
+        });
     }
     mas.forEach((n) => {
       series.push({
@@ -1305,6 +1336,7 @@ export function CandleChart({
                 down: pal.down,
                 text: pal.tooltipText,
                 warning: pal.provisional,
+                reference: pal.reference,
               }) +
               "</div>"
             );
@@ -2465,6 +2497,9 @@ export function CandleChart({
             <>
               <span className="up">▼ 收盘涨停</span>
               <span className="down">▲ 收盘跌停</span>
+              <span className="chart-limit-reference">
+                ○ 跌? · {LIMIT_DOWN_REFERENCE_LABEL}
+              </span>
               <span className="chart-broken-legend">◆ 炸板</span>
               <span className="up">▼ 回封</span>
               <span>同日形态合并标注：地天 / 一字涨 / 一字跌</span>

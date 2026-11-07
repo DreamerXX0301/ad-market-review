@@ -4,6 +4,7 @@ This reads the existing local topic catalog and manual overrides only. The
 business date describes current research membership, never historical causation.
 """
 import re
+from datetime import date
 
 from app.core import connect
 from app.services import topics, topic_members
@@ -94,3 +95,29 @@ def stock_membership_fields(market, symbol):
             'current_industries': [tag for tag in tags if tag['kind'] == 'industry'],
             'current_topics_observed_date': data['business_date'],
             'current_topics_scope': data['scope']}
+
+
+def merge_latest_provider_memberships(dated, current, day):
+    """Fill missing categories with explicitly dated provider references."""
+    merged = {symbol: list(tags) for symbol, tags in dated.items()}
+    dates = set()
+    for symbol, items in current.items():
+        tags = merged.setdefault(symbol, [])
+        existing_kinds = {tag.get("kind") for tag in tags}
+        for item in items:
+            kind = item.get("kind")
+            observed = item.get("source_observed_date")
+            if kind not in {"industry", "concept"} or kind in existing_kinds or item.get("provider_member") is not True:
+                continue
+            if not all(isinstance(item.get(key), str) and item[key].strip() for key in ("topic_id", "name")):
+                continue
+            if not isinstance(observed, str):
+                continue
+            try:
+                if date.fromisoformat(observed).isoformat() != observed or observed <= day:
+                    continue
+            except ValueError:
+                continue
+            tags.append({**item, "observed_date": observed, "classification_reference": True})
+            dates.add(observed)
+    return merged, ({"date": max(dates), "dates": sorted(dates)} if dates else None)

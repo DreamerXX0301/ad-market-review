@@ -2,8 +2,8 @@
 
 The paired Fuyao source pools share their declared A-share endpoint universe.
 Public/annual up-only supplements cannot complete a missing broken-pool universe.
-One local batch supplies at most seven sessions of event candidates; no chart,
-provider, mutable business database or whole-market history is opened here.
+One local batch supplies at most seven sessions of event candidates. The latest
+UI report can separately receive a local provider classification lookup.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from statistics import mean, median
 from zoneinfo import ZoneInfo
 
 from app.domain.universe import BOARDS, identity_flags
+from app.services import stock_memberships
 from app.services.market_history import resolve_reference
 
 VERSION = 'broken-board-analysis-v1'
@@ -259,8 +260,9 @@ def _price_feedback(change):
                       if change is not None else '缺少可比收盘收益，不能判正负反馈'}
 
 
-def _cohort_memberships(items, *, membership_day, sample_day, status, reference, broken_only=False):
-    """Resolve one retained archive for a cohort, never current per-stock lookups."""
+def _cohort_memberships(items, *, membership_day, sample_day, status, reference, broken_only=False,
+                        latest_memberships=None):
+    """Resolve a dated archive, optionally filling missing kinds for the latest UI report."""
     scope = f'按{membership_day or "未知日期"}已留存行业与概念归属；不是涨跌原因，多重关联家数不可相加'
     ids = {row['instrument_id'] for row in items if not broken_only or row.get('outcome') == 'broken'}
     local, coverage = resolve_reference('sectors', membership_day, status, reference) if _day(membership_day) and ids else ({}, {})
@@ -294,6 +296,19 @@ def _cohort_memberships(items, *, membership_day, sample_day, status, reference,
     for key in conflicts:
         by_identity.pop(key, None)
     tags_by_stock = {symbol: [] for symbol in ids}
+    for tag, members in by_identity.values():
+        for symbol in members & ids:
+            tags_by_stock[symbol].append(tag)
+    missing = sorted(symbol for symbol, tags in tags_by_stock.items()
+                     if len({tag['kind'] for tag in tags}) < 2) if latest_memberships is not None else []
+    classification_reference = None
+    if missing:
+        live = latest_memberships(missing)
+        tags_by_stock, classification_reference = stock_memberships.merge_latest_provider_memberships(
+            tags_by_stock, {symbol: live.get(symbol, []) for symbol in missing}, membership_day)
+    if classification_reference:
+        scope = (f'优先使用{membership_day}留存归属，缺项使用本机最新来源分类参考。'
+                 '最新分类来源日单独标注，归属不代表涨跌原因，多重关联家数不可相加。')
     changes = {}; price_conflicts = set()
     for row in items:
         symbol = row['instrument_id']
@@ -306,41 +321,53 @@ def _cohort_memberships(items, *, membership_day, sample_day, status, reference,
             changes[symbol] = change
     for symbol in price_conflicts:
         changes[symbol] = None
+    associations = {}
+    for symbol, tags in tags_by_stock.items():
+        for tag in tags:
+            level = tag.get('classification_level')
+            key = (tag['source'], tag['kind'], tag.get('topic_code') or tag.get('source_code') or tag['topic_id'],
+                   str(level) if level is not None else None)
+            associations.setdefault(key, {})[symbol] = tag
     groups = {'industry': [], 'concept': []}
-    for key, (tag, members) in by_identity.items():
-        for symbol in members & tags_by_stock.keys():
-            tags_by_stock[symbol].append(tag)
-        associated = members & ids
+    for associated in associations.values():
+        fallback_tags = [tag for tag in associated.values() if tag.get('classification_reference') is True]
+        tag = max(fallback_tags or associated.values(),
+                  key=lambda value: (value['observed_date'], value['topic_id'], value['name']))
         count = len(associated)
-        if count:
-            valid = [changes[symbol] for symbol in sorted(associated) if changes.get(symbol) is not None]
-            groups[tag['kind']].append({**tag, 'topics_date': membership_day,
-                'observed_count': count, 'membership_date': tag['observed_date'],
-                'membership_snapshot_day': archive_day, 'cohort_count': len(ids),
-                'sample_share_pct': count / len(ids) * 100,
-                'sample_avg_change_pct': mean(valid) if valid else None,
-                'sample_valid_count': len(valid), 'sample_unknown_count': count-len(valid),
-                'sample_date': sample_day, 'sample_basis': 'cohort_equal_weight',
-                'sample_scope': '本组关联炸板队列个股在观察日的可比涨跌等权平均；不代表行业或概念指数、实际交易收益',
-                'sample_reason': None if len(valid) == count else
-                    '本组关联样本没有可比收盘涨跌，未知不按0计入' if not valid else
-                    f'仅{len(valid)}/{count}只关联样本可比，未知不按0计入均值',
-                'share_scope': '已知关联数÷本页已核验炸板队列；非行业内炸板率，概念重叠不可相加'})
+        valid = [changes[symbol] for symbol in sorted(associated) if changes.get(symbol) is not None]
+        groups[tag['kind']].append({**tag, 'topics_date': membership_day,
+            'observed_count': count, 'membership_date': tag['observed_date'],
+            'membership_snapshot_day': None if fallback_tags else archive_day, 'cohort_count': len(ids),
+            'sample_share_pct': count / len(ids) * 100,
+            'sample_avg_change_pct': mean(valid) if valid else None,
+            'sample_valid_count': len(valid), 'sample_unknown_count': count-len(valid),
+            'sample_date': sample_day, 'sample_basis': 'cohort_equal_weight',
+            'sample_scope': '本组关联炸板队列个股在观察日的可比涨跌等权平均；不代表行业或概念指数、实际交易收益',
+            'sample_reason': None if len(valid) == count else
+                '本组关联样本没有可比收盘涨跌，未知不按0计入' if not valid else
+                f'仅{len(valid)}/{count}只关联样本可比，未知不按0计入均值',
+            'share_scope': '已知关联数÷本页已核验炸板队列；非行业内炸板率，概念重叠不可相加'})
     for row in items:
-        if row['instrument_id'] not in ids:
+        symbol = row['instrument_id']
+        if symbol not in ids:
             continue
-        tags = sorted(tags_by_stock[row['instrument_id']], key=lambda tag: (tag['kind'], tag['source'], tag['name'], tag['topic_id']))
+        tags = sorted(tags_by_stock[symbol], key=lambda tag: (tag['kind'], tag['source'], tag['name'], tag['topic_id']))
+        has_reference = any(tag.get('classification_reference') is True for tag in tags)
         row.update(topics=[dict(tag) for tag in tags if tag['kind'] == 'concept'],
                    industries=[dict(tag) for tag in tags if tag['kind'] == 'industry'],
-                   topics_date=membership_day, topics_state='dated_partial' if archive_valid else 'unknown',
+                   topics_date=membership_day,
+                   topics_state='reference_partial' if has_reference else 'dated_partial' if archive_valid else 'unknown',
                    topics_scope=scope, membership_snapshot_day=archive_day if archive_valid else None)
-    reason = (None if archive_valid else '该日行业与概念成员档案未留存，未用今日归属补历史')
+    reason = (None if archive_valid or classification_reference else '该日行业与概念成员档案未留存，未用今日归属补历史')
+    if missing and reason:
+        reason = '该日行业与概念成员档案未留存，本机最新来源也没有可核验归属'
     with_industry = sum(any(tag['kind'] == 'industry' for tag in tags_by_stock[symbol]) for symbol in ids)
     with_concept = sum(any(tag['kind'] == 'concept' for tag in tags_by_stock[symbol]) for symbol in ids)
     return {'concept_distribution': sorted(groups['concept'], key=lambda row: (-row['observed_count'], row['source'], row['name'], row['topic_id']))[:10],
             'industry_distribution': sorted(groups['industry'], key=lambda row: (-row['observed_count'], row['source'], str(row['classification_level']), row['name'], row['topic_id']))[:10],
             'topics_date': membership_day, 'membership_reason': reason, 'membership_scope': scope,
             'membership_snapshot_day': archive_day if archive_valid else None,
+            **({'classification_reference': classification_reference} if classification_reference else {}),
             'membership_summary': {'cohort_count': len(ids), 'industry_count': len(groups['industry']),
                 'concept_count': len(groups['concept']), 'stocks_with_industry': with_industry,
                 'stocks_with_concept': with_concept,
@@ -500,7 +527,8 @@ def _feedback(day, previous, current, prior, quotes, current_rows, snapshot_id):
             'scope': '昨日已核验炸板来源队列的今日可比收盘反馈，不代表实际买入可成交收益'}
 
 
-def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAYS, include_feedback=True, with_memberships=False):
+def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAYS, include_feedback=True,
+                   with_memberships=False, latest_memberships=None):
     calendar_method = getattr(market, 'calendar', None)
     calendar_values = calendar_method() if callable(calendar_method) else None
     if not isinstance(calendar_values, Iterable) or isinstance(calendar_values, (str, bytes, dict)):
@@ -564,12 +592,16 @@ def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAY
     if calendar_reason and include_feedback:
         feedback['reason'] = calendar_reason
     current.update(previous_event_version=PRIOR_EVENT_VERSION, previous_event_date=calendar_previous)
+    classification_reference = None
     if with_memberships:
         prior = internal.get(event_previous)
         for row in [*current['items'], *feedback.get('items', [])]:
             row.update(_previous_fact(row['instrument_id'], event_previous, prior, quotes))
-        current.update(_cohort_memberships(current['items'], membership_day=day, sample_day=day, status=status,
-                                          reference=reference, broken_only=True))
+        memberships = _cohort_memberships(
+            current['items'], membership_day=day, sample_day=day, status=status, reference=reference, broken_only=True,
+            latest_memberships=latest_memberships if day == status.get('data_end') else None)
+        classification_reference = memberships.pop('classification_reference', None)
+        current.update(memberships)
         if include_feedback:
             feedback.update(_cohort_memberships(feedback['items'], membership_day=previous, sample_day=day, status=status,
                                                 reference=reference))
@@ -604,6 +636,7 @@ def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAY
                             'items': [], 'reason': '读取期间行情代际变化，未返回混合来源统计'},
                 'history': [], 'previous_feedback': {}, 'observations': [], 'limits': ['行情代际变化，请重新读取。']}
     return {'version': VERSION, 'date': day, 'snapshot_id': status.get('snapshot_id'), 'scope': SCOPE,
+            **({'classification_reference': classification_reference} if classification_reference else {}),
             'current': current, 'history': history, 'previous_feedback': feedback,
             'comparison': {'previous_date': previous, 'broken_rate_delta_pp': delta}, 'observations': observations,
             'limits': ['完整炸板率=收盘未封住证券数÷同源已核验涨停与炸板证券并集；数据不齐保留未知。',

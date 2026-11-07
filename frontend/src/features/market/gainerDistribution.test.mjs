@@ -5,21 +5,25 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 const encode = (code) =>
   "data:text/javascript;base64," + Buffer.from(code).toString("base64");
-const source = await fs.readFile(
-  new URL("./GainerDistribution.tsx", import.meta.url),
-  "utf8",
-);
-let code = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.ES2022,
-    target: ts.ScriptTarget.ES2022,
-    jsx: ts.JsxEmit.ReactJSX,
-  },
-}).outputText;
+const transpile = async (path) =>
+  ts.transpileModule(
+    await fs.readFile(new URL(path, import.meta.url), "utf8"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022,
+        jsx: ts.JsxEmit.ReactJSX,
+      },
+    },
+  ).outputText;
+let code = await transpile("./GainerDistribution.tsx");
 code = code.replace('import "./GainerDistribution.css";', "");
 for (const [name, url] of Object.entries({
   react: import.meta.resolve("react"),
   "react/jsx-runtime": import.meta.resolve("react/jsx-runtime"),
+  "./brokenBoardPresentation": encode(
+    await transpile("./brokenBoardPresentation.ts"),
+  ),
   "../../lib/format": encode(
     'export const integer=value=>value==null?"—":Number(value).toLocaleString("zh-CN");',
   ),
@@ -49,8 +53,13 @@ const data = {
   date: "2026-11-02",
   sample_limit: 1000,
   sample_count: 1000,
-  topics: { top, classified_count: 999, unknown_count: 0, attribute_only_count: 1,
-    definition: "经济/政策/产业题材分布，不含已审定交易资格标签" },
+  topics: {
+    top,
+    classified_count: 999,
+    unknown_count: 0,
+    attribute_only_count: 1,
+    definition: "经济/政策/产业题材分布，不含已审定交易资格标签",
+  },
   industries: { top: [] },
   excluded_attributes: { unique_stock_count: 200 },
 };
@@ -62,6 +71,29 @@ assert.ok(html.includes("原始涨幅排名前") && html.includes("1,000"));
 assert.ok(html.includes("合计可能超过 100%") && !html.includes("其他占比"));
 assert.ok(html.includes("未计入融资融券、沪深股通等交易资格标签"));
 assert.ok(html.includes("仅资格标签 1 只"));
+assert.ok(!html.includes("最新行业概念参考"));
+const reference = renderToStaticMarkup(
+  createElement(GainerDistribution, {
+    data,
+    classificationReference: { date: "2026-11-07" },
+  }),
+);
+assert.match(reference, /最新行业概念参考 · 档案 2026-11-07/);
+assert.match(reference, /2026-11-02 · 已知/);
+const multipleReferences = renderToStaticMarkup(
+  createElement(GainerDistribution, {
+    data,
+    classificationReference: {
+      date: "2026-11-07",
+      dates: ["2026-11-05", "2026-11-07", "2026-11-31"],
+    },
+  }),
+);
+assert.match(
+  multipleReferences,
+  /最新行业概念参考 · 档案 2026-11-07、2026-11-05/,
+);
+assert.doesNotMatch(multipleReferences, /2026-11-31/);
 const empty = renderToStaticMarkup(
   createElement(GainerDistribution, {
     data: {

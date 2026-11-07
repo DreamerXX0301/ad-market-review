@@ -7,12 +7,6 @@ import ts from "typescript";
 const encode = (source) =>
   "data:text/javascript;base64," + Buffer.from(source).toString("base64");
 const runtime = import.meta.resolve("react/jsx-runtime");
-const reactProbe =
-  encode(`import * as React from ${JSON.stringify(import.meta.resolve("react"))};
-export * from ${JSON.stringify(import.meta.resolve("react"))};
-let scope='historical';export const changes=[];
-export function setScope(value){scope=value;changes.length=0;}
-export function useState(initial){const [value]=React.useState(initial==='historical'?scope:initial);return [value,(next)=>changes.push(next)];}`);
 const apiProbe = encode(`let response=null;export const requests=[];
 export function setResponse(value){response=value;requests.length=0;}
 export function useApi(path){requests.push(path);return {data:response,loading:false,error:'',reload(){throw Error('must not reload automatically');}};}
@@ -27,7 +21,7 @@ const tableProbe =
   encode(`import {jsx} from ${JSON.stringify(runtime)};export const received=[];
 export function SortableMarketTable(props){received.push(props);return jsx('div',{children:props.rows.length?props.rows.map(row=>row.name).join(','):props.emptyTitle});}`);
 const replacements = {
-  react: reactProbe,
+  react: import.meta.resolve("react"),
   "react/jsx-runtime": jsxProbe,
   "../../lib/api": apiProbe,
   "../../components/UI": encode(`import {jsx} from ${JSON.stringify(runtime)};
@@ -111,7 +105,7 @@ assert.equal(
 );
 assert.equal(
   topicMemberScopeRequest(topic, "2026-10-20", "latest"),
-  "/sectors/886040.TI/members?membership_scope=latest",
+  "/sectors/886040.TI/members?membership_scope=latest&as_of=2026-10-20",
 );
 assert.equal(
   topicMemberScopeRequest({ name: topic.name }, "2026-10-20", "latest"),
@@ -128,7 +122,6 @@ for (const value of [
 const { default: Dialog } = await import(
   await moduleUrl(new URL("./TopicMembersDialog.tsx", import.meta.url))
 );
-const { setScope, changes } = await import(reactProbe);
 const { setResponse, requests } = await import(apiProbe);
 const { selectors } = await import(jsxProbe);
 const { received } = await import(tableProbe);
@@ -152,17 +145,11 @@ assert.deepEqual(requests, [
 ]);
 assert.match(missing, /已知成员<\/small><strong>未知<\/strong>/);
 assert.doesNotMatch(missing, /已知成员<\/small><strong>0 只/);
-assert.match(missing, /当前最新成员/);
+assert.doesNotMatch(missing, /选择成员口径|当前最新成员/);
 assert.match(missing, /该盘面日没有此分类的成员快照/);
-assert.equal(
-  selectors.at(-1).value,
-  "historical",
-  "missing history must not auto-switch to current constituents",
-);
-selectors.at(-1).onChange({ target: { value: "latest" } });
-assert.deepEqual(changes, ["latest", "", "all"]);
+assert.equal(selectors.length, 0);
 
-setScope("latest");
+const currentProps = { ...props, date: "2026-10-23", latestDate: "2026-10-23" };
 setResponse({
   membership_scope: "latest",
   membership_as_of: "2026-10-21",
@@ -174,16 +161,13 @@ setResponse({
     name: `合成成员${i}`,
   })),
 });
-const current = renderToStaticMarkup(createElement(Dialog, props));
+const current = renderToStaticMarkup(createElement(Dialog, currentProps));
 assert.deepEqual(requests, [
-  "/sectors/886040.TI/members?membership_scope=latest",
+  "/sectors/886040.TI/members?membership_scope=latest&as_of=2026-10-23",
 ]);
 assert.match(current, /成员采集日<\/small><strong>2026-10-21/);
 assert.match(current, /行情日<\/small><strong>2026-10-23/);
-assert.match(
-  current,
-  /不代表<!-- --> <!-- -->2026-10-20<!-- --> 的历史归属|不代表[\s\S]*2026-10-20[\s\S]*的历史归属/,
-);
+assert.match(current, /当前最新成员/);
 assert.match(current, /18 只/);
 assert.match(current, /点击股票查看 (?:<!-- -->)?2026-10-23/);
 received.at(-1).onStockNavigate("600000.SH", received.at(-1).rows);
@@ -213,7 +197,7 @@ setResponse({
   members_complete: true,
   items: [{ instrument_id: "600000.SH", name: "非交易日采集成员" }],
 });
-const weekend = renderToStaticMarkup(createElement(Dialog, props));
+const weekend = renderToStaticMarkup(createElement(Dialog, currentProps));
 assert.match(weekend, /成员采集日<\/small><strong>2026-10-24/);
 assert.match(weekend, /行情日<\/small><strong>2026-10-23/);
 received.at(-1).onStockNavigate("600000.SH", received.at(-1).rows);
@@ -225,7 +209,7 @@ assert.equal(
 
 renderToStaticMarkup(
   createElement(Dialog, {
-    ...props,
+    ...currentProps,
     topic: {
       topic_code: "BK1000",
       name: "合成跨源行业",
@@ -236,12 +220,12 @@ renderToStaticMarkup(
 );
 assert.equal(
   requests.at(-1),
-  "/sectors/881001.TI/members?membership_scope=latest",
+  "/sectors/881001.TI/members?membership_scope=latest&as_of=2026-10-23",
 );
 assert.match(
   renderToStaticMarkup(
     createElement(Dialog, {
-      ...props,
+      ...currentProps,
       topic: {
         topic_code: "BK1000",
         name: "合成跨源行业",
@@ -257,7 +241,7 @@ setResponse({
   total: 1,
   items: [{ instrument_id: "600000.SH", name: "合成日期缺失成员" }],
 });
-renderToStaticMarkup(createElement(Dialog, props));
+renderToStaticMarkup(createElement(Dialog, currentProps));
 assert.equal(received.at(-1).onStock, undefined);
 assert.equal(
   received.at(-1).onStockNavigate,
@@ -265,7 +249,6 @@ assert.equal(
   "unknown current quote dates cannot open the historical view date by accident",
 );
 
-setScope("historical");
 setResponse({
   date: props.date,
   items: [],
@@ -277,15 +260,6 @@ renderToStaticMarkup(
     topic: { topic_code: "BK1000", name: "合成跨源行业" },
   }),
 );
-assert.match(
-  renderToStaticMarkup(
-    createElement(Dialog, {
-      ...props,
-      topic: { topic_code: "BK1000", name: "合成跨源行业" },
-    }),
-  ),
-  /value="latest" disabled=""/,
-);
 assert.ok(
   requests.every((path) => path?.startsWith("/market/topic-members?")),
   "no unsupported code or source name can trigger a latest lookup",
@@ -296,5 +270,5 @@ const market = await fs.readFile(
 );
 assert.match(market, /disabled=\{!topicMembersRequest\(row, date\)\}/);
 console.log(
-  "Topic members: history stays unknown and selectable; explicit latest selection keeps source and quote dates separate, guards provider identity and opens the right stock date",
+  "Topic members: the view date selects the scope, unknown history stays unknown and latest quote dates remain guarded",
 );

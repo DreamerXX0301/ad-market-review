@@ -45,11 +45,11 @@ def execute():
     return tasks.task_view(job['job_id'])
 
 
-def advance_generation(reference,status,day,new_id='next-raw'):
+def advance_generation(reference,status,day,new_id='next-raw',*,job_id='fixture-job'):
     now=core.now_ms();h='a'*64
     with core.connect() as db:
-        db.execute('''INSERT INTO dataset_snapshot(snapshot_id,module,scope_key,job_id,data_begin,data_end,knowledge_cutoff_ms,price_basis,algorithm_version,lineage_json,manifest_path,manifest_sha256,state,quality,created_at_ms) VALUES(?,'daily_raw','all','fixture-job',?,?,?,'none','fixture','{}',?,?,'staged','ready',?)''',
-                   (new_id,reference['calendar'][0],day,now,new_id+'/manifest.json',h,now))
+        db.execute('''INSERT INTO dataset_snapshot(snapshot_id,module,scope_key,job_id,data_begin,data_end,knowledge_cutoff_ms,price_basis,algorithm_version,lineage_json,manifest_path,manifest_sha256,state,quality,created_at_ms) VALUES(?,'daily_raw','all',?,?,?,?,'none','fixture','{}',?,?,'staged','ready',?)''',
+                   (new_id,job_id,reference['calendar'][0],day,now,new_id+'/manifest.json',h,now))
         db.execute('INSERT INTO snapshot_artifact VALUES(?,?,?,?,?,?)',(new_id,new_id+'/daily.parquet','daily',h,100,100))
         db.execute("INSERT INTO snapshot_coverage(snapshot_id,feature,scope_json,coverage_state,observed_rows,continuous_begin,continuous_end) VALUES(?,'daily_raw','{}','ready',100,?,?)",(new_id,reference['calendar'][0],day))
         db.execute("UPDATE dataset_snapshot SET state='validated' WHERE snapshot_id=?",(new_id,))
@@ -273,6 +273,49 @@ def test_only_new_sync_marker_enqueues_once_and_recovery_keeps_old_scope(identit
     listing.recover_sync_followups()
     result=execute();assert result['job_id']==identifier and result['status']=='succeeded'
     with core.connect() as db:assert db.execute("SELECT count(*) FROM job WHERE json_extract(parameters_json,'$.operation')=?",(listing.OPERATION,)).fetchone()[0]==1
+
+
+@pytest.mark.parametrize('restart',[False,True])
+def test_same_day_topic_republication_refreshes_listing_receipt(identities,monkeypatch,restart):
+    from app.services import topic_collection
+
+    market,client,reference,status=identities
+    assert confirmation(client).json()['summary_is_current'] is True
+    old=tasks.create_task('topic_init',{},target_date=market.entry,request_key='topic-old')['job_id']
+    assert tasks.claim_next('listing-fixture-worker')['job_id']==old
+    advance_generation(reference,status,market.entry,'topic-old-raw',job_id=old)
+    tasks.finish(old,'partial')
+
+    topic=tasks.create_task('topic_refresh',{},target_date=market.entry,request_key='topic-refresh')['job_id']
+
+    def publish(identifier,_callback):
+        assert identifier==topic
+        advance_generation(reference,status,market.entry,'topic-new-raw',job_id=identifier)
+        return {'data_end':market.entry}
+
+    if restart:
+        assert tasks.claim_next('listing-fixture-worker')['job_id']==topic
+        publish(topic,None)
+        tasks.finish(topic,'partial')
+        # register_market makes the published topic job terminal before the
+        # dispatch follow-up can run. Recover only the current owner.
+        listing.recover_sync_followups()
+    else:
+        monkeypatch.setattr(topic_collection,'execute_topic_collection',publish)
+        assert execute()['job_id']==topic
+
+    with core.connect() as db:
+        assert not db.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='listing_status_check_queued'",(old,)).fetchone()
+        row=db.execute("SELECT job_id,parameters_json FROM job WHERE request_key=?",('listing-after-sync:'+topic,)).fetchone()
+        assert row and json.loads(row['parameters_json'])['primary_snapshot_id']=='topic-new-raw'
+        identifier=row['job_id']
+    assert client.get('/api/v1/data/listing-status').json()['summary_is_current'] is False
+    listing.recover_sync_followups()
+    result=execute()
+    assert result['job_id']==identifier and result['status']=='succeeded'
+    assert tasks.claim_next('listing-fixture-worker') is None
+    current=client.get('/api/v1/data/listing-status').json()
+    assert current['summary_is_current'] is True and current['identities']['pending_listing_count']==5
 
 
 def test_old_attempt_and_new_head_cannot_commit_summary(identities,monkeypatch):

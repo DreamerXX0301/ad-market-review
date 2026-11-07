@@ -67,7 +67,9 @@ let active = true,
 const requests = [],
   waiting = [],
   paths = [],
-  opened = [];
+  opened = [],
+  linked = [];
+const onAfterCloseSaved = (plan) => linked.push(plan);
 const result = {
   data: null,
   error: "",
@@ -109,6 +111,9 @@ for (const [name, replacement] of Object.entries({
     "export const Badge='Badge',ErrorBox='ErrorBox',Panel='Panel',Spinner='Spinner',Status='Status';",
   ),
   "./automaticReviewPresentation": encode(helper),
+  "./IntradayAutomationSettings": encode(
+    "export default function Intraday(){return null;}",
+  ),
 }))
   source = source.replaceAll(
     `from ${JSON.stringify(name)}`,
@@ -122,7 +127,10 @@ function render() {
     cursor = 0;
     dirty = false;
     effects = [];
-    tree = Settings({ onSelectTask: (id) => opened.push(id) });
+    tree = Settings({
+      onSelectTask: (id) => opened.push(id),
+      onAfterCloseSaved,
+    });
     for (const effect of effects) effect();
     if (!dirty) return tree;
   }
@@ -186,7 +194,7 @@ assert.equal(
   true,
 );
 assert.equal(button("保存自动设置").props.disabled, true);
-assert.equal(tree.props.actions.props.children, "设置待读取");
+assert.equal(tree.props.actions.props.children, "北京时间");
 assert.ok(
   errors().length,
   "unread settings never pretend to be a saved off plan",
@@ -201,12 +209,12 @@ assert.equal(errors()[0].props.message, "暂不可读取");
 result.data = { ...base, noon: { enabled: "false", time: "12:05" } };
 render();
 assert.equal(button("保存自动设置").props.disabled, true);
-assert.equal(tree.props.actions.props.children, "设置待读取");
+assert.equal(tree.props.actions.props.children, "北京时间");
 
 result.data = base;
 result.error = "";
 render();
-assert.equal(tree.props.actions.props.children, "自动未开启");
+assert.equal(tree.props.actions.props.children, "北京时间");
 assert.deepEqual(
   toggles().map((node) => node.props.checked),
   [false, false, false],
@@ -285,8 +293,8 @@ assert.equal(
 );
 assert.equal(
   tree.props.actions.props.children,
-  "自动未开启",
-  "badge remains saved state",
+  "北京时间",
+  "the shared header states the timezone",
 );
 setTime(0, "13:00");
 assert.equal(button("保存自动设置").props.disabled, true);
@@ -338,7 +346,8 @@ waiting.shift().resolve({
   auction: { ...base.auction, enabled: true, revision: 1, mode: "daily" },
 });
 await flush();
-assert.equal(tree.props.actions.props.children, "自动已开启");
+assert.deepEqual(linked.at(-1), { enabled: true, time: "17:00" });
+assert.equal(tree.props.actions.props.children, "北京时间");
 assert.equal(button("保存自动设置").props.disabled, true);
 assert.match(text(), /保存计划不代表任务已经创建或执行/);
 assert.equal(
@@ -479,7 +488,7 @@ assert.equal(
   2,
   "auction has no editable time",
 );
-assert.match(text(), /北京时间.*09:25:30/);
+assert.match(text(), /09:25:30/);
 assert.doesNotMatch(text(), /固定时间|worker|工作进程/);
 assert.equal(original.includes("#data?section=automatic"), true);
 console.log(

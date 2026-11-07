@@ -262,6 +262,56 @@ class MarketData:
         report('真实数据快照已发布',100)
         return self.status()
 
+    def publish_topic_reference(self, reference, proof, raw_dir):
+        """Seal a reference-only generation, retaining the exact price objects."""
+        status = self.status()
+        previous = Path(status['path'])
+        root = previous.parent
+        original = status['manifest']
+        source_sha = original['source_sha256']
+        old = validated_snapshot_head(self.data_dir, previous, source_sha, original['supplemental_hashes'])
+        proof = {**proof, 'base_manifest_sha256': hash_file(previous / 'manifest.json')}
+        snapshot = 'market-' + sha256(json.dumps(proof, sort_keys=True).encode()).hexdigest()[:24]
+        final = root / snapshot
+        hashes = {**original['supplemental_hashes'], **{
+            f'topic-catalog/{proof["job_id"]}/{name}': value for name, value in proof['source_hashes'].items()}}
+        if final.exists():
+            validated_snapshot_head(self.data_dir, final, source_sha, hashes)
+            return MarketData(self.data_dir, snapshot).status()
+        with tempfile.TemporaryDirectory(prefix='.topic-reference-', dir=root) as staging:
+            stage = Path(staging)
+            files, stats = write_reference(reference, root, stage, snapshot)
+            for artifact in old['files']:
+                role = artifact['role']
+                if role == 'reference.json' or role.startswith('reference-part/'):
+                    continue
+                path = safe_object(root, artifact['path'].removeprefix('published/'))
+                if path.parent == previous:
+                    os.link(path, stage / path.name)
+                    artifact = {**artifact, 'path': f'published/{snapshot}/{path.name}'}
+                files.append(artifact)
+            for name, expected in proof['source_hashes'].items():
+                path = stage / (proof['job_id'] + '-' + name + '.json')
+                shutil.copyfile(raw_dir / (name + '.json'), path)
+                if hash_file(path) != expected:
+                    raise ValueError('题材原始响应校验不符，拒绝发布')
+                files.append({'role': 'topic-source/' + path.name, 'path': f'published/{snapshot}/{path.name}',
+                              'sha256': expected, 'bytes': path.stat().st_size})
+            descriptor = stage / 'reference.json'
+            files.append({'role': 'reference.json', 'path': f'published/{snapshot}/reference.json',
+                          'sha256': hash_file(descriptor), 'bytes': descriptor.stat().st_size})
+            head = {**old, 'snapshot_id': snapshot, 'files': files, 'manifest_path': f'published/{snapshot}/manifest.json',
+                    'storage_write': {**old.get('storage_write', {}), 'reference.json': stats}}
+            manifest = {**original, 'summary': head, 'supplemental_hashes': hashes,
+                        'topic_catalog_additions': proof, 'published_at': datetime.now(timezone.utc).isoformat()}
+            (stage / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+            for path in stage.iterdir():
+                fsync_file(path)
+            fsync_directory(stage)
+            stage.rename(final)
+            fsync_directory(root)
+        return MarketData(self.data_dir, snapshot).status()
+
     @staticmethod
     def _publish_head(root, head):
         temp = root/'market-head.json.tmp'; temp.write_text(json.dumps(head,ensure_ascii=False))

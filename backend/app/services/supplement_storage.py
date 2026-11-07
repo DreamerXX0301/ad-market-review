@@ -13,6 +13,7 @@ from app.infrastructure.storage import atomic_json, digest, dumps
 
 STORAGE_VERSION = 'supplement-index-v2'
 FIELDS = ('public_pools', 'annual_pools', 'annual_down_pools', 'fund_flows', 'sector_index_history')
+LIMIT_POOLS = ('annual_pools', 'annual_down_pools')
 _cache = OrderedDict()
 _cache_bytes = 0
 _lock = threading.RLock()
@@ -90,7 +91,10 @@ def _read_metadata(root, pointer):
             _metadata_cache.move_to_end(key)
             return found[0]
     value = _object_value(path, key)
-    metadata = {'keys': tuple(value), 'references': value.get('__supplement_fields_v1')}
+    references = value.get('__supplement_fields_v1')
+    has_items = value.get('items') is not None or isinstance(references, dict) and 'items' in references
+    metadata = {'keys': tuple(value), 'references': references,
+                'pool_state': ('complete' if value.get('complete') is True else 'partial') if has_items else None}
     size = len(dumps(metadata).encode())
     if size <= MAX_METADATA_ENTRY_BYTES:
         metadata = deepcopy(metadata)
@@ -106,7 +110,7 @@ def _verify_record(root, pointer):
     metadata = _read_metadata(root, pointer)
     references = metadata['references']
     if references is None:
-        return
+        return metadata
     if not isinstance(references, dict) or len(references) > 64:
         raise ValueError('补充数据分字段引用无效')
     for key, reference in references.items():
@@ -114,6 +118,7 @@ def _verify_record(root, pointer):
             raise ValueError('补充数据分字段引用与内容冲突')
         if set(_read_metadata(root, reference)['keys']) != {'__supplement_payload_v1'}:
             raise ValueError('补充数据分字段对象格式无效')
+    return metadata
 
 
 def _read_record(root, pointer, *, fields=None):
@@ -229,6 +234,7 @@ def expand_status_document(root, document):
     selected = {'public_pools', 'fund_flows', 'sector_index_history'}
     target = document.get('target_date')
     result = {key: value for key, value in document.items() if key != 'storage_version' and key not in FIELDS}
+    limit_pool_days = {}
     count = 0
     for field in FIELDS:
         if field not in document:
@@ -236,6 +242,7 @@ def expand_status_document(root, document):
         if not isinstance(document[field], dict):
             raise ValueError('补充数据日期索引需要映射结构')
         values = {}
+        pool_days = limit_pool_days.setdefault(field, {}) if field in LIMIT_POOLS else None
         for day, pointer in document[field].items():
             count += 1
             if count > 4096:
@@ -245,9 +252,15 @@ def expand_status_document(root, document):
                 if needed:
                     record_fields = {'date', 'items', 'complete'} if field in ('public_pools', 'fund_flows') else None
                     values[day] = _read_record(root, pointer, fields=record_fields)
-                else: _verify_record(root, pointer)
+                else:
+                    metadata = _verify_record(root, pointer)
+                    if pool_days is not None and metadata['pool_state']:
+                        pool_days[day] = metadata['pool_state']
             elif needed:
                 values[day] = pointer
+            elif pool_days is not None and isinstance(pointer, dict) and pointer.get('items') is not None:
+                pool_days[day] = 'complete' if pointer.get('complete') is True else 'partial'
         if field in selected:
             result[field] = values
+    result['limit_pool_days'] = limit_pool_days
     return result

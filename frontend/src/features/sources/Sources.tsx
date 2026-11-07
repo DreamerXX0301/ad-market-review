@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useState } from "react";
 import {
   Check,
   Eye,
@@ -21,6 +21,7 @@ import {
   capabilityStateLabels,
   sourceCapabilities,
 } from "./sourcePresentation";
+import "../../components/SettingsDialog.css";
 import "./Sources.css";
 import {
   Badge,
@@ -33,9 +34,9 @@ import {
   Status,
   Table,
   useToast,
-  Warning,
   Warnings,
 } from "../../components/UI";
+import { supplementCoverageView } from "../data/dataPresentation";
 const capLabels: Row = {
   adjustment: "复权与除权",
   minutes: "分钟K",
@@ -77,12 +78,13 @@ function sourceSetup(source: Row) {
           ? "免费 · 免 Key"
           : "账号 Key · 按实际权限",
     note:
-      source.configuration_note ||
-      (id === "fuyao"
-        ? "扶摇使用免费注册 Key，无需选择付费套餐。各项能力分别验证。"
+      id === "fuyao"
+        ? "配置完成后可逐项验证数据能力。"
         : id === "tickflow-public"
-          ? "公共历史服务免费使用，不需要配置 Key。"
-          : "免费与付费账号都填写自己的 Key，权限以实际接口探测为准。"),
+          ? "可直接验证日 K 和指数查询。"
+          : id === "tickflow"
+            ? "填写现有账号的 Key，权限以实际验证结果为准。"
+            : source.configuration_note,
   };
 }
 function SourceEditor({
@@ -102,6 +104,7 @@ function SourceEditor({
     [error, setError] = useState("");
   const toast = useToast();
   const setup = sourceSetup(source);
+  const keyId = useId();
   async function save() {
     setBusy(true);
     setError("");
@@ -130,17 +133,22 @@ function SourceEditor({
         onClose();
       }}
     >
-      <div className="modal-body">
-        <Badge>{setup.label}</Badge>
-        <p>{setup.note}</p>
+      <div className="modal-body settings-dialog-body source-editor">
+        <div className="settings-dialog-intro">
+          <Badge tone="info">{setup.label}</Badge>
+          {setup.note && <p>{setup.note}</p>}
+        </div>
         {setup.requiresKey && (
-          <label>
-            API Key{" "}
-            <span className="muted">
-              {source.configured ? "已配置，留空则保留" : ""}
-            </span>
+          <div className="source-editor-key">
+            <div className="settings-dialog-field-title">
+              <label htmlFor={keyId}>API Key</label>
+              <Badge tone={source.configured ? "good" : "neutral"}>
+                {source.configured ? "已配置" : "待配置"}
+              </Badge>
+            </div>
             <div className="secret-input">
               <input
+                id={keyId}
                 autoComplete="off"
                 spellCheck={false}
                 type={show ? "text" : "password"}
@@ -153,6 +161,7 @@ function SourceEditor({
                 }
               />
               <button
+                type="button"
                 className="icon-btn"
                 aria-label={show ? "隐藏密钥" : "显示密钥"}
                 onClick={() => setShow((v) => !v)}
@@ -160,35 +169,48 @@ function SourceEditor({
                 {show ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
-          </label>
+          </div>
         )}
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-          />
-          启用此数据源
-        </label>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={active}
-            onChange={(e) => setActive(e.target.checked)}
-          />
-          设为当前来源
-        </label>
-        <Warning>
-          {setup.requiresKey
-            ? "Key 只提交给本机后端并加密保管；不写入浏览器存储、日志或导出。"
-            : "此来源免 Key，可直接验证能力。"}
-          {source.sync_supported === false
-            ? " 全市场盘后同步请使用扶摇免费来源。"
-            : " 保存配置不会自动取数。"}
-        </Warning>
+        <div
+          className="source-editor-options"
+          role="group"
+          aria-label="数据源设置"
+        >
+          <label>
+            启用此数据源
+            <input
+              type="checkbox"
+              role="switch"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+          </label>
+          <label>
+            设为当前来源
+            <input
+              type="checkbox"
+              role="switch"
+              checked={active}
+              onChange={(e) => setActive(e.target.checked)}
+            />
+          </label>
+        </div>
+        {(setup.requiresKey || source.sync_supported === false) && (
+          <div className="settings-dialog-note">
+            {setup.requiresKey ? (
+              <ShieldCheck size={15} aria-hidden="true" />
+            ) : (
+              <CircleHelp size={15} aria-hidden="true" />
+            )}
+            <p>
+              {setup.requiresKey && "Key 仅由本机后端加密保存。"}
+              {source.sync_supported === false && "全市场盘后同步使用扶摇。"}
+            </p>
+          </div>
+        )}
         {error && <ErrorBox message={error} />}
       </div>
-      <div className="modal-footer">
+      <div className="modal-footer settings-dialog-footer">
         <button
           className="btn"
           onClick={() => {
@@ -236,6 +258,7 @@ function MarketSources() {
   }
   const sources = list(result.data);
   const supplement = result.data?.public_supplement;
+  const coverage = supplementCoverageView(supplement);
   return (
     <div className="page-stack sources-page">
       <div className="sources-heading">
@@ -445,11 +468,16 @@ function MarketSources() {
             <Layers3 size={18} />
             <div>
               <h2>公开数据补充</h2>
-              <p>AKShare同源公开接口 · 免 Key</p>
+              <p>
+                {coverage.date ? `行情日 ${coverage.date}` : "尚无已核验档案"} ·
+                公开接口与扶摇历史池
+              </p>
             </div>
           </div>
           <a className="btn small" href="#data">
-            到数据中心补齐
+            {supplement?.quality === "complete"
+              ? "查看数据中心"
+              : "到数据中心核对"}
             <ChevronRight size={13} />
           </a>
         </div>
@@ -457,11 +485,15 @@ function MarketSources() {
           <div>
             <span>封板明细</span>
             <strong>
-              {supplement?.seal_rows ?? "—"}
+              {coverage.date ? (supplement?.seal_rows ?? "—") : "—"}
               <small> 条</small>
             </strong>
             <span>
-              {supplement?.seal_complete ? "本次完整" : "完整性待核验"}
+              {supplement?.seal_complete
+                ? "已验收"
+                : coverage.date
+                  ? "待核验"
+                  : "暂无档案"}
             </span>
           </div>
           <div>
@@ -470,30 +502,58 @@ function MarketSources() {
               className={
                 supplement?.fund_flow_complete
                   ? "sources-value-good"
-                  : "sources-value-warn"
+                  : supplement?.fund_flow_retired
+                    ? "muted"
+                    : "sources-value-warn"
               }
             >
-              {supplement?.fund_flow_complete ? "已核验" : "有缺口"}
+              {coverage.fundLabel}
             </strong>
-            <span>{supplement?.target_date || "尚无来源日期"}</span>
+            <span>
+              {supplement?.fund_flow_retired && !supplement?.fund_flow_complete
+                ? "本轮同步不含行业净流入"
+                : "以已留存净流入证据为准"}
+            </span>
           </div>
-          <div>
-            <span>年内涨停完整日</span>
-            <strong>
-              {supplement?.annual_covered_days ?? "—"}
-              <small> / {supplement?.annual_expected_days ?? "—"}</small>
-            </strong>
-            <span>按来源池口径</span>
-          </div>
-          <div>
-            <span>年内跌停已取得</span>
-            <strong>
-              {supplement?.annual_down_observed_days ?? "—"}
-              <small> / {supplement?.annual_down_expected_days ?? "—"}</small>
-            </strong>
-            <span>取得不等于完整覆盖</span>
-          </div>
+          {[coverage.up, coverage.down, coverage.sector].map((item) => (
+            <div key={item.label}>
+              <span>
+                {item.label}
+                {item === coverage.sector ? "" : "完整日"}
+              </span>
+              <strong>
+                {item.covered ?? "—"}
+                {item.total !== null && (
+                  <small>
+                    {" "}
+                    / {item.total}
+                    {item === coverage.sector ? " 组" : " 日"}
+                  </small>
+                )}
+              </strong>
+              <span>{item.gapLabel}</span>
+            </div>
+          ))}
         </div>
+        {coverage.rolling && (
+          <div className="sources-supplement-year">
+            <span>
+              <strong>近一年来源池</strong>
+              <small>
+                {coverage.rolling.start} 至 {coverage.rolling.end}
+              </small>
+            </span>
+            {coverage.rolling.pools.map((item) => (
+              <span key={item.label}>
+                <strong>
+                  {item.label}完整 {item.covered ?? "—"} / {item.total ?? "—"}{" "}
+                  日
+                </strong>
+                <small>{item.gapLabel}</small>
+              </span>
+            ))}
+          </div>
+        )}
         <details className="sources-details sources-supplement-details">
           <summary>
             <ChevronRight size={13} />
@@ -505,9 +565,14 @@ function MarketSources() {
                 "补充封板细节和板块资金，分别核验来源日期、单位与完整性；批量日K仍由同步来源提供。"}
             </p>
             <p>
-              连续封单稳定性需要逐时盘口序列，一次收盘封单金额不能代替稳定性。免费接口有限重试后仍可能失败，失败日期保留并可手动补拉。
+              年内从本年年初统计，近一年按最新行情日回推一周年。未验完整是已取得来源响应但未通过全部核验；未取得表示对应日期缺少留存响应。切换统计范围不会补采历史。连续封单稳定性需要逐时盘口序列。
             </p>
-            <Warnings items={supplement?.failures} />
+            <Warnings
+              items={[
+                supplement?.failure_reason,
+                ...(supplement?.failures || []),
+              ]}
+            />
           </div>
         </details>
       </section>

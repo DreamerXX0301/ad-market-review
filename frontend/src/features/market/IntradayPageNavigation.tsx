@@ -45,10 +45,16 @@ export function renderedIntradaySections(main: HTMLElement): Entry[] {
 export default function IntradayPageNavigation({
   scopeKey,
   label,
+  pageTitle,
+  pageActive = true,
+  className = "",
   children,
 }: {
   scopeKey: string;
   label?: string;
+  pageTitle?: string;
+  pageActive?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -64,7 +70,7 @@ export default function IntradayPageNavigation({
   useEffect(() => {
     const boundary = root.current;
     const content = main.current;
-    if (!boundary || !content) return;
+    if (!boundary || !content || !pageActive) return;
     pinned.current = null;
     let frame = 0;
     const document = boundary.ownerDocument;
@@ -72,9 +78,10 @@ export default function IntradayPageNavigation({
     const header = boundary
       .closest(".app-main")
       ?.querySelector<HTMLElement>(".topbar");
+    let targets = renderedIntradaySections(content);
     const update = () => {
       frame = 0;
-      const targets = renderedIntradaySections(content);
+      if (!pageTitle) targets = renderedIntradaySections(content);
       setEntries((previous) =>
         previous.map((row) => row.id).join("|") ===
         targets.map((row) => row.id).join("|")
@@ -171,13 +178,18 @@ export default function IntradayPageNavigation({
     window.addEventListener("resize", schedule);
     const mutation =
       typeof MutationObserver === "function"
-        ? new MutationObserver(schedule)
+        ? new MutationObserver(() => {
+            if (pageTitle) targets = renderedIntradaySections(content);
+            schedule();
+          })
         : null;
     mutation?.observe(content, {
       childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["open", "hidden"],
+      ...(!pageTitle && {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["open", "hidden"],
+      }),
     });
     const resize =
       typeof ResizeObserver === "function"
@@ -199,7 +211,7 @@ export default function IntradayPageNavigation({
       window.removeEventListener("resize", schedule);
     };
     // API refreshes keep the same scope and must not reset the user's position.
-  }, [scopeKey]);
+  }, [scopeKey, pageActive, pageTitle]);
 
   useEffect(() => {
     const nav = menu.current;
@@ -264,26 +276,28 @@ export default function IntradayPageNavigation({
 
   return (
     <div
-      className={`intraday-page-reader${entries.length ? "" : " is-empty"}`}
+      className={`intraday-page-reader${entries.length ? "" : " is-empty"}${className ? " " + className : ""}`}
       ref={root}
     >
-      <PageScrollEdges
-        label="盘中观察"
-        sections={entries.map(({ id, key }) => ({
-          id,
-          label: intradayReadingSections[key].label,
-        }))}
-        activeId={active}
-        onNavigate={navigate}
-      />
+      {pageActive && (
+        <PageScrollEdges
+          label={pageTitle || "盘中观察"}
+          sections={entries.map(({ id, key }) => ({
+            id,
+            label: intradayReadingSections[key].label,
+          }))}
+          activeId={active}
+          onNavigate={navigate}
+        />
+      )}
       {entries.length > 0 && (
         <nav
           className="intraday-page-directory"
-          aria-label="盘中观察页内目录"
+          aria-label={(pageTitle || "盘中观察") + "页内目录"}
           ref={menu}
         >
           <div className="intraday-directory-heading">
-            <strong>本档目录</strong>
+            <strong>{pageTitle ? "本页目录" : "本档目录"}</strong>
             {label && <small>{label}</small>}
           </div>
           <div className="intraday-directory-items">

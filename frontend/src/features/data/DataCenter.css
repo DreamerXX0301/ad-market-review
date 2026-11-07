@@ -235,7 +235,7 @@
   font-variant-numeric: tabular-nums;
 }
 .data-sector-counts {
-  margin: 0 0 13px;
+  margin-top: 8px;
 }
 .data-sector-progress {
   padding: 11px 13px;
@@ -270,22 +270,43 @@
 .data-operation h2 > svg {
   color: var(--subtle);
 }
-.data-operation > p {
+.data-operation-description {
   color: var(--subtle);
   font-size: var(--workbench-type-body, 11px);
   margin-bottom: 15px;
   flex: 1;
 }
+.data-operation-description > p + p {
+  margin-top: 5px;
+}
 .data-operation > .btn {
   height: 32px;
   max-width: 100%;
 }
-.data-operation > small {
+.data-operation-note {
   display: block;
   font-size: var(--workbench-type-label, 9px);
   color: var(--workbench-type-muted, var(--muted));
   line-height: 1.7;
   margin-top: 10px;
+}
+.data-operation-note > small {
+  display: block;
+  font: inherit;
+}
+@supports (grid-template-rows: subgrid) {
+  @media (min-width: 1081px) {
+    .data-operation {
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-row: span 5;
+      row-gap: 0;
+      align-items: start;
+    }
+    .data-operation > .btn {
+      justify-self: start;
+    }
+  }
 }
 .data-operation-initial.is-published > .btn {
   color: var(--green);
@@ -432,7 +453,7 @@
 }
 @media (min-width: 1600px) {
   .data-center-heading p,
-  .data-operation > p,
+  .data-operation-description,
   .data-source-description {
     line-height: 1.55;
   }
@@ -459,23 +480,18 @@
     grid-column: 1 / -1;
   }
   .data-operation h2,
-  .data-operation > p,
-  .data-operation > small {
+  .data-operation-description {
     grid-column: 1;
-  }
-  .data-sector-counts,
-  .data-sector-job-link {
-    grid-column: 1 / -1;
   }
   .data-operation > .btn {
     grid-column: 2;
     grid-row: 2 / 4;
     align-self: center;
   }
-  .data-operation > p {
+  .data-operation-description {
     margin-bottom: 0;
   }
-  .data-operation > small {
+  .data-operation-note {
     grid-column: 1 / -1;
     margin-top: 7px;
   }

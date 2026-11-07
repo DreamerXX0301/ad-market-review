@@ -16,6 +16,7 @@ const {
   initializationTaskBlocked,
   visibleWarnings,
   incrementWindowView,
+  supplementCoverageView,
   initializationWindowView,
   dataTaskTitle,
   dataNoonTaskControls,
@@ -33,14 +34,39 @@ const {
 } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
 );
-for (const status of ["failed", "cancelled", "partial", "no_change", "succeeded", "paused"]) {
-  const task = { kind: "source_check", status, parameters: { operation: "noon_snapshot" } };
+for (const status of [
+  "failed",
+  "cancelled",
+  "partial",
+  "no_change",
+  "succeeded",
+  "paused",
+]) {
+  const task = {
+    kind: "source_check",
+    status,
+    parameters: { operation: "noon_snapshot" },
+  };
   const controls = dataNoonTaskControls(task);
-  assert.equal(controls.canRetry, false, `noon ${status} must never offer a new task`);
-  assert.equal(controls.canResumeHere, false, "noon resume belongs to its own window-aware page");
+  assert.equal(
+    controls.canRetry,
+    false,
+    `noon ${status} must never offer a new task`,
+  );
+  assert.equal(
+    controls.canResumeHere,
+    false,
+    "noon resume belongs to its own window-aware page",
+  );
   assert.equal(dataTaskTitle(task), "午评快照采集");
 }
-assert.equal(dataNoonTaskControls({ kind: "source_check", parameters: { operation: "market_supplement" } }).canRetry, true);
+assert.equal(
+  dataNoonTaskControls({
+    kind: "source_check",
+    parameters: { operation: "market_supplement" },
+  }).canRetry,
+  true,
+);
 assert.equal(
   listingIdentityView({
     catalog_count: 5580,
@@ -322,6 +348,25 @@ assert.equal(
   }),
   "盘面细节与年内涨跌停回补",
 );
+for (const [scope, title] of [
+  [
+    { year_history: false, recent_days: 1, parent_sync_job_id: "job-daily" },
+    "当日盘面增量",
+  ],
+  [
+    { year_history: true, recent_days: 1, parent_sync_job_id: "job-first" },
+    "盘面细节与年内涨跌停回补",
+  ],
+  [{ year_history: false, recent_days: 1 }, "盘面缺口修补"],
+  [{ year_history: true, revalidate_only: true }, "本地涨跌停证据核验"],
+])
+  assert.equal(
+    dataTaskTitle({
+      kind: "source_check",
+      parameters: { operation: "market_supplement", ...scope },
+    }),
+    title,
+  );
 assert.equal(
   dataTaskTitle({ kind: "source_check", parameters: {} }),
   "来源能力检查",
@@ -562,6 +607,34 @@ assert.equal(
 );
 assert.equal(incrementWindowView({ increment_allowed: true }).allowed, true);
 assert.equal(incrementWindowView({ increment_allowed: "true" }).allowed, false);
+assert.equal(
+  incrementWindowView({ timezone: "Asia/Shanghai", cutoff: "17:00" }).label,
+  "17:00 后可运行",
+);
+const supplement = supplementCoverageView({
+  target_date: "2026-11-06",
+  seal_complete: true,
+  sector_index_rows: 710,
+  sector_index_catalog_count: 710,
+  annual_covered_days: 121,
+  annual_observed_days: 203,
+  annual_expected_days: 203,
+  annual_down_covered_days: 91,
+  annual_down_observed_days: 198,
+  annual_down_expected_days: 203,
+  rolling_year: {
+    start: "2025-11-07",
+    end: "2026-11-06",
+    up: { covered_days: 121, observed_days: 203, expected_days: 242 },
+    down: { covered_days: 91, observed_days: 198, expected_days: 242 },
+  },
+});
+assert.equal(supplement.up.gapLabel, "82 日未验完整");
+assert.equal(supplement.down.gapLabel, "107 日未验完整 · 5 日未取得");
+assert.equal(
+  supplement.rolling.pools[1].gapLabel,
+  "107 日未验完整 · 44 日未取得",
+);
 for (const years of [5, 10]) {
   const config = {
     default_window: `near-${years}-years`,

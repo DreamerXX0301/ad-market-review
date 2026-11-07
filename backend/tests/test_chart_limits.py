@@ -203,7 +203,7 @@ def test_router_chart_response_contains_overlay_without_analytics_coupling(monke
     from fastapi.testclient import TestClient
     from app.routers.platform import router
     from app.services import market_service,chart_limits
-    market=LimitMarket();day=market.days[0]
+    market,reference_index=down_reference_market();day=market.days[0]
     market.ref={'pool_trade_date':day,'limitup':[entry(market,0)]}
     monkeypatch.setattr(market_service,'context',lambda as_of:(market,{},as_of or market.days[-1]))
     monkeypatch.setattr(chart_limits,'load_supplement',lambda snapshot,**kw:{})
@@ -214,9 +214,15 @@ def test_router_chart_response_contains_overlay_without_analytics_coupling(monke
     assert response.json()['limit_events'][0]['basis']=='verified-source-close-pool'
     assert response.json()['automatic_trendlines']['snapshot_id']=='fixture-generation'
     assert response.json()['automatic_trendlines']['instrument_id']==SYMBOL
+    reference=response.json()['bars'][reference_index]['limit_down_price_reference']
+    assert reference=={'price':10.09,'rate_pct':10.0,'previous_raw_close':11.21}
     columnar=TestClient(app).get('/api/v1/instruments/'+SYMBOL+'/chart?encoding=columns-v1')
     assert columnar.status_code==200 and 'bars_columnar' in columnar.json()
     assert columnar.json()['automatic_trendlines']==response.json()['automatic_trendlines']
+    columns=columnar.json()['bars_columnar']
+    field_index=columns['fields'].index('limit_down_price_reference')
+    assert columns['columns'][field_index][reference_index]==reference
+    assert 0 in columns['missing']['limit_down_price_reference']
 
 
 def flat_quote(market, index, price=11):
@@ -340,6 +346,71 @@ def earth_market(*, previous=11.21, rate=10, index=7):
                               corporate_action=False,corporate_action_coverage_known=True,source='fuyao')
     supplement={'annual_pools':{market.days[index]:annual(market,index,raw_sha256='source-sha',raw_artifact='raw/source.json')}}
     return market,supplement,index
+
+
+def down_reference_market(previous=11.21):
+    market,_,index=earth_market(previous=previous)
+    row=market.rows[index]
+    row.update(high=previous,close=row['low'])
+    return market,index
+
+
+@pytest.mark.parametrize('price_basis',['none','forward'])
+@pytest.mark.parametrize('source_absent',[False,True])
+@pytest.mark.parametrize(('previous','close'),[(11.21,10.09),(104.60,94.14),(34.00,30.60)])
+def test_daily_down_reference_uses_raw_close_and_leaves_verified_states_unchanged(price_basis,source_absent,previous,close):
+    market,index=down_reference_market(previous)
+    day=market.days[index]
+    supplement={'annual_down_pools':{day:annual(market,index,'limitdown',[entry(market,index,OTHER)])}} if source_absent else {}
+    result=enrich_chart_limits(market,market.chart(price_basis=price_basis),supplement)
+    bar=result['bars'][index]
+    assert bar['limit_down_price_reference']=={'price':close,'rate_pct':10.0,'previous_raw_close':previous}
+    assert bar['close']==close*(.5 if price_basis=='forward' else 1)
+    assert bar['limit_down_state'] is (False if source_absent else None)
+    assert bar['limit_event_status']['down']==('source_absent' if source_absent else 'unknown')
+    assert result['limit_events']==[] and result['pattern_events']==[]
+    assert result['limit_event_coverage']['down']['confirmed_days']==0
+    assert result['limit_event_coverage']['down']['source_absent_days']==int(source_absent)
+    assert bar['pattern_status']['one_price_limit_down']['state'] is False
+    weekly=enrich_chart_limits(market,market.chart(period='W'),{})
+    assert all('limit_down_price_reference' not in row for row in weekly['bars'])
+    detail=enrich_chart_limits(market,market.chart(),{},focus_day=bar['date'])
+    assert all('limit_down_price_reference' not in row for row in detail['bars'])
+
+
+@pytest.mark.parametrize('case',[
+    'confirmed','conflict','other_confirmed','above_limit','lower_wick','no_volume','action','unknown_actions',
+    'missing_previous','calendar_gap','recent_listing','dated_st','mismatched_generation','provisional',
+])
+def test_daily_down_reference_omits_unverified_or_superseded_matches(case):
+    market,index=down_reference_market()
+    day=market.days[index]
+    supplement={}
+    if case=='confirmed':
+        supplement['annual_down_pools']={day:annual(market,index,'limitdown')}
+    if case=='conflict':
+        supplement['annual_down_pools']={day:annual(market,index,'limitdown',[entry(market,index,last_price=11)])}
+    if case=='other_confirmed':
+        supplement['annual_pools']={day:annual(market,index)}
+    if case=='above_limit': market.rows[index].update(low=10.10,close=10.10)
+    if case=='lower_wick': market.rows[index].update(close=10.11)
+    if case=='no_volume': market.rows[index].update(volume=0)
+    if case=='action': market.rows[index].update(corporate_action=True)
+    if case=='unknown_actions': market.rows[index].update(corporate_action_coverage_known=False)
+    if case=='missing_previous': market.rows.pop(index-1)
+    if case=='calendar_gap':
+        market.calendar=lambda: [value for value in market.days if value!=market.days[index-1]]
+        flat_quote(market,index-2,11.21)
+    if case=='recent_listing': market.list_date=market.days[index-4]
+    if case=='mismatched_generation': market.status=lambda:{'snapshot_id':'another'}
+    chart=market.chart()
+    if case=='dated_st': chart['instrument'].update(is_st=True,is_st_date=day)
+    if case=='provisional': chart['bars'][index]['intraday_provisional']=True
+    result=enrich_chart_limits(market,chart,supplement)
+    bar=next(row for row in result['bars'] if row['date']==day)
+    assert 'limit_down_price_reference' not in bar
+    if case=='confirmed': assert bar['limit_down_state'] is True
+    if case=='conflict': assert bar['limit_event_status']['down']=='conflict'
 
 
 def test_earth_to_sky_decimal_rounding_retains_independent_closing_event_and_derived_evidence():

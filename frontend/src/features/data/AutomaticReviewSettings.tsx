@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Clock3, RefreshCw, Save } from "lucide-react";
 import { api, useApi, usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
-import { dateTime } from "../../lib/format";
 import { Badge, ErrorBox, Panel, Spinner, Status } from "../../components/UI";
+import IntradayAutomationSettings from "./IntradayAutomationSettings";
 import {
   automaticReviewSettings,
   automaticSettingsChanged,
@@ -12,8 +12,12 @@ import {
   automaticSavedResponse,
   automaticTimeError,
   automaticStatusText,
+  beijingPlanTime,
 } from "./automaticReviewPresentation";
-import type { AutomaticReviewSettingsValue } from "./automaticReviewPresentation";
+import type {
+  AutomaticPlan,
+  AutomaticReviewSettingsValue,
+} from "./automaticReviewPresentation";
 import "./AutomaticReviewSettings.css";
 
 const PATH = "/settings/automatic-tasks";
@@ -36,12 +40,17 @@ const PLANS = [
 
 export default function AutomaticReviewSettings({
   onSelectTask,
+  onAfterCloseSaved,
 }: {
   onSelectTask?: (id: string) => void;
+  onAfterCloseSaved?: (plan: AutomaticPlan | null) => void;
 }) {
   const active = usePageActive();
   const result = useApi<Row>(PATH);
   const saved = automaticReviewSettings(result.data);
+  useEffect(() => {
+    onAfterCloseSaved?.(saved?.after_close ?? null);
+  }, [onAfterCloseSaved, saved]);
   const [draft, setDraft] = useState<AutomaticReviewSettingsValue | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -159,7 +168,7 @@ export default function AutomaticReviewSettings({
         <p>{automaticStatusText(item.reason, "最近检查未提供说明。")}</p>
         <p className="muted">
           {item.date ? <span>任务日 {item.date} · </span> : null}
-          检查于 {item.checked_at ? dateTime(item.checked_at) : "—"}{" "}
+          检查于 {beijingPlanTime(item.checked_at)}{" "}
           {item.task_status && <Status value={item.task_status} />}
         </p>
         {typeof item.task_id === "string" && item.task_id && onSelectTask && (
@@ -178,27 +187,7 @@ export default function AutomaticReviewSettings({
     <Panel
       title="自动采集计划"
       subtitle="新安装默认关闭，开启后按北京时间自动采集。"
-      actions={
-        <Badge
-          tone={
-            saved
-              ? saved.auction.enabled ||
-                saved.noon.enabled ||
-                saved.after_close.enabled
-                ? "good"
-                : "neutral"
-              : "warn"
-          }
-        >
-          {saved
-            ? saved.auction.enabled ||
-              saved.noon.enabled ||
-              saved.after_close.enabled
-              ? "自动已开启"
-              : "自动未开启"
-            : "设置待读取"}
-        </Badge>
-      }
+      actions={<Badge>北京时间</Badge>}
     >
       <div className="automatic-review-settings" id="automatic-review-settings">
         {!saved &&
@@ -217,7 +206,7 @@ export default function AutomaticReviewSettings({
           <ErrorBox message={result.error} retry={reload} />
         )}
         <div className="automatic-review-plans">
-          <section>
+          <section className="automatic-review-auction">
             <label
               className={`automatic-review-toggle${auctionToggleAvailable ? "" : " is-unavailable"}`}
             >
@@ -233,7 +222,7 @@ export default function AutomaticReviewSettings({
               )}
               <span>
                 <strong>自动盘前竞价</strong>
-                <small>自动生成关注名单 · 当天09:30前有效</small>
+                <small>生成关注名单 · 09:30 截止</small>
               </span>
               {!auctionToggleAvailable && (
                 <Badge tone="warn">
@@ -241,12 +230,12 @@ export default function AutomaticReviewSettings({
                 </Badge>
               )}
             </label>
-            <div className="automatic-review-time">
-              北京时间{" "}
-              <strong className="automatic-review-fixed-time">09:25:30</strong>
+            <div className="automatic-review-time automatic-review-auction-time">
+              <Clock3 size={14} aria-hidden="true" />
+              <strong>09:25:30</strong>
             </div>
             {value?.auction_discovery && (
-              <label className="automatic-review-toggle">
+              <label className="automatic-review-toggle automatic-review-discovery">
                 <input
                   type="checkbox"
                   checked={value.auction_discovery.enabled}
@@ -270,13 +259,17 @@ export default function AutomaticReviewSettings({
                 />
                 <span>
                   <strong>今日竞价发现</strong>
-                  <small>
-                    重点名单保存后，查找市场异动并补查部分昨日重点股
-                  </small>
+                  <small>关注名单保存后，查找异动并补查昨日重点股</small>
                 </span>
               </label>
             )}
             <div className="automatic-review-check">
+              <div className="automatic-review-next">
+                <span>下次执行</span>
+                <strong>
+                  {beijingPlanTime(saved?.auction.next_run_at, "待核验")}
+                </strong>
+              </div>
               {saved?.auction.reason ? (
                 <p>{automaticStatusText(saved.auction.reason)}</p>
               ) : saved && !unavailable && !auctionToggleAvailable ? (
@@ -287,12 +280,6 @@ export default function AutomaticReviewSettings({
                   旧设置已停用，重新保存开关后使用每日计划。
                 </p>
               )}
-              <p className="muted">
-                下一次{" "}
-                {saved?.auction.next_run_at
-                  ? dateTime(saved.auction.next_run_at)
-                  : "暂无已核验时间"}
-              </p>
               {saved?.auction.last_run && (
                 <p>
                   最近执行：
@@ -306,12 +293,13 @@ export default function AutomaticReviewSettings({
                 </p>
               )}
               {typeof saved?.auction.worker?.alive === "boolean" && (
-                <p className="muted">
+                <Badge tone={saved.auction.worker.alive ? "good" : "neutral"}>
                   {saved.auction.worker.alive ? "服务运行中" : "服务未运行"}
-                </p>
+                </Badge>
               )}
             </div>
           </section>
+          <IntradayAutomationSettings />
           {PLANS.map((plan) => (
             <section key={plan.kind}>
               <label className="automatic-review-toggle">
@@ -377,7 +365,7 @@ export default function AutomaticReviewSettings({
               : saved
                 ? "当前显示服务端已保存设置。"
                 : "尚未读取服务端设置。"}
-            {saved?.now ? " 服务器时间 " + dateTime(saved.now) : ""}
+            {saved?.now ? " 服务器时间 " + beijingPlanTime(saved.now) : ""}
           </span>
           <div>
             <button

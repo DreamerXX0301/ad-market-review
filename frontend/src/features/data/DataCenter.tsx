@@ -58,11 +58,14 @@ import {
   initializationView,
   initializationWindowView,
   incrementWindowView,
+  supplementCoverageView,
   visibleWarnings,
 } from "./dataPresentation";
 import "./DataCenter.css";
 import AutomaticReviewSettings from "./AutomaticReviewSettings";
-import IntradayAutomationSettings from "./IntradayAutomationSettings";
+import IntradayPageNavigation from "../market/IntradayPageNavigation";
+import { intradayReadingProps } from "../market/intradayReadingNavigation";
+import type { AutomaticPlan } from "./automaticReviewPresentation";
 import CoveragePanel from "./CoveragePanel";
 import PublishedStorageDetails from "./PublishedStorageDetails";
 import { publishedStorageView } from "./storagePresentation";
@@ -145,7 +148,8 @@ function TaskProgress({
         </div>
         <div>
           <h3>
-            {dataTaskTitle(task)} <Status value={task.status} />
+            {dataTaskTitle(task)}{" "}
+            <Status value={task.display_status || task.status} />
           </h3>
           <p>
             <code>{(task.task_id || task.job_id || "").slice(0, 16)}</code> ·{" "}
@@ -174,6 +178,9 @@ function TaskProgress({
         )}
       </div>
       <WorkspaceTaskSummary workspace={task.workspace} />
+      {task.coverage_summary && (
+        <p className="muted">{task.coverage_summary}</p>
+      )}
       {sectors && (
         <div className="data-sector-progress" aria-live="polite">
           <span>
@@ -317,6 +324,7 @@ function TaskProgress({
               )}
             {["failed", "partial", "cancelled"].includes(task.status) &&
               noonControls.canRetry &&
+              task.display_status !== "succeeded" &&
               !blockedSectorInitialization && (
                 <button
                   className="btn small"
@@ -404,6 +412,7 @@ export default function DataCenter({
     [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
     [showAllJobs, setShowAllJobs] = useState(false);
+  const [afterClose, setAfterClose] = useState<AutomaticPlan | null>(null);
   useEffect(() => {
     const followLink = () => {
       const id = linkedTaskId();
@@ -637,6 +646,7 @@ export default function DataCenter({
   const incrementWindow = incrementWindowView(data?.sync_window);
   const incrementComplete = data?.sync_operations?.increment;
   const supplementComplete = data?.sync_operations?.supplement;
+  const supplementCoverage = supplementCoverageView(data?.public_supplement);
   const sectorStatus = sectorChartsStatusView(data?.sector_charts);
   const sectorInitialization = sectorChartsInitializationView(
     data?.sector_charts?.initialization,
@@ -672,14 +682,19 @@ export default function DataCenter({
     return () => clearTimeout(timer);
   }, [active, data?.sync_window?.now, result.loading]);
   return (
-    <div className="page-stack data-center">
+    <IntradayPageNavigation
+      className="data-center"
+      scopeKey="data-center"
+      pageTitle="数据中心"
+      pageActive={active}
+    >
       <div className="data-center-heading">
         <div>
           <span>数据工作区</span>
           <p>同步与任务设置，按阶段核验，保留每次运行记录。</p>
         </div>
       </div>
-      <div className="stats-grid">
+      <div {...intradayReadingProps("dataSummary")} className="stats-grid">
         <Stat
           label="行情标的"
           value={integer(summary.stock_count)}
@@ -702,13 +717,15 @@ export default function DataCenter({
         />
       </div>
       <PublishedStorageDetails view={storage} />
-      <AutomaticReviewSettings
-        onSelectTask={(id) => {
-          setSelectedId(id);
-          setFollowChain(false);
-        }}
-      />
-      <IntradayAutomationSettings />
+      <div {...intradayReadingProps("automatic")}>
+        <AutomaticReviewSettings
+          onAfterCloseSaved={setAfterClose}
+          onSelectTask={(id) => {
+            setSelectedId(id);
+            setFollowChain(false);
+          }}
+        />
+      </div>
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
@@ -737,7 +754,7 @@ export default function DataCenter({
           </a>
         </div>
       )}
-      <div className="data-operations">
+      <div {...intradayReadingProps("syncActions")} className="data-operations">
         <section
           className={`data-operation data-operation-initial ${initialization.mainPublished ? "is-published" : ""}`}
         >
@@ -751,7 +768,10 @@ export default function DataCenter({
             <Database size={17} />
             首次初始化
           </h2>
-          <p title={initializationWindow.notice}>
+          <p
+            className="data-operation-description"
+            title={initializationWindow.notice}
+          >
             目标{initializationWindow.label}
             个股、指数日K与基础资料，衔接题材、目标日盘面及行业/概念近五年K线；周K、月K在本地生成，实际范围逐项核验。
           </p>
@@ -781,7 +801,7 @@ export default function DataCenter({
             )}
             {initialization.label}
           </button>
-          <small>
+          <small className="data-operation-note">
             {initialization.mainPublished
               ? "主行情完成；初始化链已包含后续补充，失败部分可单独修补。"
               : initialization.reason}
@@ -796,9 +816,18 @@ export default function DataCenter({
             <RefreshCw size={17} />
             盘后增量
           </h2>
-          <p>
-            每日北京时间18:00后手动更新，追加行业与概念板块K线尾部，并衔接目标日盘面补充。
-          </p>
+          <div className="data-operation-description">
+            <p>更新主行情和板块 K 线尾部，盘面数据只补目标交易日。</p>
+            <p className="muted">
+              {incrementWindow.cutoff
+                ? `手动最早 ${incrementWindow.cutoff}（北京时间）`
+                : "手动窗口待服务确认"}
+              {afterClose &&
+                (afterClose.enabled
+                  ? ` · 自动执行 ${afterClose.time}`
+                  : " · 自动盘后已关闭")}
+            </p>
+          </div>
           <button
             className="btn"
             disabled={
@@ -817,7 +846,7 @@ export default function DataCenter({
               ? "本日主行情已更新"
               : incrementWindow.label}
           </button>
-          <small>
+          <small className="data-operation-note">
             {initialization.mainPublished
               ? incrementComplete?.reason || incrementWindow.reason
               : "主行情初始化发布后可用。"}
@@ -832,7 +861,7 @@ export default function DataCenter({
             <Layers3 size={17} />
             盘面补充
           </h2>
-          <p>
+          <p className="data-operation-description">
             修补封板、行业与概念的板块日行情及年内统计；历史成分股单独核验。
           </p>
           <button
@@ -855,9 +884,10 @@ export default function DataCenter({
               ? "本日盘面补充已完成"
               : "修补盘面缺口"}
           </button>
-          <small>
+          <small className="data-operation-note">
             {supplementComplete?.reason ||
-              "复用已核验批次，逐板块补当前已发布行情日的真实涨幅与成交额。部分成功仍可修补；完整成功后不重复提交。"}
+              supplementCoverage.missing ||
+              "补充范围以当前行情日为准，已核验批次会复用。"}
           </small>
         </section>
         <section
@@ -887,29 +917,31 @@ export default function DataCenter({
             <Layers3 size={17} />
             行业与概念历史K线
           </h2>
-          <p>
-            当前目录 {integer(sectorStatus.catalog)}{" "}
-            个板块，目标近五年日K；周K、月K本地生成。
-            {sectorInitialization.initialized
-              ? "历史已留存，之后随盘后增量追加尾部，不重复整库下载。"
-              : "首次独立补齐，不重新初始化主行情。"}
-          </p>
-          <div className="data-sector-counts" aria-live="polite">
-            <span>
-              已接受{" "}
-              <b>
-                {integer(sectorCounts.available)} / {integer(sectorTotal)}
-              </b>
-            </span>
-            <span>
-              完整 <b>{integer(sectorCounts.complete)}</b>
-            </span>
-            <span>
-              部分覆盖 <b>{integer(sectorCounts.partial)}</b>
-            </span>
-            <span>
-              失败 <b>{integer(sectorCounts.failed)}</b>
-            </span>
+          <div className="data-operation-description">
+            <p>
+              当前目录 {integer(sectorStatus.catalog)}{" "}
+              个板块，目标近五年日K；周K、月K本地生成。
+              {sectorInitialization.initialized
+                ? "历史已留存，之后随盘后增量追加尾部，不重复整库下载。"
+                : "首次独立补齐，不重新初始化主行情。"}
+            </p>
+            <div className="data-sector-counts" aria-live="polite">
+              <span>
+                已接受{" "}
+                <b>
+                  {integer(sectorCounts.available)} / {integer(sectorTotal)}
+                </b>
+              </span>
+              <span>
+                完整 <b>{integer(sectorCounts.complete)}</b>
+              </span>
+              <span>
+                部分覆盖 <b>{integer(sectorCounts.partial)}</b>
+              </span>
+              <span>
+                失败 <b>{integer(sectorCounts.failed)}</b>
+              </span>
+            </div>
           </div>
           <button
             className="btn"
@@ -935,31 +967,37 @@ export default function DataCenter({
             )}
             {sectorInitialization.label}
           </button>
-          <small>
-            观察日 {sectorStatus.targetDate || "待确认"}。
-            {!sectorInitialization.initialized &&
-              "全库首次补齐可能需要20分钟以上；"}
-            来源近五年按获取日滚动，首日边界等部分覆盖单列，不计下载失败。
-            {sectorInitialization.initialized &&
-              ` 首次初始化已完成${sectorInitialization.initializedDate ? "（" + sectorInitialization.initializedDate + "）" : ""}，后续使用盘后增量。`}
-            {sectorStatus.available === null &&
-              !sectorActive &&
-              !sectorInitialization.initialized &&
-              " 尚无整批核验记录，计数保持未知。"}
-          </small>
-          {latestSectorId && (
-            <button
-              className="link data-sector-job-link"
-              onClick={() => {
-                setSelectedId(latestSectorId);
-                setFollowChain(false);
-              }}
-            >
-              查看{sectorActive ? "运行进度" : "最近核验记录"}
-              <ChevronRight size={12} />
-              {liveSectorJob?.status && <Status value={liveSectorJob.status} />}
-            </button>
-          )}
+          <div className="data-operation-note">
+            <small>
+              观察日 {sectorStatus.targetDate || "待确认"}。
+              {!sectorInitialization.initialized &&
+                "全库首次补齐可能需要20分钟以上；"}
+              来源近五年按获取日滚动，首日边界等部分覆盖单列，不计下载失败。
+              {sectorInitialization.initialized &&
+                ` 首次初始化已完成${sectorInitialization.initializedDate ? "（" + sectorInitialization.initializedDate + "）" : ""}，后续使用盘后增量。`}
+              {sectorStatus.available === null &&
+                !sectorActive &&
+                !sectorInitialization.initialized &&
+                " 尚无整批核验记录，计数保持未知。"}
+            </small>
+            {latestSectorId && (
+              <button
+                className="link data-sector-job-link"
+                onClick={() => {
+                  setSelectedId(latestSectorId);
+                  setFollowChain(false);
+                }}
+              >
+                查看{sectorActive ? "运行进度" : "最近核验记录"}
+                <ChevronRight size={12} />
+                {liveSectorJob?.status && (
+                  <Status
+                    value={liveSectorJob.display_status || liveSectorJob.status}
+                  />
+                )}
+              </button>
+            )}
+          </div>
         </section>
       </div>
       <div className="data-supplement-summary">
@@ -981,8 +1019,8 @@ export default function DataCenter({
           {integer(data?.public_supplement?.annual_expected_days)}
         </span>
         <span>
-          跌停已取得{" "}
-          <b>{integer(data?.public_supplement?.annual_down_observed_days)}</b> /{" "}
+          跌停完整日{" "}
+          <b>{integer(data?.public_supplement?.annual_down_covered_days)}</b> /{" "}
           {integer(data?.public_supplement?.annual_down_expected_days)} 日
         </span>
         <details>
@@ -991,172 +1029,187 @@ export default function DataCenter({
             口径与限制
           </summary>
           <p>
-            完整日为来源池核验结果，取得日不等于完整覆盖；不代表每只股票都有完整历史。题材全库成员需在题材库手动刷新；行情增量不会自动重拉全部成员。连续封单稳定性还需要逐时盘口序列。
+            完整日为来源池核验结果；个股覆盖另行核验。可在题材库同步新增分类，已有成员保留各自采集日。连续封单稳定性需要逐时盘口序列。
           </p>
         </details>
       </div>
       {task.data && (
+        <div {...intradayReadingProps("task")}>
+          <Panel
+            title="当前任务"
+            actions={
+              <button
+                className="icon-btn"
+                aria-label="刷新任务"
+                onClick={task.reload}
+              >
+                <RefreshCw size={14} />
+              </button>
+            }
+          >
+            <TaskProgress
+              task={task.data}
+              onAction={taskAction}
+              initialization={data?.initialization}
+              sectorInitialization={data?.sector_charts?.initialization}
+            />
+            {waitingForChild && (
+              <Warning>
+                本阶段已发布，链式初始化仍待后台确认下一阶段。正在根据已授权链日志检查排队状态；不会因超过固定等待时间而宣告全部完成。
+              </Warning>
+            )}
+            {chain.state === "blocked" && (
+              <Warning>
+                后续阶段暂未排队：{chain.reason}
+                。当前已发布数据保留，请查看日志及可重试任务。
+              </Warning>
+            )}
+            {!followChain && (activeHistory || pendingHistoryChain) && (
+              <div className="panel-footnote">
+                正在查看历史记录；运行任务与链式状态仍每2秒刷新，页面不会自动跳转。
+                <button
+                  className="btn small"
+                  onClick={() => {
+                    const current =
+                      recent.find((item) =>
+                        activeStatuses.includes(item.status),
+                      ) ||
+                      recent.find(
+                        (item) =>
+                          publishedStatuses.includes(item.status) &&
+                          taskChainState(item).state === "pending",
+                      );
+                    if (current) {
+                      setSelectedId(current.task_id || current.job_id);
+                      setFollowChain(true);
+                    }
+                  }}
+                >
+                  查看当前运行链
+                </button>
+              </div>
+            )}
+          </Panel>
+        </div>
+      )}
+      {task.error && <ErrorBox message={task.error} retry={task.reload} />}
+      <div {...intradayReadingProps("dataCoverage")}>
+        <CoveragePanel
+          datasets={data?.datasets || []}
+          audit={data?.coverage_check}
+          loading={result.loading}
+          disabled={!!busy || running}
+          remoteConfigured={!needsSource}
+          onReload={result.reload}
+          onTask={(next) => {
+            setSelectedId(next.task_id || next.job_id);
+            setFollowChain(false);
+            history.reload();
+            result.reload();
+          }}
+        />
+      </div>
+      <div {...intradayReadingProps("taskHistory")}>
         <Panel
-          title="当前任务"
+          title={
+            <>
+              <FileClock size={18} />
+              同步历史
+            </>
+          }
+          subtitle="最近 200 条后台任务中的同步记录；可点任务查看进度、日志与失败证据"
           actions={
             <button
               className="icon-btn"
-              aria-label="刷新任务"
-              onClick={task.reload}
+              aria-label="刷新同步历史"
+              onClick={history.reload}
             >
               <RefreshCw size={14} />
             </button>
           }
         >
-          <TaskProgress
-            task={task.data}
-            onAction={taskAction}
-            initialization={data?.initialization}
-            sectorInitialization={data?.sector_charts?.initialization}
-          />
-          {waitingForChild && (
-            <Warning>
-              本阶段已发布，链式初始化仍待后台确认下一阶段。正在根据已授权链日志检查排队状态；不会因超过固定等待时间而宣告全部完成。
-            </Warning>
-          )}
-          {chain.state === "blocked" && (
-            <Warning>
-              后续阶段暂未排队：{chain.reason}
-              。当前已发布数据保留，请查看日志及可重试任务。
-            </Warning>
-          )}
-          {!followChain && (activeHistory || pendingHistoryChain) && (
-            <div className="panel-footnote">
-              正在查看历史记录；运行任务与链式状态仍每2秒刷新，页面不会自动跳转。
-              <button
-                className="btn small"
-                onClick={() => {
-                  const current =
-                    recent.find((item) =>
-                      activeStatuses.includes(item.status),
-                    ) ||
-                    recent.find(
-                      (item) =>
-                        publishedStatuses.includes(item.status) &&
-                        taskChainState(item).state === "pending",
-                    );
-                  if (current) {
-                    setSelectedId(current.task_id || current.job_id);
-                    setFollowChain(true);
-                  }
-                }}
-              >
-                查看当前运行链
-              </button>
-            </div>
+          <div className="result-toolbar">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={showAllJobs}
+                onChange={(e) => setShowAllJobs(e.target.checked)}
+              />
+              包括策略、回测与研究后台任务
+            </label>
+          </div>
+          {history.error ? (
+            <ErrorBox message={history.error} retry={history.reload} />
+          ) : (
+            <Table
+              rows={displayedHistory}
+              columns={[
+                {
+                  key: "status",
+                  title: "执行状态",
+                  render: (v, r) => <Status value={r.display_status || v} />,
+                },
+                {
+                  key: "task_id",
+                  title: "任务",
+                  render: (v, r) => (
+                    <button
+                      className="link mono"
+                      onClick={() => {
+                        setFollowChain(false);
+                        setSelectedId(v || r.job_id);
+                      }}
+                    >
+                      {(v || r.job_id || "").slice(0, 12)}
+                    </button>
+                  ),
+                },
+                {
+                  key: "kind",
+                  title: "类型",
+                  render: (_v, r) => dataTaskTitle(r),
+                },
+                {
+                  key: "created_at",
+                  title: "开始时间",
+                  sortValue: (row) =>
+                    row.created_at_ms ?? row.created_at ?? null,
+                  render: (v, r) => dateTime(v ?? r.created_at_ms),
+                },
+                { key: "target_date", title: "目标日期" },
+                {
+                  key: "progress",
+                  title: "进度",
+                  render: (v) => (v == null ? "—" : `${num(Number(v), 0)}%`),
+                },
+                {
+                  key: "duration_ms",
+                  title: "总历时",
+                  description:
+                    "从任务提交到完成或当前时刻，包含排队、暂停等等待时间，不等于纯执行耗时。",
+                  render: (v) => duration(v),
+                },
+                {
+                  key: "row_count",
+                  title: "已接受记录",
+                  render: (v, r) => integer(v ?? r.accepted_rows),
+                },
+                {
+                  key: "message",
+                  title: "结果与缺口",
+                  render: (v, r) => r.coverage_summary || v,
+                },
+              ]}
+              emptyTitle="尚无同步历史"
+              emptyDescription="第一次手动同步后可查看阶段、批次与完整日志。"
+            />
           )}
         </Panel>
-      )}
-      {task.error && <ErrorBox message={task.error} retry={task.reload} />}
-      <CoveragePanel
-        datasets={data?.datasets || []}
-        audit={data?.coverage_check}
-        loading={result.loading}
-        disabled={!!busy || running}
-        remoteConfigured={!needsSource}
-        onReload={result.reload}
-        onTask={(next) => {
-          setSelectedId(next.task_id || next.job_id);
-          setFollowChain(false);
-          history.reload();
-          result.reload();
-        }}
-      />
-      <Panel
-        title={
-          <>
-            <FileClock size={18} />
-            同步历史
-          </>
-        }
-        subtitle="最近 200 条后台任务中的同步记录；可点任务查看进度、日志与失败证据"
-        actions={
-          <button
-            className="icon-btn"
-            aria-label="刷新同步历史"
-            onClick={history.reload}
-          >
-            <RefreshCw size={14} />
-          </button>
-        }
-      >
-        <div className="result-toolbar">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={showAllJobs}
-              onChange={(e) => setShowAllJobs(e.target.checked)}
-            />
-            包括策略、回测与研究后台任务
-          </label>
-        </div>
-        {history.error ? (
-          <ErrorBox message={history.error} retry={history.reload} />
-        ) : (
-          <Table
-            rows={displayedHistory}
-            columns={[
-              { key: "status", render: (v) => <Status value={v} /> },
-              {
-                key: "task_id",
-                title: "任务",
-                render: (v, r) => (
-                  <button
-                    className="link mono"
-                    onClick={() => {
-                      setFollowChain(false);
-                      setSelectedId(v || r.job_id);
-                    }}
-                  >
-                    {(v || r.job_id || "").slice(0, 12)}
-                  </button>
-                ),
-              },
-              {
-                key: "kind",
-                title: "类型",
-                render: (_v, r) => dataTaskTitle(r),
-              },
-              {
-                key: "created_at",
-                title: "开始时间",
-                sortValue: (row) => row.created_at_ms ?? row.created_at ?? null,
-                render: (v, r) => dateTime(v ?? r.created_at_ms),
-              },
-              { key: "target_date", title: "目标日期" },
-              {
-                key: "progress",
-                title: "进度",
-                render: (v) => (v == null ? "—" : `${num(Number(v), 0)}%`),
-              },
-              {
-                key: "duration_ms",
-                title: "总历时",
-                description:
-                  "从任务提交到完成或当前时刻，包含排队、暂停等等待时间，不等于纯执行耗时。",
-                render: (v) => duration(v),
-              },
-              {
-                key: "row_count",
-                title: "已接受记录",
-                render: (v, r) => integer(v ?? r.accepted_rows),
-              },
-              { key: "message", title: "摘要" },
-            ]}
-            emptyTitle="尚无同步历史"
-            emptyDescription="第一次手动同步后可查看阶段、批次与完整日志。"
-          />
-        )}
-      </Panel>
+      </div>
       <p className="data-center-footnote">
         <CircleHelp size={12} />
         服务启动仅按规则恢复先前已授权的中断任务，不自动发起新取数；关闭浏览器不会取消后台任务。
       </p>
-    </div>
+    </IntradayPageNavigation>
   );
 }

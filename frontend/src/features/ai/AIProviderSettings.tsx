@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, KeyRound, Settings2, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import {
+  Check,
+  ChevronRight,
+  KeyRound,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { requestKey, useApi, usePageActive } from "../../lib/api";
 import { dateTime } from "../../lib/format";
 import {
@@ -23,6 +30,7 @@ import {
 } from "./aiState";
 import type { AIProvider } from "./aiTypes";
 import AIModelPicker from "./AIModelPicker";
+import "../../components/SettingsDialog.css";
 import "./AI.css";
 
 const capabilityLabels: Record<string, string> = {
@@ -61,8 +69,9 @@ function ProviderEditor({
   const [timeout, setTimeoutSeconds] = useState(
     provider.limits?.timeout_seconds || 45,
   );
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"save" | "verify" | null>(null);
   const [error, setError] = useState("");
+  const keyId = useId();
   const active = usePageActive();
   const modelAllowed = selectableModel(provider.provider_id, model);
   useEffect(() => {
@@ -76,7 +85,7 @@ function ProviderEditor({
       setError("请选择受支持的常用GPT模型");
       return;
     }
-    setBusy(true);
+    setBusy(verify ? "verify" : "save");
     setError("");
     const changed =
       !!key.trim() ||
@@ -116,7 +125,7 @@ function ProviderEditor({
       setKey("");
       setError(e.message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
   return (
@@ -133,42 +142,49 @@ function ProviderEditor({
           void save(false);
         }}
       >
-        <div className="modal-body ai-editor">
-          <p>
-            官方服务 ·{" "}
-            {provider.provider_id === "openai"
-              ? "api.openai.com"
-              : "api.deepseek.com"}
-          </p>
-          <label>
-            API Key{" "}
-            <span className="muted">
-              {provider.configured ? "已配置 · 留空保留" : "尚未配置"}
-            </span>
+        <div className="modal-body settings-dialog-body ai-editor">
+          <div className="settings-dialog-intro">
+            <Badge tone="info">官方 API</Badge>
+            <p>
+              {provider.provider_id === "openai"
+                ? "api.openai.com"
+                : "api.deepseek.com"}
+            </p>
+          </div>
+          <div className="ai-editor-fields">
+            <div className="settings-dialog-field-title">
+              <label htmlFor={keyId}>API Key</label>
+              <Badge tone={provider.configured ? "good" : "neutral"}>
+                {provider.configured ? "已配置" : "待配置"}
+              </Badge>
+            </div>
             <input
+              id={keyId}
               type="password"
               value={key}
               autoComplete="new-password"
               spellCheck={false}
               onChange={(e) => setKey(e.target.value)}
               placeholder={
-                provider.configured ? "输入新 Key 以替换" : "输入官方 API Key"
+                provider.configured ? "留空保留现有 Key" : "输入官方 API Key"
               }
             />
-          </label>
-          <AIModelPicker
-            provider={provider}
-            value={model}
-            onChange={setModel}
-          />
-          <p className="muted">
-            预置名称不代表账号已有权限或效果等级。验证会核对账号与所选模型，切换前的会话继续保留。
-          </p>
-          <details className="ai-details">
-            <summary>费用与限制</summary>
-            <div className="ai-editor">
+          </div>
+          <div className="ai-editor-fields">
+            <AIModelPicker
+              provider={provider}
+              value={model}
+              onChange={setModel}
+            />
+          </div>
+          <details className="ai-details ai-editor-limits">
+            <summary>
+              <ChevronRight size={14} aria-hidden="true" />
+              <span>费用与限制</span>
+            </summary>
+            <div className="ai-editor-limit-fields">
               <label>
-                本实例每日预算（美元）
+                每日预算（美元）
                 <input
                   type="number"
                   min="0.01"
@@ -179,7 +195,7 @@ function ProviderEditor({
                 />
               </label>
               <label>
-                本实例每日最多付费请求
+                每日付费请求上限
                 <input
                   type="number"
                   min="1"
@@ -203,21 +219,24 @@ function ProviderEditor({
                 </select>
               </label>
               <p className="muted">
-                两家服务共用本实例预算，验证推理计入用量；这是本地预估保护，实际账单以供应商为准。
+                两家服务共用本实例预算，验证计入用量。实际账单以供应商为准。
               </p>
             </div>
           </details>
-          <Warning>
-            Key 只提交给本机后端加密保存，不回显，不写入浏览器存储。变更 Key
-            或模型后须重新验证，再手动启用。
-          </Warning>
+          <div className="settings-dialog-note">
+            <ShieldCheck size={15} aria-hidden="true" />
+            <p>
+              Key 仅由本机后端加密保存。更换
+              Key、模型或等待上限后，需重新验证并手动启用。
+            </p>
+          </div>
           {error && <ErrorBox message={error} />}
         </div>
-        <div className="modal-footer ai-actions">
+        <div className="modal-footer settings-dialog-footer">
           <button
             type="button"
             className="btn"
-            disabled={busy}
+            disabled={!!busy}
             onClick={() => {
               setKey("");
               onClose();
@@ -228,19 +247,19 @@ function ProviderEditor({
           <button
             type="submit"
             className="btn"
-            disabled={busy || !modelAllowed}
+            disabled={!!busy || !modelAllowed}
           >
-            {busy && <Spinner />}仅保存
+            {busy === "save" && <Spinner />}仅保存
           </button>
           <button
             type="button"
             className="btn primary"
-            disabled={busy || !modelAllowed}
+            disabled={!!busy || !modelAllowed}
             onClick={(event) => {
               if (event.currentTarget.form?.reportValidity()) void save(true);
             }}
           >
-            <ShieldCheck size={14} />
+            {busy === "verify" ? <Spinner /> : <ShieldCheck size={14} />}
             保存并验证
           </button>
         </div>
@@ -385,7 +404,7 @@ export default function AIProviderSettings() {
             ? `${plainText(providers.data.usage.amount_usd)} USD`
             : "未知"}
         </span>
-        <span>两家服务合计；实际账单以供应商为准</span>
+        <span>两家服务合计，实际账单以供应商为准</span>
       </div>
       {providers.error && (
         <ErrorBox message={providers.error} retry={providers.reload} />
@@ -422,7 +441,10 @@ export default function AIProviderSettings() {
         <div className="ai-provider-grid">
           {(providers.data?.items || []).map((provider) => (
             <section
-              className="sources-connection ai-provider"
+              className={
+                "sources-connection ai-provider" +
+                (provider.enabled ? " is-active" : "")
+              }
               key={provider.provider_id}
             >
               <div className="sources-connection-head">
@@ -439,9 +461,9 @@ export default function AIProviderSettings() {
               </div>
               <p className="ai-model-id">{provider.model}</p>
               <div className="ai-meta">
-                <span>
+                <Badge tone={provider.configured ? "good" : "neutral"}>
                   {provider.configured ? "Key 已配置" : "Key 尚未配置"}
-                </span>
+                </Badge>
                 <span>
                   {stateLabels[provider.verification?.state || "unverified"] ||
                     "待核验"}
@@ -486,7 +508,7 @@ export default function AIProviderSettings() {
               </p>
               <div className="ai-actions">
                 <button
-                  className="btn"
+                  className="btn small"
                   disabled={!!busy || task.pending}
                   onClick={() => setEditing(provider)}
                 >
@@ -494,7 +516,7 @@ export default function AIProviderSettings() {
                   配置
                 </button>
                 <button
-                  className="btn"
+                  className="btn small"
                   disabled={
                     !!busy ||
                     task.pending ||
@@ -507,7 +529,7 @@ export default function AIProviderSettings() {
                   验证所选模型
                 </button>
                 <button
-                  className={"btn " + (provider.enabled ? "" : "primary")}
+                  className={"btn small" + (provider.enabled ? "" : " primary")}
                   disabled={
                     !!busy ||
                     (!provider.enabled &&

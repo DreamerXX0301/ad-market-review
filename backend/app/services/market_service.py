@@ -240,7 +240,8 @@ def _sectors_from_panel(market, status, day, reference, indexed):
 
 
 @supplement_reader
-def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical', rank_state='all', market=None, supplement_dates=None, gainers_lookup=None):
+def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical', rank_state='all', market=None, supplement_dates=None, gainers_lookup=None,
+                include_latest_classification_reference=False):
     if rank_state not in ('all', 'unranked') or (rank_state != 'all' and kind != 'gainers'):
         raise HTTPException(422, '未排名范围仅支持近30日涨幅榜')
     if rank_state == 'unranked' and top_n is not None:
@@ -260,13 +261,32 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
     latest = day == reference.get("pool_trade_date")
     events=dated_events(reference,day)
     base = {"date": day, "snapshot_id": status["snapshot_id"], "items": [], "total": 0, "summary": {}, "warnings": [], "quality": "partial"}
+    latest_memberships = None
+    if kind == "emotion" and day == status.get("data_end") and include_latest_classification_reference:
+        from app.services.stock_memberships import current_memberships
+
+        def latest_memberships(symbols):
+            try:
+                data = current_memberships(
+                    market, symbols, expected_day=day, include_unregistered_provider=True,
+                    connection_factory=getattr(market, "business_read_connection", None),
+                )
+            except HTTPException as exc:
+                if exc.status_code != 409:
+                    raise
+                return {}
+            return data["memberships"]
+
     if kind == "gainers":
         base["items"], summary = cached_gainers(market,status,reference,day,rows)
         from app.services.market_rank_distribution import classification_lookup, ranking_distribution
         connection_factory = getattr(market, 'business_read_connection', None)
         if gainers_lookup is None:
             base['items'], base['ranking_distribution'] = ranking_distribution(
-                market, status, reference, day, base['items'], connection_factory=connection_factory)
+                market, status, reference, day, base['items'], connection_factory=connection_factory,
+                include_latest_classification_reference=include_latest_classification_reference)
+            if classification_reference := base['ranking_distribution'].get('classification_reference'):
+                base['classification_reference'] = classification_reference
         else:
             matched, base['classification_lookup'] = classification_lookup(
                 market, status, reference, day, base['items'], connection_factory=connection_factory,
@@ -330,7 +350,8 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         from app.services.market_sentiment import describe_sentiment
         base['sentiment']=describe_sentiment(market,reference,rows,day)
         from app.services.market_broken_boards import build_analysis
-        base['broken_board_analysis'] = build_analysis(market,status,day,reference,rows,with_memberships=True)
+        base['broken_board_analysis'] = build_analysis(market,status,day,reference,rows,with_memberships=True,
+                                                      latest_memberships=latest_memberships)
         from app.services.market_outlook import build_market_outlook
         base['market_outlook']=build_market_outlook(market,status,day,reference,rows,breadth,emotion,
                                                      base['sentiment'],history,previous_breadth=previous,

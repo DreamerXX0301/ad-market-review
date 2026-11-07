@@ -83,13 +83,17 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
-.ai-provider {
-  padding: 19px;
+.ai-instance-usage {
+  gap: 4px 16px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface);
 }
 .ai-model-id {
   color: var(--blue);
   font-size: var(--workbench-type-label, 13px);
-  margin: 17px 0 8px;
+  margin: 13px 0 8px;
   overflow-wrap: anywhere;
 }
 .ai-meta {
@@ -101,13 +105,13 @@
   color: var(--text);
 }
 .ai-checks {
-  margin: 15px 0 10px;
+  margin: 12px 0 10px;
   padding: 0;
   list-style: none;
   border-block: 1px solid var(--border-soft);
 }
 .ai-checks li {
-  padding: 10px 0;
+  padding: 8px 0;
   font-size: var(--workbench-type-label, 12px);
 }
 .ai-checks li + li {
@@ -128,39 +132,71 @@
   font-size: var(--workbench-type-caption, 11px);
 }
 .ai-provider .ai-actions {
-  margin-top: 17px;
+  margin-top: 12px;
 }
 .ai-delete-key {
-  margin-top: 14px;
+  margin-top: 10px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-size: var(--workbench-type-caption, 11px);
 }
-.ai-editor {
+.ai-editor-fields,
+.ai-editor-limit-fields {
   display: grid;
-  gap: 13px;
+  gap: 6px;
+  min-width: 0;
 }
-.ai-editor label,
+.ai-editor-fields > label,
+.ai-editor-limit-fields > label,
 .ai-composer > label {
   display: grid;
   gap: 7px;
   font-size: var(--workbench-type-label, 12px);
 }
-.ai-editor label input,
-.ai-editor label select,
+.ai-editor :is(input, select),
 .ai-provider-select select,
 .ai-composer textarea {
   width: 100%;
   min-width: 0;
   max-width: 100%;
 }
-.ai-editor p {
-  font-size: var(--workbench-type-label, 12px);
+.ai-editor-fields p,
+.ai-editor-limit-fields p {
+  font-size: var(--workbench-type-caption, 11px);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.ai-editor .ai-details > div {
-  padding: 12px 0 0;
+.ai-details.ai-editor-limits {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
+}
+.ai-details.ai-editor-limits > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 11px;
+  list-style: none;
+}
+.ai-editor-limits > summary::-webkit-details-marker {
+  display: none;
+}
+.ai-editor-limits[open] > summary svg {
+  transform: rotate(90deg);
+}
+.ai-editor-limit-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  padding: 0 11px 11px;
+}
+.ai-editor-limit-fields > p {
+  grid-column: 1 / -1;
+}
+@media (max-width: 460px) {
+  .ai-editor-limit-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .ai-provider-select {
   display: flex;
@@ -2128,17 +2164,36 @@ a.ai-attachment-card:hover {
   color: var(--amber);
 }
 
+.ai-chat-workspace {
+  --ai-conversation-width: 880px;
+  --ai-conversation-padding: clamp(14px, 2.1vw, 30px);
+}
+
+.ai-chat-workspace
+  :is(.ai-chat-messages, .ai-toolbar, .ai-composer, .ai-chat-status) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--ai-conversation-width);
+  margin-inline: auto;
+  padding-inline: var(--ai-conversation-padding);
+}
+
+.ai-chat-workspace :is(.ai-chat-messages, .ai-composer) {
+  scrollbar-gutter: stable both-edges;
+}
+.ai-chat-workspace .ai-composer {
+  overflow-y: auto;
+}
+.ai-chat-workspace .ai-chat-messages > .ai-message.is-assistant {
+  max-width: none;
+}
+.ai-chat-workspace .ai-chat-messages > .ai-message.is-user {
+  margin-right: 0;
+}
+
 @media (min-width: 1600px) {
   .ai-chat-workspace {
     grid-template-columns: 264px minmax(0, 1fr);
-  }
-
-  .ai-chat-workspace
-    :is(.ai-chat-messages, .ai-toolbar, .ai-composer, .ai-chat-status) {
-    max-width: 960px;
-  }
-
-  .ai-chat-workspace .ai-message.is-assistant {
-    max-width: 920px;
+    --ai-conversation-width: 960px;
   }
 }

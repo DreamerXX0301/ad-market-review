@@ -36,6 +36,19 @@ export function automaticStatusText(value: unknown, fallback = ""): string {
     .replace(/工作进程/g, "采集服务");
 }
 
+const beijingClock = new Intl.DateTimeFormat("sv-SE", {
+  timeZone: "Asia/Shanghai",
+  dateStyle: "short",
+  timeStyle: "medium",
+});
+
+export function beijingPlanTime(value: unknown, fallback = "—") {
+  if (typeof value !== "string" || !/(Z|[+-]\d{2}:\d{2})$/.test(value))
+    return fallback;
+  const stamp = Date.parse(value);
+  return Number.isFinite(stamp) ? beijingClock.format(stamp) : fallback;
+}
+
 export function automaticTimeError(
   kind: "noon" | "after_close",
   value: string,

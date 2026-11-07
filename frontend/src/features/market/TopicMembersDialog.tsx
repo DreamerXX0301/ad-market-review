@@ -27,7 +27,6 @@ import {
   latestMemberTopicCode,
   memberQuoteDate,
   topicMemberScopeRequest,
-  type TopicMemberScope,
 } from "./topicMemberScope";
 import {
   MemberBoardCell,
@@ -39,6 +38,7 @@ import {
 type TopicMembersContentProps = {
   topic: Row;
   date: string;
+  latestDate?: string;
   onStock: (id: string, navigation?: StockNavigation) => void;
   onChart?: () => void;
   compact?: boolean;
@@ -58,6 +58,7 @@ const compactMemberColumns = new Set([
 export function TopicMembersContent({
   topic,
   date,
+  latestDate,
   onStock,
   onChart,
   compact = false,
@@ -66,12 +67,23 @@ export function TopicMembersContent({
   const [showAllMetrics, setShowAllMetrics] = useState(false);
   const [query, setQuery] = useState("");
   const [board, setBoard] = useState("all");
-  const [scope, setScope] = useState<TopicMemberScope>("historical");
+  const scope =
+    date === latestDate && latestMemberTopicCode(topic)
+      ? "latest"
+      : "historical";
   const path = topicMemberScopeRequest(topic, date, scope);
   const result = useApi<Row>(path);
-  const data = result.data;
+  const payload = result.data;
+  const data =
+    scope === "latest"
+      ? payload?.membership_scope === "latest" &&
+        (!payload.quote_as_of || payload.quote_as_of === date)
+        ? payload
+        : null
+      : payload?.date === date
+        ? payload
+        : null;
   const quoteDate = memberQuoteDate(data, date, scope);
-  const currentCode = latestMemberTopicCode(topic);
   const membershipDate =
     data?.membership_as_of || data?.membership_observed_date;
   const items = list(data).map((row) =>
@@ -267,13 +279,6 @@ export function TopicMembersContent({
             </Warning>
           )
         )}
-        {scope === "latest" && (
-          <Warning>
-            当前成员采集于 {membershipDate || "未知日期"}，股票行情截至{" "}
-            {quoteDate || "未知日期"}。这是当前来源成员及本地人工调整，不代表{" "}
-            {date} 的历史归属；不会据此补写历史档案。
-          </Warning>
-        )}
         <details className="market-members-details">
           <summary>数据口径与来源</summary>
           <div>
@@ -305,23 +310,6 @@ export function TopicMembersContent({
         </details>
         <div className="member-dialog-toolbar">
           <div className="result-toolbar member-dialog-search-row">
-            <label className="member-dialog-field">
-              <span>成员口径</span>
-              <select
-                aria-label="选择成员口径"
-                value={scope}
-                onChange={(event) => {
-                  setScope(event.target.value as TopicMemberScope);
-                  setQuery("");
-                  setBoard("all");
-                }}
-              >
-                <option value="historical">所选日历史成员</option>
-                <option value="latest" disabled={!currentCode}>
-                  当前最新成员{!currentCode ? " · 来源代码未核验" : ""}
-                </option>
-              </select>
-            </label>
             <label className="member-dialog-field member-dialog-field-search">
               <span>搜索成分股</span>
               <input
@@ -334,10 +322,10 @@ export function TopicMembersContent({
             </label>
             <span className="muted">
               {result.loading
-                ? "正在读取所选口径成员…"
+                ? "正在读取成分股…"
                 : data
                   ? data.unavailable_reason
-                    ? "成员档案缺失，数量未知；可手动切换成员口径"
+                    ? "成员档案缺失，数量未知"
                     : `已返回 ${items.length}${data.total != null ? ` / ${data.total}` : ""} 只 · 当前匹配 ${filtered.length} 只`
                   : "成员数量待核验"}
             </span>
@@ -453,6 +441,7 @@ export function TopicMembersContent({
 export default function TopicMembersDialog({
   topic,
   date,
+  latestDate,
   onClose,
   onStock,
   onChart,
@@ -467,6 +456,7 @@ export default function TopicMembersDialog({
       <TopicMembersContent
         topic={topic}
         date={date}
+        latestDate={latestDate}
         onStock={onStock}
         onChart={onChart}
         onClose={onClose}

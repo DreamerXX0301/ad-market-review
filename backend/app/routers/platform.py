@@ -63,7 +63,7 @@ def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),qu
     if monitor_scope!='historical' and kind!='abnormal':raise HTTPException(422,'最新监控名单范围仅适用于监管页')
     # Services already return JSON-native read models. Avoid FastAPI recursively
     # copying every bar/evidence field again before JSON encoding large charts.
-    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope,rank_state=rank_state))
+    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope,rank_state=rank_state,include_latest_classification_reference=True))
 
 @router.get('/instruments')
 def instruments(query:str='',limit:int=Query(50,ge=1,le=10000),fuzzy:bool=False):
@@ -228,9 +228,16 @@ def research_list():return research_service.list_reports()
 
 @router.post('/sync/topics')
 def topic_sync(payload:dict=Body(default={})):
+    from app.core import get_market
+    from app.services.topic_catalog_additions import SCOPE
+    scope = payload.get('scope', 'current-full-catalog')
+    if scope not in ('current-full-catalog', SCOPE):
+        raise HTTPException(422, '题材同步范围不支持')
     adapter=source_service.client('fuyao')
     if not adapter.key:raise HTTPException(422,'请先配置扶摇免费Key')
-    return task_service.create_task('topic_refresh',{'source_id':'fuyao','scope':'current-full-catalog'},request_key=payload.get('request_key'))
+    if scope == SCOPE and not get_market().status().get('ready'):
+        raise HTTPException(409, '请先完成行情初始化，再同步新增题材')
+    return task_service.create_task('topic_refresh',{'source_id':'fuyao','scope':scope},request_key=payload.get('request_key'))
 
 @router.post('/sync/market-supplement')
 def market_supplement(payload:dict=Body(default={})):

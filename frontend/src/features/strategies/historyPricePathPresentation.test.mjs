@@ -326,13 +326,26 @@ const fullHtml = renderToStaticMarkup(
     ],
   }),
 );
-assert.match(fullHtml, /查看事件依据/);
+assert.match(fullHtml, /<summary>查看事件依据<\/summary>/);
 assert.match(fullHtml, /价格过程未满足/);
 assert.match(fullHtml, /当前条件/);
 assert.match(fullHtml, /周期涨跌幅/);
 assert.match(fullHtml, /整体条件未满足/);
 assert.doesNotMatch(fullHtml, /当前条件未满足/);
 assert.match(unknownHtml, /已核验可比部分最低收盘/);
+const ordinaryHtml = renderToStaticMarkup(
+  createElement(evidence.default, {
+    value: Array.from({ length: 7 }, (_, index) => ({
+      field: "volume_ratio",
+      op: ">=",
+      value: index + 1,
+      actual: 8,
+      result: true,
+    })),
+  }),
+);
+assert.match(ordinaryHtml, /<summary>查看条件依据<\/summary>/);
+assert.match(ordinaryHtml, /≥ 7|&gt;= 7/);
 console.log(
   "history price path presentation: disabled legacy editors, five modes, daily process in D/W/M, exact-price evidence, unknowns and shared result expansion passed",
 );

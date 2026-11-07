@@ -80,7 +80,7 @@ def _published_supplement(snapshot, day, scope):
     """Recognize a successful pre-upgrade publication without writing on GET."""
     from .market_supplement import load_supplement_status
     doc = load_supplement_status(snapshot)
-    if (doc.get('snapshot_id') != snapshot or doc.get('target_date') != day
+    if (snapshot not in (doc.get('snapshot_id'), doc.get('compatible_snapshot_id')) or doc.get('target_date') != day
             or doc.get('quality') != 'complete' or doc.get('revalidate_only') or not doc.get('job_id')):
         return None
     with connect() as connection:

@@ -7,9 +7,9 @@ import pandas as pd
 
 from test_sync import FixtureTransport,transport,start_job
 from app.analytics.market import MarketData
-from app.core import get_market,work_dir
+from app.core import connect,get_market,work_dir
 from app.services import sync_service,topic_collection,task_service as tasks
-from app.services import market_service
+from app.services import market_service, market_supplement, sync_completion, topic_catalog_additions
 
 
 def test_topic_republication_preserves_unknown_missing_count_and_calendar_lineage(transport,monkeypatch):
@@ -147,3 +147,97 @@ def test_topic_task_rejects_a_different_frozen_target_before_requesting_sources(
     task=tasks.create_task('topic_refresh',{'source_id':'fuyao'},target_date='2026-10-16')
     claimed=tasks.claim_next('fixture-worker');assert claimed['job_id']==task['job_id']
     with pytest.raises(ValueError,match='冻结日期'):topic_collection.execute_topic_collection(task['job_id'])
+
+
+def test_catalog_additions_reuses_quotes_and_requests_only_unseen_members(transport, monkeypatch):
+    sync_service.execute_sync(start_job())
+    before = get_market()
+    prior = before.status()
+    members = before.topics_data()
+    day = prior['data_end']
+    supplement = tasks.create_task('source_check', {
+        'operation': 'market_supplement', 'year_history': True, 'sector_history': True, 'recent_days': 1})
+    tasks.finish(supplement['job_id'], 'succeeded')
+    market_supplement.SupplementCache().publish({
+        'version': market_supplement.VERSION, 'snapshot_id': prior['snapshot_id'],
+        'target_date': day, 'job_id': supplement['job_id'], 'quality': 'complete',
+        'public_pools': {day: {'date': day, 'complete': True, 'items': []}},
+    })
+    new_code = '885998.TI'
+    original = transport.request
+
+    def request(path, params):
+        value = original(path, params)
+        if path.endswith('/ths-index-list') and params['tag'] == 'cn_concept':
+            value['data']['item'].append({'thscode': new_code, 'name': '合成新增概念'})
+        return value
+
+    monkeypatch.setattr(transport, 'request', request)
+    monkeypatch.setattr(topic_catalog_additions, 'client', lambda _: transport)
+
+    def run():
+        start = len(transport.calls)
+        task = tasks.create_task('topic_refresh', {'scope': topic_catalog_additions.SCOPE})
+        job = tasks.claim_next('fixture-worker')
+        assert job['job_id'] == task['job_id']
+        result = topic_catalog_additions.execute(job, lambda *args: None)
+        return result, transport.calls[start:]
+
+    result, calls = run()
+    assert result['status'] == 'succeeded'
+    assert [path.rsplit('/', 1)[-1] for path, _ in calls] == ['ths-index-list', 'ths-index-list', 'ths-stock-list']
+    assert calls[-1][1] == {'thscode': new_code}
+    current = get_market()
+    assert current.topics_data()[:-1] == members
+    assert current.topics_data()[-1]['topic_code'] == new_code
+    assert current.topics_data()[-1]['instrument_ids'] == ['600000.SH']
+    price_hashes = lambda head: {f['role']: f['sha256'] for f in head['files']
+                                 if f['role'].startswith(('raw-daily', 'daily', 'corporate-actions'))}
+    assert price_hashes(current.status()) == price_hashes(prior)
+    for key in ('limitup', 'limitdown', 'breakpool', 'pool_history', 'abnormal', 'indices', 'coverage'):
+        assert current.reference()[key] == before.reference()[key]
+    current_id = current.status()['snapshot_id']
+    assert market_supplement.load_supplement(current_id)['public_pools'][day]['complete']
+    assert sync_completion.read_view(current_id, day)['supplement']['completed']
+    with connect() as connection:
+        assert connection.execute('SELECT 1 FROM topic WHERE provider_topic_key=?', ('fuyao-' + new_code,)).fetchone()
+    second, calls = run()
+    assert second['status'] == 'no_change'
+    assert [path.rsplit('/', 1)[-1] for path, _ in calls] == ['ths-index-list', 'ths-index-list']
+    assert get_market().status()['snapshot_id'] == current.status()['snapshot_id']
+
+
+def test_catalog_additions_retry_only_unaccepted_members(transport, monkeypatch):
+    from app.adapters.providers import ProviderError
+    sync_service.execute_sync(start_job())
+    before = get_market().topics_data()
+    original = transport.request
+    accepted, failed = '885997.TI', '885998.TI'
+    fail = True
+
+    def request(path, params):
+        value = original(path, params)
+        if path.endswith('/ths-index-list') and params['tag'] == 'cn_concept':
+            value['data']['item'] += [{'thscode': code, 'name': code} for code in (accepted, failed)]
+        if path.endswith('/ths-stock-list') and params['thscode'] == failed and fail:
+            raise ProviderError('合成成员来源暂不可用', 503)
+        return value
+
+    monkeypatch.setattr(transport, 'request', request)
+    monkeypatch.setattr(topic_catalog_additions, 'client', lambda _: transport)
+
+    def run():
+        start = len(transport.calls)
+        task = tasks.create_task('topic_refresh', {'scope': topic_catalog_additions.SCOPE})
+        job = tasks.claim_next('fixture-worker')
+        assert job['job_id'] == task['job_id']
+        result = topic_catalog_additions.execute(job, lambda *args: None)
+        requested = [params['thscode'] for path, params in transport.calls[start:] if path.endswith('/ths-stock-list')]
+        return result['status'], requested
+
+    assert run() == ('partial', [accepted, failed])
+    assert get_market().topics_data()[:-1] == before
+    assert get_market().topics_data()[-1]['topic_code'] == accepted
+    fail = False
+    assert run() == ('succeeded', [failed])
+    assert get_market().topics_data()[-1]['topic_code'] == failed

@@ -200,6 +200,58 @@ def test_daily_increment_recovers_orphan_raw_after_master_change(offline,tmp_pat
     assert result['annual_coverage']['counts']=={UP:2} and calls==['limitup','limitdown']
 
 
+def test_increment_preserves_in_window_pool_evidence_across_year_boundary(offline,tmp_path,monkeypatch):
+    from app.services.retention_policy import VERSION
+    from app.services.supplement_policy import FUND_FLOW_RETIRED
+
+    older='2024-12-31';prior='2025-12-31'
+    days=pd.bdate_range(older,prior).strftime('%Y-%m-%d').tolist()
+    previous=LocalMarket(tmp_path/'previous',{day:{UP:10.,DOWN:10.} for day in days})
+    up=seed(offline,previous,prior,'limitup')
+    down=seed(offline,previous,prior,'limitdown')
+    seed(offline,previous,older,'limitup')
+    publish(offline,previous,{prior:up})  # The prior-year down pool exists only in accepted.
+    current=LocalMarket(tmp_path/'current',{**previous.quotes,FIRST:{UP:10.,DOWN:10.}},extra_master=True)
+    calls=[]
+
+    class Adapter:
+        def request(self,path,params):
+            assert params['date_ms']==supplement._midnight(FIRST)
+            kind='limitdown' if path.endswith('/limit-down-pool') else 'limitup'
+            calls.append(kind)
+            symbol=DOWN if kind=='limitdown' else UP
+            return {'data':{'item':[{'ticker':symbol[:6],'thscode':symbol,'last_price':10.}],
+                            'pagination':{'total':1}}}
+
+    class Public:
+        def limit_pool(self,day):
+            assert day==FIRST
+            calls.append('seal_details')
+            raise ProviderError('fixture public unavailable')
+
+    with monkeypatch.context() as local:
+        local.setattr(source_service,'client',lambda *_:Adapter())
+        local.setattr(supplement,'PublicMarketClient',Public)
+        result=supplement.refresh_for_market(current,FIRST,year_history=False,
+            retention_policy_version=VERSION,fund_flow_policy=FUND_FLOW_RETIRED)
+    assert calls==['limitup','limitdown','seal_details']
+    assert result['retention']['cutoff_date']>older
+    assert result['annual_coverage']['counts']=={UP:1}
+    assert result['annual_down_coverage']['counts']=={DOWN:1}
+    for field,original in (('annual_pools',up),('annual_down_pools',down)):
+        assert set(result[field])=={prior,FIRST}
+        for key in ('raw_sha256','fetched_at'):
+            assert result[field][prior][key]==original[key]
+    # A subsequent same-generation offline repair still processes January only.
+    repaired=supplement.revalidate_for_market(current,FIRST)
+    assert repaired['revalidation']['planned_batches']==2
+    assert repaired['annual_pools'][prior]==result['annual_pools'][prior]
+    assert repaired['annual_down_pools'][prior]==result['annual_down_pools'][prior]
+    status=supplement.load_supplement_status(current.status()['snapshot_id'])
+    rolling=source_service._rolling_pool_coverage(status,current.calendar(),FIRST)
+    assert rolling['up']['covered_days']==rolling['down']['covered_days']==2
+
+
 def test_revalidate_route_never_reads_provider_credentials_and_worker_uses_frozen_scope(isolated,monkeypatch):
     from app.routers import platform
     status={'ready':True,'snapshot_id':'market-fixture','data_end':SECOND}

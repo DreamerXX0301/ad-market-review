@@ -39,3 +39,9 @@ API中间件在锁定时拒绝所有新的业务GET/写请求并返回409与当�
 `GET /data/status` 新增 `sync_operations.increment/supplement`，各含 `completed/reason/task`。主行情按北京时间盘后日期核验已发布终态，盘面补充按行情代际、目标日期及覆盖范围核验成功回执；不存在、失败或partial补充不填成功。`POST /sync/tasks` 与 `/sync/market-supplement` 在重复成功范围返回409与 `detail.message/completed_task_id`，重复同request_key的任务创建仍先幂等读取。扩大补充范围、明确核验计划、离线重验及失败恢复保持原范围。新补充回执存业务SQLite platform_setting并以真实job终态再次核验，不增加schema；旧版完整成功索引可只读识别。文件取证在事务外，创建事务内只读SQLite回执。
 
 新手动初始/增量/补充冻结 `fund_flow_policy=fund-flow-retired-v1` 并逐级传递：不再请求行业资金历史；旧冻结任务不增删范围。资金历史不删除，旧只读API继续兼容。
+
+## 手动同步新增题材
+
+题材库按钮提交 `POST /api/v1/sync/topics`，请求体包含 `scope: "catalog-additions-v1"` 和 `request_key`。唯一 worker 在固定本地行情代际比较扶摇行业、概念目录，只请求未留存代码的成员。已留存组的成员、采集日和人工调整保留。没有新增时返回 `no_change`，无需发布新代际。部分新成员未通过核验时，只发布通过的组并保留失败代码。继续同一任务复用已落盘且 SHA 匹配的响应。旧冻结任务和缺省范围仍沿用完整目录采集。
+
+新增成员以各批实际采集日留证。发布复用原始、规范化行情对象及现有盘面补充，附加目录与新增成员响应 SHA。手动新增只更新成员档案，板块价格与历史成员仍按各自来源核验。任务列表的可选 `display_status` 和 `coverage_summary` 仅用于展示执行与覆盖状态；原 `status` 继续用于链路、重试和历史审计。

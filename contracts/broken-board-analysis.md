@@ -22,6 +22,10 @@
 
 完整市场报告 `current.items` 中 `outcome=broken` 的炸板队列和 `previous_feedback.items` 补充 `industries/topics/topics_state/topics_date/topics_scope`。当前报告仍保留涨停行的事件与价格事实，但不为这些非炸板队列行装饰未被展示的成员标签。今日明细归属范围日为T，昨日炸板反馈的归属冻结在炸板日P；标签的 `observed_date` 是实际成员采集日，不冒充新的采集时间。来源、板块代码及行业层级分别保留，同名不同代码不合并。`current` 与 `previous_feedback` 的 `concept_distribution/industry_distribution` 按各自已核验炸板队列做去重关联计数，分母为整批队列而不是表格当前页或筛选结果；`sample_share_pct` 是关联股票占这批样本的比例，不是行业内炸板率。多概念可重叠，比例不能相加；分类覆盖与缺档另行披露。
 
+市场情绪公开 GET 的观察日等于最新已发布完成日时，可为 `current` 炸板队列缺失的行业或概念补充本机已核验且采集日晚于 T 的来源成员。已有同类型归属优先。使用补充时，`broken_board_analysis.classification_reference` 提供 `date` 和可选的 `dates`，分别为参与补充的最新实际档案日和实际档案日列表。行的 `topics_date` 仍为 T，补充标签的 `observed_date` 和分布行的 `membership_date` 留存实际来源日。只有元数据逐日列出的实际日期才可作为较晚参考。页面显示“最新行业概念参考”及所用档案日期。
+
+此参考仅用于最新市场情绪的当日股票标签与分类分布。昨日反馈、近7日的单日历史明细、其他页面统计和 AI 仍按对应日期归属取证。行情、事件数量与分母沿用原队列，未知归属保留。补充只读取本地档案，无联网采集、写入或历史回填。
+
 分布行保留 `sample_share_pct` 兼容已有接口，前端不展示占比，改显示关联家数及组内样本的观察日平均涨跌幅。字段为 `sample_date/sample_avg_change_pct/sample_valid_count/sample_unknown_count/sample_basis`，`sample_basis=cohort_equal_weight`：按本批已核验炸板队列中的唯一股票等权计算，仅使用观察日可比 `change_pct`，保留原始精度；有效数与未知数之和必须等于关联家数。0是有效收益，未知不补0，全未知时均值为null；部分可比须在页面披露有效数量。昨日归属P不改变收益观察日T。分组统计直接复用该报告的股票明细，不读取或混入行业、概念指数行情；筛选、排序和分页不改变完整队列均值。
 
 股票明细另有 `board/board_label/board_scope/board_reason`，复用证券代码与交易所分类，范围为 `main/chinext/star/beijing/unknown`，不按涨幅推断板块，也不将当前代码分类声称为历史身份档案。前端支持与行业、概念组合筛选，日期、行情代际或明细范围切换时隔离筛选状态；筛选与排序不改变原队列分布分母。

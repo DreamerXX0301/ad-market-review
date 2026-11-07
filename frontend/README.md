@@ -30,6 +30,8 @@ npm run build
 
 `build` 先执行 TypeScript 检查，再生成 `dist/`。生产构建由后端同源托管，无外部字体、CDN 或运行时第三方脚本依赖。依赖解析以 `package-lock.json` 为准。
 
+左侧导航底部的「联系作者」弹窗按需加载同源微信二维码。部署时将作者提供的原图放入 `frontend/public/author-wechat.jpg` 后构建，已有构建也可将原图放入 `dist/author-wechat.jpg`。图片在 Git 忽略范围内，由对应部署单独保管。
+
 ## 模块
 
 | 目录 / 文件                            | 职责                                                                               |

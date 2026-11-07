@@ -71,13 +71,14 @@ def _reference_memberships(topics, symbols, day):
     return result
 
 
-def _memberships(market, status, reference, day, sample, connection_factory=None, *, include_classifications=False):
+def _memberships(market, status, reference, day, sample, connection_factory=None, *, include_classifications=False,
+                 include_latest_classification_reference=False):
     symbols = [row['instrument_id'] for row in sample]
     if not symbols:
         return {}, {'state': 'empty', 'scope': '所选日没有可排名证券', 'snapshot_id': status.get('snapshot_id')}
     current = day == status.get('data_end')
     if current and any(callable(getattr(market, name, None)) for name in ('topics', 'topics_data', 'topic_catalog')):
-        from app.services.stock_memberships import current_memberships
+        from app.services.stock_memberships import current_memberships, merge_latest_provider_memberships
         try:
             kwargs = {'expected_day': day, 'include_unregistered_provider': True}
             if connection_factory is not None:
@@ -92,7 +93,11 @@ def _memberships(market, status, reference, day, sample, connection_factory=None
                         'snapshot_id': status.get('snapshot_id')}
         found = {symbol: [tag for item in data['memberships'].get(symbol, [])
                           if (tag := _tag(item, day, current=True)) is not None] for symbol in symbols}
+        classification_reference = None
+        if include_latest_classification_reference:
+            found, classification_reference = merge_latest_provider_memberships(found, data['memberships'], day)
         return found, {'state': 'current_business_partial', 'scope': data['scope'],
+                       'classification_reference': classification_reference,
                        'business_date': data['business_date'], 'snapshot_id': status.get('snapshot_id'),
                        'snapshot_day': day, 'classifications': data.get('classifications', [])}
     if current:
@@ -194,11 +199,15 @@ def _rank_sample(ranked):
     return sample
 
 
-def ranking_distribution(market, status, reference, day, ranked, *, connection_factory=None):
+def ranking_distribution(market, status, reference, day, ranked, *, connection_factory=None,
+                         include_latest_classification_reference=False):
     """Return copied rank rows plus an independent, fixed pre-filter summary."""
     sample = _rank_sample(ranked)
     seen = {row['instrument_id'] for row in sample}
-    memberships, context = _memberships(market, status, reference, day, sample, connection_factory)
+    memberships, context = _memberships(
+        market, status, reference, day, sample, connection_factory,
+        include_latest_classification_reference=include_latest_classification_reference,
+    )
     distribution = {'version': 'gainers-top1000-distribution-v1', 'date': day,
                     'sample_limit': SAMPLE_LIMIT, 'sample_count': len(sample),
                     'sample_scope': 'top_1000_before_filters', 'rank_basis': 'return_30d',
@@ -210,6 +219,8 @@ def ranking_distribution(market, status, reference, day, ranked, *, connection_f
                     'excluded_attributes': _excluded_attributes(sample, memberships)}
     # Preserve cached ranks. Sample rows show the same freshly read labels used
     # by their summary, including explicitly known industry/manual kinds.
+    if context.get('classification_reference'):
+        distribution['classification_reference'] = context['classification_reference']
     rows = [{**row, 'topics': memberships.get(row['instrument_id'], []),
              'industries': [tag for tag in memberships.get(row['instrument_id'], []) if tag['kind'] == 'industry'],
              'topics_observed_date': day, 'topics_scope': context['scope']}

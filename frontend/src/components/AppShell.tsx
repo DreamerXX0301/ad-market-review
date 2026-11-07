@@ -32,6 +32,7 @@ import InstrumentSearch from "./InstrumentSearch";
 import MarketDatePicker from "./MarketDatePicker";
 import MarketDateNotice from "./MarketDateNotice";
 import ActiveTaskBanner from "./ActiveTaskBanner";
+import AuthorContact from "./AuthorContact";
 import { Badge } from "./UI";
 import "./Brand.css";
 import "./AppShell.css";
@@ -211,7 +212,8 @@ export default function AppShell({
             <span className="status-dot good" />
             本机数据服务
           </div>
-          <p>盘后研究 · 手动更新</p>
+          <p>盘后可自动或手动更新</p>
+          <AuthorContact />
           <button className="theme-toggle" onClick={onTheme}>
             {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
             <span>{theme === "dark" ? "切换浅色" : "切换深色"}</span>

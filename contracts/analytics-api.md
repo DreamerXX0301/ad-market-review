@@ -194,6 +194,8 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 
 收盘涨跌停通过 `limit_events` 与逐方向 `limit_event_coverage` 返回；日 bar 的状态和证据区分 confirmed/source_absent/unknown/conflict。正事件必须通过来源身份、日期及原始收盘核验，不按涨幅 9.9% 猜，不用炸板触价当收盘涨停。空池、隔离、错价不能证明 false。周/月只汇总确切日事件，不称整周/整月涨停；指数不适用个股标记。显式前复权只改变图上锚点，不改变原始事件日期和核验价格。
 
+个股正式日K的 bar 可附 `limit_down_price_reference={price,rate_pct,previous_raw_close}`，数值为原价人民币元与百分比。严格前一市场交易日的有效未复权收盘价按当日可用的常规板块档位计算，应用分价取整与最小价差，须与同日未复权收盘和最低成交价精确一致。要求已核验上市日期且至少5个先前上市后市场日、当日无公司行动证据明确及无板况冲突。候选档位舍入歧义、当日明确特别处理或已有确证板况时省略该字段。来源池未收录或覆盖不足时可独立展示「跌?」，原事件状态、计数、策略与回测口径照常。仅日K提供，图表以当日显示低点放置标记。
+
 个股成交日形态另外使用 `pattern_events/pattern_coverage`，日 bar 带 `pattern_events/pattern_status`，与收盘池状态分开；不会将地天板同时记为收盘跌停，也不新增选股、提醒或回测信号。原kind为 `earth_to_sky/one_price_limit_up/one_price_limit_down`，沿用basis `verified-source-close-pool-and-raw-ohlc-v1`；新增展示kind `broken_board/resealed_board`使用basis `verified-dated-close-pool-board-events-v1`。事件包含具体 `date/bar_date/snapshot_id/raw_ohlc/raw_low/raw_close/raw_volume/raw_price_basis:"none"/chart_price/sources/evidence`。状态分别为 confirmed、not_matched、unknown，指数为not_applicable；来源不足、身份或价格矛盾时不补猜。
 
 - 一字涨停/跌停：当日有效成交量为正，未复权开高低收按人民币分精度全等，且同日同证券对应收盘池的所有正证据精确匹配原始收盘价。仅证明全天已成交价格相同，不能称全天封单未打开。
@@ -244,7 +246,7 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 - `GET /sectors/{topic_code}/members?as_of=&membership_scope=latest|historical` 无需跟踪轮次。latest 仅用当前业务日报价，显示真实成员采集日；historical 严格查历史留存。无档保持未知，不按名称猜成员。
 - 成员返回 `membership_as_of/quote_as_of/members_complete`、board 和上述收益/事件字段；`stock_entry_baseline=null`。展开成员不会创建个股跟踪，也不会把板块入池点位套给股票。
 
-盘面分类名称在历史成员缺档时仍可打开成员窗口，默认保持所选日历史口径和未知状态；只在用户显式切换“当前最新成员”后调用 `membership_scope=latest`，不携带旧盘面日。成员采集日和当前业务行情日分别展示，股票K线导航使用返回的 `quote_as_of`。当前成员需要明确来源代码或已核验唯一代理身份，不能按名称猜测；切换不联网、不排队、不补写历史。完整初始化只采集当时的当前成员，不补造五年成员变迁；日增量沿用成员和原采集日，完整成员更新仍需用户手动刷新。使用说明见[板块行情与成员档案](../docs/板块行情与成员档案.md)。
+盘面成分股随选定日期读取。最新已发布日且来源代码明确时调用 `membership_scope=latest`，并传同日 `as_of`，防止并发发布后混用报价。较早日期调用所选日的历史成员接口，缺档保留未知。成员采集日与行情日分别展示，股票K线导航使用返回的 `quote_as_of`。当前成员需要明确来源代码或已核验唯一代理身份，不能按名称猜测；切换不联网、不排队、不补写历史。完整初始化只采集当时的当前成员，不补造五年成员变迁；日增量沿用成员和原采集日，完整成员更新仍需用户手动刷新。使用说明见[板块行情与成员档案](../docs/板块行情与成员档案.md)。
 
 精确字段与校验入口见[平台路由](../backend/app/routers/platform.py)、[工作区路由](../backend/app/routers/workspace.py)及[市场服务](../backend/app/services/market_service.py)。
 
@@ -263,6 +265,8 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 ### 涨幅榜未排名范围
 
 `GET /market/gainers` 新增 `rank_state=all|unranked`，默认all。unranked不能同时传top_n，其他页面不得使用该范围。summary含available_unranked_total、available_ranked_total、rank_scope_total、rank_state。未排名行保留真实报价与原因，rank及无法核验的收益为null。前端默认前100名，输入搜索时不传top_n，以便在全市场发现含未排名的证券；清空搜索恢复所选榜单范围。
+
+最新公开页面的可选 `classification_reference`、固定前1000统计和 AI 日期边界见[涨幅榜分布契约](gainers-distribution-v1.md)。
 
 收益期间仍使用市场交易日T/T−30。任一端点须经留存证据核实为全天停牌，才可跨过连续已证实的停牌日，向前最多20个市场交易日取唯一正成交的实际收盘。盘面日停牌显示`return_30d_observation_suspended=true`且当日涨跌幅为空；由停牌前收盘计算的收益带`return_30d_quality='verified_suspension_endpoints'`及`return_30d_start_quote_date/end_quote_date`。停牌前收盘不写成所选日K线，普通缺档、证据冲突、超出范围或公司行动无法核验时仍保留未排名。仅对证据覆盖端点的证券追加有界批读，不改变策略、跟踪及回测。
 

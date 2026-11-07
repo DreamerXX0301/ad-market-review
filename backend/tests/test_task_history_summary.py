@@ -71,6 +71,15 @@ def test_200_summary_receipts_stay_under_250kb_without_per_task_connections(isol
     assert all('source_sha' not in row['parameters'] and row['logs']==[] for row in body['items'])
 
 
+def test_summary_keeps_frozen_market_supplement_scope(isolated):
+    scope={'operation':'market_supplement','year_history':False,'recent_days':1,
+           'parent_sync_job_id':'fixture-parent','revalidate_only':False}
+    task=tasks.create_task('source_check',{**scope,'source_sha':['a'*64]},target_date='2026-10-19')
+    item=client().get('/api/v1/tasks?summary=true').json()['items'][0]
+    assert item['task_id']==task['task_id']
+    assert item['parameters']==scope
+
+
 def test_summary_running_unknown_progress_and_parameter_instrument_allowlist(isolated):
     task=tasks.create_task('source_check',{'operation':'sector_chart','topic_code':'123456',
         'instrument':{'name':'研究行业','source_code':'123456','raw':'do-not-return'},'window':'near-five-years'})

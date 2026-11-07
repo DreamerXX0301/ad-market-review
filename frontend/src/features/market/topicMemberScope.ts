@@ -27,9 +27,9 @@ export function topicMemberScopeRequest(
 ): string | null {
   if (scope === "historical") return topicMembersRequest(topic, date);
   const code = latestMemberTopicCode(topic);
-  // Omit the old view date: latest must use the server's current business day.
+  // The server rejects a mismatched date if a newer generation was published.
   return code
-    ? `/sectors/${encodeURIComponent(code)}/members?membership_scope=latest`
+    ? `/sectors/${encodeURIComponent(code)}/members?membership_scope=latest&as_of=${encodeURIComponent(date)}`
     : null;
 }
 
