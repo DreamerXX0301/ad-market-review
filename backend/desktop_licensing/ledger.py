@@ -14,23 +14,27 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from .protocol import DAY, License, PLAN_DAYS, SIGNATURE_DOMAIN, parse_machine_code
 
 _APPLICATION_ID = 0x414D524F
-_SCHEMA = """
-CREATE TABLE issuer (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    public_key_sha256 TEXT NOT NULL
-);
+_SCHEMA_VERSION = 2
+SELLER_PLAN_DAYS = {"daily": 1, **PLAN_DAYS}
+_ISSUE_TABLE = """
 CREATE TABLE license_issue (
     serial INTEGER PRIMARY KEY AUTOINCREMENT,
     order_ref TEXT NOT NULL UNIQUE,
     machine TEXT NOT NULL,
-    plan TEXT NOT NULL CHECK (plan IN ('trial','monthly','yearly','permanent')),
+    plan TEXT NOT NULL CHECK (plan IN ('daily','trial','monthly','yearly','permanent')),
     issued_at INTEGER NOT NULL,
     expires_at INTEGER,
     CHECK ((plan = 'permanent') = (expires_at IS NULL)),
     CHECK (expires_at IS NULL OR expires_at > issued_at)
 );
-CREATE INDEX license_issue_machine ON license_issue(machine, serial DESC);
 """
+_ISSUE_INDEX = "CREATE INDEX license_issue_machine ON license_issue(machine, serial DESC);"
+_SCHEMA = """
+CREATE TABLE issuer (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    public_key_sha256 TEXT NOT NULL
+);
+""" + _ISSUE_TABLE + _ISSUE_INDEX
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -53,7 +57,9 @@ def _key_id(signer: Ed25519PrivateKey) -> str:
 
 
 def _license(row) -> License:
-    return License(serial=row["serial"], machine=row["machine"], plan=row["plan"],
+    # Shipped AMR-L1 clients accept the existing plan labels and enforce expires_at.
+    wire_plan = "monthly" if row["plan"] == "daily" else row["plan"]
+    return License(serial=row["serial"], machine=row["machine"], plan=wire_plan,
                    issued_at=row["issued_at"], expires_at=row["expires_at"])
 
 
@@ -65,9 +71,27 @@ def _signed_issue(row, signer: Ed25519PrivateKey) -> dict:
         base64.urlsafe_b64encode(part).decode("ascii") for part in (payload, signature)
     )
     return {
-        "order_ref": row["order_ref"], **license.model_dump(),
+        "order_ref": row["order_ref"], **license.model_dump(), "plan": row["plan"],
         "code": f"AMR-L1.{encoded_payload}.{encoded_signature}",
     }
+
+
+def _upgrade_v1(db: sqlite3.Connection) -> None:
+    sequence = db.execute("SELECT seq FROM sqlite_sequence WHERE name='license_issue'").fetchone()
+    db.execute("ALTER TABLE license_issue RENAME TO license_issue_v1")
+    db.execute(_ISSUE_TABLE)
+    db.execute("""
+        INSERT INTO license_issue(serial, order_ref, machine, plan, issued_at, expires_at)
+        SELECT serial, order_ref, machine, plan, issued_at, expires_at FROM license_issue_v1
+    """)
+    db.execute("DROP TABLE license_issue_v1")
+    db.execute(_ISSUE_INDEX)
+    if sequence is not None:
+        # Copying live rows alone would reuse a higher serial whose row was removed.
+        updated = db.execute("UPDATE sqlite_sequence SET seq=max(seq, ?) WHERE name='license_issue'", sequence)
+        if not updated.rowcount:
+            db.execute("INSERT INTO sqlite_sequence(name, seq) VALUES ('license_issue', ?)", sequence)
+    db.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
 
 
 class Ledger:
@@ -84,32 +108,31 @@ class Ledger:
                 db.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA)
                 db.execute("INSERT INTO issuer VALUES (1, ?)", (_key_id(signer),))
                 db.execute(f"PRAGMA application_id={_APPLICATION_ID}")
-                db.execute("PRAGMA user_version=1")
+                db.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
         except BaseException:
             self.path.unlink()
             raise
 
     @contextmanager
     def _database(self, *, write=False):
-        with closing(_connect(self.path)) as db:
-            if (
-                db.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID
-                or db.execute("PRAGMA user_version").fetchone()[0] != 1
-            ):
+        with closing(_connect(self.path)) as db, db:
+            if db.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID:
                 raise ValueError("文件不是受支持的离线授权台账")
             if write:
                 db.execute("BEGIN IMMEDIATE")
-            with db:
-                yield db
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (1, _SCHEMA_VERSION):
+                raise ValueError("文件不是受支持的离线授权台账")
+            yield db, version
 
     def issue(self, plan: str, order_ref: str, machine_code: str, signer: Ed25519PrivateKey) -> dict:
-        if plan not in PLAN_DAYS:
+        if plan not in SELLER_PLAN_DAYS:
             raise ValueError("授权类型无效")
         order_ref = order_ref.strip()
         if not 1 <= len(order_ref) <= 80 or not order_ref.isprintable():
             raise ValueError("订单编号需为 1 至 80 个可显示字符")
         machine = parse_machine_code(machine_code)
-        with self._database(write=True) as db:
+        with self._database(write=True) as (db, version):
             key = db.execute("SELECT public_key_sha256 FROM issuer WHERE singleton=1").fetchone()
             if key is None or key[0] != _key_id(signer):
                 raise ValueError("签名私钥与台账不匹配")
@@ -133,8 +156,10 @@ class Ledger:
             start = now
             if previous is not None and previous["plan"] != "trial":
                 start = max(start, previous["expires_at"])
-            days = PLAN_DAYS[plan]
+            days = SELLER_PLAN_DAYS[plan]
             expires_at = None if days is None else start + days * DAY
+            if plan == "daily" and version == 1:
+                _upgrade_v1(db)
             serial = db.execute(
                 "INSERT INTO license_issue(order_ref, machine, plan, issued_at, expires_at) VALUES (?, ?, ?, ?, ?)",
                 (order_ref, machine, plan, now, expires_at),
@@ -143,7 +168,7 @@ class Ledger:
             return _signed_issue(row, signer)
 
     def info(self, order_ref: str) -> dict:
-        with self._database() as db:
+        with self._database() as (db, _):
             row = db.execute("SELECT * FROM license_issue WHERE order_ref=?", (order_ref,)).fetchone()
             if row is None:
                 raise ValueError("找不到该订单的签发记录")

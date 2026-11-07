@@ -1,6 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
+import hashlib
+import json
 import shutil
 import sqlite3
 import sys
@@ -12,9 +14,10 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from desktop_licensing.__main__ import main as seller_main
 from desktop_licensing.client import DesktopClient
 from desktop_licensing.ledger import Ledger
-from desktop_licensing.protocol import DAY, format_machine_code
+from desktop_licensing.protocol import DAY, format_machine_code, parse_machine_code, verify_license
 
 
 @dataclass
@@ -99,6 +102,122 @@ def test_trial_expires_at_boundary_and_new_paid_card_reactivates_same_installati
     assert client.machine_code() == machine
     with pytest.raises(ValueError, match="早于"):
         client.activate(trial["code"])
+
+
+def test_daily_card_replaces_trial_and_expires_at_exact_signed_boundary(issuer, tmp_path):
+    ledger, signer, clock = issuer
+    client = _client(tmp_path / "daily-client", signer, clock)
+    machine = client.machine_code()
+    trial = ledger.issue("trial", "trial", machine, signer)
+    client.activate(trial["code"])
+    clock.now += DAY
+    daily = ledger.issue("daily", "day", machine, signer)
+    assert daily["plan"] == ledger.info("day")["plan"] == "daily"
+    assert daily["expires_at"] == clock.now + DAY
+    assert daily["expires_at"] < trial["expires_at"]
+    assert client.activate(daily["code"])["plan"] == "monthly"
+    clock.now = daily["expires_at"] - 1
+    assert client.status()["state"] == "active"
+    clock.now += 1
+    assert client.status()["state"] == "expired"
+    assert ledger.issue("daily", "day", machine, signer) == daily
+    with pytest.raises(ValueError, match="套餐"):
+        ledger.issue("monthly", "day", machine, signer)
+
+
+def test_daily_cli_exports_legacy_compatible_card_and_preserves_paid_time(issuer, tmp_path, capsys):
+    ledger, signer, clock = issuer
+    machine = format_machine_code("A" * 32)
+    clock.now = int(time.time()) - DAY
+    month = ledger.issue("monthly", "month", machine, signer)
+    private = tmp_path / "test-signer.pem"
+    private.write_bytes(signer.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption(),
+    ))
+    output = tmp_path / "one-day.amr-license"
+    assert seller_main([
+        "issue", "--db", str(ledger.path), "--private-key", str(private),
+        "--plan", "daily", "--order-ref", "day", "--machine-code", machine, "--output", str(output),
+    ]) == 0
+    issued = json.loads(capsys.readouterr().out)
+    assert issued["plan"] == "daily" and "code" not in issued
+    assert issued["expires_at"] == month["expires_at"] + DAY
+    signed = verify_license(output.read_text("ascii").strip(), signer.public_key(), parse_machine_code(machine))
+    assert signed.plan == "monthly" and signed.expires_at == issued["expires_at"]
+    assert seller_main(["info", "--db", str(ledger.path), "--order-ref", "day"]) == 0
+    assert json.loads(capsys.readouterr().out)["plan"] == "daily"
+
+
+def test_daily_issue_migrates_v1_atomically_preserving_orders_and_sequence(tmp_path, monkeypatch):
+    from desktop_licensing import ledger as issuer_module
+
+    path = tmp_path / "legacy.sqlite3"
+    signer, clock = Ed25519PrivateKey.generate(), Clock()
+    key_hash = hashlib.sha256(signer.public_key().public_bytes_raw()).hexdigest()
+    machine = "A" * 32
+    with closing(sqlite3.connect(path)) as db, db:
+        db.executescript("""
+            PRAGMA foreign_keys=ON;
+            PRAGMA recursive_triggers=ON;
+            PRAGMA busy_timeout=5000;
+            PRAGMA application_id=0x414D524F;
+            PRAGMA user_version=1;
+            CREATE TABLE issuer (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                public_key_sha256 TEXT NOT NULL
+            );
+            CREATE TABLE license_issue (
+                serial INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_ref TEXT NOT NULL UNIQUE,
+                machine TEXT NOT NULL,
+                plan TEXT NOT NULL CHECK (plan IN ('trial','monthly','yearly','permanent')),
+                issued_at INTEGER NOT NULL,
+                expires_at INTEGER,
+                CHECK ((plan = 'permanent') = (expires_at IS NULL)),
+                CHECK (expires_at IS NULL OR expires_at > issued_at)
+            );
+            CREATE INDEX license_issue_machine ON license_issue(machine, serial DESC);
+        """)
+        db.execute("INSERT INTO issuer VALUES (1, ?)", (key_hash,))
+        db.executemany("INSERT INTO license_issue VALUES (?, ?, ?, 'monthly', ?, ?)", [
+            (4, "month", machine, clock.now, clock.now + 30 * DAY),
+            (41, "removed", "B" * 32, clock.now, clock.now + 30 * DAY),
+        ])
+        db.execute("DELETE FROM license_issue WHERE order_ref='removed'")
+
+    ledger = Ledger(path, clock)
+    code = format_machine_code(machine)
+    old_record = ledger.info("month")
+    old_issue = ledger.issue("monthly", "month", code, signer)
+    assert old_record["serial"] == 4 and old_issue["serial"] == 4
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="台账不匹配"):
+        ledger.issue("daily", "wrong-key", code, Ed25519PrivateKey.generate())
+
+    def failed_signature(*args):
+        raise RuntimeError("fixture signing failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(issuer_module, "_signed_issue", failed_signature)
+        with pytest.raises(RuntimeError, match="fixture signing failure"):
+            ledger.issue("daily", "upgrade", code, signer)
+    assert path.read_bytes() == before
+    assert ledger.info("month") == old_record
+
+    daily = ledger.issue("daily", "upgrade", code, signer)
+    assert daily["serial"] == 42 and daily["expires_at"] == old_record["expires_at"] + DAY
+    assert ledger.info("month") == old_record
+    assert ledger.issue("monthly", "month", code, signer) == old_issue
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("PRAGMA recursive_triggers=ON")
+        db.execute("PRAGMA busy_timeout=5000")
+        assert db.execute("PRAGMA user_version").fetchone() == (2,)
+        assert db.execute("SELECT public_key_sha256 FROM issuer").fetchone() == (key_hash,)
+        assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert "license_issue_machine" in {row[1] for row in db.execute("PRAGMA index_list(license_issue)")}
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO license_issue VALUES (NULL, 'invalid', ?, 'daily', ?, NULL)", (machine, clock.now))
 
 
 def test_early_renewal_stacks_paid_time_permanent_remains_permanent(issuer, tmp_path):

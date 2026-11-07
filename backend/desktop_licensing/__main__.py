@@ -11,8 +11,7 @@ import sys
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from .ledger import Ledger
-from .protocol import PLAN_DAYS
+from .ledger import Ledger, SELLER_PLAN_DAYS
 
 
 def _private_key(path):
@@ -71,7 +70,7 @@ def main(argv=None):
         command.add_argument("--db", type=Path, required=True)
         command.add_argument("--private-key", type=Path, required=True)
         if name == "issue":
-            command.add_argument("--plan", choices=tuple(PLAN_DAYS), required=True)
+            command.add_argument("--plan", choices=tuple(SELLER_PLAN_DAYS), required=True)
             command.add_argument("--order-ref", required=True)
             command.add_argument("--machine-code", required=True)
             command.add_argument("--output", type=Path, help="保存为新 .amr-license 文件")
