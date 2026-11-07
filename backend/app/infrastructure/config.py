@@ -4,7 +4,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 APP_NAME = "冒险的梦想家"
 APP_ID = "ad-market-review"
-APP_VERSION = "0.1.24"
+APP_VERSION = "0.1.25"
 
 def data_dir() -> Path:
     return Path(os.environ.get("SHIXU_DATA_DIR", str(PROJECT_ROOT / "data"))).expanduser().resolve()

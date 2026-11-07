@@ -17,6 +17,7 @@ data
 backups
 reports
 frontend/dist
+frontend/public/author-wechat.jpg
 docs/validation
 docs/screenshots
 deploy/*checks*.json
