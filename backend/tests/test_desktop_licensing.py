@@ -93,8 +93,6 @@ def test_trial_expires_at_boundary_and_new_paid_card_reactivates_same_installati
     assert client.status()["state"] == "expired"
     with pytest.raises(ValueError, match="已经到期"):
         client.activate(trial["code"])
-    with pytest.raises(ValueError, match="已有试用"):
-        ledger.issue("trial", "trial-again", machine, signer)
 
     month = ledger.issue("monthly", "paid", machine, signer)
     assert month["expires_at"] == clock.now + 30 * DAY
@@ -125,7 +123,37 @@ def test_daily_card_replaces_trial_and_expires_at_exact_signed_boundary(issuer, 
         ledger.issue("monthly", "day", machine, signer)
 
 
-def test_daily_cli_exports_legacy_compatible_card_and_preserves_paid_time(issuer, tmp_path, capsys):
+def test_new_seven_day_order_replaces_daily_with_prior_trial_and_same_second_issuance(issuer, tmp_path):
+    ledger, signer, clock = issuer
+    client = _client(tmp_path / "reissue", signer, clock)
+    machine = client.machine_code()
+    first_trial = ledger.issue("trial", "trial-initial", machine, signer)
+    client.activate(first_trial["code"])
+    clock.now += 3600
+    daily = ledger.issue("daily", "one-day", machine, signer)
+    client.activate(daily["code"])
+    next_trial = ledger.issue("trial", "trial-reissued", machine, signer)
+    assert next_trial["issued_at"] == daily["issued_at"] == clock.now
+    assert first_trial["serial"] < daily["serial"] < next_trial["serial"]
+    assert next_trial["expires_at"] == next_trial["issued_at"] + 7 * DAY
+    activated = client.activate(next_trial["code"])
+    assert activated["state"] == "active"
+    assert activated["expires_at"] == next_trial["expires_at"]
+
+    clock.now += 3600
+    assert ledger.issue("trial", "trial-reissued", machine, signer) == next_trial
+    assert client.activate(next_trial["code"]) == activated
+    for earlier in (first_trial, daily):
+        with pytest.raises(ValueError, match="早于"):
+            client.activate(earlier["code"])
+    assert client.status() == activated
+    clock.now = next_trial["expires_at"]
+    assert client.status()["state"] == "expired"
+    with pytest.raises(ValueError, match="已经到期"):
+        client.activate(next_trial["code"])
+
+
+def test_daily_cli_exports_legacy_compatible_card_starting_at_issuance(issuer, tmp_path, capsys):
     ledger, signer, clock = issuer
     machine = format_machine_code("A" * 32)
     clock.now = int(time.time()) - DAY
@@ -141,7 +169,7 @@ def test_daily_cli_exports_legacy_compatible_card_and_preserves_paid_time(issuer
     ]) == 0
     issued = json.loads(capsys.readouterr().out)
     assert issued["plan"] == "daily" and "code" not in issued
-    assert issued["expires_at"] == month["expires_at"] + DAY
+    assert issued["expires_at"] == issued["issued_at"] + DAY < month["expires_at"]
     signed = verify_license(output.read_text("ascii").strip(), signer.public_key(), parse_machine_code(machine))
     assert signed.plan == "monthly" and signed.expires_at == issued["expires_at"]
     assert seller_main(["info", "--db", str(ledger.path), "--order-ref", "day"]) == 0
@@ -180,7 +208,7 @@ def test_daily_issue_migrates_v1_atomically_preserving_orders_and_sequence(tmp_p
         """)
         db.execute("INSERT INTO issuer VALUES (1, ?)", (key_hash,))
         db.executemany("INSERT INTO license_issue VALUES (?, ?, ?, 'monthly', ?, ?)", [
-            (4, "month", machine, clock.now, clock.now + 30 * DAY),
+            (4, "month", machine, clock.now, clock.now + 40 * DAY),
             (41, "removed", "B" * 32, clock.now, clock.now + 30 * DAY),
         ])
         db.execute("DELETE FROM license_issue WHERE order_ref='removed'")
@@ -205,7 +233,7 @@ def test_daily_issue_migrates_v1_atomically_preserving_orders_and_sequence(tmp_p
     assert ledger.info("month") == old_record
 
     daily = ledger.issue("daily", "upgrade", code, signer)
-    assert daily["serial"] == 42 and daily["expires_at"] == old_record["expires_at"] + DAY
+    assert daily["serial"] == 42 and daily["expires_at"] == clock.now + DAY
     assert ledger.info("month") == old_record
     assert ledger.issue("monthly", "month", code, signer) == old_issue
     with closing(sqlite3.connect(path)) as db, db:
@@ -220,7 +248,7 @@ def test_daily_issue_migrates_v1_atomically_preserving_orders_and_sequence(tmp_p
             db.execute("INSERT INTO license_issue VALUES (NULL, 'invalid', ?, 'daily', ?, NULL)", (machine, clock.now))
 
 
-def test_early_renewal_stacks_paid_time_permanent_remains_permanent(issuer, tmp_path):
+def test_early_renewal_starts_at_issue_time_and_permanent_remains_permanent(issuer, tmp_path):
     ledger, signer, clock = issuer
     client = _client(tmp_path / "renewal", signer, clock)
     machine = client.machine_code()
@@ -232,7 +260,7 @@ def test_early_renewal_stacks_paid_time_permanent_remains_permanent(issuer, tmp_
     client.activate(monthly["code"])
     clock.now += 10 * DAY
     yearly = ledger.issue("yearly", "year", machine, signer)
-    assert yearly["expires_at"] == monthly["expires_at"] + 365 * DAY
+    assert yearly["expires_at"] == yearly["issued_at"] + 365 * DAY == clock.now + 365 * DAY
     client.activate(yearly["code"])
     permanent = ledger.issue("permanent", "permanent", machine, signer)
     assert client.activate(permanent["code"])["expires_at"] is None
@@ -240,6 +268,8 @@ def test_early_renewal_stacks_paid_time_permanent_remains_permanent(issuer, tmp_
     assert client.status()["state"] == "active"
     with pytest.raises(ValueError, match="已有永久授权"):
         ledger.issue("monthly", "unused", machine, signer)
+    with pytest.raises(ValueError, match="已有永久授权"):
+        ledger.issue("trial", "unused-trial", machine, signer)
 
 
 def test_competing_orders_cannot_bind_same_order_twice_and_exact_retry_is_idempotent(issuer):

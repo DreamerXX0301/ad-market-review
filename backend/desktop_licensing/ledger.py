@@ -143,21 +143,16 @@ class Ledger:
                 return _signed_issue(existing, signer)
 
             previous = db.execute(
-                "SELECT * FROM license_issue WHERE machine=? ORDER BY serial DESC LIMIT 1", (machine,)
+                "SELECT plan, issued_at FROM license_issue WHERE machine=? ORDER BY serial DESC LIMIT 1", (machine,)
             ).fetchone()
             now = int(self.clock())
             if previous is not None and now < previous["issued_at"]:
                 raise ValueError("签发电脑的时间早于上次记录，请校准系统时间")
-            if previous is not None and plan == "trial":
-                raise ValueError("这台电脑已有试用或正式授权")
             if previous is not None and previous["plan"] == "permanent":
                 raise ValueError("这台电脑已有永久授权")
 
-            start = now
-            if previous is not None and previous["plan"] != "trial":
-                start = max(start, previous["expires_at"])
             days = SELLER_PLAN_DAYS[plan]
-            expires_at = None if days is None else start + days * DAY
+            expires_at = None if days is None else now + days * DAY
             if plan == "daily" and version == 1:
                 _upgrade_v1(db)
             serial = db.execute(

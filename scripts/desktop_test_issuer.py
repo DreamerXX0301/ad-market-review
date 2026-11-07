@@ -51,7 +51,7 @@ def _preserve_v1_ledger(database: Path) -> None:
 
 
 def issue_card(root: Path, out: Path, machine: str, plan: str) -> tuple[Path, int | None]:
-    tag = parse_machine_code(machine)
+    parse_machine_code(machine)
     signer = serialization.load_pem_private_key((root / "test-signing.pem").read_bytes(), password=None)
     if not isinstance(signer, Ed25519PrivateKey):
         raise ValueError("测试发卡密钥无效")
@@ -59,8 +59,7 @@ def issue_card(root: Path, out: Path, machine: str, plan: str) -> tuple[Path, in
     if plan == "daily":
         _preserve_v1_ledger(database)
     out.mkdir(parents=True, exist_ok=True, mode=0o700)
-    reference = f"test-trial-{tag}" if plan == "trial" else f"test-{uuid.uuid4().hex}"
-    result = Ledger(database).issue(plan, reference, machine, signer)
+    result = Ledger(database).issue(plan, f"test-{uuid.uuid4().hex}", machine, signer)
     destination = out / f"AMR-Test-{plan}-{result['serial']:04d}.amr-license"
     contents = (result["code"] + "\n").encode("ascii")
     try:
@@ -86,6 +85,7 @@ def main(argv=None) -> int:
         machine = input("粘贴 Windows 授权页显示的机器码，再按回车\n").strip()
         for number, (_, label) in _OPTIONS.items():
             print(number, label)
+        print("新卡从本次签发起算，导入后按新卡期限使用。")
         selected = input("选择类型，直接回车选 2（7 天试用） ").strip() or "2"
         if selected not in _OPTIONS:
             raise ValueError("请选择 1 到 5")
