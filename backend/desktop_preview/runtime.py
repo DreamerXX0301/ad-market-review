@@ -225,7 +225,7 @@ def _serve(package: Path, root: Path, client: DesktopClient) -> None:
         )
         server = uvicorn.Server(uvicorn.Config(
             application, host="127.0.0.1", loop="asyncio", http="h11", ws="none",
-            proxy_headers=False, access_log=False, log_level="warning", lifespan="on",
+            interface="asgi3", proxy_headers=False, access_log=False, log_level="warning", lifespan="on",
         ))
 
         def supervise() -> None:
