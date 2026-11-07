@@ -111,7 +111,7 @@ def test_uncommitted_worktree_and_untracked_env_cannot_enter_commit_export(repos
     'backend/.venv/bin/python','frontend/node_modules/dependency/index.js','frontend/dist/index.html',
     'docs/validation/private-evidence.json','docs/screenshots/private.jpg','deploy/container-checks.json',
     'frontend/api-contract-checks.json','frontend/.env.production','backend/database.duckdb',
-    '.idea/workspace.xml','frontend/src/leak.enc'])
+    '.idea/workspace.xml','frontend/src/leak.enc','backend/customer.amr-license'])
 def test_dangerous_tracked_tree_aborts_before_output_creation(repository,tmp_path,unsafe):
     repo,_=repository;path=repo/unsafe;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('synthetic')
     sha=commit(repo)

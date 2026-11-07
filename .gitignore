@@ -20,6 +20,8 @@ frontend/dist/
 .idea/
 .vscode/
 *.enc
+*.amr-license
+device-license.lock
 *.key
 *.pem
 credential_master_key

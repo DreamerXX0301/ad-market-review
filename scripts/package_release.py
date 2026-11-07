@@ -39,7 +39,7 @@ _SOURCE_DIRS = {'backend','frontend','scripts','deploy','contracts','docs','.git
 _FORBIDDEN_PARTS = {'.git','.idea','.venv','venv','node_modules','__pycache__',
     '.pytest_cache','.ruff_cache','dist','coverage','playwright-report',
     'backups','secrets','credentials','raw','work','reports'}
-_FORBIDDEN_SUFFIXES = {'.enc','.key','.pem','.p12','.pfx','.sqlite','.sqlite3',
+_FORBIDDEN_SUFFIXES = {'.enc','.amr-license','.key','.pem','.p12','.pfx','.sqlite','.sqlite3',
     '.db','.duckdb','.parquet','.arrow','.feather','.log','.pyc','.pyo','.zip',
     '.gz','.tgz','.tar','.7z','.DS_Store'}
 _PRIVATE_PATH = re.compile(r'(?:/[U]sers/|/[h]ome/)[A-Za-z0-9_.-]+/|[A-Za-z]:\\[U]sers\\[A-Za-z0-9_.-]+\\')
