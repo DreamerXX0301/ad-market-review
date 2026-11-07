@@ -394,9 +394,11 @@ def main() -> None:
             f"Zig {native.ZIG_VERSION}: https://ziglang.org/ (see licenses/Zig-LICENSE.txt and MinGW-COPYING.txt).\n",
             encoding="utf-8",
         )
+        copy_file(ROOT / "docs/Windows使用说明.html", package / "使用说明.html")
         (package / "READ-ME.txt").write_text(
             f"冒险的梦想家 Windows x64 桌面版 {desktop_version}\n\n"
             "完整解压 ZIP，再双击 AMR-Desktop-Preview.exe。\n"
+            "双击同目录的 使用说明.html，可离线查看首次配置、自动采集、全部菜单和图表操作。\n"
             "在任务栏通知区域找到工作台图标，图标也可能位于折叠菜单。\n"
             "双击图标，或右键选择「打开工作台」，使用 Windows 默认浏览器打开。\n"
             "关闭浏览器页面后工作台继续运行。右键选择「退出工作台」可安全停止。\n"

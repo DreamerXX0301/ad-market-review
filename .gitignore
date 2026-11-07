@@ -42,6 +42,7 @@ playwright-report/
 !/docs/实现范围与数据边界.md
 !/docs/部署与运维.md
 !/docs/Windows桌面预览.md
+!/docs/Windows使用说明.html
 !/docs/版本升级与回滚.md
 !/docs/架构与模块边界.md
 !/docs/数据库与数据流.md
