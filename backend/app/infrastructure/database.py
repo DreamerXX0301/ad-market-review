@@ -1,12 +1,12 @@
 """SQLite connections and checksummed, atomic, cross-process migrations."""
 from __future__ import annotations
 import contextlib
-import fcntl
 from pathlib import Path
 import sqlite3
 import threading
 from typing import Iterator
 from .config import data_dir, sqlite_path, published_dir, raw_dir, work_dir
+from .file_operations import locked_file
 from .storage import hash_file, now_ms
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 _ready = {}
@@ -46,8 +46,7 @@ def ensure_ready() -> None:
         check_sqlite_runtime()
         for directory in (data_dir(), path.parent, published_dir(), raw_dir(), work_dir()):
             directory.mkdir(parents=True, exist_ok=True)
-        with (path.parent / "migration.lock").open("a+b") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with locked_file(path.parent / "migration.lock", exclusive=True):
             connection = _raw_connection(path)
             try:
                 connection.execute("PRAGMA journal_mode=WAL")
@@ -74,7 +73,6 @@ def ensure_ready() -> None:
                 connection.commit()
             finally:
                 connection.close()
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         _ready[str(path)] = signature
 
 

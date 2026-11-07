@@ -11,13 +11,13 @@ from contextlib import contextmanager
 from datetime import date
 import hashlib
 import json
-import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
 import time
 
-from app.core import connect, digest, new_id, now_ms, published_dir, work_dir
+from app.infrastructure.file_operations import flush_directory, path_is_link_or_reparse
+from app.core import connect, digest, hash_file, new_id, now_ms, published_dir, work_dir
 from app.services.supplement_access import supplement_access
 from app.services.task_service import TaskCancelled, TaskPaused
 
@@ -88,7 +88,7 @@ def _safe(root, key):
         raise ValueError('补充引用越出命名空间')
     path = root.joinpath(*parts.parts)
     for candidate in (path, *path.parents):
-        if candidate.is_symlink():
+        if path_is_link_or_reparse(candidate):
             raise ValueError('补充文件或父目录不允许符号链接')
         if candidate == root:
             break
@@ -439,16 +439,11 @@ def collect_after_publication(job_id, market, document, guard=None):
                     current = _node(root, key)
                     if current['sha256'] != row['sha256'] or current['byte_count'] != row['byte_count']:
                         raise ValueError('删除前补充对象SHA或大小变化')
-                    from app.core import hash_file
                     if hash_file(path) != row['sha256'] or _identity(path) != current['identity']:
                         raise ValueError('删除边界的文件身份或SHA变化')
                     unchanged_database()
                     path.unlink()
-                    directory = os.open(path.parent, os.O_RDONLY)
-                    try:
-                        os.fsync(directory)
-                    finally:
-                        os.close(directory)
+                    flush_directory(path.parent)
                     outcome, removed = 'removed', row['byte_count']
                     report['removed_files'] += 1
                     report['removed_bytes'] += removed

@@ -342,6 +342,11 @@ def _remember_memory(key, record):
 
 
 def _safe_directory(create):
+    # This disposable cache relies on POSIX owner and mode checks. Native
+    # Windows continues using the bounded in-memory cache until its disk
+    # directory can be verified against a Windows ACL policy.
+    if os.name == 'nt':
+        return None
     root = Path(work_dir()).absolute()
     # config.work_dir resolves its environment input; inspect the original too.
     raw = Path(os.environ.get('SHIXU_WORK_DIR', root)).expanduser().absolute()
@@ -659,6 +664,8 @@ def disk_session():
 
 
 def _put_disk(identity, record):
+    if os.name == 'nt':
+        return
     session = _current_disk_session()
     with _disk_lock:
         if session is not None:
@@ -676,6 +683,8 @@ def _put_disk(identity, record):
 
 
 def _get_disk(identity):
+    if os.name == 'nt':
+        return None
     session = _current_disk_session()
     with _disk_lock:
         if session is not None:

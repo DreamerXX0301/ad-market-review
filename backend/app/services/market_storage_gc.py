@@ -14,6 +14,7 @@ import re
 import stat
 
 from app.analytics.market_storage import OBJECT_ROOT, safe_object
+from app.infrastructure.file_operations import flush_directory, path_is_link_or_reparse
 from app.core import digest, dumps, hash_file, new_id, now_ms, raw_dir, work_dir
 
 VERSION='market-storage-gc-v1'
@@ -65,7 +66,7 @@ def _roots(connection,snapshots,now):
     for job in connection.execute("SELECT job_id,kind FROM job WHERE status='paused' AND kind IN ('initialise','increment','topic_init','topic_refresh')"):
         path=(raw_dir()/'sync'/job['job_id']/'checkpoint.json' if job['kind'] in ('initialise','increment') else work_dir()/job['job_id']/'topic-plan.json')
         try:
-            if path.is_symlink() or path.stat().st_size>16*1024*1024:raise ValueError('unsafe recovery checkpoint')
+            if path_is_link_or_reparse(path) or path.stat().st_size>16*1024*1024:raise ValueError('unsafe recovery checkpoint')
             document=json.loads(path.read_text())
             roots.update(value for value in _strings(document.get('plan',{}) if job['kind'] in ('initialise','increment') else document) if value in identifiers or value in generations)
         except (OSError,ValueError,TypeError):roots.update(value for value in generations if isinstance(value,str))
@@ -139,8 +140,8 @@ def preview(connection,published,*,now=None,keep_latest=2):
         expected={file['path'].removeprefix('published/'):file for file in document.get('summary',{}).get('files',[])}
         actual=set()
         for path in folder.rglob('*'):
-            if path.is_symlink():raise ValueError('候选代际包含符号链接')
-            if path.is_file():actual.add(str(path.relative_to(published)))
+            if path_is_link_or_reparse(path):raise ValueError('候选代际包含符号链接')
+            if path.is_file():actual.add(path.relative_to(published).as_posix())
         allowed={key for key in expected if Path(key).parts[0]==generation}|{generation+'/manifest.json'}
         if actual!=allowed:raise ValueError('候选代际含未登记文件，拒绝清理')
         add(generation+'/manifest.json')
@@ -187,9 +188,7 @@ def collect(connection,published,plan,*,offline=False,collection_id=None):
         if exists:
             if not path.is_file() or path.stat().st_size!=row['byte_count'] or hash_file(path)!=row['sha256']:raise ValueError('删除前文件大小或SHA变化，停止且保留原清理台账')
             path.unlink()
-            descriptor=__import__('os').open(path.parent,__import__('os').O_RDONLY)
-            try:__import__('os').fsync(descriptor)
-            finally:__import__('os').close(descriptor)
+            flush_directory(path.parent)
         connection.execute("UPDATE market_storage_collection_file SET status=?,removed_bytes=? WHERE collection_id=? AND object_key=?",('removed' if exists else 'absent',row['byte_count'] if exists else 0,collection_id,row['object_key']));connection.commit()
     connection.execute('BEGIN IMMEDIATE')
     try:

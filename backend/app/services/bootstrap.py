@@ -21,7 +21,7 @@ def register_market(status: dict, job_id: str, callback=None, *, completion=None
         path = Path(file["path"])
         if path.parts and path.parts[0] == "published":
             path = Path(*path.parts[1:])
-        physical[file["role"]] = {"object_key": str(path), "sha256": file["sha256"], "byte_count": file["bytes"], "role": file["role"]}
+        physical[file["role"]] = {"object_key": path.as_posix(), "sha256": file["sha256"], "byte_count": file["bytes"], "role": file["role"]}
     for role in ('raw-daily.parquet','daily.parquet'):
         prefix=role.removesuffix('.parquet')+'-partition/'
         shared[role]=[value for key,value in physical.items() if key.startswith(prefix)]

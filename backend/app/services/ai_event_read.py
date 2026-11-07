@@ -75,10 +75,12 @@ def frame(kind, data, seq=None):
     return '\n'.join(lines) + '\n\n'
 
 
-async def stream_events(request, task_id, after=0, *, interval=.15, heartbeat=10):
+async def stream_events(request, task_id, after=0, *, interval=.15, heartbeat=10, allow_read=None):
     cursor, ping = after, time.monotonic()
     yield ': connected\n\n'
     while not await request.is_disconnected():
+        if allow_read is not None and not await allow_read():
+            return
         try:
             snapshot, events = read_batch(task_id, cursor)
         except HTTPException:

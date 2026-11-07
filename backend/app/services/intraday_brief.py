@@ -674,7 +674,12 @@ def _can_work(connection):
     return not connection.execute("SELECT 1 FROM job WHERE status IN ('queued','running') LIMIT 1").fetchone()
 
 
-def _tick(now, stopping):
+def _tick(now, stopping, *, allow_start=None):
+    def blocked():
+        return stopping.is_set() or allow_start is not None and not allow_start()
+
+    if blocked():
+        return
     day = now.date().isoformat()
     at_ms = int(now.timestamp() * 1000)
     with connect() as connection:
@@ -690,7 +695,9 @@ def _tick(now, stopping):
     projections = {}
     ready = []
     for slot, _ in TIMELINE:
-        if slot not in metadata or stopping.is_set():
+        if blocked():
+            return
+        if slot not in metadata:
             continue
         records = _preceding(metadata, slot)
         source_sha = _digest([BRIEF_VERSION, records])
@@ -726,11 +733,13 @@ def _tick(now, stopping):
                 (day, slot, source_sha, encoded, now_ms()))
         ready.append((slot, source_sha, brief, anchor))
     for slot, source_sha, brief, anchor in ready:
-        if stopping.is_set():
+        if blocked():
             return
         with connect() as connection:
             if not _can_work(connection):
                 return
+        if blocked():
+            return
         try:
             enriched = _model_selection(brief)
         except (ValueError, TypeError, KeyError, httpx.HTTPError) as error:
@@ -745,14 +754,14 @@ def _tick(now, stopping):
                     WHERE trade_date=? AND slot=? AND source_sha256=?''', (encoded, day, slot, source_sha))
 
 
-def start_brief_worker():
+def start_brief_worker(*, allow_start=None):
     """Starts in the exclusively locked worker. No market requests or DB lock span inference."""
     stopping = threading.Event()
 
     def run():
         while not stopping.is_set():
             try:
-                _tick(datetime.now(CHINA), stopping)
+                _tick(datetime.now(CHINA), stopping, allow_start=allow_start)
             except Exception as error:
                 LOGGER.warning('盘中累计简报检查稍后重试 %s', type(error).__name__)
             stopping.wait(10)

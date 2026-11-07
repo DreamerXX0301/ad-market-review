@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse,json,os,re,shutil,sqlite3,tempfile,time,uuid
 from pathlib import Path
 from backup import sha,safe_path,connect_sqlite,check_db,finder_metadata,dragon_tiger_files
+from app.infrastructure.file_operations import flush_file,move_path,path_is_link_or_reparse
 
 def disable_automatic_review(connection, now):
     """A restored copy must not inherit permission to create new daily jobs.
@@ -106,9 +107,9 @@ def disable_ai(connection, now):
     return result
 
 def verify_backup(bundle):
-    bundle=Path(bundle).expanduser().resolve()
-    if not bundle.is_dir() or (bundle/'backup-manifest.json').is_symlink():raise ValueError('Backup bundle is missing or invalid')
-    manifest=json.loads((bundle/'backup-manifest.json').read_text())
+    bundle=Path(bundle).expanduser().absolute()
+    if path_is_link_or_reparse(bundle) or not bundle.is_dir() or path_is_link_or_reparse(bundle/'backup-manifest.json'):raise ValueError('Backup bundle is missing or invalid')
+    manifest=json.loads((bundle/'backup-manifest.json').read_text(encoding='utf-8'))
     if manifest.get('format')!='shixu-backup-v1' or manifest.get('master_key_included') is not False:raise ValueError('Unsupported/unsafe backup format')
     expected=set()
     for item in manifest['files']:
@@ -122,9 +123,9 @@ def verify_backup(bundle):
         expected.add(key)
     actual=set()
     for p in bundle.rglob('*'):
-        if p.is_symlink():raise ValueError('Symlink in backup bundle')
+        if path_is_link_or_reparse(p):raise ValueError('Symlink in backup bundle')
         if finder_metadata(p):continue
-        if p.is_file() and p!=bundle/'backup-manifest.json':actual.add(str(p.relative_to(bundle)))
+        if p.is_file() and p!=bundle/'backup-manifest.json':actual.add(p.relative_to(bundle).as_posix())
     if actual!=expected or 'business/app.sqlite3' not in expected:raise ValueError('Backup inventory differs from manifest')
     dragon_tiger=dragon_tiger_files(bundle/'published')
     declared_dragon={item['path'].removeprefix('published/'):item['sha256'] for item in manifest['files'] if item['path'].startswith('published/dragon-tiger/')}
@@ -140,9 +141,9 @@ def verify_backup(bundle):
     return manifest
 
 def perform_restore(bundle,target):
-    bundle=Path(bundle).expanduser().resolve();target=Path(target).expanduser().resolve()
-    if target.exists():raise ValueError('Restore target must not exist; choose a completely new data root')
-    if target.is_relative_to(bundle) or bundle.is_relative_to(target):raise ValueError('Restore target and backup bundle must be independent')
+    bundle=Path(bundle).expanduser().absolute();target=Path(target).expanduser().absolute()
+    if path_is_link_or_reparse(target) or target.exists():raise ValueError('Restore target must not exist; choose a completely new data root')
+    if target.resolve().is_relative_to(bundle.resolve()) or bundle.resolve().is_relative_to(target.resolve()):raise ValueError('Restore target and backup bundle must be independent')
     manifest=verify_backup(bundle);target.parent.mkdir(parents=True,exist_ok=True)
     stage=Path(tempfile.mkdtemp(prefix='.shixu-restore-',dir=target.parent));stage.chmod(0o700)
     try:
@@ -181,8 +182,11 @@ def perform_restore(bundle,target):
             result['intraday_automation_disabled'] = True
         if auction_discovery_disabled:
             result['auction_discovery_disabled'] = True
-        (stage/'restore-report.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
-        os.replace(stage,target)
+        (stage/'restore-report.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+        if os.name=='nt':
+            for file in stage.rglob('*'):
+                if file.is_file():flush_file(file)
+        move_path(stage,target,replace=False)
         return {**result,'target':str(target)}
     finally:
         if stage.exists():shutil.rmtree(stage)

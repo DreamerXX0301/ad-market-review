@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 from datetime import date
-import fcntl
 import logging
 import json
 import os
@@ -12,6 +11,7 @@ import threading
 import time
 from app.core import connect,data_dir,work_dir,ensure_ready,now_ms,set_setting
 from app.services import task_service as tasks
+from app.infrastructure.file_operations import lock_fd, open_lock
 from app.adapters.providers import ProviderError
 from app.adapters.providers import provider_connection_scope
 
@@ -458,38 +458,61 @@ def dispatch(job):
     else:raise ValueError('该任务类型尚未实现工作进程执行，请通过对应模块手动运行')
 
 
-def run(once=False):
-    ensure_ready(); stop=threading.Event();owner='worker-'+str(os.getpid())
+def run(once=False, *, stop_event=None, allow_start=None):
+    stop = stop_event if stop_event is not None else threading.Event()
+
+    def can_start():
+        return not stop.is_set() and (allow_start is None or allow_start())
+
+    def wait_for_admission():
+        while not stop.is_set():
+            if can_start():
+                return True
+            if once:
+                break
+            stop.wait(1.5)
+        return False
+
+    if not wait_for_admission():
+        return
+    ensure_ready()
+    owner='worker-'+str(os.getpid())
     lock_path=work_dir()/'worker.lock'
-    with lock_path.open('a+b') as lock, ExitStack() as cleanup:
-        try:fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+    with os.fdopen(open_lock(lock_path), 'r+b') as lock, ExitStack() as cleanup:
+        try:lock_fd(lock.fileno(), exclusive=True, blocking=False)
         except BlockingIOError:raise SystemExit('已有工作进程运行，拒绝第二个分析写入者')
+        if not wait_for_admission():
+            return
         from app.services.sync_progress import worker_released
         # Holding this existing EX worker lock proves an earlier execution
         # cannot still write, including a process that died before finally.
         worker_released(recovered=True)
         if not once:
+            if not wait_for_admission():
+                return
+            admission = can_start if allow_start is not None or stop_event is not None else None
             # This is a control thread in this same exclusively locked worker,
             # not a second task-consuming process. Main market jobs retain
             # their existing single-running admission and dispatch behavior.
             try:
                 from app.services.worker_ai_control import WorkerAIControl
-                ai_control = WorkerAIControl(owner)
+                ai_control = WorkerAIControl(owner, allow_start=admission)
                 cleanup.callback(ai_control.close)
                 ai_control.start()
             except Exception as error:
                 logger.warning('AI任务控制尚未启动：%s', type(error).__name__)
             try:
                 from app.services.intraday_brief import start_brief_worker
-                cleanup.callback(start_brief_worker())
+                cleanup.callback(start_brief_worker(allow_start=admission))
             except Exception as error:
                 logger.warning('盘中简报控制尚未启动：%s', type(error).__name__)
-        for signum in (signal.SIGTERM,signal.SIGINT):
-            signal.signal(signum,lambda *_:stop.set())
+        if stop_event is None:
+            for signum in (signal.SIGTERM,signal.SIGINT):
+                signal.signal(signum,lambda *_:stop.set())
         next_research_cleanup=0
         from app.services.automatic_tasks import AutomaticReviewScheduler
         automatic_scheduler=AutomaticReviewScheduler()
-        while not stop.is_set():
+        while wait_for_admission():
             if time.monotonic()>=next_research_cleanup:
                 try:
                     from app.services.research_service import cleanup_expired
@@ -497,37 +520,47 @@ def run(once=False):
                 except Exception:
                     logger.warning('个股研究缓存清理稍后重试')
                 next_research_cleanup=time.monotonic()+3600
+            if not can_start():
+                continue
             set_setting('worker_heartbeat',{'owner':owner,'at_ms':now_ms()})
             from app.services.line_alerts import recover_sync_followups
             from app.services.listing_status import recover_sync_followups as recover_listing_followups
             for name,recover in (('line_alerts',recover_sync_followups),('listing_status',recover_listing_followups)):
+                if not can_start():
+                    break
                 try:recover()
                 except Exception as error:
                     logger.warning('本地核验补漏稍后重试 %s %s',name,type(error).__name__)
+            if not can_start():
+                continue
             recover_followups()
+            if not can_start():
+                continue
             try:
                 from app.services.sync_workspace_followup import recover as recover_workspace
                 recover_workspace()
             except Exception as error:
                 logger.warning('同步后计算阶段补漏暂未完成 %s',type(error).__name__)
+            if not can_start():
+                continue
             try:automatic_scheduler.tick()
             except Exception as error:
                 logger.warning('自动复盘检查暂未完成 %s',type(error).__name__)
-            job=tasks.claim_next(owner)
-            if not job:
+            job=tasks.claim_next(owner) if can_start() else None
+            if not job and can_start():
                 try:
                     from app.services.auction_automation import tick
                     tick()
                 except Exception as error:
                     logger.warning('自动竞价计划核验稍后重试 %s',type(error).__name__)
-                job=tasks.claim_next(owner)
-            if not job:
+                job=tasks.claim_next(owner) if can_start() else None
+            if not job and can_start():
                 try:
                     from app.services.intraday_service import tick_automatic
                     tick_automatic()
                 except Exception as error:
                     logger.warning('盘中自动计划核验稍后重试 %s',type(error).__name__)
-                job=tasks.claim_next(owner)
+                job=tasks.claim_next(owner) if can_start() else None
             if not job:
                 if once:return
                 stop.wait(1.5);continue

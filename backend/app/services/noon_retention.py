@@ -6,11 +6,12 @@ from hashlib import sha256
 import gzip
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 import re
 import stat
 
 from app.core import connect, dumps, now_ms, raw_dir
+from app.infrastructure.file_operations import bound_file
 from app.services.supplement_access import supplement_access
 
 VERSION = 'noon-retention-28d-v1'
@@ -64,17 +65,11 @@ def validate_source(source, source_job_id=None):
 
 
 def source_bytes(root, source, *, remove=False):
-    """使用dir_fd及O_NOFOLLOW，核验后只删除已绑定目录中的同一原件。"""
+    """核验后只删除已绑定目录中的同一原件。"""
     source = validate_source(source)
     parts = PurePosixPath(source['path']).parts
-    directory = os.open(Path(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    descriptor = None
-    try:
-        for part in parts[:-1]:
-            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
-            os.close(directory)
-            directory = following
-        descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+    with bound_file(root, parts, delete=remove) as file:
+        descriptor = file.descriptor
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or before.st_size != source['bytes']:
             raise ValueError('午评原件类型或大小与清单不符')
@@ -105,15 +100,11 @@ def source_bytes(root, source, *, remove=False):
         if sha256(original).hexdigest() != source['sha256']:
             raise ValueError('午评规范原件SHA不符')
         if remove:
-            current = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
+            current = file.named_stat()
             if signature(current) != signature(after):
                 raise ValueError('午评删除前文件身份变化')
-            os.unlink(parts[-1], dir_fd=directory)
+            file.unlink()
         return content
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        os.close(directory)
 
 
 def _anchor(connection, job_id, result):
@@ -252,13 +243,8 @@ def _read_manifest(job_id):
     """终止且没有正文的任务只读它的固定manifest，不枚举可疑孤儿文件。"""
     if not isinstance(job_id, str) or not _JOB.fullmatch(job_id):
         raise ValueError('午评终止任务身份无效')
-    directory = os.open(raw_dir(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    descriptor = None
-    try:
-        for part in ('noon', job_id):
-            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
-            os.close(directory); directory = following
-        descriptor = os.open('manifest.json', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+    with bound_file(raw_dir(), ('noon', job_id, 'manifest.json')) as file:
+        descriptor = file.descriptor
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_SOURCE_BYTES:
             raise ValueError('午评终止任务清单类型或大小无效')
@@ -275,10 +261,6 @@ def _read_manifest(job_id):
                 after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
             raise ValueError('午评终止任务清单读取期间变化')
         return content
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        os.close(directory)
 
 
 def _orphan_candidates(connection, cutoff, report, *, job_id, anchor, check_sequence):

@@ -5,12 +5,14 @@ catalogues are retained. A watchlisted symbol in *any* strategy tracking round
 protects that whole strategy, irrespective of how the watchlist item was added.
 """
 from __future__ import annotations
+from contextlib import ExitStack
 import hashlib
 import json
 import os
 from pathlib import PurePosixPath
 import stat
 from fastapi import HTTPException
+from app.infrastructure.file_operations import bound_file, is_link_or_reparse
 from app.core import connect, digest, dumps, new_id, now_ms, published_dir
 from . import task_service as tasks
 from .workspace_deletion import backtest_block_reason, strategy_block_reason
@@ -106,7 +108,7 @@ def _file_info(key, sha, byte_count, *, snapshot_id, backtest_id, manifest=False
         try: info = path.lstat()
         except FileNotFoundError:
             present = False; break
-        if stat.S_ISLNK(info.st_mode): raise ValueError('报告路径含符号链接，未执行永久清理')
+        if is_link_or_reparse(info): raise ValueError('报告路径含符号链接，未执行永久清理')
         if index < len(parts)-1 and not stat.S_ISDIR(info.st_mode): raise ValueError('报告路径不是安全目录')
         if index == len(parts)-1 and (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1):
             raise ValueError('报告文件类型或硬链接无法安全核对')
@@ -281,38 +283,32 @@ def retry(purge_id):
         return _view(c,c.execute('SELECT * FROM workspace_purge WHERE purge_id=?',(purge_id,)).fetchone())
 
 
-def _open_file(key):
-    """Open each component without following symlinks; caller owns returned FDs."""
-    parts=PurePosixPath(key).parts
-    if not parts or PurePosixPath(key).is_absolute() or '..' in parts: raise ValueError('清理文件路径不安全')
-    parent=os.open(published_dir(),os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
-    try:
-        for part in parts[:-1]:
-            child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=parent)
-            os.close(parent);parent=child
-        descriptor=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=parent)
-        return parent,descriptor,parts[-1]
-    except BaseException:
-        os.close(parent);raise
-
-
 def _verify_file(file, *, remove=False):
-    try: parent,descriptor,name=_open_file(file['object_key'])
-    except FileNotFoundError: return 'absent',0
-    try:
-        before=os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink!=1 or before.st_size!=file['byte_count']: raise ValueError('专属报告文件类型或大小变化，已保留文件')
-        sha=hashlib.sha256()
-        while chunk:=os.read(descriptor,1024*1024):sha.update(chunk)
-        if sha.hexdigest()!=file['sha256']:raise ValueError('专属报告校验和变化，已保留文件')
-        after=os.stat(name,dir_fd=parent,follow_symlinks=False)
-        if (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns):raise ValueError('专属报告在核验期间发生变化，已保留文件')
+    path = PurePosixPath(file['object_key'])
+    if not path.parts or path.is_absolute() or '..' in path.parts:
+        raise ValueError('清理文件路径不安全')
+    with ExitStack() as stack:
+        try:
+            opened = stack.enter_context(bound_file(published_dir(), path.parts, delete=remove))
+        except FileNotFoundError:
+            return 'absent', 0
+        descriptor = opened.descriptor
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != file['byte_count']:
+            raise ValueError('专属报告文件类型或大小变化，已保留文件')
+        sha = hashlib.sha256()
+        while chunk := os.read(descriptor, 1024 * 1024):
+            sha.update(chunk)
+        if sha.hexdigest() != file['sha256']:
+            raise ValueError('专属报告校验和变化，已保留文件')
+        after = opened.named_stat()
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            raise ValueError('专属报告在核验期间发生变化，已保留文件')
         if remove:
-            os.unlink(name,dir_fd=parent);os.fsync(parent)
-            return 'removed',before.st_size
-        return 'verified',0
-    finally:
-        os.close(descriptor);os.close(parent)
+            opened.unlink(durable=True)
+            return 'removed', before.st_size
+        return 'verified', 0
 
 
 def _delete_business(c,scope):

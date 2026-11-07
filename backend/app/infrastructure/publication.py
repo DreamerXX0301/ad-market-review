@@ -20,7 +20,7 @@ def publish_snapshot(*, module: str, job_id: str, start: str, end: str, artifact
         if not target.is_relative_to(published_dir()) or not target.is_file() or hash_file(target) != artifact["sha256"]:
             raise ValueError("发布文件不存在或校验和不一致")
     atomic_json(manifest_path, manifest)
-    relative = str(manifest_path.relative_to(published_dir()))
+    relative = manifest_path.relative_to(published_dir()).as_posix()
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         job = connection.execute("SELECT status FROM job WHERE job_id=?", (job_id,)).fetchone()

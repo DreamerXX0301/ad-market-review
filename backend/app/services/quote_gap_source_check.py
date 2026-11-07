@@ -188,7 +188,7 @@ def _publish(job,parameters,diagnosis,results):
     path=_root()/'reports'/(digest(report)+'.json');atomic_json(path,report)
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE');_guard(connection,job,parameters)
-        atomic_json(_root()/'latest.json',{'artifact':str(path.relative_to(_root())),'sha256':hash_file(path)})
+        atomic_json(_root()/'latest.json',{'artifact':path.relative_to(_root()).as_posix(),'sha256':hash_file(path)})
     return report
 
 
@@ -227,7 +227,7 @@ def execute_check(job):
                 local_quotes={day:value for day,value in quote_cache[symbol].items() if any(start<=day<=end for start,end in windows)}
                 value.update(compare(stock,quotes,local_quotes,value['checked_at_ms']),status='accepted')
                 raw_path=raw_dir()/'quote-gap-source'/job['job_id']/digest(job['lease_owner'])/(symbol+'.json')
-                atomic_json(raw_path,{'version':VERSION,'responses':responses});value['raw_relative']=str(raw_path.relative_to(raw_dir()));sha=hash_file(raw_path)
+                atomic_json(raw_path,{'version':VERSION,'responses':responses});value['raw_relative']=raw_path.relative_to(raw_dir()).as_posix();sha=hash_file(raw_path)
                 value['source_sha256']=sha
                 with connect() as connection:
                     connection.execute('BEGIN IMMEDIATE');_guard(connection,job,parameters)

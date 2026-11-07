@@ -18,3 +18,16 @@
 .nav-item.active .nav-item-copy > small {
   color: color-mix(in srgb, var(--blue) 70%, var(--muted));
 }
+.desktop-license-link {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface2);
+  color: var(--subtle);
+  font-size: var(--workbench-type-caption, 11px);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.desktop-license-link:hover {
+  color: var(--blue);
+}

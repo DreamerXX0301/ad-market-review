@@ -4,10 +4,12 @@
 No network, decryption, master-key reads, live DuckDB copies, or recursive data-dir copying.
 """
 from __future__ import annotations
-import argparse,datetime as dt,hashlib,json,os,shutil,sqlite3,stat,tempfile,time,uuid
-from pathlib import Path
+import argparse,datetime as dt,hashlib,json,os,shutil,sqlite3,stat,sys,tempfile,time,uuid
+from pathlib import Path,PurePosixPath
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'backend'))
+from app.infrastructure.file_operations import flush_file,locked_file,move_path,path_is_link_or_reparse
 
 def sha(path):
     h=hashlib.sha256()
@@ -22,11 +24,14 @@ def finder_metadata(path):
     except FileNotFoundError:return False
 
 def safe_path(root,key):
-    relative=Path(key)
-    if relative.is_absolute() or not relative.parts or '..' in relative.parts:raise ValueError('Unsafe relative path in backup metadata')
-    root=Path(root).resolve();target=root/relative
-    if any(p.is_symlink() for p in [target,*target.parents] if p!=root and root in [p,*p.parents]):raise ValueError('Symlinks are not accepted in backup inputs')
-    if not target.resolve().is_relative_to(root):raise ValueError('Backup path escapes its root')
+    relative=PurePosixPath(key)
+    if relative.is_absolute() or not relative.parts or '..' in relative.parts or relative.as_posix()!=key or any('\\' in part or ':' in part for part in relative.parts):raise ValueError('Unsafe relative path in backup metadata')
+    if os.name=='nt':
+        import ntpath
+        if any(ntpath.isreserved(part) for part in relative.parts):raise ValueError('Reserved Windows path in backup metadata')
+    root=Path(root).absolute();target=root.joinpath(*relative.parts)
+    if any(path_is_link_or_reparse(p) for p in [target,*target.parents] if p==root or root in p.parents):raise ValueError('Symlinks and reparse points are not accepted in backup inputs')
+    if not target.resolve().is_relative_to(root.resolve()):raise ValueError('Backup path escapes its root')
     return target
 
 def connect_sqlite(path,mode='rw'):
@@ -105,7 +110,7 @@ def supplement_files(published):
     if not root.is_dir():raise ValueError('Public supplement root is not a directory')
     required={}
     for path in sorted(root.rglob('*')):
-        if path.is_symlink():raise ValueError('Symlink in public supplement')
+        if path_is_link_or_reparse(path):raise ValueError('Symlink in public supplement')
         if not path.is_file():continue
         relative=path.relative_to(root)
         if path.suffix!='.json':continue
@@ -113,9 +118,9 @@ def supplement_files(published):
         if not valid:raise ValueError('Unexpected public supplement JSON namespace')
         required['market-supplement/'+relative.as_posix()]=sha(path)
     def document(path):
-        key='market-supplement/'+str(path.relative_to(root))
+        key='market-supplement/'+path.relative_to(root).as_posix()
         if key not in required or not path.is_file() or sha(path)!=required[key]:raise ValueError('Public supplement changed while taking its inventory')
-        try:value=json.loads(path.read_text())
+        try:value=json.loads(path.read_text(encoding='utf-8'))
         except (OSError,ValueError) as error:raise ValueError('Invalid public supplement JSON: '+key) from error
         if sha(path)!=required[key]:raise ValueError('Public supplement changed while reading metadata')
         return value
@@ -177,14 +182,13 @@ def needed_files(c,published):
             directory=safe_path(published,generation)
             if not directory.is_dir():raise ValueError('Required immutable market generation is missing')
             for f in directory.rglob('*'):
-                if f.is_symlink():raise ValueError('Symlink in immutable generation')
-                if f.is_file():required.setdefault(str(f.relative_to(published)),None)
-            manifest=json.loads(safe_path(directory,'manifest.json').read_text())
+                if path_is_link_or_reparse(f):raise ValueError('Symlink in immutable generation')
+                if f.is_file():required.setdefault(f.relative_to(published).as_posix(),None)
+            manifest=json.loads(safe_path(directory,'manifest.json').read_text(encoding='utf-8'))
             for item in manifest.get('summary',{}).get('files',[]):
-                key=Path(item['path'])
-                if key.parts and key.parts[0]=='published':key=Path(*key.parts[1:])
-                if str(key) in required and required[str(key)] not in (None,item['sha256']):raise ValueError('Conflicting market object hashes')
-                required[str(key)]=item['sha256']
+                key=item['path'].removeprefix('published/')
+                if key in required and required[key] not in (None,item['sha256']):raise ValueError('Conflicting market object hashes')
+                required[key]=item['sha256']
     for key,expected in supplement_files(published).items():
         if key in required and required[key] not in (None,expected):raise ValueError('Conflicting public supplement artifact hashes')
         required[key]=expected
@@ -197,29 +201,23 @@ def perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credentia
     # The API and sole collector use this same lock on the shared business
     # volume. Hold a reader lock through the supplement inventory/copy so GC
     # cannot unlink an object after it has been captured by this backup.
-    import fcntl
-    import os
     database=Path(sqlite_path or os.environ.get('SHIXU_SQLITE_PATH') or Path(data_dir)/'business/app.sqlite3').expanduser().absolute()
     parent=database.parent
-    if not database.is_file() or parent.is_symlink():raise ValueError('Source SQLite database does not exist or has an unsafe parent')
-    descriptor=os.open(parent/'supplement-access.lock',os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
-    try:
-        fcntl.flock(descriptor,fcntl.LOCK_SH)
+    if path_is_link_or_reparse(database) or path_is_link_or_reparse(parent) or not database.is_file():raise ValueError('Source SQLite database does not exist or has an unsafe parent')
+    with locked_file(parent/'supplement-access.lock'):
         return _perform_backup(data_dir,output,sqlite_path,published_dir,credential_dir)
-    finally:
-        fcntl.flock(descriptor,fcntl.LOCK_UN);os.close(descriptor)
 
 
 def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credential_dir=None):
-    data_dir=Path(data_dir).expanduser().resolve();output=Path(output).expanduser().resolve()
-    if output.exists():raise ValueError('Backup output must be a new path')
-    if output.is_relative_to(data_dir):raise ValueError('Backup output cannot be inside live data')
-    db=Path(sqlite_path or os.environ.get('SHIXU_SQLITE_PATH') or data_dir/'business/app.sqlite3').expanduser().resolve()
-    published=Path(published_dir or os.environ.get('SHIXU_PUBLISHED_DIR') or data_dir/'published').expanduser().resolve()
-    credentials=Path(credential_dir or os.environ.get('SHIXU_CREDENTIAL_DIR') or data_dir/'credentials').expanduser().resolve()
+    data_dir=Path(data_dir).expanduser().absolute();output=Path(output).expanduser().absolute()
+    if path_is_link_or_reparse(output) or output.exists():raise ValueError('Backup output must be a new path')
+    if output.resolve().is_relative_to(data_dir.resolve()):raise ValueError('Backup output cannot be inside live data')
+    db=Path(sqlite_path or os.environ.get('SHIXU_SQLITE_PATH') or data_dir/'business/app.sqlite3').expanduser().absolute()
+    published=Path(published_dir or os.environ.get('SHIXU_PUBLISHED_DIR') or data_dir/'published').expanduser().absolute()
+    credentials=Path(credential_dir or os.environ.get('SHIXU_CREDENTIAL_DIR') or data_dir/'credentials').expanduser().absolute()
     raw=Path(os.environ.get('SHIXU_RAW_DIR') or data_dir/'raw').expanduser().absolute()
     if not db.is_file():raise ValueError('Source SQLite database does not exist')
-    if db.is_symlink() or published.is_symlink() or credentials.is_symlink():raise ValueError('Symlink storage roots are not accepted')
+    if any(path_is_link_or_reparse(path) for path in (data_dir,db,published,credentials)):raise ValueError('Symlink storage roots are not accepted')
     output.parent.mkdir(parents=True,exist_ok=True)
     stage=Path(tempfile.mkdtemp(prefix='.shixu-backup-',dir=output.parent));stage.chmod(0o700)
     owner='backup-'+uuid.uuid4().hex;source=connect_sqlite(db)
@@ -256,8 +254,8 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
             if latest:
                 generation=json.loads(latest[0]).get('market_snapshot_id')
                 if generation:
-                    frozen=json.loads(safe_path(stage/'published',generation+'/manifest.json').read_text())['summary']
-                    (stage/'published/market-head.json').write_text(json.dumps(frozen,ensure_ascii=False))
+                    frozen=json.loads(safe_path(stage/'published',generation+'/manifest.json').read_text(encoding='utf-8'))['summary']
+                    (stage/'published/market-head.json').write_text(json.dumps(frozen,ensure_ascii=False),encoding='utf-8')
         finally:copied.close()
         # A read-only connection to a WAL-mode backup can leave empty -wal/-shm sidecars.
         # Materialize a standalone checkpointed database; runtime re-enables WAL on start.
@@ -272,24 +270,23 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
             explicit_master=os.environ.get('SHIXU_CREDENTIAL_MASTER_KEY_FILE') or os.environ.get('SHIXU_MASTER_KEY_FILE')
             master_path=Path(explicit_master).expanduser().resolve() if explicit_master else Path.home()/'.local/share/shixu/credential_master_key'
             for src in sorted(credentials.glob('*.enc')):
-                if src.is_symlink() or not src.is_file():raise ValueError('Invalid credential ciphertext file')
+                if path_is_link_or_reparse(src) or not src.is_file():raise ValueError('Invalid credential ciphertext file')
                 if src.resolve()==master_path:raise ValueError('The master key must be outside credential ciphertext files')
                 expected=sha(src);dst=stage/'credentials'/src.name;dst.parent.mkdir(exist_ok=True);shutil.copyfile(src,dst);dst.chmod(0o600)
                 if sha(src)!=expected or sha(dst)!=expected:raise ValueError('Credentials changed during backup; retry with credential settings idle')
                 credential_files.append(src.name)
         files=[]
         for path in sorted(stage.rglob('*')):
-            if path.is_symlink():raise ValueError('Symlink in backup staging directory')
+            if path_is_link_or_reparse(path):raise ValueError('Symlink in backup staging directory')
             if finder_metadata(path):continue
-            if path.is_file():files.append({'path':str(path.relative_to(stage)),'sha256':sha(path),'bytes':path.stat().st_size})
+            if path.is_file():files.append({'path':path.relative_to(stage).as_posix(),'sha256':sha(path),'bytes':path.stat().st_size})
         manifest={'format':'shixu-backup-v1','backup_id':owner,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),'sqlite_version':sqlite3.sqlite_version,'heads':heads,'retained_snapshot_count':len(snapshots),'credential_ciphertexts':credential_files,'master_key_included':False,'files':files,'notes':['Online SQLite backup; immutable file references pinned while copying','Optional public market-supplement JSON objects and mutable pointers copied only after checksum and stable-inventory verification','Optional dragon-tiger day/source CAS closure and resumable component pointers verified independently; no historical CAS directory scan','Optional noon sources copied only from captured SQLite and exact manifest closure with stored/canonical checksums; no raw directory scan','Bulk raw downloads and active DuckDB work files intentionally excluded','Do not change provider credentials during a backup; ciphertext storage is not cross-store versioned']}
-        (stage/'backup-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
+        (stage/'backup-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
         for f in stage.rglob('*'):
-            if f.is_symlink():raise ValueError('Symlink in backup staging directory')
+            if path_is_link_or_reparse(f):raise ValueError('Symlink in backup staging directory')
             if finder_metadata(f):continue
-            if f.is_file():
-                with f.open('rb') as reader:os.fsync(reader.fileno())
-        os.replace(stage,output)
+            if f.is_file():flush_file(f)
+        move_path(stage,output,replace=False)
         return {'backup_id':owner,'output':str(output),'files':len(files),'bytes':sum(x['bytes'] for x in files),'snapshot_count':len(snapshots),'master_key_included':False}
     finally:
         try:source.execute("DELETE FROM retention_pin WHERE owner_kind='backup' AND owner_id=?",(owner,));source.commit()

@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import stat
 
+from app.infrastructure.file_operations import is_link_or_reparse, open_directory
+
 
 _GENERATION = re.compile(r"market-[0-9a-f]{24}\Z")
 _KEYS = ("current_market", "old_market", "shared_market", "supplement", "backtests", "metadata_other")
@@ -19,8 +21,8 @@ _KEYS = ("current_market", "old_market", "shared_market", "supplement", "backtes
 def published_storage(root: Path, current_snapshot_id: str | None) -> dict:
     """Classify ordinary files by top-level directory, using the pinned head.
 
-    Directory descriptors with O_NOFOLLOW prevent a concurrent directory swap
-    from turning this inventory into traversal of a symlink outside the root.
+    Pinned directories prevent a concurrent directory swap from turning this
+    inventory into traversal of a symlink or reparse point outside the root.
     Excluded counts describe encountered entries/subtrees, not their contents.
     """
     rows = {key: {"key": key, "logical_bytes": 0, "allocated_bytes": 0,
@@ -46,8 +48,6 @@ def published_storage(root: Path, current_snapshot_id: str | None) -> dict:
             return "current_market" if top == current else "old_market"
         return {"market-objects": "shared_market", "market-supplement": "supplement", "dragon-tiger": "supplement", "backtests": "backtests"}.get(top, "metadata_other")
 
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-
     def walk(directory_fd, top=None):
         try:
             with os.scandir(directory_fd) as entries:
@@ -57,18 +57,15 @@ def published_storage(root: Path, current_snapshot_id: str | None) -> dict:
                         continue
                     try:
                         info = entry.stat(follow_symlinks=False)
-                        if stat.S_ISLNK(info.st_mode):
+                        if is_link_or_reparse(info):
                             excluded["symlink_entries"] += 1
                         elif stat.S_ISDIR(info.st_mode):
-                            child = os.open(entry.name, flags, dir_fd=directory_fd)
-                            try:
+                            with open_directory(entry.name, parent=directory_fd) as child:
                                 child_top = top or entry.name
                                 if top is None and _GENERATION.fullmatch(entry.name):
                                     generations.add(entry.name)
                                     rows[category(entry.name)]["generation_count"] += 1
                                 walk(child, child_top)
-                            finally:
-                                os.close(child)
                         elif stat.S_ISREG(info.st_mode):
                             row = rows[category(top)]
                             row["logical_bytes"] += info.st_size
@@ -86,18 +83,14 @@ def published_storage(root: Path, current_snapshot_id: str | None) -> dict:
             failed()
 
     try:
-        descriptor = os.open(root, flags)
+        with open_directory(root) as directory:
+            walk(directory)
     except FileNotFoundError:
         # An uninitialised installation has no published directory yet.
         if current:
             failed()
     except OSError:
         failed()
-    else:
-        try:
-            walk(descriptor)
-        finally:
-            os.close(descriptor)
     if current and current not in generations:
         errors += 1
         reasons.add("当前行情代际目录未计入")

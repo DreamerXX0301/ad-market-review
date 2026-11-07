@@ -6,7 +6,6 @@ No SQLite transaction is held while reading files or waiting for the collector.
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 import asyncio
-import fcntl
 import os
 import re
 import threading
@@ -15,6 +14,7 @@ from functools import wraps
 from pathlib import Path
 
 from app.core import sqlite_path
+from app.infrastructure.file_operations import lock_fd, open_lock, unlock_fd
 
 _held = threading.local()
 _request_locks = ContextVar('supplement_request_locks', default={})
@@ -31,12 +31,12 @@ def _open_descriptor():
     parent.mkdir(parents=True, exist_ok=True)
     if parent.is_symlink() or path.is_symlink():
         raise ValueError('补充数据访问锁不能是符号链接')
-    return os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    return open_lock(path)
 
 
 def _close_descriptor(descriptor):
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        unlock_fd(descriptor)
     finally:
         os.close(descriptor)
 
@@ -60,17 +60,16 @@ def supplement_access(*, exclusive=False, guard=None):
         return
     descriptor = _open_descriptor()
     try:
-        mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
         if guard:
             while True:
                 guard()
                 try:
-                    fcntl.flock(descriptor, mode | fcntl.LOCK_NB)
+                    lock_fd(descriptor, exclusive=exclusive, blocking=False)
                     break
                 except BlockingIOError:
                     time.sleep(.05)
         else:
-            fcntl.flock(descriptor, mode)
+            lock_fd(descriptor, exclusive=exclusive)
         _held.paths = {**held, key: exclusive}
         try:
             yield
@@ -170,7 +169,7 @@ async def supplement_write_access():
     try:
         while True:
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                lock_fd(descriptor, blocking=False)
                 break
             except BlockingIOError:
                 await asyncio.sleep(.02)

@@ -10,7 +10,8 @@ router = APIRouter(prefix='/api/v1/ai', tags=['ai'])
 async def task_events(request: Request, task_id: str, after: int = Query(0, ge=0, le=MAX_CURSOR)):
     cursor = resume_cursor(after, request.headers.get('last-event-id'))
     read_batch(task_id, cursor, limit=1)  # Return a real 404 before opening SSE.
+    allow_read = getattr(request.state, 'desktop_stream_admission', None)
     return StreamingResponse(
-        stream_events(request, task_id, cursor), media_type='text/event-stream',
+        stream_events(request, task_id, cursor, allow_read=allow_read), media_type='text/event-stream',
         headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'},
     )

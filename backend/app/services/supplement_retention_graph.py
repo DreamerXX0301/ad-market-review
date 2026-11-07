@@ -19,6 +19,7 @@ import stat
 import tempfile
 import time
 
+from app.infrastructure.file_operations import is_link_or_reparse, path_is_link_or_reparse
 from app.infrastructure.storage import digest, dumps
 
 _CAS = re.compile(r'(artifacts|raw|indexes)/[0-9a-f]{64}\.json\Z')
@@ -38,7 +39,7 @@ def _day(value):
 
 def _files(root):
     """Stream flat CAS directories; never sort/materialize their million names."""
-    if root.is_symlink() or any(parent.is_symlink() for parent in root.parents):
+    if any(path_is_link_or_reparse(path) for path in (root, *root.parents)):
         raise ValueError('补充目录不允许符号链接')
     directories = 0
     def walk(folder, depth):
@@ -50,7 +51,7 @@ def _files(root):
             for entry in entries:
                 path = Path(entry.path)
                 key = path.relative_to(root).as_posix()
-                if entry.is_symlink():
+                if entry.is_symlink() or (os.name == "nt" and is_link_or_reparse(entry.stat(follow_symlinks=False))):
                     raise ValueError('补充树含符号链接，拒绝清理')
                 if entry.is_dir(follow_symlinks=False):
                     if PurePosixPath(key).parts[0] not in ('accepted', 'artifacts', 'raw', 'indexes'):
@@ -71,11 +72,14 @@ def _private_directory(directory):
         return None
     path = Path(directory).absolute()
     for candidate in (path, *path.parents):
-        if candidate.is_symlink():
+        if path_is_link_or_reparse(candidate):
             raise ValueError('补充派生图目录不允许符号链接')
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
+    # A fresh TemporaryDirectory below this parent is created with mode 0700.
+    # On Python 3.13+ that sets a private Windows ACL, while st_mode reports
+    # only read-only/writable bits. POSIX also verifies the existing parent.
+    if not stat.S_ISDIR(info.st_mode) or (os.name != 'nt' and stat.S_IMODE(info.st_mode) != 0o700):
         raise ValueError('补充派生图目录必须为0700私有目录')
     return path
 

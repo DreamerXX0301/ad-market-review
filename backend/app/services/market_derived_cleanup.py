@@ -6,11 +6,11 @@ writer-owned success step, never a directory/age sweep or a reader side effect.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import re
 import time
 
+from app.infrastructure.file_operations import flush_directory, path_is_link_or_reparse
 from app.core import atomic_json, connect, digest, hash_file, now_ms, published_dir, raw_dir, work_dir
 from app.analytics.market_storage import VERSION as STORAGE_VERSION, read_descriptor
 
@@ -26,7 +26,7 @@ def _safe(root, relative):
     if relative.is_absolute() or '..' in relative.parts or not relative.parts:
         raise ValueError('派生清理路径越界')
     path = root / relative
-    if any(part.is_symlink() for part in (path, *path.parents) if part != root and root in part.parents):
+    if any(path_is_link_or_reparse(part) for part in (path, *path.parents) if part != root and root in part.parents):
         raise ValueError('派生清理拒绝符号链接')
     if not path.resolve().is_relative_to(root):
         raise ValueError('派生清理路径越界')
@@ -97,7 +97,7 @@ def cleanup_published_derivatives(job_id, directory, status, plan, *, source_kin
     if not isinstance(frozen, dict) or frozen.get('storage_layout') != STORAGE_VERSION:
         return {'status': 'skipped', 'reason': '旧冻结任务不改变原始文件保留方式'}
     directory = Path(directory)
-    if directory.is_symlink():
+    if path_is_link_or_reparse(directory):
         raise ValueError('派生工作目录不能是符号链接')
     directory = directory.resolve()
     expected = (raw_dir() / 'sync' / job_id) if source_kind == 'sync' else (work_dir() / job_id)
@@ -177,9 +177,7 @@ def cleanup_published_derivatives(job_id, directory, status, plan, *, source_kin
                 raise ValueError('派生文件删除前发生变化，停止释放')
             path.unlink()
             removed_this_attempt += expected_file['bytes']
-            descriptor = os.open(path.parent, os.O_RDONLY)
-            try: os.fsync(descriptor)
-            finally: os.close(descriptor)
+            flush_directory(path.parent)
         item.update(status='removed' if exists else 'absent', removed_bytes=expected_file['bytes'] if exists else 0)
         atomic_json(receipt_path, receipt)
     receipt.update(status='completed', completed_at_ms=now_ms(), elapsed_seconds=round(time.monotonic() - started, 3))

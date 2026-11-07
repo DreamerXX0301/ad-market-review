@@ -9,6 +9,10 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
+from app.infrastructure.file_operations import bound_file
 
 MAX_BYTES = 16 * 1024 * 1024
 MAX_FILES = 32768
@@ -36,49 +40,41 @@ def source_metadata(value):
 
 def read_source(raw_root, source):
     source = source_metadata(source)
+    parts = PurePosixPath(source['path']).parts
     try:
-        directory = os.open(Path(raw_root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    except OSError as error:
-        raise ValueError('Noon raw root is missing or unsafe') from error
-    descriptor = None
-    try:
-        parts = PurePosixPath(source['path']).parts
-        for part in parts[:-1]:
-            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
-            os.close(directory); directory = following
-        descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode) or before.st_size != source['bytes']:
-            raise ValueError('Noon source size or file type differs from snapshot')
-        chunks = []; size = 0
-        while True:
-            block = os.read(descriptor, 1024 * 1024)
-            if not block:
-                break
-            size += len(block)
-            if size > source['bytes']:
-                raise ValueError('Noon source changed during read')
-            chunks.append(block)
-        content = b''.join(chunks); after = os.fstat(descriptor)
-        identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
-        if identity(before) != identity(after) or sha256(content).hexdigest() != source['stored_sha256']:
-            raise ValueError('Noon stored source checksum mismatch')
-        if parts[-1].endswith('.gz'):
-            with gzip.GzipFile(fileobj=io.BytesIO(content)) as reader:
-                original = reader.read(MAX_BYTES + 1)
-            if len(original) > MAX_BYTES:
-                raise ValueError('Noon source decompression exceeds limit')
-        else:
-            original = content
-        if sha256(original).hexdigest() != source['sha256']:
-            raise ValueError('Noon canonical source checksum mismatch')
-        return content, original
+        with bound_file(raw_root, parts) as opened:
+            return _read_source(opened.descriptor, parts[-1], source)
     except (OSError, EOFError) as error:
         raise ValueError('Noon source is missing, unsafe or unreadable') from error
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        os.close(directory)
+
+
+def _read_source(descriptor, name, source):
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode) or before.st_size != source['bytes']:
+        raise ValueError('Noon source size or file type differs from snapshot')
+    chunks = []; size = 0
+    while True:
+        block = os.read(descriptor, 1024 * 1024)
+        if not block:
+            break
+        size += len(block)
+        if size > source['bytes']:
+            raise ValueError('Noon source changed during read')
+        chunks.append(block)
+    content = b''.join(chunks); after = os.fstat(descriptor)
+    identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+    if identity(before) != identity(after) or sha256(content).hexdigest() != source['stored_sha256']:
+        raise ValueError('Noon stored source checksum mismatch')
+    if name.endswith('.gz'):
+        with gzip.GzipFile(fileobj=io.BytesIO(content)) as reader:
+            original = reader.read(MAX_BYTES + 1)
+        if len(original) > MAX_BYTES:
+            raise ValueError('Noon source decompression exceeds limit')
+    else:
+        original = content
+    if sha256(original).hexdigest() != source['sha256']:
+        raise ValueError('Noon canonical source checksum mismatch')
+    return content, original
 
 
 def inventory(connection, raw_root):

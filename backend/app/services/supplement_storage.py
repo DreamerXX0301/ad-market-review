@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import threading
 
+from app.infrastructure.file_operations import path_is_link_or_reparse
 from app.infrastructure.storage import atomic_json, digest, dumps
 
 STORAGE_VERSION = 'supplement-index-v2'
@@ -34,7 +35,7 @@ def _object_identity(root, pointer):
         raise ValueError('补充数据对象缺少SHA')
     root = Path(root).resolve()
     path = root / relative
-    if path.is_symlink() or path.parent.is_symlink() or not path.resolve().is_relative_to(root):
+    if path_is_link_or_reparse(path) or path_is_link_or_reparse(path.parent) or not path.resolve().is_relative_to(root):
         raise ValueError('补充数据对象不接受符号链接')
     try:
         info = path.stat()

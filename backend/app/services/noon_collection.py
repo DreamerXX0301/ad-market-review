@@ -8,6 +8,8 @@ from hashlib import sha256
 import json
 import math
 import os
+
+from app.infrastructure.file_operations import open_exclusive_file, path_is_link_or_reparse
 from pathlib import Path
 import re
 from zoneinfo import ZoneInfo
@@ -83,23 +85,23 @@ class Collector:
         self.job_id, self.day, self.adapter = job_id, day, adapter
         self.guard, self.now, self.callback = guard, now, callback
         self.root = raw_dir() / 'noon'
-        if self.root.is_symlink():
+        if path_is_link_or_reparse(self.root):
             raise ValueError('午评原件根目录不能为符号链接')
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.directory = self.root / job_id
-        if self.directory.is_symlink():
+        if path_is_link_or_reparse(self.directory):
             raise ValueError('午评原件任务目录不能为符号链接')
         self.directory.mkdir(exist_ok=True, mode=0o700)
         self.manifest = self.directory / 'manifest.json'
         self.records, self.gaps = [], []
         self.started_at = now().isoformat()
         self.last_accepted_at = self.started_at
-        if self.manifest.is_symlink():
+        if path_is_link_or_reparse(self.manifest):
             raise ValueError('午评原件清单不能为符号链接')
         if self.manifest.is_file():
             if self.manifest.stat().st_size > 4 * 1024 * 1024:
                 raise ValueError('午评恢复清单超过4MiB预算')
-            document = json.loads(self.manifest.read_text())
+            document = json.loads(self.manifest.read_text(encoding='utf-8'))
             if (document.get('job_id') != job_id or document.get('date') != day
                     or document.get('version') != VERSION or not isinstance(document.get('sources'), list)):
                 raise ValueError('午评恢复清单身份不符')
@@ -191,7 +193,7 @@ class Collector:
                 raise ValueError('来源单页超过4MiB')
             stored = gzip.compress(raw, mtime=0)
             target = self.directory / (name + '.json.gz')
-            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            descriptor = open_exclusive_file(target)
             with os.fdopen(descriptor, 'wb') as writer:
                 writer.write(stored)
                 writer.flush()

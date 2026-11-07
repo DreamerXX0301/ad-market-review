@@ -45,7 +45,7 @@ class AIRuntime(AgentRuntimeMixin):
                     verification.update(state='unverified', reason_code='interrupted_manual_retry')
                     db.execute('UPDATE ai_provider_config SET verification_json=? WHERE provider_id=?', (dumps(verification), row['provider_id']))
 
-    def tick(self, owner, allow_start=True):
+    def tick(self, owner, allow_start=True, *, allow_cleanup=True):
         """Drain completion first, then (optionally) claim one low-priority task."""
         if self.closed: return
         if self.active:
@@ -63,7 +63,7 @@ class AIRuntime(AgentRuntimeMixin):
                 if not task or task['cancel_requested'] or service.config_signature(row, limits) != task['config_signature'] or (task['operation'] == 'message' and not row['enabled']):
                     cancel.set()
                 return
-        if now_ms() - self.last_cleanup > 300000:
+        if allow_cleanup and now_ms() - self.last_cleanup > 300000:
             with connect() as db:
                 service._purge_expired(db)
                 self._cleanup_agent_events(db)

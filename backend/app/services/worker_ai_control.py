@@ -20,10 +20,11 @@ def may_start_ai():
 
 
 class WorkerAIControl:
-    def __init__(self, owner, *, runtime=None, admission=None, interval=.5):
+    def __init__(self, owner, *, runtime=None, admission=None, interval=.5, allow_start=None):
         self.owner = owner
         self.runtime = runtime or AIRuntime()
         self.admission = admission or may_start_ai
+        self.allow_start = allow_start
         self.interval = interval
         self.stop_event = threading.Event()
         self.thread = None
@@ -35,14 +36,20 @@ class WorkerAIControl:
         self.thread.start()
         return self
 
+    def _may_start(self):
+        return not self.stop_event.is_set() and (self.allow_start is None or self.allow_start())
+
     def _run(self):
         try:
             while not self.stop_event.is_set():
                 try:
                     # Always drain/observe cancellation even when new work has
                     # to wait behind a long main-market dispatch.
-                    self.runtime.tick(self.owner, allow_start=False)
-                    if not self.stop_event.is_set() and self.admission():
+                    if self.allow_start is None:
+                        self.runtime.tick(self.owner, allow_start=False)
+                    else:
+                        self.runtime.tick(self.owner, allow_start=False, allow_cleanup=self._may_start())
+                    if self._may_start() and self.admission() and self._may_start():
                         self.runtime.tick(self.owner, allow_start=True)
                 except Exception as error:
                     logger.warning('AI任务控制暂未完成：%s', type(error).__name__)

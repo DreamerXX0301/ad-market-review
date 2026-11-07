@@ -6,6 +6,7 @@ import re
 from cryptography.fernet import Fernet, InvalidToken
 
 from .config import data_dir
+from .file_operations import move_path
 
 
 class CredentialStore:
@@ -47,7 +48,7 @@ class CredentialStore:
             writer.write(self._cipher(create=True).encrypt(value.encode()))
             writer.flush()
             os.fsync(writer.fileno())
-        os.replace(temporary, target)
+        move_path(temporary, target)
         return "encrypted:" + source_id
 
     def get(self, source_id):

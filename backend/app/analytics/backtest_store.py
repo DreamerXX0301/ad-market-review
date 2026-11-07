@@ -1,11 +1,11 @@
 """Frozen backtest jobs and immutable result publication, separate from simulation."""
 from pathlib import Path
 import json
-import os
 import shutil
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from app.infrastructure.file_operations import flush_directory, flush_file, move_path
 from app.core import connect,data_dir,published_dir,new_id,now_ms,dumps,digest,hash_file,atomic_json,publish_snapshot
 from .market import MarketData
 from .backtest_engine import VERSION,availability,config_checked,run_backtest,engine_version
@@ -212,7 +212,7 @@ def execute_backtest(job_id,progress=None):
             table=pa.Table.from_pylist(flattened) if flattened else pa.table({'_empty':pa.array([],type=pa.string())})
             target=stage/(kind+'.parquet')
             pq.write_table(table,target,compression='zstd')
-            with target.open('rb') as reader:os.fsync(reader.fileno())
+            flush_file(target)
         result['signal_count']=len(result['signals']);result['signals_preview']=result.pop('signals')[:50]
         atomic_json(stage/'report.json',result)
         # Interrupted attempts may have renamed but not catalogued; files are deterministic.
@@ -222,13 +222,11 @@ def execute_backtest(job_id,progress=None):
                 if not candidate.exists() or hash_file(existing)!=hash_file(candidate):raise ValueError('恢复回测遇到不同内容的已存在结果目录')
             shutil.rmtree(stage)
         else:
-            os.replace(stage,folder)
-            descriptor=os.open(folder.parent,os.O_RDONLY)
-            try:os.fsync(descriptor)
-            finally:os.close(descriptor)
+            move_path(stage,folder)
+            flush_directory(folder.parent)
         counts={k:len(result.get(k,[])) for k in ('orders','fills','positions','trades','equity')};counts['signals']=result['signal_count']
         for path in sorted(folder.iterdir()):
-            artifacts.append({'object_key':str(path.relative_to(published_dir())),'sha256':hash_file(path),'byte_count':path.stat().st_size,'row_count':counts.get(path.stem,1),'role':'report' if path.suffix=='.json' else path.stem})
+            artifacts.append({'object_key':path.relative_to(published_dir()).as_posix(),'sha256':hash_file(path),'byte_count':path.stat().st_size,'row_count':counts.get(path.stem,1),'role':'report' if path.suffix=='.json' else path.stem})
         if progress:progress('发布回测明细和权益',95)
         snapshot=publish_snapshot(module='backtest_result',job_id=job_id,start=row['requested_start'],end=row['requested_end'],artifacts=artifacts,quality='partial',scope=bid,lineage={'input_snapshots':result['input_snapshots'],'input_sha256':row['input_sha256'],'market_snapshot_id':frozen['market_snapshot_id'],'data_quality':result['data_quality']},price_basis='none',algorithm=row['engine_version'],snapshot_id='result-'+bid,activate=False)
         with connect() as c:

@@ -10,6 +10,8 @@ import time
 from typing import Any
 import uuid
 
+from .file_operations import flush_directory, move_path
+
 def now_ms() -> int:
     return time.time_ns() // 1_000_000
 
@@ -58,13 +60,9 @@ def hash_file(path: Path) -> str:
 def atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    with temporary.open("w", encoding="utf-8") as writer:
+    with temporary.open("w", encoding="utf-8", newline="\n") as writer:
         writer.write(dumps(value) + "\n")
         writer.flush()
         os.fsync(writer.fileno())
-    os.replace(temporary, path)
-    descriptor = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    move_path(temporary, path)
+    flush_directory(path.parent)

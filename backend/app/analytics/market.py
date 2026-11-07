@@ -12,6 +12,8 @@ import tempfile
 import threading
 import duckdb
 
+from app.infrastructure.file_operations import flush_directory as fsync_directory, flush_file as fsync_file, move_path
+
 from .indicators import INDICATOR_VERSION, aggregate_weekly, enrich_bars
 from .market_storage import VERSION as STORAGE_VERSION, OBJECT_ROOT, parquet_input, write_partitions, activity_window, write_reference, load_reference, REFERENCE_VERSION, ENCODER_VERSION, verify_immutable_file, safe_object
 
@@ -25,16 +27,6 @@ def hash_file(path):
     with open(path, 'rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''): h.update(block)
     return h.hexdigest()
-
-
-def fsync_file(path):
-    with Path(path).open('rb') as stream:os.fsync(stream.fileno())
-
-
-def fsync_directory(path):
-    descriptor=os.open(path,os.O_RDONLY|getattr(os,'O_DIRECTORY',0))
-    try:os.fsync(descriptor)
-    finally:os.close(descriptor)
 
 
 def validated_snapshot_head(data_dir,final,raw_sha,source_hashes):
@@ -247,16 +239,16 @@ class MarketData:
         else:(stage/'reference.json').write_text(json.dumps(metadata,ensure_ascii=False,separators=(',',':')))
         if (source/'raw/fuyao_bulk_adjustments.parquet').is_file(): shutil.copyfile(source/'raw/fuyao_bulk_adjustments.parquet',stage/'corporate-actions.parquet')
         report('校验不可变快照', 80)
-        artifacts = partition_files+[{'role':p.name,'path':str(Path('published')/snapshot/p.name),'sha256':hash_file(p),'bytes':p.stat().st_size} for p in sorted(stage.iterdir()) if p.is_file() and p.name not in ('raw-daily.manifest.json','daily.manifest.json')]
+        artifacts = partition_files+[{'role':p.name,'path':f'published/{snapshot}/{p.name}','sha256':hash_file(p),'bytes':p.stat().st_size} for p in sorted(stage.iterdir()) if p.is_file() and p.name not in ('raw-daily.manifest.json','daily.manifest.json')]
         warnings=bundle.get('quality_warnings',['2145个预期交易记录缺口未解释，未填0；退市历史不完整','未复权原始价格；公司行动附近价格指标重启预热，未声称复权已验收','换手率和完整历史题材不可用；最新名称不等于历史证券身份'])
-        head = {'snapshot_id':snapshot,'data_begin':begin,'data_end':end,'rows':count,'symbols':symbols,'source':'fuyao','price_basis':'none','volume_unit':'股','amount_unit':'CNY','algorithm_version':ALGORITHM,'quality':'partial','files':artifacts,'collected_at':collected,'warnings':warnings,'unexplained_missing':bundle.get('unexplained_missing',2145 if not bundle else None),'coverage':bundle.get('coverage',{}),'manifest_path':str(Path('published')/snapshot/'manifest.json')}
+        head = {'snapshot_id':snapshot,'data_begin':begin,'data_end':end,'rows':count,'symbols':symbols,'source':'fuyao','price_basis':'none','volume_unit':'股','amount_unit':'CNY','algorithm_version':ALGORITHM,'quality':'partial','files':artifacts,'collected_at':collected,'warnings':warnings,'unexplained_missing':bundle.get('unexplained_missing',2145 if not bundle else None),'coverage':bundle.get('coverage',{}),'manifest_path':f'published/{snapshot}/manifest.json'}
         if partitioned:head.update(storage_layout=STORAGE_VERSION,storage_encoder=ENCODER_VERSION,storage_write=storage_stats,active_window=activity_window(end,begin))
         manifest = {'summary':head,'source_sha256':raw_sha,'supplemental_hashes':hashes,'quality':head['warnings'],'published_at':datetime.now(timezone.utc).isoformat()}
         (stage/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
         for file in sorted(stage.iterdir()):
             if file.is_file():fsync_file(file)
         fsync_directory(stage)
-        os.replace(stage,final)
+        move_path(stage,final)
         fsync_directory(root)
         self._publish_head(root,head)
         report('真实数据快照已发布',100)
@@ -308,7 +300,7 @@ class MarketData:
             for path in stage.iterdir():
                 fsync_file(path)
             fsync_directory(stage)
-            stage.rename(final)
+            move_path(stage,final,replace=False)
             fsync_directory(root)
         return MarketData(self.data_dir, snapshot).status()
 
@@ -316,7 +308,7 @@ class MarketData:
     def _publish_head(root, head):
         temp = root/'market-head.json.tmp'; temp.write_text(json.dumps(head,ensure_ascii=False))
         fsync_file(temp)
-        os.replace(temp,root/'market-head.json')
+        move_path(temp,root/'market-head.json')
         fsync_directory(root)
 
     def _reference(self):

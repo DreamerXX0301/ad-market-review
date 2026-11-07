@@ -117,10 +117,10 @@ class SupplementCache:
             except (ValueError,OSError):valid=False
             if not valid:raise ValueError('补充原始证据对象已损坏，拒绝将新响应关联到损坏缓存')
         else:atomic_json(raw_path,raw)
-        result={**result,'fetched_at':result.get('fetched_at') or datetime.now(CHINA).isoformat(),'raw_sha256':hash_file(raw_path),'raw_artifact':str(raw_path.relative_to(self.root)),'validation_version':VERSION}
+        result={**result,'fetched_at':result.get('fetched_at') or datetime.now(CHINA).isoformat(),'raw_sha256':hash_file(raw_path),'raw_artifact':raw_path.relative_to(self.root).as_posix(),'validation_version':VERSION}
         content=digest(result); path=self.root/'artifacts'/(content+'.json')
         atomic_json(path,result)
-        atomic_json(self.root/'accepted'/source/capability/(day+'.json'),{'version':VERSION,'signature':signature,'normalization_version':result.get('normalization_version',VERSION),'artifact':str(path.relative_to(self.root)),'sha256':hash_file(path)})
+        atomic_json(self.root/'accepted'/source/capability/(day+'.json'),{'version':VERSION,'signature':signature,'normalization_version':result.get('normalization_version',VERSION),'artifact':path.relative_to(self.root).as_posix(),'sha256':hash_file(path)})
         return result
 
     def pool_raw_evidence(self, day, pool_kind):
@@ -156,7 +156,7 @@ class SupplementCache:
         content=digest(stored); path=self.root/'indexes'/(content+'.json')
         atomic_json(path,stored)
         if guard:guard()
-        atomic_json(self.root/'head.json',{'snapshot_id':document['snapshot_id'],'version':VERSION,'artifact':str(path.relative_to(self.root)),'sha256':hash_file(path),'published_at_ms':now_ms()})
+        atomic_json(self.root/'head.json',{'snapshot_id':document['snapshot_id'],'version':VERSION,'artifact':path.relative_to(self.root).as_posix(),'sha256':hash_file(path),'published_at_ms':now_ms()})
 
 
 def _year_dates(calendar,target):

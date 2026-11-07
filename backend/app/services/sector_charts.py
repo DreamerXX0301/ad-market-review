@@ -84,7 +84,7 @@ class _VerifiedRead(tuple):
         value = super().__new__(cls, (record, pointer))
         value.files = tuple(sorted(files))
         value.root = str(_root().resolve())
-        value.pointer_path = str(pointer_path.relative_to(_root().resolve()))
+        value.pointer_path = pointer_path.relative_to(_root().resolve()).as_posix()
         value.pointer_sha256 = sha256(pointer_bytes).hexdigest()
         value.pointer_value_sha256 = digest(pointer)
         value.record_sha256 = digest(record)

@@ -11,12 +11,13 @@ from datetime import date
 from dataclasses import dataclass
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
 import re
 import shutil
 import stat as stat_mode
 import threading
+
+from app.infrastructure.file_operations import flush_directory, flush_file, is_link_or_reparse, publish_immutable
 
 VERSION = 'market-partitions-v1'
 ENCODER_VERSION = 'market-monthly-zstd-rg8192-v1'
@@ -49,7 +50,7 @@ def reusable_partitions(proof, output_sha, previous_folder, root, con, raw_relat
         for role in ROLES:
             item=next((item for item in previous_files if item['role']==role),None)
             path=folder/manifest_name(role)
-            if item is None or item['path']!=str(Path('published')/folder.name/path.name): return {}
+            if item is None or item['path']!=f'published/{folder.name}/{path.name}': return {}
             _verify(path,item['sha256'],item['bytes'])
         documents = {role: read_descriptor(folder/manifest_name(role)) for role in ROLES}
         raw = documents['raw-daily.parquet']
@@ -92,7 +93,7 @@ def safe_object(root, key):
         target = target / component
         try:info=target.lstat()
         except FileNotFoundError:continue
-        if stat_mode.S_ISLNK(info.st_mode):raise ValueError('行情对象不接受符号链接')
+        if is_link_or_reparse(info):raise ValueError('行情对象不接受符号链接')
     return target
 
 
@@ -122,7 +123,7 @@ def _descriptor_structure(path):
         cached=_descriptors.get(signature)
         if cached is not None:
             _descriptors.move_to_end(signature);return cached
-    document = json.loads(path.read_text())
+    document = json.loads(path.read_text(encoding='utf-8'))
     if document.get('version') != VERSION or document.get('role') not in ROLES: raise ValueError('行情分片清单版本或角色无效')
     parts = document.get('partitions')
     if not isinstance(parts, list) or not parts: raise ValueError('行情分片清单为空')
@@ -162,11 +163,11 @@ def _descriptor_inputs(path):
     # size or bytes. Each shared directory is checked once for the full scope.
     for directory in directories:
         info=directory.lstat()
-        if stat_mode.S_ISLNK(info.st_mode):raise ValueError('行情对象不接受符号链接')
+        if is_link_or_reparse(info):raise ValueError('行情对象不接受符号链接')
         if not stat_mode.S_ISDIR(info.st_mode):raise ValueError('行情对象目录无效')
     for part,target in zip(document['partitions'],paths):
         info=target.lstat()
-        if stat_mode.S_ISLNK(info.st_mode):raise ValueError('行情对象不接受符号链接')
+        if is_link_or_reparse(info):raise ValueError('行情对象不接受符号链接')
         _verify(target,part['sha256'],part['bytes'],info)
     return document,paths
 
@@ -245,24 +246,22 @@ def write_partitions(con, relation, role, root, stage, snapshot, *, reusable=Non
         if target.exists():
             _verify(target, digest, size); temporary.unlink(); reused += size
         else:
-            with temporary.open('rb') as stream: os.fsync(stream.fileno())
+            flush_file(temporary)
             # A single writer owns publication, but never replace an object even
             # if an accidental second writer races this immutable creation.
-            try: os.link(temporary, target)
+            try: publish_immutable(temporary, target)
             except FileExistsError: _verify(target, digest, size); reused += size
             else:
                 created += size
-                descriptor = os.open(target.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
-                try: os.fsync(descriptor)
-                finally: os.close(descriptor)
-            temporary.unlink()
+                flush_directory(target.parent)
+            temporary.unlink(missing_ok=True)
         parts.append({'month': month, 'object_key': key, 'sha256': digest, 'bytes': size, 'rows': count, 'data_begin': begin, 'data_end': end})
     if temporary_root.exists(): shutil.rmtree(temporary_root)
     if not parts: raise ValueError('不能发布空行情分片')
     document = {'version': VERSION, 'role': role, 'partitions': parts, 'rows': sum(part['rows'] for part in parts), 'data_begin': parts[0]['data_begin'], 'data_end': parts[-1]['data_end']}
     output = stage / manifest_name(role)
-    output.write_text(json.dumps(document, ensure_ascii=False, separators=(',', ':'), sort_keys=True))
-    files = [{'role': role, 'path': str(Path('published') / snapshot / output.name), 'sha256': file_sha(output), 'bytes': output.stat().st_size}]
+    output.write_text(json.dumps(document, ensure_ascii=False, separators=(',', ':'), sort_keys=True), encoding='utf-8')
+    files = [{'role': role, 'path': f'published/{snapshot}/{output.name}', 'sha256': file_sha(output), 'bytes': output.stat().st_size}]
     prefix = role.removesuffix('.parquet') + '-partition/'
     files.extend({'role': prefix + part['month'], 'path': 'published/' + part['object_key'], 'sha256': part['sha256'], 'bytes': part['bytes']} for part in parts)
     return files, {'partition_count': len(parts), 'new_object_bytes': created, 'reused_object_bytes': reused,
@@ -292,14 +291,13 @@ def write_reference(metadata,root,stage,snapshot):
         if target.exists():_verify(target,digest,len(raw));reused+=len(raw)
         else:
             temporary=stage/'reference-object.tmp';temporary.write_bytes(raw)
-            with temporary.open('rb') as stream:os.fsync(stream.fileno())
-            try:os.link(temporary,target)
+            flush_file(temporary)
+            try:publish_immutable(temporary,target)
             except FileExistsError:_verify(target,digest,len(raw));reused+=len(raw)
             else:
-                created+=len(raw);descriptor=os.open(target.parent,os.O_RDONLY|getattr(os,'O_DIRECTORY',0))
-                try:os.fsync(descriptor)
-                finally:os.close(descriptor)
-            temporary.unlink()
+                created+=len(raw)
+                flush_directory(target.parent)
+            temporary.unlink(missing_ok=True)
         artifacts[key]={'role':'reference-part/'+digest,'path':'published/'+key,'sha256':digest,'bytes':len(raw)}
         return {'object_key':key,'sha256':digest,'bytes':len(raw)}
     fields={key:put(value) for key,value in metadata.items() if key not in ('indices','master')}
@@ -320,13 +318,13 @@ def write_reference(metadata,root,stage,snapshot):
         for row in rows:months.setdefault(row['date'][:7],[]).append(row)
         indices[symbol]=[{'month':month,**put(values)} for month,values in sorted(months.items())]
     descriptor={'storage_version':REFERENCE_VERSION,'fields':fields,'master_columns':master_columns,'indices':indices}
-    output=stage/'reference.json';output.write_text(json.dumps(descriptor,ensure_ascii=False,sort_keys=True,separators=(',',':')))
+    output=stage/'reference.json';output.write_text(json.dumps(descriptor,ensure_ascii=False,sort_keys=True,separators=(',',':')), encoding='utf-8')
     return list(artifacts.values()),{'new_object_bytes':created,'reused_object_bytes':reused,'object_count':len(artifacts),'manifest_bytes':output.stat().st_size}
 
 
 def load_reference(path,*,document=None):
     path=Path(path)
-    if document is None:document=json.loads(path.read_text())
+    if document is None:document=json.loads(path.read_text(encoding='utf-8'))
     if document.get('storage_version') not in ('market-reference-parts-v1',REFERENCE_VERSION):return document
     root=path.parent.parent.resolve();fields=document.get('fields');indices=document.get('indices')
     if not isinstance(fields,dict) or not isinstance(indices,dict) or 'indices' in fields:raise ValueError('参考资料轻清单结构无效')

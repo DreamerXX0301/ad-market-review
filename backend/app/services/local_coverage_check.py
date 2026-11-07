@@ -61,7 +61,7 @@ def _context(market):
         path=(root/relative).resolve()
         if not (path.is_relative_to(generation) or path.is_relative_to(root/OBJECT_ROOT)):raise ValueError('行情文件路径不属于当前不可变代际')
         stamp=path.stat() if path.is_file() else None
-        files.append({'role':item.get('role') or path.name,'path':path,'relative':str(relative),
+        files.append({'role':item.get('role') or path.name,'path':path,'relative':relative.as_posix(),
                       'sha256':item.get('sha256'),'bytes':item.get('bytes'),
                       'stat':[stamp.st_size,stamp.st_mtime_ns] if stamp else None})
     supplement=root/'market-supplement/head.json'
@@ -320,5 +320,5 @@ def execute_check(identifier,progress=None):
         listing_status.snapshot_summary(context['reference'],context['status']['data_end'],listing_evidence,
             context['status']['snapshot_id'],expected_revision=context['listing_revision'])
     artifact=_root()/'reports'/(digest(report)+'.json');atomic_json(artifact,report)
-    guard();atomic_json(_root()/'latest.json',{'artifact':str(artifact.relative_to(_root())),'sha256':hash_file(artifact)})
+    guard();atomic_json(_root()/'latest.json',{'artifact':artifact.relative_to(_root()).as_posix(),'sha256':hash_file(artifact)})
     return report

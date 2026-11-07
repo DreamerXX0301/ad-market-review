@@ -6,7 +6,8 @@ accepted component-pointer namespaces. Do not enumerate an historical CAS tree.
 from __future__ import annotations
 from datetime import date
 import hashlib,json,re
-from pathlib import Path
+
+from app.infrastructure.file_operations import path_is_link_or_reparse
 
 VERSION='dragon-tiger-v1'
 CAPABILITIES=('fuyao-all','fuyao-org','fuyao-hot_money','eastmoney-buy','eastmoney-sell','eastmoney-disclosures')
@@ -26,9 +27,9 @@ def inventory(published,*,safe_path,sha):
     def read(path):
         relative=path.relative_to(root).as_posix();key='dragon-tiger/'+relative
         if key in documents:return documents[key]
-        if not path.is_file() or path.is_symlink() or path.stat().st_size>32*1024*1024:raise ValueError('Dragon-tiger referenced object is missing or invalid')
+        if not path.is_file() or path_is_link_or_reparse(path) or path.stat().st_size>32*1024*1024:raise ValueError('Dragon-tiger referenced object is missing or invalid')
         before=sha(path)
-        try:value=json.loads(path.read_text())
+        try:value=json.loads(path.read_text(encoding='utf-8'))
         except (OSError,ValueError) as error:raise ValueError('Invalid dragon-tiger JSON') from error
         if not isinstance(value,dict) or sha(path)!=before:raise ValueError('Dragon-tiger changed while reading metadata')
         required[key]=before;documents[key]=value
@@ -61,12 +62,12 @@ def inventory(published,*,safe_path,sha):
         if not parts.is_dir():raise ValueError('Invalid dragon-tiger parts directory')
         for folder in parts.iterdir():
             if folder.name=='.DS_Store' and folder.is_file():continue
-            if folder.is_symlink() or folder.name not in CAPABILITIES or not folder.is_dir():raise ValueError('Unknown dragon-tiger component namespace')
+            if path_is_link_or_reparse(folder) or folder.name not in CAPABILITIES or not folder.is_dir():raise ValueError('Unknown dragon-tiger component namespace')
             for path in folder.iterdir():
                 if path.name=='.DS_Store' and path.is_file():continue
-                if path.name.endswith('.tmp') and path.is_file() and not path.is_symlink():continue
+                if path.name.endswith('.tmp') and path.is_file() and not path_is_link_or_reparse(path):continue
                 count+=1
-                if count>4096 or path.is_symlink() or not path.is_file() or path.suffix!='.json' or not valid_day(path.stem):raise ValueError('Invalid or unbounded dragon-tiger component pointer inventory')
+                if count>4096 or path_is_link_or_reparse(path) or not path.is_file() or path.suffix!='.json' or not valid_day(path.stem):raise ValueError('Invalid or unbounded dragon-tiger component pointer inventory')
                 component=reference(read(path))
                 if component.get('version')!=VERSION or component.get('date')!=path.stem or component.get('capability')!=folder.name:raise ValueError('Dragon-tiger component pointer scope differs')
     return required
