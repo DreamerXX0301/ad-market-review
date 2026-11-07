@@ -287,7 +287,7 @@ export default function AppShell({
             <LineAlertNotice businessDate={dataDate} onNavigate={onNavigate} />
             {import.meta.env.VITE_DESKTOP_PREVIEW === "1" ? (
               <a className="desktop-license-link" href="/__amr/manage">
-                桌面授权
+                授权管理
               </a>
             ) : (
               <button className="avatar" title="本机个人研究空间">

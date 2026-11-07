@@ -1,4 +1,4 @@
-"""Supervise the loopback API, licensed worker and private Edge app window."""
+"""Supervise the loopback API and licensed worker for the Windows tray."""
 from __future__ import annotations
 
 import asyncio
@@ -13,10 +13,10 @@ import secrets
 import signal
 import socket
 import stat
-import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import threading
+from time import monotonic
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
@@ -25,7 +25,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from desktop_licensing.client import DesktopClient
 from desktop_licensing.windows import default_state_directory, protect, unprotect
 from .access import license_active
-from .windows_runtime import edge_path, protect_process_tree, require_local_ntfs
+from .profile import import_legacy, roots
+from .windows_runtime import choose_previous, protect_process_tree, require_local_ntfs
 
 
 def _ordinary(path: Path, *, directory: bool) -> None:
@@ -61,12 +62,14 @@ def _license_client(package: Path) -> DesktopClient:
     return DesktopClient(profile, key, protect=protect, unprotect=unprotect)
 
 
-def _install_root(client: DesktopClient) -> Path:
+def _install_roots(client: DesktopClient) -> tuple[Path, Path]:
     base = client.directory.parents[1]
     local = base.parent
     _ordinary(local, directory=True)
     require_local_ntfs(local)
-    return _directory(_directory(_directory(local, base.name), "workbench-preview-v1"), client.directory.name)
+    legacy, tray = roots(client.directory)
+    _directory(_directory(local, base.name), tray.parent.name)
+    return legacy, tray
 
 
 def _release_record(package: Path) -> dict:
@@ -162,22 +165,53 @@ def _listen(root: Path):
         yield listener
 
 
+class _BrowserTickets:
+    def __init__(self, clock=monotonic):
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._pending = {}
+
+    def issue(self) -> str:
+        with self._lock:
+            now = self._clock()
+            self._pending = {key: expiry for key, expiry in self._pending.items() if expiry > now}
+            if len(self._pending) >= 8:
+                del self._pending[next(iter(self._pending))]
+            ticket = secrets.token_urlsafe(32)
+            self._pending[ticket] = now + 120
+            return ticket
+
+    def consume(self, ticket: str) -> bool:
+        with self._lock:
+            return self._pending.pop(ticket, 0) > self._clock()
+
+
+def _read_tray_controls(descriptor: int, open_requested, stop) -> None:
+    try:
+        while chunk := os.read(descriptor, 4096):
+            if b"o" in chunk:
+                open_requested.set()
+    finally:
+        stop()
+
+
 def _serve(package: Path, root: Path, client: DesktopClient) -> None:
     import uvicorn
 
     from .access import create_desktop_app
 
-    browser = edge_path()
-    browser_data = _directory(root, "browser-profile")
     protect_process_tree()
     context = multiprocessing.get_context("spawn")
     worker_stop = context.Event()
     closing = threading.Event()
+    tray_stopped = threading.Event()
+    open_requested = threading.Event()
+    open_requested.set()
     workers = []
     errors = []
     with _listen(root) as listener:
         origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
-        ticket = secrets.token_urlsafe(32)
+        tickets = _BrowserTickets()
 
         def stop() -> None:
             closing.set()
@@ -185,7 +219,7 @@ def _serve(package: Path, root: Path, client: DesktopClient) -> None:
             server.should_exit = True
 
         application = create_desktop_app(
-            client, origin=origin, ticket=ticket, stop=stop, stopping=closing.is_set,
+            client, origin=origin, consume_ticket=tickets.consume, stop=stop, stopping=closing.is_set,
         )
         server = uvicorn.Server(uvicorn.Config(
             application, host="127.0.0.1", loop="asyncio", http="h11", ws="none",
@@ -197,56 +231,70 @@ def _serve(package: Path, root: Path, client: DesktopClient) -> None:
                 while not server.started:
                     if closing.wait(0.1):
                         return
-                window = subprocess.Popen([
-                    str(browser), f"--user-data-dir={browser_data}", "--no-first-run",
-                    "--no-default-browser-check", "--disable-background-mode", "--disable-sync",
-                    f"--app={origin}/__amr/open?ticket={ticket}",
-                ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                while not closing.wait(0.25):
-                    if window.poll() is not None:
-                        if window.returncode:
-                            errors.append("工作台窗口未能启动")
-                        break
+                while not closing.is_set():
+                    if open_requested.is_set():
+                        open_requested.clear()
+                        print(f"AMR_OPEN {origin}/__amr/open?ticket={tickets.issue()}", flush=True)
                     if not workers and license_active(client):
                         worker = context.Process(target=_worker_entry, args=(package, worker_stop), name="amr-worker")
                         worker.start()
                         workers.append(worker)
                     if workers and not workers[0].is_alive():
-                        errors.append("后台工作进程已退出，请保留启动窗口的错误信息")
+                        if not closing.is_set():
+                            errors.append("后台工作进程已意外退出")
                         break
+                    closing.wait(0.2)
             except (OSError, RuntimeError, ValueError):
-                errors.append("无法启动工作台窗口或后台进程")
+                if not closing.is_set():
+                    errors.append("无法打开工作台页面或启动后台进程")
             finally:
                 stop()
 
+        def stop_from_tray() -> None:
+            tray_stopped.set()
+            stop()
+
+        controls = threading.Thread(
+            target=_read_tray_controls, args=(sys.stdin.fileno(), open_requested, stop_from_tray),
+            name="amr-tray-controls", daemon=True,
+        )
         supervisor = threading.Thread(target=supervise, name="amr-desktop-supervisor")
+        controls.start()
         supervisor.start()
-        print("正在启动本机工作台。可用工作台的退出入口安全停止。", flush=True)
         try:
             server.run(sockets=[listener])
         finally:
             stop()
             supervisor.join()
             if workers:
-                if workers[0].is_alive():
-                    print("后台任务正在收尾，请等候。", flush=True)
                 workers[0].join()
                 workers[0].close()
         if errors:
             raise RuntimeError(errors[0])
-        if not server.started:
-            raise RuntimeError("本机 API 启动失败，请保留启动窗口的错误信息")
+        if not server.started and not tray_stopped.is_set():
+            raise RuntimeError("本机 API 启动失败")
 
 
-def run_preview(package: Path) -> None:
+def run_preview(package: Path, *, import_previous: bool = False) -> dict | None:
     if sys.platform != "win32":
         raise ValueError("请在 Windows x64 测试机运行")
     from app.infrastructure.file_operations import locked_file
 
     client = _license_client(package)
-    root = _install_root(client)
+    legacy, root = _install_roots(client)
+    instance_lock = root.parent / f"instance-{root.name}.lock"
     try:
-        with locked_file(root / "instance.lock", exclusive=True, blocking=False):
+        with locked_file(instance_lock, exclusive=True, blocking=False):
+            if import_previous:
+                return import_legacy(legacy, root, _release_record(package))
+            if not root.exists() and not root.is_symlink():
+                if (legacy / "data" / "business" / "app.sqlite3").is_file():
+                    choice = choose_previous()
+                    if choice == "cancel":
+                        return None
+                    if choice == "import":
+                        import_legacy(legacy, root, _release_record(package))
+            _directory(root.parent, root.name)
             _configure_instance(root, package)
             _serve(package, root, client)
     except BlockingIOError:
@@ -272,7 +320,6 @@ def diagnose(package: Path) -> dict:
         root = Path(temporary).resolve()
         if sys.platform == "win32":
             require_local_ntfs(root)
-            edge_path()
             probe_data = secrets.token_bytes(32)
             if unprotect(protect(probe_data)) != probe_data:
                 raise RuntimeError("Windows 本地授权保护检查失败")

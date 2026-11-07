@@ -7,20 +7,23 @@ import argparse
 from base64 import b64decode
 from datetime import datetime, timezone
 from hashlib import file_digest, sha256
+from importlib.util import MAGIC_NUMBER
 import json
 import os
 from pathlib import Path, PurePosixPath
+import py_compile
 import shutil
 import stat
 import struct
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT = "AMR-Desktop-Preview-Windows-x64"
+ARTIFACT = "AMR-Desktop-Tray-Windows-x64"
 AUTH_PREFIX = "AMR-License-Test-Windows-x64"
 AUTH_SHA256 = "28cc92be54ff385380c0e58aa74f77a1fde5a9b1452f5891bf450a716181b3fe"
 SQLITE_URL = "https://www.sqlite.org/2026/sqlite-dll-win-x64-3540100.zip"
@@ -30,6 +33,7 @@ GO_SHA256 = "dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2"
 CLIENT_FILES = ("__init__.py", "client.py", "protocol.py", "windows.py")
 MAINTENANCE_FILES = ("backup.py", "restore.py", "noon_archive.py", "dragon_tiger_archive.py")
 CONTRACT_FILES = ("ai-evidence-answer-v2.schema.json", "ai-research-interpretation-v1.schema.json")
+LAUNCHER = "AMR-Desktop-Preview.exe"
 
 
 def run(*args: str, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
@@ -85,7 +89,18 @@ def copy_file(source: Path, destination: Path) -> None:
     shutil.copyfile(source, destination)
 
 
-def copy_tree(source: Path, destination: Path, suffixes: set[str] | None = None) -> None:
+def stage_python(source: Path, destination: Path) -> None:
+    if source.is_symlink() or not source.is_file():
+        raise ValueError(f"Expected a regular Python source: {source.name}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    py_compile.compile(
+        str(source), str(destination.with_suffix(".pyc")),
+        dfile=source.relative_to(ROOT).as_posix(), doraise=True, optimize=0,
+        invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH,
+    )
+
+
+def copy_tree(source: Path, destination: Path, suffixes: set[str] | None = None, *, bytecode: bool = False) -> None:
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
         if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
@@ -93,7 +108,10 @@ def copy_tree(source: Path, destination: Path, suffixes: set[str] | None = None)
         if path.is_symlink():
             raise ValueError(f"Unexpected build input symlink: {relative}")
         if path.is_file() and (suffixes is None or path.suffix in suffixes):
-            copy_file(path, destination / relative)
+            if bytecode and path.suffix == ".py":
+                stage_python(path, destination / relative)
+            else:
+                copy_file(path, destination / relative)
 
 
 def stage_runtime(package: Path, previous: Path, sqlite: Path) -> None:
@@ -115,6 +133,10 @@ def stage_runtime(package: Path, previous: Path, sqlite: Path) -> None:
                     and name.name not in ("sqlite3.dll", "python313._pth")
                     and not member.is_dir()):
                 write_member(archive, member, package / "runtime" / name.name)
+    with zipfile.ZipFile(package / "runtime" / "python313.zip") as stdlib:
+        with stdlib.open("encodings/__init__.pyc") as encoding:
+            if encoding.read(4) != MAGIC_NUMBER:
+                raise ValueError("The build interpreter and the embedded runtime use different bytecode formats")
     with zipfile.ZipFile(sqlite) as archive:
         member = archive.getinfo("sqlite3.dll")
         safe_member(member)
@@ -168,13 +190,13 @@ def build_frontend(package: Path, offline: bool) -> None:
 
 def stage_application(package: Path) -> None:
     for module in ("app", "desktop_preview"):
-        copy_tree(ROOT / "backend" / module, package / "backend" / module, {".py", ".sql", ".json"})
-    if not (package / "backend/desktop_preview/__main__.py").is_file():
+        copy_tree(ROOT / "backend" / module, package / "backend" / module, {".py", ".sql", ".json"}, bytecode=True)
+    if not (package / "backend/desktop_preview/__main__.pyc").is_file():
         raise ValueError("Desktop entrypoint is missing")
     for name in CLIENT_FILES:
-        copy_file(ROOT / "backend" / "desktop_licensing" / name, package / "backend" / "desktop_licensing" / name)
+        stage_python(ROOT / "backend" / "desktop_licensing" / name, package / "backend" / "desktop_licensing" / name)
     for name in MAINTENANCE_FILES:
-        copy_file(ROOT / "scripts" / name, package / "scripts" / name)
+        stage_python(ROOT / "scripts" / name, package / "scripts" / name)
     for name in CONTRACT_FILES:
         copy_file(ROOT / "contracts" / name, package / "contracts" / name)
     copy_tree(ROOT / "contracts" / "prompts", package / "contracts" / "prompts", {".md"})
@@ -192,8 +214,8 @@ def build_launcher(package: Path, scratch: Path, go_archive: Path) -> None:
         "GOFLAGS": "", "GOEXPERIMENT": "",
         "GOCACHE": str(scratch / "go-cache"), "GOPATH": str(scratch / "go-path"),
     }
-    run(str(go / "bin" / "go"), "build", "-trimpath", "-ldflags=-s -w -buildid=",
-        "-o", str(package / "AMR-Desktop-Preview.exe"),
+    run(str(go / "bin" / "go"), "build", "-trimpath", "-ldflags=-s -w -buildid= -H=windowsgui",
+        "-o", str(package / LAUNCHER),
         str(ROOT / "scripts" / "windows_desktop_launcher.go"), env=env)
     for filename in ("LICENSE", "PATENTS"):
         copy_file(go / filename, package / "licenses" / f"Go-{filename}.txt")
@@ -208,9 +230,14 @@ def verify_binaries(package: Path) -> int:
             header = file.read(64)
             if len(header) != 64 or header[:2] != b"MZ":
                 raise ValueError(f"Invalid PE header: {path.name}")
-            file.seek(struct.unpack_from("<I", header, 60)[0])
+            pe_offset = struct.unpack_from("<I", header, 60)[0]
+            file.seek(pe_offset)
             if file.read(6) != b"PE\0\0\x64\x86":
                 raise ValueError(f"Windows x64 PE required: {path.name}")
+            if path == package / LAUNCHER:
+                file.seek(pe_offset + 24 + 68)  # IMAGE_OPTIONAL_HEADER64.Subsystem
+                if file.read(2) != b"\x02\0":
+                    raise ValueError("The desktop launcher must use the Windows GUI subsystem")
         count += 1
     return count
 
@@ -245,6 +272,8 @@ def main() -> None:
     parser.add_argument("--npm-offline", action="store_true")
     parser.add_argument("--allow-working-tree", action="store_true", help="Label a dirty checkout as development only")
     args = parser.parse_args()
+    if sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 13):
+        raise ValueError("Build this preview with CPython 3.13")
     output = args.output.expanduser().absolute()
     if output.suffix != ".zip" or output.exists() or output.is_symlink():
         raise ValueError("Choose a new .zip output path")
@@ -270,6 +299,11 @@ def main() -> None:
         install_packages(package, scratch, wheels if wheels.is_dir() else None)
         build_frontend(package, args.npm_offline)
         stage_application(package)
+        for directory in ("backend", "scripts", "frontend"):
+            if any((package / directory).rglob("*.py")):
+                raise ValueError(f"Unexpected first-party Python source in {directory}")
+        if any(package.rglob("*.map")):
+            raise ValueError("Unexpected source map in the preview package")
         build_launcher(package, scratch, go)
         binary_count = verify_binaries(package)
         (package / "THIRD-PARTY.txt").write_text(
@@ -282,11 +316,18 @@ def main() -> None:
             encoding="utf-8",
         )
         (package / "READ-ME.txt").write_text(
-            "冒险的梦想家 Windows x64 桌面预览\n\n"
-            "请解压整个 ZIP，再双击 AMR-Desktop-Preview.exe。\n"
-            "保留启动窗口，按界面提示导入试用授权并打开工作台。\n"
-            "关闭启动窗口前，请先按程序提示停止本机服务。\n"
-            "用 AMR-Desktop-Preview.exe --diagnose 核验运行时。\n",
+            "冒险的梦想家 Windows x64 托盘预览\n\n"
+            "完整解压 ZIP，再双击 AMR-Desktop-Preview.exe。\n"
+            "在任务栏通知区域找到工作台图标，图标也可能位于折叠菜单。\n"
+            "双击图标，或右键选择「打开工作台」，使用 Windows 默认浏览器打开。\n"
+            "关闭浏览器页面后工作台继续运行。右键选择「退出工作台」可安全停止。\n"
+            "同一 Windows 用户的有效测试授权可沿用，也可按页面提示导入新授权。\n\n"
+            "请先退出旧版。首次打开新版时，若检测到旧版数据，会提示选择迁移或开始新工作台。\n"
+            "也可在新版首次正常启动前，于解压目录的 PowerShell 执行以下命令。\n"
+            ".\\AMR-Desktop-Preview.exe --import-previous\n"
+            "原预览数据保留。按弹窗结果确认完成后，再正常启动新版。\n\n"
+            "可在 PowerShell 运行 .\\AMR-Desktop-Preview.exe --diagnose 检查运行环境，结果会在弹窗显示。\n"
+            "本包包含可逆向分析的 Python 字节码和编译后的前端文件。\n",
             encoding="utf-8-sig",
         )
         payload = {
@@ -299,6 +340,7 @@ def main() -> None:
             "source_commit": source_commit, "app_version": (ROOT / "VERSION").read_text().strip(),
             "build_id": build_id, "working_tree": dirty, "binary_count": binary_count,
             "python_runtime": "3.13.17", "sqlite_runtime": "3.54.1",
+            "first_party_python": "cpython-3.13-bytecode", "launcher_subsystem": "windows-gui",
             "authorization_preview_sha256": AUTH_SHA256, "sqlite_zip_sha3_256": SQLITE_SHA3,
             "go_toolchain_sha256": GO_SHA256, "uv_lock_sha256": digest(ROOT / "backend/uv.lock"),
             "frontend_lock_sha256": digest(ROOT / "frontend/package-lock.json"), "files": payload,

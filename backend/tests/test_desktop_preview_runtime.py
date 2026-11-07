@@ -1,6 +1,7 @@
 import json
 import os
 from hashlib import sha256
+from threading import Event, Thread
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -84,3 +85,35 @@ def test_reopen_keeps_the_local_browser_origin(tmp_path):
             assert fallback.getsockname()[1] != address[1]
     with runtime._listen(tmp_path) as listener:
         assert listener.getsockname() == address
+
+
+def test_tray_browser_tickets_can_reopen_but_cannot_be_replayed_or_used_late():
+    time = [1.0]
+    tickets = runtime._BrowserTickets(clock=lambda: time[0])
+    first, second = tickets.issue(), tickets.issue()
+    assert first != second
+    assert tickets.consume(first)
+    assert not tickets.consume(first)
+    time[0] += 121
+    assert not tickets.consume(second)
+    assert tickets.consume(tickets.issue())
+
+
+def test_tray_open_command_keeps_the_runtime_alive_until_tray_pipe_closes():
+    opened, stopped = Event(), Event()
+    read, write = os.pipe()
+    controls = Thread(target=runtime._read_tray_controls, args=(read, opened, stopped.set))
+    controls.start()
+    try:
+        os.write(write, b"o")
+        assert opened.wait(2)
+        assert not stopped.is_set()
+        opened.clear()
+        os.write(write, b"o")
+        assert opened.wait(2)
+        assert not stopped.is_set()
+    finally:
+        os.close(write)
+        controls.join(2)
+        os.close(read)
+    assert stopped.is_set()

@@ -46,15 +46,11 @@ def check_db(c):
     # Load only the pure validator from this release. Importing the application
     # configuration could otherwise initialize an unrelated default data root.
     if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_noon_close_review'").fetchone():
-        import importlib.util
-        spec=importlib.util.spec_from_file_location('backup_noon_close_integrity',ROOT/'backend/app/services/noon_close_integrity.py')
-        validator=importlib.util.module_from_spec(spec);spec.loader.exec_module(validator)
-        validator.validate_close_reviews(c)
+        from app.services.noon_close_integrity import validate_close_reviews
+        validate_close_reviews(c)
     if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_snapshot'").fetchone():
-        import importlib.util
-        spec=importlib.util.spec_from_file_location('backup_auction_integrity',ROOT/'backend/app/services/auction_integrity.py')
-        validator=importlib.util.module_from_spec(spec);spec.loader.exec_module(validator)
-        validator.validate_snapshots(c)
+        from app.services.auction_integrity import validate_snapshots
+        validate_snapshots(c)
 
 def retained_snapshots(c):
     return [dict(r) for r in c.execute("SELECT s.* FROM dataset_snapshot s LEFT JOIN snapshot_gc g USING(snapshot_id) WHERE s.state='published' AND (g.state IS NULL OR g.state='available')")]

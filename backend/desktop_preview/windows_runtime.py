@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
-import os
 from pathlib import Path
 
 
@@ -81,12 +80,15 @@ def require_local_ntfs(path: Path) -> None:
         raise ValueError("首版工作台数据需位于本机 NTFS 文件系统")
 
 
-def edge_path() -> Path:
-    # Search the known installation locations rather than the working directory.
-    for name in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):
-        base = os.environ.get(name)
-        if base and Path(base).is_absolute():
-            candidate = Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe"
-            if candidate.is_file():
-                return candidate
-    raise RuntimeError("这台 Windows 未找到 Microsoft Edge，无法打开预览窗口")
+def choose_previous() -> str:
+    message = ctypes.WinDLL("user32", use_last_error=True).MessageBoxW
+    message.argtypes = (wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT)
+    message.restype = ctypes.c_int
+    choice = message(
+        None,
+        "检测到首版桌面工作台的数据。\n\n"
+        "选「是」可备份旧数据并验证后复制到托盘版。数据量大时请等候。\n"
+        "选「否」会创建空白的托盘工作台。选「取消」退出启动。",
+        "冒险的梦想家 · 导入上版数据", 0x00040000 | 0x20 | 3,
+    )
+    return {6: "import", 7: "empty"}.get(choice, "cancel")

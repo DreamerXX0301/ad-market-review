@@ -1,5 +1,6 @@
 """Private desktop authorization reaches every licensed business route."""
 import importlib
+import re
 import threading
 
 from fastapi import FastAPI
@@ -92,6 +93,84 @@ def test_cross_origin_and_other_local_sessions_cannot_use_valid_license(desktop)
     assert http.post("/api/v1/tasks/task1/pause", headers={"Origin": "http://127.0.0.1:51780"}).status_code == 403
     assert not calls
     assert http.get("/api/v1/watchlist").status_code == 200
+
+
+def test_tray_can_open_the_default_browser_again_with_a_fresh_ticket(desktop):
+    _, license, stopped, calls = desktop
+    license.state = "active"
+    fresh = {"first-open", "second-open", "open-after-expiry"}
+    attempts = []
+
+    def consume(ticket):
+        attempts.append(ticket)
+        if ticket not in fresh:
+            return False
+        fresh.remove(ticket)
+        return True
+
+    app = create_desktop_app(
+        license, origin=ORIGIN, stop=stopped.set, stopping=stopped.is_set, consume_ticket=consume,
+    )
+    browser = TestClient(app, base_url=ORIGIN, follow_redirects=False, client=("127.0.0.1", 5000))
+    open_path = "/__amr/open?ticket=first-open"
+    assert browser.get(open_path, headers={"Sec-Fetch-Site": "same-site"}).status_code == 403
+    assert browser.get(open_path + "&ticket=second-open").status_code == 403
+    assert not attempts
+
+    opened = browser.get(open_path, headers={"Sec-Fetch-Site": "none"})
+    assert opened.headers["location"] == "/"
+    assert opened.headers["set-cookie"].startswith("amr_desktop_session_51779=")
+    assert browser.get("/").status_code == 200
+    assert browser.get("/").status_code == 200
+    replay = browser.get(open_path)
+    assert replay.status_code == 403
+    assert replay.headers["referrer-policy"] == "no-referrer"
+
+    other = TestClient(app, base_url=ORIGIN, follow_redirects=False, client=("127.0.0.1", 5001))
+    assert other.get("/").status_code == 403
+    assert other.get("/__amr/open?ticket=second-open").headers["location"] == "/"
+    assert other.get("/").status_code == 200
+    assert browser.get("/").status_code == 200
+
+    license.state = "expired"
+    assert browser.get("/__amr/open?ticket=open-after-expiry").headers["location"] == "/__amr/manage"
+    assert browser.get("/").headers["location"] == "/__amr/manage"
+    management = browser.get("/__amr/manage")
+    assert management.status_code == 200
+    assert "/__amr/quit" not in management.text
+    assert "Windows 托盘" in management.text
+    assert 'type="file" accept=".amr-license"' in management.text
+    assert 'id="copy-machine"' in management.text
+    assert '<textarea id="license" name="license"' in management.text
+    nonce = re.search(r'<script nonce="([\w-]+)">', management.text).group(1)
+    assert f"script-src 'nonce-{nonce}'" in management.headers["content-security-policy"]
+    assert f"nonce-{nonce}" not in browser.get("/__amr/manage").headers["content-security-policy"]
+    assert browser.post("/__amr/quit", headers={"Origin": ORIGIN}).status_code == 404
+    assert browser.get("/api/v1/watchlist").status_code == 403
+    assert not stopped.is_set()
+    assert attempts == ["first-open", "first-open", "second-open", "open-after-expiry"]
+    assert calls == ["/"] * 4
+
+
+def test_tray_cookies_keep_local_previews_on_separate_ports(desktop):
+    _, license, stopped, _ = desktop
+    license.state = "active"
+    other_origin = "http://127.0.0.1:51780"
+    first = create_desktop_app(license, origin=ORIGIN, stop=stopped.set, consume_ticket=lambda value: value == "one")
+    second = create_desktop_app(
+        license, origin=other_origin, stop=stopped.set, consume_ticket=lambda value: value == "two",
+    )
+    browser = TestClient(first, base_url=ORIGIN, follow_redirects=False, client=("127.0.0.1", 5000))
+    assert browser.get("/__amr/open?ticket=one").status_code == 303
+    other = TestClient(
+        second, base_url=other_origin, follow_redirects=False, client=("127.0.0.1", 5000), cookies=browser.cookies,
+    )
+    assert other.get("/").status_code == 403
+    assert other.get("/__amr/open?ticket=two").status_code == 303
+    browser.cookies.update(other.cookies)
+    assert browser.get("/").status_code == other.get("/").status_code == 200
+    assert other.get("/api/v1/watchlist", headers={"Origin": ORIGIN}).status_code == 403
+    assert browser.post("/api/v1/tasks/task1/pause", headers={"Origin": other_origin}).status_code == 403
 
 
 def test_exit_blocks_admission_even_when_authorization_is_active(desktop):
