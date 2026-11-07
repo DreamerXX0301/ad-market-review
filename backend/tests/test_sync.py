@@ -348,16 +348,15 @@ def test_five_year_increment_keeps_old_indices_and_respects_rolling_source_bound
     def bounded_source(path,params=None):
         payload=original(path,params)
         if path.endswith('/historical'):
-            query_target=sync.date_ms(params['end'])
-            earliest=sync.midnight_ms(sync.window_start(query_target,'near-five-years'))
-            if params['start']<earliest:return {'code':0,'data':{'item':[]}}
+            earliest=sync.midnight_ms(sync.window_start(sync.now_china().date().isoformat(),'near-five-years'))
+            if params['start']<earliest:return {'code':1003}
         return payload
     monkeypatch.setattr(transport,'request',bounded_source)
     initial=sync.execute_sync(start_job(window='near-five-years'))
     assert initial['coverage']['index_request_plan']==sync.INDEX_REQUEST_PLAN
     for path,params in transport.calls:
         if path.endswith('/historical'):
-            assert params['start']==sync.midnight_ms('2021-10-19')
+            assert params['start']==sync.midnight_ms('2021-10-20')
     before=get_market().reference()['indices']
     assert all(rows[0]['date']=='2021-10-20' for rows in before.values())
     calls=len(transport.calls)
@@ -372,6 +371,32 @@ def test_five_year_increment_keeps_old_indices_and_respects_rolling_source_bound
     index_requests=[params for path,params in transport.calls[calls:] if path.endswith('/historical')]
     assert len(index_requests)==4
     assert all(params['start']==sync.midnight_ms('2025-10-20') for params in index_requests)
+
+
+def test_five_year_initialisation_clamps_weekend_index_request_without_losing_trading_days(transport,monkeypatch):
+    transport.__dict__.update(FixtureTransport(transport.root,'2021-10-18').__dict__)
+    monkeypatch.setattr(sync,'now_china',lambda:datetime(2026,10,18,12,tzinfo=sync.CHINA))
+    result=sync.execute_sync(start_job(window='near-five-years'))
+
+    proof=result['coverage']['calendar_provenance']
+    assert proof['wanted']=='2021-10-16'
+    assert result['data_status']['data_begin']=='2021-10-18'
+    assert result['data_status']['data_end']=='2026-10-16'
+    index_requests=[params for path,params in transport.calls if path.endswith('/historical')]
+    assert len(index_requests)==4
+    assert all(params['start']==sync.midnight_ms('2021-10-18') for params in index_requests)
+    assert all(index['full_window'] and index['requested_start']=='2021-10-18' for index in proof['indices'].values())
+
+
+def test_five_year_initialisation_refuses_to_drop_required_early_trading_day(transport,monkeypatch):
+    transport.__dict__.update(FixtureTransport(transport.root,'2021-10-15').__dict__)
+    monkeypatch.setattr(sync,'now_china',lambda:datetime(2026,10,17,12,tzinfo=sync.CHINA))
+    job=start_job(target='2026-10-15',window='near-five-years')
+
+    with pytest.raises(ValueError,match='2021-10-17 晚于所需首个交易日 2021-10-15'):
+        sync.execute_sync(job)
+
+    assert not get_market().status()['ready']
 
 
 @pytest.mark.parametrize('fault',['missing_retained','missing_old_day','missing_new_day','empty_new','wrong_basis','duplicate_old'])
@@ -402,7 +427,8 @@ def test_bounded_index_merge_accepts_real_suffix_revision_without_losing_early_h
     assert result['lineage']['merge']=='incoming_daily_revision_wins'
 
 
-def test_legacy_five_year_checkpoint_does_not_change_prewarm_request_signatures(transport):
+@pytest.mark.parametrize('bounded',[False,True])
+def test_older_five_year_checkpoint_preserves_frozen_index_request_signatures(transport,monkeypatch,bounded):
     replacement=FixtureTransport(transport.root,'2021-10-20')
     transport.__dict__.update(replacement.__dict__)
     job=start_job(window='near-five-years')
@@ -411,9 +437,12 @@ def test_legacy_five_year_checkpoint_does_not_change_prewarm_request_signatures(
     with pytest.raises(tasks.TaskPaused):sync.execute_sync(job,pause_before_indices)
     checkpoint=sync.raw_dir()/'sync'/job/'checkpoint.json'
     state=json.loads(checkpoint.read_text())
-    # An old accepted plan has no v2 marker. Upgrades must not reinterpret it.
-    state['plan'].pop('index_request_plan');state['plan'].pop('index_request_begin')
+    # Emulate both older plan shapes. Neither may be clamped again on resume.
+    if bounded:state['plan']['index_request_begin']=state['plan']['wanted']
+    else:
+        state['plan'].pop('index_request_plan');state['plan'].pop('index_request_begin')
     checkpoint.write_text(json.dumps(state))
+    monkeypatch.setattr(sync,'now_china',lambda:datetime(2026,10,21,12,tzinfo=sync.CHINA))
     tasks.change_task(job,'resume');tasks.claim_next('fixture-worker')
     def pause_after_indices(stage,pct):
         if stage=='校验、合并历史行情与重叠修订':tasks.change_task(job,'pause')
@@ -421,12 +450,12 @@ def test_legacy_five_year_checkpoint_does_not_change_prewarm_request_signatures(
     before=json.loads(checkpoint.read_text())
     requests=[params for path,params in transport.calls if path.endswith('/historical')]
     sse=next(params for params in requests if params['thscode']=='000001.SH')
-    assert sse['start']==sync.midnight_ms('2021-06-01')
-    assert before['plan']['calendar_provenance']['version']=='source-calendar-history-window-v1'
+    assert sse['start']==sync.midnight_ms('2021-10-19' if bounded else '2021-06-01')
+    assert before['plan']['calendar_provenance']['version']==f'source-calendar-history-window-v{2 if bounded else 1}'
     calls=len(requests)
     tasks.change_task(job,'resume');tasks.claim_next('fixture-worker')
     result=sync.execute_sync(job)
     after=json.loads(checkpoint.read_text())
     assert len([path for path,_ in transport.calls if path.endswith('/historical')])==calls
     assert all(before['files'][name]==after['files'][name] for name in before['files'] if name.startswith('index-'))
-    assert 'index_request_plan' not in result['coverage']
+    assert ('index_request_plan' in result['coverage'])==bounded

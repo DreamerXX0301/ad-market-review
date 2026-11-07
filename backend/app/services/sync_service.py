@@ -277,7 +277,8 @@ def execute_sync(job_id,progress=None):
     source_calendar=sorted({date_ms(r['date_ms']) for r in response_items(calendar_payload)})
     current=get_market();old=current.status()
     if not plan:
-        safe=safe_completion_date(now_china())
+        observed_at=now_china()
+        safe=safe_completion_date(observed_at)
         completed=[d for d in source_calendar if d<=safe]
         if not completed:raise ValueError('来源未提供可验证的已收盘交易日')
         target=requested or completed[-1]
@@ -293,7 +294,9 @@ def execute_sync(job_id,progress=None):
         plan={'target':target,'begin':begin,'wanted':wanted,'window':window,'kind':kind,'previous_generation':old.get('snapshot_id') if kind=='increment' else None,'previous_end':old.get('data_end') if kind=='increment' else None,'provider':'fuyao','master_request_params':dict(MASTER_REQUEST_PARAMS)}
         if window=='near-five-years' or (kind=='increment' and current.reference().get('coverage',{}).get('index_request_plan')==INDEX_REQUEST_PLAN):
             plan['index_request_plan']=INDEX_REQUEST_PLAN
-            plan['index_request_begin']=wanted if kind=='initialise' else max(begin,source_calendar[0])
+            # Fuyao's five-year request limit rolls with the acquisition date.
+            # Keep the target window intact for the calendar coverage check.
+            plan['index_request_begin']=max(wanted,window_start(observed_at.date().isoformat(),window)) if kind=='initialise' else max(begin,source_calendar[0])
         plan['completion_cutoff']='17:00 Asia/Shanghai'
         plan['storage_layout']='market-partitions-v1'
         collector.state['plan']=plan;atomic_json(collector.state_path,collector.state)
@@ -347,7 +350,12 @@ def execute_sync(job_id,progress=None):
         collect_indices(wanted,44)
         years=resolve_initial_window({'window':plan['window']})['years']
         collector.tick(f'交叉核验近{years}年交易日期：全市场包、长历史指数、科创可用后缀、近期官方日历',49)
-        cal,calendar_provenance=validate_history_calendar(downloaded,wanted,target,index_payloads,source_calendar,years=years,index_prewarm_days=0 if plan.get('index_request_plan')==INDEX_REQUEST_PLAN else 140)
+        bounded=plan.get('index_request_plan')==INDEX_REQUEST_PLAN
+        cal,calendar_provenance=validate_history_calendar(
+            downloaded,wanted,target,index_payloads,source_calendar,years=years,
+            index_prewarm_days=0 if bounded else 140,
+            index_request_begin=plan['index_request_begin'] if bounded else None,
+        )
         begin=cal[0]
         if plan.get('calendar_verified') and (plan['begin']!=begin or plan.get('calendar_provenance')!=calendar_provenance):raise ValueError('已确认历史日历或来源依据变化，拒绝改变恢复任务窗口')
         plan.update(begin=begin,calendar_verified=True,calendar_provenance=calendar_provenance)

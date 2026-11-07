@@ -143,7 +143,7 @@ def index_window_begin(symbol: str, wanted: str) -> str:
     return max(wanted, STAR_BASE) if symbol == '000688.SH' else wanted
 
 
-def validate_history_calendar(bulk_path, wanted, target, index_payloads, official_calendar, *, years, index_prewarm_days=140):
+def validate_history_calendar(bulk_path, wanted, target, index_payloads, official_calendar, *, years, index_prewarm_days=140, index_request_begin=None):
     """Validate 5/10-year stock dates with full old-index and dated STAR coverage.
 
     The historical stock calendar is inferred, not exchange-official. Three
@@ -176,10 +176,13 @@ def validate_history_calendar(bulk_path, wanted, target, index_payloads, officia
             or (date.fromisoformat(days[-1])-date.fromisoformat(days[0])).days < minimum_span
             or not 0 <= (date.fromisoformat(days[0])-date.fromisoformat(wanted)).days <= 14):
         raise ValueError(f'批量行情不足近{years}年：交易日数量、跨度或起止边界不符')
+    if index_request_begin is not None and days[0] < index_request_begin:
+        raise ValueError(f'扶摇指数可查询起日 {index_request_begin} 晚于所需首个交易日 {days[0]}，无法核验完整窗口，未发布行情')
     indices = {}
     for symbol in INDEX_CODES:
         start = index_window_begin(symbol, wanted)
-        requested_begin = (date.fromisoformat(start)-timedelta(days=index_prewarm_days)).isoformat() if symbol == '000001.SH' else start
+        request_start = index_window_begin(symbol, index_request_begin) if index_request_begin is not None else start
+        requested_begin = (date.fromisoformat(request_start)-timedelta(days=index_prewarm_days)).isoformat() if symbol == '000001.SH' else request_start
         observed = index_dates(index_payloads[symbol], symbol, start, target, requested_begin)
         if symbol in CORE_INDEX_CODES or start == wanted:
             expected = days
@@ -193,7 +196,7 @@ def validate_history_calendar(bulk_path, wanted, target, index_payloads, officia
         if observed != expected:
             raise ValueError(symbol+'指数与批量行情对应日期不一致，拒绝推导历史日历')
         indices[symbol] = {**_summary(observed), 'matches_bulk': True,
-                           'full_window': observed == days, 'requested_start': start,
+                           'full_window': observed == days, 'requested_start': request_start,
                            'prehistory_not_covered': [wanted, observed[0]] if observed[0] > days[0] else None}
     official = sorted(set(day for day in official_calendar if wanted <= day <= target))
     if (not official or official[-1] != target or len(official) < 200
