@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from hashlib import sha256
+from importlib import import_module
+from importlib.machinery import ExtensionFileLoader
 import json
 import multiprocessing
 import os
@@ -25,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from desktop_licensing.client import DesktopClient
 from desktop_licensing.windows import default_state_directory, protect, unprotect
 from .access import license_active
-from .profile import import_legacy, roots
+from .profile import import_legacy, roots, select_import_source
 from .windows_runtime import choose_previous, protect_process_tree, require_local_ntfs
 
 
@@ -62,14 +64,14 @@ def _license_client(package: Path) -> DesktopClient:
     return DesktopClient(profile, key, protect=protect, unprotect=unprotect)
 
 
-def _install_roots(client: DesktopClient) -> tuple[Path, Path]:
+def _install_roots(client: DesktopClient) -> tuple[Path, Path, Path]:
     base = client.directory.parents[1]
     local = base.parent
     _ordinary(local, directory=True)
     require_local_ntfs(local)
-    legacy, tray = roots(client.directory)
-    _directory(_directory(local, base.name), tray.parent.name)
-    return legacy, tray
+    preview, tray, native = roots(client.directory)
+    _directory(_directory(local, base.name), native.parent.name)
+    return preview, tray, native
 
 
 def _release_record(package: Path) -> dict:
@@ -281,19 +283,23 @@ def run_preview(package: Path, *, import_previous: bool = False) -> dict | None:
     from app.infrastructure.file_operations import locked_file
 
     client = _license_client(package)
-    legacy, root = _install_roots(client)
+    preview, tray, root = _install_roots(client)
     instance_lock = root.parent / f"instance-{root.name}.lock"
     try:
         with locked_file(instance_lock, exclusive=True, blocking=False):
             if import_previous:
-                return import_legacy(legacy, root, _release_record(package))
+                source = select_import_source(preview, tray)
+                if source is None:
+                    raise ValueError("没有找到可导入的旧版工作台数据")
+                return import_legacy(source, root, _release_record(package))
             if not root.exists() and not root.is_symlink():
-                if (legacy / "data" / "business" / "app.sqlite3").is_file():
+                source = select_import_source(preview, tray)
+                if source is not None:
                     choice = choose_previous()
                     if choice == "cancel":
                         return None
                     if choice == "import":
-                        import_legacy(legacy, root, _release_record(package))
+                        import_legacy(source, root, _release_record(package))
             _directory(root.parent, root.name)
             _configure_instance(root, package)
             _serve(package, root, client)
@@ -301,9 +307,33 @@ def run_preview(package: Path, *, import_previous: bool = False) -> dict | None:
         raise RuntimeError("工作台已经打开或正在收尾") from None
 
 
-def _diagnostic_worker(stop) -> None:
+def _verify_native_modules(package: Path) -> int:
+    manifest = json.loads((package / "BUILD-MANIFEST.json").read_text(encoding="utf-8"))
+    modules = manifest.get("native_modules")
+    if not isinstance(modules, list) or not {"app.domain.conditions", "app.analytics.backtest_engine"}.issubset(
+        name for name in modules if isinstance(name, str)
+    ):
+        raise ValueError("原生核心模块清单无效")
+    for name in modules:
+        if not isinstance(name, str) or not re.fullmatch(
+            r"(?:app|desktop_preview|desktop_licensing)(?:\.[a-z_][a-z_0-9]*)+|"
+            r"backup|restore|noon_archive|dragon_tiger_archive", name,
+        ):
+            raise ValueError("原生核心模块名称无效")
+        module = import_module(name)
+        module_root = "backend" if "." in name else "scripts"
+        if not isinstance(module.__loader__, ExtensionFileLoader) or not Path(module.__file__).resolve().is_relative_to(
+            package / module_root
+        ):
+            raise RuntimeError(f"核心模块未从包内原生扩展载入，{name}")
+    return len(modules)
+
+
+def _diagnostic_worker(package: Path, stop) -> None:
     from app.worker import run
 
+    if sys.platform == "win32":
+        _verify_native_modules(package)
     run(once=True, stop_event=stop)
 
 
@@ -316,6 +346,7 @@ def diagnose(package: Path) -> dict:
     import pyarrow
     import sqlite3
 
+    manifest = json.loads((package / "BUILD-MANIFEST.json").read_text(encoding="utf-8"))
     with TemporaryDirectory(prefix="amr-desktop-diagnose-") as temporary:
         root = Path(temporary).resolve()
         if sys.platform == "win32":
@@ -327,6 +358,7 @@ def diagnose(package: Path) -> dict:
         key = root / "diagnostic-only.key"
         key.write_bytes(Fernet.generate_key())
         _configure_environment(data, key)
+        native_modules = {"native_modules": _verify_native_modules(package)} if sys.platform == "win32" else {}
 
         from app.infrastructure.database import check_sqlite_runtime, connect
         from app.main import app
@@ -334,7 +366,7 @@ def diagnose(package: Path) -> dict:
         check_sqlite_runtime()
         context = multiprocessing.get_context("spawn")
         worker_stop = context.Event()
-        worker = context.Process(target=_diagnostic_worker, args=(worker_stop,))
+        worker = context.Process(target=_diagnostic_worker, args=(package, worker_stop))
         worker.start()
         try:
             worker.join(90)
@@ -382,8 +414,10 @@ def diagnose(package: Path) -> dict:
         finally:
             sys.path.pop(0)
         return {
+            "desktop_version": manifest["desktop_version"],
             "app_version": _release_record(package)["app_version"], "schema": schema,
             "sqlite": sqlite3.sqlite_version, "duckdb": duckdb.__version__,
             "numpy": numpy.__version__, "pandas": pandas.__version__, "pyarrow": pyarrow.__version__,
             "api": "ok", "frontend": "ok", "worker_once": "ok", "backup_restore": "ok",
+            **native_modules,
         }

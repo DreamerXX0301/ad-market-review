@@ -1,4 +1,4 @@
-"""Carry the stopped first preview into an independent tray profile."""
+"""Carry a stopped Windows preview into an independent native tray profile."""
 from __future__ import annotations
 
 from contextlib import ExitStack, closing, contextmanager
@@ -23,7 +23,12 @@ from app.infrastructure.file_operations import (
 from app.infrastructure.storage import atomic_json, dumps, hash_file
 
 LEGACY_COMMIT = "9b39537add6cd098bfc5e99ace004aa4459e9895"
+LEGACY_TRAY_COMMIT = "3839e431c22fe855fec2c94e8e9dbc2d6b2486c9"
 LEGACY_SCHEMA = 39
+_PREVIEW = "workbench-preview-v1"
+_TRAY = "workbench-tray-v1"
+_NATIVE = "workbench-tray-native-v1"
+_SOURCE_COMMITS = {_PREVIEW: LEGACY_COMMIT, _TRAY: LEGACY_TRAY_COMMIT}
 _LEGACY_APP_VERSION = "0.1.24"
 _DATABASE = ("business", "app.sqlite3")
 _KEY = ("secrets", "credential-master.key")
@@ -37,15 +42,16 @@ _BUSINESS_TABLES = (
 )
 
 
-def roots(license_directory: Path) -> tuple[Path, Path]:
+def roots(license_directory: Path) -> tuple[Path, Path, Path]:
     if license_directory.parent.name != "license-preview-v1" or not re.fullmatch(
         r"[0-9a-f]{20}", license_directory.name
     ):
         raise ValueError("工作台授权目录身份无效")
     base = license_directory.parents[1]
     return (
-        base / "workbench-preview-v1" / license_directory.name,
-        base / "workbench-tray-v1" / license_directory.name,
+        base / _PREVIEW / license_directory.name,
+        base / _TRAY / license_directory.name,
+        base / _NATIVE / license_directory.name,
     )
 
 
@@ -60,6 +66,23 @@ def _ordinary(path: Path, *, directory: bool, optional: bool = False):
     if not expected(info.st_mode) or is_link_or_reparse(info):
         raise ValueError(f"导入路径必须是普通{'目录' if directory else '文件'}，{path.name}")
     return info
+
+
+def select_import_source(preview_root: Path, tray_root: Path) -> Path | None:
+    """Choose the latest installed business database without opening it."""
+    for root in (tray_root, preview_root):
+        for directory in (root.parent, root, root / "data", root / "data" / "business"):
+            if _ordinary(directory, directory=True, optional=True) is None:
+                break
+        else:
+            business = root / "data" / "business"
+            if _ordinary(business / "app.sqlite3", directory=False, optional=True) is not None:
+                return root
+            if any((business / ("app.sqlite3" + suffix)).exists()
+                   or path_is_link_or_reparse(business / ("app.sqlite3" + suffix))
+                   for suffix in ("-wal", "-shm", "-journal")):
+                raise ValueError("旧版业务库缺少主文件，请先核对该版本的恢复资料")
+    return None
 
 
 def _read_small(root: Path, parts: tuple[str, ...], limit: int) -> bytes:
@@ -175,13 +198,13 @@ def _safe_member(key: str) -> PurePosixPath:
     return path
 
 
-def _verify_and_extract(archive_path: Path, verification: Path, expected: dict) -> None:
+def _verify_and_extract(archive_path: Path, verification: Path, expected: dict, source_commit: str) -> None:
     with ZipFile(archive_path) as archive:
         members = archive.namelist()
         if len(members) != len(expected) + 1 or set(members) != {"recovery-manifest.json", *expected}:
             raise ValueError("压缩恢复集内容与清单不一致")
         manifest = json.loads(archive.read("recovery-manifest.json"))
-        if manifest != {"format": 1, "source_commit": LEGACY_COMMIT, "files": expected}:
+        if manifest != {"format": 1, "source_commit": source_commit, "files": expected}:
             raise ValueError("压缩恢复集清单校验失败")
         for name, evidence in expected.items():
             member = _safe_member(name)
@@ -193,7 +216,7 @@ def _verify_and_extract(archive_path: Path, verification: Path, expected: dict) 
                 raise ValueError(f"压缩恢复集文件校验失败，{member.name}")
 
 
-def _archive_recovery(archive_path: Path, bundle: Path, extras: dict[str, Path]) -> dict:
+def _archive_recovery(archive_path: Path, bundle: Path, extras: dict[str, Path], source_commit: str) -> dict:
     sources = {
         "standard/" + path.relative_to(bundle).as_posix(): path for path, _ in _files(bundle)
     }
@@ -214,7 +237,7 @@ def _archive_recovery(archive_path: Path, bundle: Path, extras: dict[str, Path])
             archive.write(source, name)
             expected[name] = {"bytes": before.st_size, "sha256": checksum}
         archive.writestr("recovery-manifest.json", dumps({
-            "format": 1, "source_commit": LEGACY_COMMIT, "files": expected,
+            "format": 1, "source_commit": source_commit, "files": expected,
         }))
     flush_file(archive_path)
     return expected
@@ -250,7 +273,9 @@ def _restore_extras(verification: Path, data: Path, extras: dict[str, Path]) -> 
         move_path(source, target, replace=False)
 
 
-def _stage_import(legacy_root: Path, stage: Path, record: dict, *, available_before: int) -> dict:
+def _stage_import(
+    legacy_root: Path, stage: Path, record: dict, *, source_commit: str, available_before: int,
+) -> dict:
     check_sqlite_runtime()
     check_db, connect_sqlite, perform_backup, perform_restore = _maintenance()
     old_data = legacy_root / "data"
@@ -280,9 +305,9 @@ def _stage_import(legacy_root: Path, stage: Path, record: dict, *, available_bef
     profile = stage / "profile"
     recovery = profile / "migration" / "recovery.zip"
     recovery.parent.mkdir(parents=True, mode=0o700)
-    archived = _archive_recovery(recovery, bundle, extras)
+    archived = _archive_recovery(recovery, bundle, extras, source_commit)
     verification = stage / "verification"
-    _verify_and_extract(recovery, verification, archived)
+    _verify_and_extract(recovery, verification, archived, source_commit)
     shutil.rmtree(bundle)
 
     data = profile / "data"
@@ -303,7 +328,8 @@ def _stage_import(legacy_root: Path, stage: Path, record: dict, *, available_bef
     atomic_json(profile / "release.json", record)
     receipt = {
         "format": 1,
-        "source_commit": LEGACY_COMMIT,
+        "source_commit": source_commit,
+        "source_profile": legacy_root.parent.name,
         "target_commit": record["source_commit"],
         "backup_id": restored["backup_id"],
         "archive_sha256": hash_file(recovery),
@@ -317,22 +343,28 @@ def _stage_import(legacy_root: Path, stage: Path, record: dict, *, available_bef
     return receipt
 
 
-def import_legacy(legacy_root: Path, tray_root: Path, release_record: dict) -> dict:
-    """Import under the caller's tray-instance lock, before creating tray_root."""
-    if tray_root.exists() or path_is_link_or_reparse(tray_root):
-        raise ValueError("托盘版数据目录已经存在，导入只接受全新目录")
-    _ordinary(tray_root.parent, directory=True)
+def import_legacy(legacy_root: Path, native_root: Path, release_record: dict) -> dict:
+    """Import under the caller's native-instance lock, before creating native_root."""
+    if native_root.exists() or path_is_link_or_reparse(native_root):
+        raise ValueError("新版数据目录已经存在，导入只接受全新目录")
+    _ordinary(native_root.parent, directory=True)
+    _ordinary(legacy_root.parent, directory=True)
     _ordinary(legacy_root, directory=True)
-    if (legacy_root.parent.parent != tray_root.parent.parent or legacy_root.name != tray_root.name
-            or legacy_root.parent.name != "workbench-preview-v1"
-            or tray_root.parent.name != "workbench-tray-v1"):
+    namespace = legacy_root.parent.name
+    source_commit = _SOURCE_COMMITS.get(namespace)
+    if (legacy_root.parent.parent != native_root.parent.parent or legacy_root.name != native_root.name
+            or source_commit is None or native_root.parent.name != _NATIVE
+            or not re.fullmatch(r"[0-9a-f]{20}", native_root.name)):
         raise ValueError("新旧工作台目录身份不同")
+    target_commit = release_record.get("source_commit")
     if (release_record.get("format") != 1 or release_record.get("app_version") != _LEGACY_APP_VERSION
-            or release_record.get("source_commit") == LEGACY_COMMIT
-            or not re.fullmatch(r"[0-9a-f]{40}", str(release_record.get("source_commit", "")))):
-        raise ValueError("本次托盘版发行标记无效")
+            or target_commit in _SOURCE_COMMITS.values()
+            or not isinstance(target_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", target_commit)):
+        raise ValueError("新版发行标记无效")
+    instance_lock = (legacy_root.parent / f"instance-{legacy_root.name}.lock"
+                     if namespace == _TRAY else legacy_root / "instance.lock")
     with ExitStack() as locks:
-        _legacy_lock(locks, legacy_root / "instance.lock", required=True)
+        _legacy_lock(locks, instance_lock, required=True)
         _ordinary(legacy_root / "data", directory=True)
         _ordinary(legacy_root / "data" / "business", directory=True)
         _ordinary(legacy_root / "data" / "work", directory=True)
@@ -340,12 +372,14 @@ def import_legacy(legacy_root: Path, tray_root: Path, release_record: dict) -> d
         _legacy_lock(locks, legacy_root / "data" / "business" / "supplement-access.lock")
         _legacy_lock(locks, legacy_root / "data" / "business" / "migration.lock")
         old = json.loads(_read_small(legacy_root, ("release.json",), 4096))
-        if old != {"format": 1, "source_commit": LEGACY_COMMIT, "app_version": _LEGACY_APP_VERSION}:
+        if old != {"format": 1, "source_commit": source_commit, "app_version": _LEGACY_APP_VERSION}:
             raise ValueError("旧版发行标记与本次导入支持的版本不符")
-        available_before = shutil.disk_usage(tray_root.parent).free
-        with TemporaryDirectory(prefix=".tray-import-", dir=tray_root.parent) as temporary:
+        available_before = shutil.disk_usage(native_root.parent).free
+        with TemporaryDirectory(prefix=".tray-import-", dir=native_root.parent) as temporary:
             stage = Path(temporary)
-            receipt = _stage_import(legacy_root, stage, release_record, available_before=available_before)
-            move_path(stage / "profile", tray_root, replace=False)
-    available_after = shutil.disk_usage(tray_root).free
+            receipt = _stage_import(
+                legacy_root, stage, release_record, source_commit=source_commit, available_before=available_before,
+            )
+            move_path(stage / "profile", native_root, replace=False)
+    available_after = shutil.disk_usage(native_root).free
     return {**receipt, "available_bytes_after": available_after}

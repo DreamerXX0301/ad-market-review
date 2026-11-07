@@ -12,20 +12,27 @@ import pytest
 
 from app import core
 from app.infrastructure.file_operations import locked_file
-from desktop_preview.profile import LEGACY_COMMIT, import_legacy, roots
+from desktop_preview.profile import LEGACY_COMMIT, LEGACY_TRAY_COMMIT, import_legacy, roots, select_import_source
 
-_OLD = {"format": 1, "source_commit": LEGACY_COMMIT, "app_version": "0.1.24"}
+_OLD = {"format": 1, "app_version": "0.1.24"}
 _NEW = {"format": 1, "source_commit": "a" * 40, "app_version": "0.1.24"}
 
 
-@pytest.fixture
-def profiles(tmp_path, monkeypatch):
+def _old_lock(old):
+    if old.parent.name == "workbench-tray-v1":
+        return old.parent / f"instance-{old.name}.lock"
+    return old / "instance.lock"
+
+
+@pytest.fixture(params=("first_preview", "tray"))
+def profiles(tmp_path, monkeypatch, request):
     license_dir = tmp_path / "app" / "license-preview-v1" / ("b" * 20)
-    old, new = roots(license_dir)
+    preview, tray, new = roots(license_dir)
+    old, commit = (tray, LEGACY_TRAY_COMMIT) if request.param == "tray" else (preview, LEGACY_COMMIT)
     old.mkdir(parents=True)
     new.parent.mkdir()
-    (old / "instance.lock").touch()
-    core.atomic_json(old / "release.json", _OLD)
+    _old_lock(old).touch()
+    core.atomic_json(old / "release.json", {**_OLD, "source_commit": commit})
 
     data = old / "data"
     for name in ("SHIXU_SQLITE_PATH", "SHIXU_PUBLISHED_DIR", "SHIXU_CREDENTIAL_DIR",
@@ -121,9 +128,13 @@ def test_import_preserves_legacy_bytes_and_restores_wal_evidence(profiles):
     archive = new / "migration/recovery.zip"
     assert core.hash_file(archive) == receipt["archive_sha256"]
     assert receipt["paused_jobs"] == 1
+    old_commit = json.loads((old / "release.json").read_bytes())["source_commit"]
+    assert receipt["source_commit"] == old_commit
+    assert receipt["source_profile"] == old.parent.name
     assert receipt["available_bytes_before"] > 0 and receipt["available_bytes_after"] > 0
     with ZipFile(archive) as recovery:
         names = set(recovery.namelist())
+        assert json.loads(recovery.read("recovery-manifest.json"))["source_commit"] == old_commit
         assert "standard/business/app.sqlite3" in names
         assert "extra/raw/response" in names
         assert "extra/work/checkpoint" in names
@@ -139,7 +150,7 @@ def test_import_preserves_legacy_bytes_and_restores_wal_evidence(profiles):
 def test_import_requires_the_old_instance_to_be_stopped(profiles):
     old, new, _ = profiles
     before = _contents(old)
-    with locked_file(old / "instance.lock", exclusive=True):
+    with locked_file(_old_lock(old), exclusive=True):
         with pytest.raises(RuntimeError, match="完整退出"):
             import_legacy(old, new, _NEW)
     assert not new.exists()
@@ -172,3 +183,35 @@ def test_import_refuses_master_key_copies_in_archived_data(profiles):
     with pytest.raises(ValueError, match="主密钥副本"):
         import_legacy(old, new, _NEW)
     assert not new.exists()
+
+
+
+def test_source_selection_prefers_tray_then_falls_back_to_first_preview(tmp_path):
+    preview, tray, native = roots(tmp_path / "app/license-preview-v1" / ("b" * 20))
+    assert select_import_source(preview, tray) is None
+    assert not native.parent.exists()
+
+    preview_database = preview / "data/business/app.sqlite3"
+    preview_database.parent.mkdir(parents=True)
+    preview_database.touch()
+    assert select_import_source(preview, tray) == preview
+
+    tray_database = tray / "data/business/app.sqlite3"
+    tray_database.parent.mkdir(parents=True)
+    assert select_import_source(preview, tray) == preview
+    tray_database.touch()
+    assert select_import_source(preview, tray) == tray
+    assert not native.parent.exists()
+
+
+def test_source_selection_refuses_incomplete_newer_tray_data(tmp_path):
+    preview, tray, _ = roots(tmp_path / "app/license-preview-v1" / ("b" * 20))
+    preview_database = preview / "data/business/app.sqlite3"
+    preview_database.parent.mkdir(parents=True)
+    preview_database.touch()
+    tray_business = tray / "data/business"
+    tray_business.mkdir(parents=True)
+    (tray_business / "app.sqlite3-wal").touch()
+
+    with pytest.raises(ValueError, match="缺少主文件"):
+        select_import_source(preview, tray)

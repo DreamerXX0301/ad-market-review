@@ -12,26 +12,25 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import py_compile
+import re
 import shutil
 import stat
 import struct
 import subprocess
-import sys
 import tarfile
 import tempfile
 import zipfile
 
+import windows_desktop_native_core as native
+
 
 ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT = "AMR-Desktop-Tray-Windows-x64"
 AUTH_PREFIX = "AMR-License-Test-Windows-x64"
 AUTH_SHA256 = "28cc92be54ff385380c0e58aa74f77a1fde5a9b1452f5891bf450a716181b3fe"
 SQLITE_URL = "https://www.sqlite.org/2026/sqlite-dll-win-x64-3540100.zip"
 SQLITE_SHA3 = "c2d09c8babb9399277055c057c97a53f1ffd7c5f11d0c1f2118ffdfa39f2daa4"
 GO_URL = "https://dl.google.com/go/go1.27.3.darwin-arm64.tar.gz"
 GO_SHA256 = "dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2"
-CLIENT_FILES = ("__init__.py", "client.py", "protocol.py", "windows.py")
-MAINTENANCE_FILES = ("backup.py", "restore.py", "noon_archive.py", "dragon_tiger_archive.py")
 CONTRACT_FILES = ("ai-evidence-answer-v2.schema.json", "ai-research-interpretation-v1.schema.json")
 LAUNCHER = "AMR-Desktop-Preview.exe"
 
@@ -100,10 +99,11 @@ def stage_python(source: Path, destination: Path) -> None:
     )
 
 
-def copy_tree(source: Path, destination: Path, suffixes: set[str] | None = None, *, bytecode: bool = False) -> None:
+def copy_tree(source: Path, destination: Path, suffixes: set[str] | None = None, *,
+              bytecode: bool = False, exclude: frozenset[Path] = frozenset()) -> None:
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
-        if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
+        if relative in exclude or any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
             continue
         if path.is_symlink():
             raise ValueError(f"Unexpected build input symlink: {relative}")
@@ -172,12 +172,18 @@ def install_packages(package: Path, scratch: Path, wheelhouse: Path | None) -> N
                 record.write_text(portable, encoding="utf-8")
 
 
-def build_frontend(package: Path, offline: bool) -> None:
+def build_frontend(package: Path, offline: bool) -> dict[str, str]:
     frontend = ROOT / "frontend"
     run("npm", "ci", "--no-audit", "--no-fund", "--offline" if offline else "--prefer-offline", cwd=frontend)
     run("npm", "run", "build", cwd=frontend,
         env={**os.environ, "VITE_DESKTOP_PREVIEW": "1", "VITE_READONLY_PREVIEW": "0"})
-    copy_tree(frontend / "dist", package / "frontend" / "dist")
+    dist = package / "frontend" / "dist"
+    copy_tree(frontend / "dist", dist, exclude=frozenset({Path("author-wechat.jpg")}))
+    for asset in dist.rglob("*.js"):
+        content = asset.read_bytes()
+        if ("联系作者".encode() in content or b"author-wechat.jpg" in content
+                or b"\\u8054\\u7cfb\\u4f5c\\u8005" in content.lower()):
+            raise ValueError(f"Desktop author contact leaked into {asset.name}")
     lock = json.loads((frontend / "package-lock.json").read_text(encoding="utf-8"))
     notices = package / "licenses" / "frontend"
     for name, dependency in lock["packages"].items():
@@ -186,21 +192,26 @@ def build_frontend(package: Path, offline: bool) -> None:
         for file in (frontend / name).glob("*"):
             if file.is_file() and file.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE")):
                 copy_file(file, notices / name.removeprefix("node_modules/") / file.name)
+    obfuscator = lock["packages"]["node_modules/javascript-obfuscator"]
+    copy_file(frontend / "node_modules/javascript-obfuscator/LICENSE.BSD",
+              notices / "javascript-obfuscator/LICENSE.BSD")
+    return {"version": obfuscator["version"], "integrity": obfuscator["integrity"]}
 
 
 def stage_application(package: Path) -> None:
     for module in ("app", "desktop_preview"):
-        copy_tree(ROOT / "backend" / module, package / "backend" / module, {".py", ".sql", ".json"}, bytecode=True)
+        protected_sources = frozenset(native.module_path(name).relative_to(module).with_suffix(".py")
+                                      for name in native.MODULES if name.startswith(f"{module}."))
+        copy_tree(ROOT / "backend" / module, package / "backend" / module, {".py", ".sql", ".json"},
+                  bytecode=True, exclude=protected_sources)
     if not (package / "backend/desktop_preview/__main__.pyc").is_file():
         raise ValueError("Desktop entrypoint is missing")
-    for name in CLIENT_FILES:
-        stage_python(ROOT / "backend" / "desktop_licensing" / name, package / "backend" / "desktop_licensing" / name)
-    for name in MAINTENANCE_FILES:
-        stage_python(ROOT / "scripts" / name, package / "scripts" / name)
+    license_init = Path("backend/desktop_licensing/__init__.py")
+    stage_python(ROOT / license_init, package / license_init)
     for name in CONTRACT_FILES:
         copy_file(ROOT / "contracts" / name, package / "contracts" / name)
-    copy_tree(ROOT / "contracts" / "prompts", package / "contracts" / "prompts", {".md"})
     copy_file(ROOT / "VERSION", package / "VERSION")
+    copy_file(ROOT / "DESKTOP_VERSION", package / "DESKTOP_VERSION")
 
 
 def build_launcher(package: Path, scratch: Path, go_archive: Path) -> None:
@@ -242,6 +253,57 @@ def verify_binaries(package: Path) -> int:
     return count
 
 
+def verify_extension(path: Path, init_name: str) -> None:
+    image = path.read_bytes()
+    pe_offset = struct.unpack_from("<I", image, 60)[0]
+    if struct.unpack_from("<II", image, pe_offset + 12) != (0, 0):
+        raise ValueError(f"Unexpected COFF symbol table for {path.name}")
+    optional = pe_offset + 24
+    section_count = struct.unpack_from("<H", image, pe_offset + 6)[0]
+    section_table = optional + struct.unpack_from("<H", image, pe_offset + 20)[0]
+    sections = [struct.unpack_from("<IIII", image, section_table + index * 40 + 8)
+                for index in range(section_count)]
+
+    def file_offset(address: int) -> int:
+        for _, start, size, offset in sections:
+            if start <= address < start + size:
+                return offset + address - start
+        raise ValueError(f"Unmapped PE address in {path.name}")
+
+    export_rva = struct.unpack_from("<I", image, optional + 112)[0]
+    _, _, _, _, _, _, functions, names, _, table, _ = struct.unpack_from(
+        "<IIHHIIIIIII", image, file_offset(export_rva),
+    )
+    if (functions, names) != (1, 1):
+        raise ValueError(f"Unexpected PE exports for {path.name}")
+    name_rva = struct.unpack_from("<I", image, file_offset(table))[0]
+    name_start = file_offset(name_rva)
+    if image[name_start:image.index(0, name_start)] != init_name.encode("ascii"):
+        raise ValueError(f"Incorrect Python entrypoint for {path.name}")
+
+    debug_rva, debug_size = struct.unpack_from("<II", image, optional + 112 + 6 * 8)
+    if debug_rva or debug_size:
+        # Zig's deterministic REPRO marker contains zero debug data.
+        if debug_size != 28 or struct.unpack_from("<IIII", image, file_offset(debug_rva) + 12) != (16, 0, 0, 0):
+            raise ValueError(f"Unexpected PE debug information for {path.name}")
+
+
+def verify_protected_payload(package: Path) -> None:
+    bootstrap = {"desktop_preview/__main__.pyc", "desktop_preview/__init__.pyc", "desktop_licensing/__init__.pyc"}
+    for path in (package / "backend").rglob("*.pyc"):
+        relative = path.relative_to(package / "backend")
+        if relative.as_posix() not in bootstrap and not (relative.is_relative_to("app") and path.name == "__init__.pyc"):
+            raise ValueError(f"Unexpected bytecode outside desktop bootstrap: {relative}")
+    for name in native.MODULES:
+        module = package / native.package_module(name)
+        if any(module.with_suffix(suffix).exists() for suffix in (".py", ".pyc")):
+            raise ValueError(f"Unexpected Python fallback for {name}")
+        verify_extension(module.with_suffix(native.WINDOWS_SUFFIX), f"PyInit_{module.name}")
+    if any(path.suffix.lower() in {".c", ".cpp", ".pdb", ".exp", ".lib", ".obj"}
+           for directory in ("backend", "scripts") for path in (package / directory).rglob("*")):
+        raise ValueError("Unexpected native compiler intermediate in the protected backend")
+
+
 def zip_package(package: Path, output: Path, epoch: int) -> None:
     zip_date = datetime.fromtimestamp(epoch, timezone.utc).timetuple()[:6]
     descriptor, temporary = tempfile.mkstemp(prefix=".amr-windows-", suffix=".zip", dir=output.parent)
@@ -272,8 +334,10 @@ def main() -> None:
     parser.add_argument("--npm-offline", action="store_true")
     parser.add_argument("--allow-working-tree", action="store_true", help="Label a dirty checkout as development only")
     args = parser.parse_args()
-    if sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 13):
-        raise ValueError("Build this preview with CPython 3.13")
+    native.require_host()
+    desktop_version = (ROOT / "DESKTOP_VERSION").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", desktop_version):
+        raise ValueError("Invalid desktop version")
     output = args.output.expanduser().absolute()
     if output.suffix != ".zip" or output.exists() or output.is_symlink():
         raise ValueError("Choose a new .zip output path")
@@ -283,8 +347,8 @@ def main() -> None:
     source_commit = capture("git", "rev-parse", "HEAD")
     epoch = int(capture("git", "show", "-s", "--format=%ct", source_commit))
     output.parent.mkdir(parents=True, exist_ok=True)
-    if shutil.disk_usage(args.scratch or tempfile.gettempdir()).free < 2 * 1024**3:
-        raise ValueError("The build directory needs 2 GiB of available space")
+    if shutil.disk_usage(args.scratch or tempfile.gettempdir()).free < 4 * 1024**3:
+        raise ValueError("The build directory needs 4 GiB of available space")
     if shutil.disk_usage(output.parent).free < 512 * 1024**2:
         raise ValueError("The output filesystem needs 512 MiB of available space")
     with tempfile.TemporaryDirectory(prefix="amr-windows-build-", dir=args.scratch) as temporary:
@@ -292,42 +356,59 @@ def main() -> None:
         inputs = args.inputs or scratch
         go = fetch(inputs / "go.tar.gz", GO_URL, "sha256", GO_SHA256)
         sqlite = fetch(inputs / "sqlite-dll.zip", SQLITE_URL, "sha3_256", SQLITE_SHA3)
-        package = scratch / ARTIFACT
+        package = scratch / f"AMR-Desktop-{desktop_version}-Windows-x64"
         package.mkdir()
         stage_runtime(package, args.auth_preview.expanduser(), sqlite)
         wheels = inputs / "wheels"
         install_packages(package, scratch, wheels if wheels.is_dir() else None)
-        build_frontend(package, args.npm_offline)
+        frontend_obfuscation = build_frontend(package, args.npm_offline)
         stage_application(package)
+        cython = fetch(inputs / native.CYTHON_WHEEL, native.CYTHON_URL, "sha256", native.CYTHON_SHA256)
+        zig = fetch(inputs / "zig.tar.xz", native.ZIG_URL, "sha256", native.ZIG_SHA256)
+        sdk = fetch(inputs / "python-win-sdk.zip", native.PYTHON_SDK_URL, "sha256", native.PYTHON_SDK_SHA256)
+        native.build_windows_core(package, scratch, cython, zig, sdk)
+        for notice, checksum in native.CYTHON_NOTICE_FILES:
+            url = f"https://raw.githubusercontent.com/cython/cython/{native.CYTHON_VERSION}/{notice}"
+            path = fetch(inputs / f"cython-{notice.lower()}", url, "sha256", checksum)
+            copy_file(path, package / "licenses" / f"Cython-{notice}")
         for directory in ("backend", "scripts", "frontend"):
             if any((package / directory).rglob("*.py")):
                 raise ValueError(f"Unexpected first-party Python source in {directory}")
         if any(package.rglob("*.map")):
             raise ValueError("Unexpected source map in the preview package")
+        copy_file(ROOT / "scripts/assets/windows-tray.ico", package / "tray.ico")
         build_launcher(package, scratch, go)
         binary_count = verify_binaries(package)
+        verify_protected_payload(package)
         (package / "THIRD-PARTY.txt").write_text(
             "CPython 3.13.17 Windows x64: https://www.python.org/downloads/release/python-31317/\n"
             "See runtime/LICENSE.txt and the original wheel licenses under runtime/packages/*.dist-info/.\n"
             "SQLite 3.54.1: https://www.sqlite.org/download.html\n"
             "SQLite is in the public domain: https://www.sqlite.org/copyright.html\n"
             "Go 1.27.3: https://go.dev/dl/ (see licenses/Go-LICENSE.txt and Go-PATENTS.txt).\n"
-            "See licenses/frontend/ for frontend dependency notices.\n",
+            "See licenses/frontend/ for frontend dependency notices.\n"
+            f"javascript-obfuscator {frontend_obfuscation['version']} (build-time, BSD-2-Clause).\n"
+            "https://github.com/javascript-obfuscator/javascript-obfuscator\n"
+            f"npm integrity {frontend_obfuscation['integrity']}\n"
+            f"Cython {native.CYTHON_VERSION}: https://cython.org/ (see licenses/Cython-LICENSE.txt).\n"
+            f"Zig {native.ZIG_VERSION}: https://ziglang.org/ (see licenses/Zig-LICENSE.txt and MinGW-COPYING.txt).\n",
             encoding="utf-8",
         )
         (package / "READ-ME.txt").write_text(
-            "冒险的梦想家 Windows x64 托盘预览\n\n"
+            f"冒险的梦想家 Windows x64 桌面版 {desktop_version}\n\n"
             "完整解压 ZIP，再双击 AMR-Desktop-Preview.exe。\n"
             "在任务栏通知区域找到工作台图标，图标也可能位于折叠菜单。\n"
             "双击图标，或右键选择「打开工作台」，使用 Windows 默认浏览器打开。\n"
             "关闭浏览器页面后工作台继续运行。右键选择「退出工作台」可安全停止。\n"
+            "找不到托盘图标时，可在解压目录的 PowerShell 运行 .\\AMR-Desktop-Preview.exe --quit 请求安全退出。\n"
             "同一 Windows 用户的有效测试授权可沿用，也可按页面提示导入新授权。\n\n"
             "请先退出旧版。首次打开新版时，若检测到旧版数据，会提示选择迁移或开始新工作台。\n"
             "也可在新版首次正常启动前，于解压目录的 PowerShell 执行以下命令。\n"
             ".\\AMR-Desktop-Preview.exe --import-previous\n"
             "原预览数据保留。按弹窗结果确认完成后，再正常启动新版。\n\n"
             "可在 PowerShell 运行 .\\AMR-Desktop-Preview.exe --diagnose 检查运行环境，结果会在弹窗显示。\n"
-            "本包包含可逆向分析的 Python 字节码和编译后的前端文件。\n",
+            "后端业务、授权和维护模块以原生扩展交付，启动引导保留 Python 字节码，前端提供编译后的文件。"
+            "程序仍可被逆向分析。\n",
             encoding="utf-8-sig",
         )
         payload = {
@@ -338,13 +419,21 @@ def main() -> None:
         manifest = {
             "artifact": "private-windows-desktop-preview", "target": "windows-x64",
             "source_commit": source_commit, "app_version": (ROOT / "VERSION").read_text().strip(),
+            "desktop_version": desktop_version,
             "build_id": build_id, "working_tree": dirty, "binary_count": binary_count,
             "python_runtime": "3.13.17", "sqlite_runtime": "3.54.1",
-            "first_party_python": "cpython-3.13-bytecode", "launcher_subsystem": "windows-gui",
+            "first_party_python": "cpython-3.13-bytecode-and-native-core",
+            "launcher_subsystem": "windows-gui",
+            "frontend_obfuscation": frontend_obfuscation,
             "authorization_preview_sha256": AUTH_SHA256, "sqlite_zip_sha3_256": SQLITE_SHA3,
             "go_toolchain_sha256": GO_SHA256, "uv_lock_sha256": digest(ROOT / "backend/uv.lock"),
             "frontend_lock_sha256": digest(ROOT / "frontend/package-lock.json"), "files": payload,
         }
+        manifest.update(native_modules=list(native.MODULES), native_toolchain={
+            "cython": native.CYTHON_VERSION, "cython_wheel_sha256": native.CYTHON_SHA256,
+            "zig": native.ZIG_VERSION, "zig_archive_sha256": native.ZIG_SHA256,
+            "python_sdk_sha256": native.PYTHON_SDK_SHA256,
+        })
         (package / "BUILD-MANIFEST.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )

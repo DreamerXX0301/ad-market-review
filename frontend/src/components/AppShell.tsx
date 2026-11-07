@@ -171,7 +171,12 @@ export default function AppShell({
         </a>
         <div className="sidebar-workspace">
           <span className="status-dot good" />
-          本地研究工作台<span className="local-tag">本地</span>
+          本地研究工作台
+          <span className="local-tag">
+            {import.meta.env.VITE_DESKTOP_PREVIEW === "1" && import.meta.env.VITE_DESKTOP_VERSION
+              ? `Windows ${import.meta.env.VITE_DESKTOP_VERSION}`
+              : "本地"}
+          </span>
         </div>
         <nav>
           {navigation.map((group) => (
@@ -213,7 +218,7 @@ export default function AppShell({
             本机数据服务
           </div>
           <p>盘后可自动或手动更新</p>
-          <AuthorContact />
+          {import.meta.env.VITE_DESKTOP_PREVIEW === "1" ? null : <AuthorContact />}
           <button className="theme-toggle" onClick={onTheme}>
             {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
             <span>{theme === "dark" ? "切换浅色" : "切换深色"}</span>

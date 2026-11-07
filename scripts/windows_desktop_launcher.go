@@ -22,12 +22,14 @@ const (
 	wmDestroy      = 0x0002
 	wmClose        = 0x0010
 	wmEndSession   = 0x0016
+	wmTimer        = 0x0113
 	wmTray         = 0x8001
 	wmOpen         = 0x8002
 	wmBrowser      = 0x8003
 	wmExited       = 0x8004
 	menuOpen       = 1
 	menuQuit       = 2
+	iconRetryTimer = 1
 	createNoWindow = 0x08000000
 )
 
@@ -82,6 +84,7 @@ type tray struct {
 	browserRequests chan string
 	result          chan string
 	stopping        bool
+	modernIcon      bool
 }
 
 func wide(value string) *uint16 {
@@ -186,6 +189,30 @@ func (app *tray) updateIcon(operation uintptr, title string) bool {
 	return ok != 0
 }
 
+func (app *tray) iconTitle() string {
+	if app.stopping {
+		return "冒险的梦想家 · 正在退出"
+	}
+	return "冒险的梦想家"
+}
+
+func (app *tray) registerIcon() bool {
+	if !app.updateIcon(0, app.iconTitle()) {
+		return false
+	}
+	ok, _, _ := notifyIcon.Call(4, uintptr(unsafe.Pointer(&app.icon))) // NIM_SETVERSION
+	app.modernIcon = ok != 0
+	return true
+}
+
+func (app *tray) restoreIcon() {
+	if app.updateIcon(1, app.iconTitle()) || app.registerIcon() {
+		user32.NewProc("KillTimer").Call(app.window, iconRetryTimer)
+	} else {
+		user32.NewProc("SetTimer").Call(app.window, iconRetryTimer, 1000, 0)
+	}
+}
+
 func (app *tray) open() {
 	if !app.stopping {
 		select {
@@ -200,7 +227,7 @@ func (app *tray) stop() {
 		return
 	}
 	app.stopping = true
-	app.updateIcon(1, "冒险的梦想家 · 正在退出")
+	app.updateIcon(1, app.iconTitle())
 	close(app.openRequests)
 	if app.commands != nil {
 		app.commands.Close()
@@ -237,14 +264,23 @@ func (app *tray) menu() {
 func (app *tray) handle(window uintptr, id uint32, wParam, lParam uintptr) uintptr {
 	switch id {
 	case wmTray:
-		switch uint32(lParam) {
-		case 0x0203:
+		switch uint16(lParam) {
+		case 0x0203, 0x0401: // Double-click or NIN_KEYSELECT.
 			app.open()
-		case 0x0205:
+		case 0x007b: // WM_CONTEXTMENU.
 			app.menu()
+		case 0x0205:
+			if !app.modernIcon {
+				app.menu()
+			}
 		}
 	case wmOpen:
+		app.restoreIcon()
 		app.open()
+	case wmTimer:
+		if wParam == iconRetryTimer {
+			app.restoreIcon()
+		}
 	case wmBrowser:
 		var raw string
 		select {
@@ -278,15 +314,12 @@ func (app *tray) handle(window uintptr, id uint32, wParam, lParam uintptr) uintp
 			app.stop()
 		}
 	case wmDestroy:
+		user32.NewProc("KillTimer").Call(window, iconRetryTimer)
 		notifyIcon.Call(2, uintptr(unsafe.Pointer(&app.icon)))
 		user32.NewProc("PostQuitMessage").Call(0)
 	default:
 		if id != 0 && uintptr(id) == app.taskbar {
-			title := "冒险的梦想家"
-			if app.stopping {
-				title += " · 正在退出"
-			}
-			app.updateIcon(0, title)
+			app.restoreIcon()
 			return 0
 		}
 		result, _, _ := user32.NewProc("DefWindowProcW").Call(window, uintptr(id), wParam, lParam)
@@ -295,13 +328,26 @@ func (app *tray) handle(window uintptr, id uint32, wParam, lParam uintptr) uintp
 	return 0
 }
 
-func runTray(folder, profile string) error {
+func currentTrayName() (string, error) {
+	localAppData := os.Getenv("LOCALAPPDATA")
+	if !filepath.IsAbs(localAppData) {
+		return "", fmt.Errorf("无法读取 Windows 的本地应用数据目录")
+	}
+	profile := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(localAppData))))
+	return fmt.Sprintf("AMRDesktopTray-%x", profile[:10]), nil
+}
+
+func findTrayWindow(name string) uintptr {
+	window, _, _ := user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(wide(name))), 0)
+	return window
+}
+
+func runTray(folder, name string) error {
 	// ShellExecute can invoke a browser association via a COM shell extension.
 	initialized, _, _ := ole32.NewProc("CoInitializeEx").Call(0, 2|4)
 	if int32(initialized) >= 0 {
 		defer ole32.NewProc("CoUninitialize").Call()
 	}
-	name := "AMRDesktopTray-" + profile
 	mutex, _, lockError := kernel32.NewProc("CreateMutexW").Call(
 		0, 0, uintptr(unsafe.Pointer(wide("Local\\"+name))))
 	if mutex == 0 {
@@ -309,9 +355,8 @@ func runTray(folder, profile string) error {
 	}
 	defer syscall.CloseHandle(syscall.Handle(mutex))
 	if lockError == syscall.Errno(183) { // ERROR_ALREADY_EXISTS
-		findWindow := user32.NewProc("FindWindowW")
 		for range 30 {
-			window, _, _ := findWindow.Call(uintptr(unsafe.Pointer(wide(name))), 0)
+			window := findTrayWindow(name)
 			if window != 0 {
 				postMessage.Call(window, wmOpen, 0, 0)
 				return nil
@@ -328,9 +373,18 @@ func runTray(folder, profile string) error {
 	app.taskbar, _, _ = user32.NewProc("RegisterWindowMessageW").Call(
 		uintptr(unsafe.Pointer(wide("TaskbarCreated"))))
 	instance, _, _ := kernel32.NewProc("GetModuleHandleW").Call(0)
+	metric := user32.NewProc("GetSystemMetrics")
+	width, _, _ := metric.Call(49)  // SM_CXSMICON
+	height, _, _ := metric.Call(50) // SM_CYSMICON
+	icon, _, _ := user32.NewProc("LoadImageW").Call(0,
+		uintptr(unsafe.Pointer(wide(filepath.Join(folder, "tray.ico")))), 1, width, height, 0x10)
+	if icon == 0 {
+		return fmt.Errorf("无法读取工作台托盘图标，请完整解压新版 ZIP")
+	}
+	defer user32.NewProc("DestroyIcon").Call(icon)
 	className := wide(name)
 	class := windowClass{
-		callback: syscall.NewCallback(app.handle), instance: instance,
+		callback: syscall.NewCallback(app.handle), instance: instance, icon: icon,
 		className: uintptr(unsafe.Pointer(className)),
 	}
 	atom, _, err := user32.NewProc("RegisterClassW").Call(uintptr(unsafe.Pointer(&class)))
@@ -345,10 +399,9 @@ func runTray(folder, profile string) error {
 		return err
 	}
 	app.window = window
-	icon, _, _ := user32.NewProc("LoadIconW").Call(0, 32512) // IDI_APPLICATION
-	app.icon = notification{window: window, id: 1, flags: 7, callback: wmTray, icon: icon}
+	app.icon = notification{window: window, id: 1, flags: 7 | 0x80, callback: wmTray, icon: icon, version: 4}
 	app.icon.size = uint32(unsafe.Sizeof(app.icon))
-	if !app.updateIcon(0, "冒险的梦想家") {
+	if !app.registerIcon() {
 		return fmt.Errorf("无法创建托盘图标，请确认 Windows 任务栏正在运行")
 	}
 	if err := app.start(folder); err != nil {
@@ -385,8 +438,27 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 {
+		if len(os.Args) == 2 && os.Args[1] == "--quit" {
+			name, err := currentTrayName()
+			if err != nil {
+				dialog(err.Error(), 0x10)
+				return
+			}
+			window := findTrayWindow(name)
+			if window == 0 {
+				dialog("当前 Windows 会话没有运行中的托盘工作台。", 0x40)
+				return
+			}
+			ok, _, _ := postMessage.Call(window, wmClose, 0, 0)
+			if ok == 0 {
+				dialog("发送退出请求失败，请用运行工作台的同一个 Windows 账号重试。", 0x10)
+				return
+			}
+			dialog("已请求工作台退出。后台任务安全收尾后，程序会自动关闭。", 0x40)
+			return
+		}
 		if len(os.Args) != 2 || (os.Args[1] != "--diagnose" && os.Args[1] != "--import-previous") {
-			dialog("可用命令为 --diagnose 和 --import-previous。", 0x10)
+			dialog("可用命令为 --diagnose、--import-previous 和 --quit。", 0x10)
 			return
 		}
 		output, err := pythonCommand(folder, os.Args[1]).CombinedOutput()
@@ -397,13 +469,12 @@ func main() {
 		dialog(strings.TrimSpace(string(output)), 0x40)
 		return
 	}
-	localAppData := os.Getenv("LOCALAPPDATA")
-	if !filepath.IsAbs(localAppData) {
-		dialog("无法读取 Windows 的本地应用数据目录。", 0x10)
+	name, err := currentTrayName()
+	if err != nil {
+		dialog(err.Error(), 0x10)
 		return
 	}
-	profile := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(localAppData))))
-	if err := runTray(folder, fmt.Sprintf("%x", profile[:10])); err != nil {
+	if err := runTray(folder, name); err != nil {
 		dialog("工作台预览启动失败。\n\n"+err.Error(), 0x10)
 	}
 }
