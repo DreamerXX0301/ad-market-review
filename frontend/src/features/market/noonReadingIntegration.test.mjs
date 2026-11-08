@@ -12,6 +12,7 @@ const day = "2026-10-28";
 const fixture = {
   date: day, today: day, state: "available", locked_for_day: true,
   can_capture: false, capture_window: { allowed: false },
+  retention: { calendar_days: 30 },
   snapshot: { date: day, snapshot_id: "fixture-noon-reading", quality: "partial",
     workbench: { version: "noon-workbench-v1", previous_feedback: {}, today_ladder: {}, directions: {}, afternoon: [] },
     payload: { date: day, indices: [], summary: {}, events: {}, analysis: {summary:["上涨1只、下跌1只、平盘0只；上证指数+0.72%，深证成指-1.20%。"]}, previous_review: { date: "2026-10-27", state: "missing",background:{date:"2026-10-27",mode:"previous_session_price_facts",observed:5568,comparable:5562,up:604,down:4916,flat:42} },
@@ -93,6 +94,7 @@ const fetchBefore = globalThis.fetch;
 globalThis.fetch = () => { throw Error("reading/navigation rendering must not fetch"); };
 try {
   const html = renderToStaticMarkup(createElement(NoonReview, {date:day,onDate(){},onStock(){},chartDate:"2026-10-27"}));
+  assert.equal((html.match(/保留 30 个自然日/g) || []).length, 2, "header and retention details use the same API policy");
   assert.ok(html.includes('aria-label="午评阅读导航"'));
   assert.match(html, /#ai\?ai_kind=market(?:&amp;|&)ai_day=2026-10-28(?:&amp;|&)ai_stage=noon/, "noon opens a dated AI context without sending or capturing");
   for (const id of ["noon-overview-start", "noon-prior-feedback", "noon-today-ladder", "noon-directions", "noon-afternoon", "noon-review-history"])

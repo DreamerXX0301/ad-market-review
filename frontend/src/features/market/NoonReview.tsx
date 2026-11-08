@@ -1037,6 +1037,7 @@ export default function NoonReview({
     `/market/noon${noonReadDate.current ? `?date=${encodeURIComponent(noonReadDate.current)}` : ""}`,
   );
   const view = result.data?.date === date || !date ? result.data : null;
+  const retentionDays = view?.retention?.calendar_days;
   const selected = date || view?.date || "";
   const payload = noonPayload(view, selected);
   const [pendingDay, setPendingDay] = useState(""),
@@ -1501,8 +1502,8 @@ export default function NoonReview({
         <span>{selected || "正在读取观察日"}</span>
         <Badge>每天只提交一次</Badge>
         <span>
-          {view?.retention?.calendar_days
-            ? `保留 ${view.retention.calendar_days} 个自然日 · 到期随盘后增量自动清理`
+          {retentionDays
+            ? `保留 ${retentionDays} 个自然日 · 到期随盘后增量自动清理`
             : "到期随盘后增量自动清理"}
         </span>
       </div>
@@ -2188,7 +2189,11 @@ export default function NoonReview({
                   </Panel>
                   <Panel title="保存与自动清理">
                     <p>
-                      每天只允许提交一次。保留本次已核验盘后交易日及此前27个自然日，过期午评由盘后增量安全收尾自动清理，不弹确认。
+                      每天只允许提交一次。
+                      {retentionDays
+                        ? `按已核验盘后交易日保留 ${retentionDays} 个自然日，含该交易日。`
+                        : "按已核验盘后交易日滚动留存。"}
+                      过期午评由盘后增量安全收尾自动清理。
                     </p>
                     <p className="noon-footnote">
                       未运行增量或发布失败时暂留；永久小台账区分“未采集”和“已清理”，不会因删除正文而恢复当天名额。
