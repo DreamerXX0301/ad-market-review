@@ -6,6 +6,7 @@ import sys
 
 import pytest
 
+from app.infrastructure import storage
 from app.infrastructure.file_operations import bound_file, locked_file, publish_immutable
 from app.infrastructure.storage import atomic_json
 
@@ -57,6 +58,27 @@ def test_atomic_metadata_uses_portable_utf8_bytes(tmp_path):
     atomic_json(path, {"状态": "旧"})
     atomic_json(path, {"状态": "新"})
     assert path.read_bytes() == '{"状态":"新"}\n'.encode()
+
+
+def test_atomic_metadata_removes_only_its_temporary_file_after_failed_replace(tmp_path, monkeypatch):
+    path = tmp_path / "manifest.json"
+    atomic_json(path, {"generation": "old"})
+    unrelated = tmp_path / "manifest.json.other.tmp"
+    unrelated.write_bytes(b"another writer")
+    failure = PermissionError("fixture replacement denied")
+
+    def deny_replace(source, destination):
+        assert destination == path and source != unrelated
+        assert source.read_bytes() == b'{"generation":"new"}\n'
+        raise failure
+
+    monkeypatch.setattr(storage, "move_path", deny_replace)
+    with pytest.raises(PermissionError) as raised:
+        atomic_json(path, {"generation": "new"})
+    assert raised.value is failure
+    assert path.read_bytes() == b'{"generation":"old"}\n'
+    assert unrelated.read_bytes() == b"another writer"
+    assert list(tmp_path.glob("*.tmp")) == [unrelated]
 
 
 def test_bound_read_and_removal_use_the_same_ordinary_file(tmp_path):

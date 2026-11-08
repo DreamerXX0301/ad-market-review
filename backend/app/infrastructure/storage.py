@@ -1,5 +1,6 @@
 """Canonical JSON, hashing and durable local file operations."""
 from __future__ import annotations
+from contextlib import suppress
 import datetime as dt
 import hashlib
 import json
@@ -60,9 +61,15 @@ def hash_file(path: Path) -> str:
 def atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    with temporary.open("w", encoding="utf-8", newline="\n") as writer:
-        writer.write(dumps(value) + "\n")
-        writer.flush()
-        os.fsync(writer.fileno())
-    move_path(temporary, path)
+    writer = temporary.open("x", encoding="utf-8", newline="\n")
+    try:
+        with writer:
+            writer.write(dumps(value) + "\n")
+            writer.flush()
+            os.fsync(writer.fileno())
+        move_path(temporary, path)
+    except BaseException:
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
+        raise
     flush_directory(path.parent)

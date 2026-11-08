@@ -247,6 +247,10 @@ def _read_historical(name, day, evidence, build, market, status):
                 create_window = not _history_active(folder, at)
                 if create_window:
                     _prune_history(root, at)
+                    # A Windows reader can temporarily prevent an expired block
+                    # from being deleted. Keep it expired until cleanup succeeds.
+                    if folder.is_dir() and _folder_files(folder):
+                        return value
                 _write_record(path, token, body)
                 if create_window and not path_is_link_or_reparse(folder / _HISTORY_EXPIRY):
                     at = now_ms()

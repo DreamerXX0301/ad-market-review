@@ -1,5 +1,6 @@
 import json
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -188,3 +189,39 @@ def test_cache_pruning_does_not_follow_a_link_to_another_directory(market, tmp_p
 
     assert protected.read_text() == 'keep'
     assert (history / market.days[0]).is_symlink()
+
+
+def test_expired_historical_window_does_not_renew_while_old_block_is_locked(market, monkeypatch):
+    day = market.days[0]
+    at = 2 * cache.HISTORY_TTL_MS
+    monkeypatch.setattr(cache, 'now_ms', lambda: at)
+    monkeypatch.setattr(market, 'status', lambda: {'data_begin': day, 'data_end': market.latest})
+    folder = cache._root() / 'historical' / day
+    locked = folder / 'first.json'
+    deadline = folder / cache._HISTORY_EXPIRY
+    real_unlink = Path.unlink
+
+    @cache.with_historical_cache
+    def browse(name, value):
+        return cache.read_block(name, day, 'same-source', lambda: value, market=market)
+
+    assert browse('first', 'old value') == 'old value'
+    at += cache.HISTORY_TTL_MS
+
+    def sharing_violation(path, *args, **kwargs):
+        if path == locked:
+            raise PermissionError('synthetic Windows sharing violation')
+        return real_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as windows:
+        windows.setattr(Path, 'unlink', sharing_violation)
+        assert browse('second', 'new sibling') == 'new sibling'
+        assert browse('first', 'fresh value') == 'fresh value'
+        assert locked.is_file()
+        assert int(deadline.read_text()) == at
+        assert not (folder / 'second.json').exists()
+
+    assert browse('second', 'fresh sibling') == 'fresh sibling'
+    assert not locked.exists()
+    assert int(deadline.read_text()) == at + cache.HISTORY_TTL_MS
+    assert browse('second', 'not called') == 'fresh sibling'
