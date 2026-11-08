@@ -172,7 +172,7 @@ def read_view(day=None):
     if ledger and retained:
         reason = '当天竞价终态已留存，不再次采集'
     elif state == 'purged':
-        reason = '该日竞价已超过28自然日保留窗口，正文及内嵌原件已随成功增量清理；采集日账保留，不补造历史竞价。'
+        reason = '该日竞价正文及内嵌原件已按当时的保留规则随成功增量清理，采集日账仍可查看。'
     elif state == 'cancelled':
         reason = '当天竞价任务已显式取消，不自动继续或创建第二个任务'
     elif ledger:
@@ -189,11 +189,20 @@ def read_view(day=None):
     snapshot = _snapshot_view(retained)
     # Classification is a read projection, never part of the immutable quote body.
     # validate_snapshot has already checked both the identities and the 100-row bound.
-    from app.services.market_broken_boards import _board_fields
     payload = snapshot['payload'] if snapshot else {}
     quotes = (payload.get('quotes') or {}).get('items', [])
     benchmark = (payload.get('benchmark') or {}).get('items', [])
-    stock_boards = {item['instrument_id']: _board_fields(item['instrument_id']) for item in quotes}
+    stock_boards = {}
+    if quotes:
+        from app.services.market_broken_boards import _board_fields
+        from app.services.pane_read_cache import read_block
+
+        stock_boards = read_block(
+            'auction-stock-boards', day,
+            (snapshot['snapshot_id'], snapshot['content_sha256']),
+            lambda: {item['instrument_id']: _board_fields(item['instrument_id']) for item in quotes},
+            live_snapshot=True,
+        )
     return {'date': day, 'today': now.date().isoformat(), 'now': now.isoformat(),
             'capture_window': window, 'capture_reason': reason,
             'can_capture': False, 'can_retry': False, 'can_resume': False,

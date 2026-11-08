@@ -11,6 +11,7 @@ from app.core import get_market, json_clean, digest
 from app.services.market_supplement import load_supplement, load_supplement_with_fingerprint, annual_coverage
 from app.services.market_history import resolve_reference, data_coverage
 from app.services.market_amount import amount_change_metadata
+from app.services.pane_read_cache import historical_cache_requested, read_block, retained_days, snapshot_evidence
 from app.services.sector_history import sector_prices_for_date
 from app.services.sector_views import sector_view
 
@@ -56,7 +57,7 @@ def dated_events(reference,day):
     return existing
 
 
-def prior_ladder_feedback(market,reference,day,indexed):
+def prior_ladder_feedback(market,reference,day,indexed,*,evidence=None):
     calendar=market.calendar();position=calendar.index(day)
     if not position:return []
     previous=calendar[position-1]
@@ -95,7 +96,18 @@ def prior_ladder_feedback(market,reference,day,indexed):
             industries=[tag for tag in tags if tag.get('kind')=='industry'],topics_state=state,
             topics_observed_date=day,topics_scope=scope)
     from app.services.stock_board_presentation import decorate_board_collections
-    decorated=decorate_board_collections(market,status,day,reference,{'feedback':list(found.values())})['feedback']
+    def decorate():
+        return decorate_board_collections(market,status,day,reference,{'feedback':list(found.values())})['feedback']
+    if evidence is None:
+        decorated=decorate()
+    else:
+        def presentation_facts():
+            return {row['instrument_id']:row['board_presentation'] for row in decorate() if 'board_presentation' in row}
+        # Today's editable tags are read above on every request. The cached
+        # presentation uses only retained event pools and the verified quotes.
+        facts=read_block('emotion-ladder-feedback-facts',day,evidence,presentation_facts,market=market)
+        decorated=[{**row,'board_presentation':facts[symbol]} if symbol in facts else row
+                   for symbol,row in found.items()]
     def feedback_order(row):
         height=row.get('board_presentation',{}).get('previous_height',{})
         value=height.get('value')
@@ -171,14 +183,22 @@ def _breadth(market, rows, day):
 def index_overview(day=None, *, market=None):
     """Index-page facts without the stock panel or unrelated source histories."""
     market, status, day = context(day) if market is None else context(day, market=market)
+    indices = read_block('index-summary', day, snapshot_evidence(market, status),
+                         lambda: market.index_quotes(day), market=market)
     return json_clean({"date": day, "snapshot_id": status["snapshot_id"],
-        "indices": market.index_quotes(day), "quality": status["quality"],
+        "indices": indices, "quality": status["quality"],
         "data_coverage": data_coverage("overview", status, day, market.reference(), market.calendar())})
 
 
 @supplement_reader
 def overview(day=None):
     market, status, day, reference, rows = panel(day,supplement_fields=_POOL_SUPPLEMENT_FIELDS)
+    evidence = snapshot_evidence(market, status)
+    breadth = read_block('overview-breadth', day, evidence,
+                         lambda: _breadth(market, rows, day), market=market)
+    indices = read_block('index-summary', day, evidence,
+                         lambda: market.index_quotes(day) if hasattr(market, 'index_quotes') else market.indices(day),
+                         market=market)
     events=dated_events(reference,day)
     latest = day == reference.get("pool_trade_date")
     shsz = [r for r in rows if r["instrument_id"].endswith((".SH", ".SZ"))]
@@ -199,7 +219,9 @@ def overview(day=None):
             symbol = event.get("thscode")
             largest.append({**indexed.get(symbol, {"instrument_id": symbol, "code": event.get("ticker"), "name": event.get("name")}), "seal_money": event.get("seal_money"), "reason": event.get("limit_up_reason"), "limit_time": event.get("limit_up_time"), "board_count": event.get("continue_day_cnt"), "source":event.get("source","fuyao"), "date":day, "scope":"收盘池单次封单资金，不代表稳定性", "topics":indexed.get(symbol,{}).get("topics") or ([{"name":event["source_industry"],"kind":"source_industry"}] if event.get("source_industry") else [])})
     from app.services.stock_board_presentation import decorate_board_collections
-    ranking,_=cached_gainers(market,status,reference,day,rows,5)
+    rank_evidence=snapshot_evidence(market, status, reference, verified_source=evidence)
+    ranking,_=cached_gainers(market,status,reference,day,rows,5,
+                             **({'source_evidence':rank_evidence} if rank_evidence is not None else {}))
     from app.services.market_top_amount import decorate_top_amount
     top_amount, top_amount_activity = decorate_top_amount(market,status,day,rows,reference)
     displayed = decorate_board_collections(market, status, day, reference, {
@@ -216,7 +238,7 @@ def overview(day=None):
     feedback['broken_board_analysis'] = {**broken, **{
         key: {field: value for field, value in broken[key].items() if field != 'items'}
         for key in ('current', 'previous_feedback') if isinstance(broken.get(key), dict)}}
-    return json_clean({**feedback, "date": day, "snapshot_id": status["snapshot_id"], "data_coverage": data_coverage("overview", status, day, reference, market.calendar()), "indices": market.index_quotes(day) if hasattr(market,"index_quotes") else market.indices(day), "breadth": _breadth(market, rows, day), "total_amount": amount, "amount_scope": "沪深京已留存A股股票成交额", "shsz_total_amount": sum(r["amount"] for r in shsz if number(r.get("amount"))), "bj_amount": sum(r["amount"] for r in three if r["instrument_id"].endswith(".BJ") and number(r.get("amount"))), "sh_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SH") and number(r.get("amount"))), "sz_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SZ") and number(r.get("amount"))), **comparison, "top_amount": displayed["amount"], "top_amount_activity": top_amount_activity, "top_gainers": displayed["gainers"], "top_losers": displayed["losers"], "top_30d": displayed["gainers_30d"], "limit_up_count": len(events["limitup"]) if "limitup" in events else None, "limit_down_count": len(events["limitdown"]) if "limitdown" in events else None, "broken_count": len(events["breakpool"]) if "breakpool" in events else None, "divergence": divergence, "largest_seals": largest, "seal_funds_top5": largest, "seal_stability": {"items": [], "needed_capability":"盘中连续封单金额与委托队列快照，带时间戳、采样间隔和覆盖率；通常需要Level-2或许可的连续盘口采样", "unavailable_reason": "当前仅留存封单金额快照，尚无连续封单序列，不能据此计算封单稳定性"}, "warnings": ["行情与技术指标为真实未复权数据；公司行动附近指标重新预热", "上涨家数为已留存可比样本；停牌与缺数尚未全部解释"], "quality": status["quality"]})
+    return json_clean({**feedback, "date": day, "snapshot_id": status["snapshot_id"], "data_coverage": data_coverage("overview", status, day, reference, market.calendar()), "indices": indices, "breadth": breadth, "total_amount": amount, "amount_scope": "沪深京已留存A股股票成交额", "shsz_total_amount": sum(r["amount"] for r in shsz if number(r.get("amount"))), "bj_amount": sum(r["amount"] for r in three if r["instrument_id"].endswith(".BJ") and number(r.get("amount"))), "sh_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SH") and number(r.get("amount"))), "sz_amount": sum(r["amount"] for r in shsz if r["instrument_id"].endswith(".SZ") and number(r.get("amount"))), **comparison, "top_amount": displayed["amount"], "top_amount_activity": top_amount_activity, "top_gainers": displayed["gainers"], "top_losers": displayed["losers"], "top_30d": displayed["gainers_30d"], "limit_up_count": len(events["limitup"]) if "limitup" in events else None, "limit_down_count": len(events["limitdown"]) if "limitdown" in events else None, "broken_count": len(events["breakpool"]) if "breakpool" in events else None, "divergence": divergence, "largest_seals": largest, "seal_funds_top5": largest, "seal_stability": {"items": [], "needed_capability":"盘中连续封单金额与委托队列快照，带时间戳、采样间隔和覆盖率；通常需要Level-2或许可的连续盘口采样", "unavailable_reason": "当前仅留存封单金额快照，尚无连续封单序列，不能据此计算封单稳定性"}, "warnings": ["行情与技术指标为真实未复权数据；公司行动附近指标重新预热", "上涨家数为已留存可比样本；停牌与缺数尚未全部解释"], "quality": status["quality"]})
 
 
 @supplement_reader
@@ -226,11 +248,13 @@ def market_topic_members(day=None, *, topic_id=None, source_code=None, kind=None
     return list_members(market, status, day, reference, rows, topic_id=topic_id, source_code=source_code, kind=kind, source_name=source_name)
 
 
-def _sectors_from_panel(market, status, day, reference, indexed):
+def _sectors_from_panel(market, status, day, reference, indexed, *, evidence=None):
     """Reuse one dated panel for the sector page and missing-flow fallback."""
     local, membership = resolve_reference('sectors', day, status, reference)
     prices = sector_prices_for_date(reference.get('_supplement', {}), day)
-    result = sector_view(day, reference, indexed, local, membership, prices)
+    token = (evidence, digest((local, membership, prices))) if evidence is not None else None
+    result = read_block('sector-overview', day, token,
+                        lambda: sector_view(day, reference, indexed, local, membership, prices), market=market)
     from app.services.market_broken_boards import build_analysis, decorate_sectors
     broken = build_analysis(market,status,day,reference,list(indexed.values()),history_days=1,include_feedback=False)
     result['items'] = decorate_sectors(result['items'],local,membership,broken)
@@ -241,7 +265,7 @@ def _sectors_from_panel(market, status, day, reference, indexed):
 
 @supplement_reader
 def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical', rank_state='all', market=None, supplement_dates=None, gainers_lookup=None,
-                include_latest_classification_reference=False):
+                include_latest_classification_reference=False, summary_only=False):
     if rank_state not in ('all', 'unranked') or (rank_state != 'all' and kind != 'gainers'):
         raise HTTPException(422, '未排名范围仅支持近30日涨幅榜')
     if rank_state == 'unranked' and top_n is not None:
@@ -261,6 +285,7 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
     latest = day == reference.get("pool_trade_date")
     events=dated_events(reference,day)
     base = {"date": day, "snapshot_id": status["snapshot_id"], "items": [], "total": 0, "summary": {}, "warnings": [], "quality": "partial"}
+    evidence = snapshot_evidence(market, status, reference) if kind in ('sectors', 'ladder', 'emotion', 'gainers', 'broken-boards') else None
     latest_memberships = None
     if kind == "emotion" and day == status.get("data_end") and include_latest_classification_reference:
         from app.services.stock_memberships import current_memberships
@@ -278,7 +303,8 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
             return data["memberships"]
 
     if kind == "gainers":
-        base["items"], summary = cached_gainers(market,status,reference,day,rows)
+        base["items"], summary = cached_gainers(market,status,reference,day,rows,
+                                                 **({'source_evidence':evidence} if evidence is not None else {}))
         from app.services.market_rank_distribution import classification_lookup, ranking_distribution
         connection_factory = getattr(market, 'business_read_connection', None)
         if gainers_lookup is None:
@@ -302,19 +328,21 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
             base['items'] = matched
         base["warnings"] = ["按30个市场交易日端点计算；端点经确认连续停牌时可用停牌前实际收盘并注明日期。中间缺报价另列缺口。区间已核验公司行动使用事件前复权价格，未核验则不计算涨幅。", "年内涨停以逐日来源池计数；覆盖不完整时只显示已确认次数下界，不补0。"]
     elif kind == "sectors":
-        base.update(_sectors_from_panel(market, status, day, reference, indexed))
+        base.update(_sectors_from_panel(market, status, day, reference, indexed, evidence=evidence))
     elif kind == "ladder":
-        from app.services.market_ladder import build_ladder
-        base.update(build_ladder(market, status, day, reference, rows, events))
+        from app.services.market_ladder import read_ladder
+        base.update(read_ladder(market, status, day, reference, rows, events, evidence=evidence))
         base["high_position_feedback"]=[r for r in prior_ladder_feedback(market,reference,day,indexed) if (r.get("previous_board_count") or 0)>=3]
         base['supplement_status']=supplement_status(reference,day,'seal_details')
     elif kind == "abnormal":
         from app.services.market_abnormal import monitor_view
-        base.update(monitor_view(day, status, reference, indexed, scope=monitor_scope, requested_date=requested_date))
+        base.update(monitor_view(day, status, reference, indexed, scope=monitor_scope,
+                                 requested_date=requested_date, market=market))
     elif kind == "broken-boards":
         from app.services.market_broken_boards import build_analysis
         base['broken_board_analysis'] = build_analysis(market,status,day,reference,rows,
-                                                      history_days=1,include_feedback=False,with_memberships=True)
+                                                      history_days=1,include_feedback=False,with_memberships=True,
+                                                      **({'evidence':evidence} if evidence is not None else {}))
     elif kind == "emotion":
         from app.services.emotion import describe_emotion
         history=market.breadth_history(day)
@@ -348,19 +376,25 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base["breadth"] = breadth
         base['emotion']=emotion
         from app.services.market_sentiment import describe_sentiment
-        base['sentiment']=describe_sentiment(market,reference,rows,day)
-        from app.services.market_broken_boards import build_analysis
-        base['broken_board_analysis'] = build_analysis(market,status,day,reference,rows,with_memberships=True,
-                                                      latest_memberships=latest_memberships)
+        base['sentiment'] = read_block('emotion-facts', day, evidence,
+                                      lambda: describe_sentiment(market, reference, rows, day), market=market)
+        if not summary_only:
+            from app.services.market_broken_boards import build_analysis
+            base['broken_board_analysis'] = build_analysis(market,status,day,reference,rows,with_memberships=True,
+                                                          latest_memberships=latest_memberships,
+                                                          **({'evidence':evidence} if evidence is not None else {}))
         from app.services.market_outlook import build_market_outlook
         base['market_outlook']=build_market_outlook(market,status,day,reference,rows,breadth,emotion,
                                                      base['sentiment'],history,previous_breadth=previous,
-                                                     universe_upper_bound=universe_upper_bound)
+                                                     universe_upper_bound=universe_upper_bound,
+                                                     ladder_evidence=evidence)
         base["summary"] = {"temperature":emotion['temperature'],"cycle":emotion['phase'],'breadth_state':emotion['breadth_state'],'comparable_count':emotion['comparable_count'],'comparable_coverage_pct':emotion['comparable_coverage']*100,'temperature_delta':emotion['temperature_delta'],"model":emotion['model'],"formula":emotion['formula']}
         base["items"] = [{"name": "上涨家数", "value": breadth["up"], "reference": "普涨参考3000"}, {"name": "下跌家数", "value": breadth["down"], "reference": "已留存可比样本"}, {"name": "收盘涨停", "value": len(events["limitup"]) if "limitup" in events else None}, {"name": "收盘跌停", "value": len(events["limitdown"]) if "limitdown" in events else None}, {"name": "炸板池", "value": len(events["breakpool"]) if "breakpool" in events else None}]
-        from app.services.market_feedback import feedback_view
-        base.update(feedback_view(market,status,reference,day,indexed))
-        base["history"] = history
+        if not summary_only:
+            from app.services.market_feedback import feedback_view
+            base.update(feedback_view(market,status,reference,day,indexed,
+                                      **({'evidence':evidence} if evidence is not None else {})))
+            base["history"] = history
         base["warnings"] = [emotion['notice'],"情绪页使用同口径沪深序列；主行情页的沪深京范围不同。未知、缺报价和除权不可比样本不计作平盘。"]
         if breadth.get('universe_expected_known') is False:base['warnings'].append('部分证券上市日期未知，无法确认全市场应有家数与缺报价家数；可比率以已观察样本为分母，不把应有范围记为0。')
     elif kind == "flow":
@@ -481,18 +515,21 @@ def _gainers_suspended_endpoints(history, calendar, baseline, day, symbol):
             suspension_endpoint(index, calendar, day, symbol))
 
 
-def gainers_rows(market,reference,day,rows,max_items=None):
-    """Use T/T-30 with dated source proof for any suspended endpoint."""
+def _unquoted_gainers(market, day, represented):
+    return [instrument for instrument in market.instruments(limit=10000)
+            if instrument.get('kind') == 'stock' and instrument['instrument_id'] not in represented
+            and (not instrument.get('list_date') or instrument['list_date'] <= day)
+            and (not instrument.get('end_date') or instrument['end_date'] >= day)]
+
+
+def _gainers_price_rank(market, day, rows, unquoted, calendar, baseline):
+    """Compute immutable T/T-30 rank fields, with verified suspension endpoints."""
     from app.analytics.adjustments import continuous_prices
     from app.services.market_suspensions import suspensions_for_date
 
-    calendar=market.calendar();position=calendar.index(day);baseline=calendar[position-30] if position>=30 else None
+    position=calendar.index(day)
     expected=set(calendar[position-30:position+1]) if baseline else set()
     represented = {row['instrument_id'] for row in rows}
-    unquoted = [instrument for instrument in market.instruments(limit=10000)
-                if instrument.get('kind') == 'stock' and instrument['instrument_id'] not in represented
-                and (not instrument.get('list_date') or instrument['list_date'] <= day)
-                and (not instrument.get('end_date') or instrument['end_date'] >= day)]
     day_suspensions = suspensions_for_date(day)
     baseline_suspensions = suspensions_for_date(baseline) if baseline else {}
     suspended_unquoted = {item['instrument_id']: item for item in unquoted if item['instrument_id'] in day_suspensions}
@@ -504,11 +541,11 @@ def gainers_rows(market,reference,day,rows,max_items=None):
         baseline_suspended=not baseline_suspensions.keys().isdisjoint(suspension_symbols))
     result=[]
     for original in [*rows, *suspended_unquoted.values()]:
-        row=dict(original);symbol=row['instrument_id'];history=[r for r in histories.get(symbol,[]) if not baseline or r['date']>=baseline]
+        symbol=original['instrument_id'];row={'instrument_id':symbol};history=[r for r in histories.get(symbol,[]) if not baseline or r['date']>=baseline]
         index={r['date']:r for r in history}; missing=sorted(expected-set(index))
         start_quote, end_quote = baseline, day
         if symbol in day_suspensions:
-            volume = row.get('volume')
+            volume = original.get('volume')
             if not number(volume) or volume <= 0:
                 row.update(change_pct=None, return_30d_observation_suspended=True)
         reason=None; value=None; basis='none'
@@ -546,12 +583,25 @@ def gainers_rows(market,reference,day,rows,max_items=None):
     # unranked with an explicit reason, instead of silently disappearing.
     for instrument in unquoted:
         if instrument['instrument_id'] in suspended_unquoted:continue
-        result.append({**instrument,'change_pct':None,'return_30d':None,'change_30d_pct':None,'return_30d_start':baseline,'return_30d_end':day,'return_30d_reason':'该盘面日未留存报价，保留证券并标为未知','return_30d_quality':'unknown','topics':[],'technical_observation':'该日行情待核验','limit_up_ytd':None})
+        result.append({'instrument_id':instrument['instrument_id'],'change_pct':None,'return_30d':None,'change_30d_pct':None,'return_30d_start':baseline,'return_30d_end':day,'return_30d_reason':'该盘面日未留存报价，保留证券并标为未知','return_30d_quality':'unknown','topics':[],'technical_observation':'该日行情待核验','limit_up_ytd':None})
     result.sort(key=lambda r:(not number(r.get('return_30d')),-r['return_30d'] if number(r.get('return_30d')) else 0,r['instrument_id']))
     known=0
     for row in result:
         row['rank']=None
         if number(row.get('return_30d')):known+=1;row['rank']=known
+    return result, known
+
+
+def gainers_rows(market, reference, day, rows, max_items=None, *, rank_key=None):
+    """Reattach verified rank fields to the current dated panel and decorations."""
+    from app.services.market_rank_cache import read_rank_block
+
+    calendar=market.calendar();position=calendar.index(day);baseline=calendar[position-30] if position>=30 else None
+    quoted={row['instrument_id']:row for row in rows}
+    unquoted=_unquoted_gainers(market,day,quoted)
+    lookup=quoted | {row['instrument_id']:row for row in unquoted}
+    result, known=read_rank_block('gainers-price-rank-v1',day,rank_key,market,
+                                  lambda: _gainers_price_rank(market,day,rows,unquoted,calendar,baseline))
     selected=result if max_items is None else [row for row in result if row['rank'] is not None][:max_items]
     from app.services.topic_member_metrics import BATCH_SIZE, limit_metrics
     evidence_symbols=sorted({row['instrument_id'] for row in result})
@@ -563,12 +613,14 @@ def gainers_rows(market,reference,day,rows,max_items=None):
         evidence_symbols=[symbol for offset in range(0,len(evidence_symbols),BATCH_SIZE)
                           for batch in [evidence_symbols[offset:offset+BATCH_SIZE]]
                           if wanted.intersection(batch) for symbol in batch]
-    limits=limit_metrics(market,day,evidence_symbols,reference.get('_supplement',{}),reference)
-    for row in selected:row.update(limits.get(row['instrument_id'],{}))
+    build_limits=lambda:limit_metrics(market,day,evidence_symbols,reference.get('_supplement',{}),reference)
+    limits=(read_rank_block('gainers-full-events-v1',day,rank_key,market,build_limits)
+            if max_items is None else build_limits())
+    selected=[{**lookup[row['instrument_id']], **row, **limits.get(row['instrument_id'],{})} for row in selected]
     return selected,{'window':'近30个市场交易日','start':baseline,'end':day,'covered_stocks':known,'unknown_count':len(result)-known,'universe_count':len(result),'with_intermediate_gaps':sum(bool(r.get('return_30d_missing_sessions')) and number(r.get('return_30d')) for r in result),'observation':'未知端点保留未排名；已核验连续停牌的端点可沿用停牌前实际收盘','return_basis':'T/T-30市场交易日端点，停牌端点标注实际取价日，区间有行动时仅用可核验事件前复权','annual_limitup_coverage':reference.get('_supplement',{}).get('annual_coverage',{}) and {k:v for k,v in annual_coverage(reference['_supplement'],calendar,day).items() if k!='counts' and k!='missing_dates'}}
 
 
-def cached_gainers(market,status,reference,day,rows,max_items=None):
+def cached_gainers(market,status,reference,day,rows,max_items=None, *, source_evidence=None):
     # A top-five overview must never seed the full searchable/sortable rank.
     # Supplement publication/repair can alter facts without changing its old
     # created_at timestamp; fingerprint the actual retained document instead.
@@ -577,10 +629,27 @@ def cached_gainers(market,status,reference,day,rows,max_items=None):
     supplement=reference.get('_supplement',{})
     verified=reference.get('_supplement_cache_source')
     fingerprint=verified[1] if isinstance(verified,tuple) and len(verified)==2 and verified[0] is supplement else None
-    key=(status['snapshot_id'],status.get('path'),day,fingerprint if fingerprint is not None else digest(supplement),suspension_revision(),max_items)
+    revision = suspension_revision()
+    rank_key = None
+    if callable(getattr(market, 'verify_condition_sources', None)):
+        recent = source_evidence is not None and day in retained_days(market, status=status)
+        if source_evidence is None or (not recent and not historical_cache_requested()):
+            return gainers_rows(market,reference,day,rows,max_items)
+        rank_key = (source_evidence, revision)
+        if max_items == 5:
+            result = read_block('gainers-overview', day, (source_evidence, revision),
+                                lambda: gainers_rows(market,reference,day,rows,max_items,rank_key=rank_key), market=market)
+            return tuple(result)
+        if not recent:
+            return gainers_rows(market, reference, day, rows, max_items, rank_key=rank_key)
+    key=(status['snapshot_id'],status.get('path'),day,fingerprint if fingerprint is not None else digest(supplement),revision,source_evidence,max_items)
     with _gainers_lock:
         if key not in _gainers_cache:
-            _gainers_cache[key]=gainers_rows(market,reference,day,rows,max_items)
+            result=gainers_rows(market,reference,day,rows,max_items,
+                                **({'rank_key':rank_key} if rank_key is not None else {}))
+            if source_evidence is not None and market.status().get('snapshot_id') != status['snapshot_id']:
+                return result
+            _gainers_cache[key]=result
             # Overview's five-row rank must not evict a full dated rank, or
             # vice versa. Each scope keeps its own four LRU entries; current
             # callers retain at most four full ranks and twenty overview rows.

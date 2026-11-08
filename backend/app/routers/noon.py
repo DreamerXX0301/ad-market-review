@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 
 from app.core import json_clean
 from app.services import noon_service as service
+from app.services.pane_read_cache import with_historical_cache
 
 router = APIRouter(prefix='/api/v1/market/noon', tags=['noon-snapshots'])
 
@@ -32,6 +33,7 @@ def close_review_items(date: str, review_id: str | None = None, section: str = '
 
 
 @router.get('')
+@with_historical_cache
 def view(date: str | None = None):
     return JSONResponse(json_clean(service.read_view(date)))
 

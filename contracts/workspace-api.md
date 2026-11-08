@@ -327,6 +327,7 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 ## 我的自选池
 
 - `GET /watchlist?query=` 返回 `{items,total,matched_count,business_date}`。独立于策略轮次，持久化于业务 SQLite，最多 2000 只本地已核验 A 股；空安装返回空列表。行情读取本地已发布业务日，复用固定行情代际的批量两日报价缓存，不联网、不逐只计算全历史指标。
+- 自选的两日报价摘要同时保留用于价格比较的已核验公司行动日期。缓存命中仍校验当前发布来源。行情代际或来源校验值变化后按新输入读取。已发现的来源损坏使报价保持未知并给出 `quote_reason`。缓存只保存证券的行情派生输入，自选清单、加入基准、题材归属与提醒每次读取现值，加入后涨幅按该次读取的基准计算。
 - `GET /watchlist/ids` 返回 `{instrument_ids,total}`，供所有星标入口共用一次轻量读取；新增和移除在当前页面各入口之间同步。
 - `POST /watchlist {instrument_id,tracking_round_id?,source_kind?,source_id?,source_name?,observed_date?}` 返回 `{item,added,already_exists}`。source_kind 为 stock/tracking/sector/topic。跟踪来源必须提供个股轮次，服务端核验其股票并复制原 `entry_business_date`、`entry_price_e8` 和价格口径，忽略客户端价格；不重置、创建或结束策略跟踪。重复添加幂等，保留首次来源、加入时间和事件基准。
 - `DELETE /watchlist/{instrument_id}` 幂等移除自选，返回 `{instrument_id,removed}`，不修改原跟踪或题材成员。

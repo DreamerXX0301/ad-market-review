@@ -202,7 +202,7 @@ def read_close_review(day):
     if row is None:
         if retention['purged']:
             return {'version': VERSION, 'date': day, 'state': 'purged', 'items': [], 'groups': [], 'summary': None,
-                    'reason': '竞价已超过28自然日保留窗口，正文及内嵌原件已清理；不倒造盘前记录。',
+                    'reason': '竞价正文及内嵌原件已按当时的保留规则清理。',
                     'posthoc': True, 'notice': NOTICE, 'retention': retention}
         return {'version': VERSION, 'date': day, 'state': 'not_collected', 'items': [], 'groups': [],
                 'summary': None, 'reason': '该日未留存盘前竞价，不使用开盘价倒造盘前记录。', 'posthoc': True, 'notice': NOTICE}

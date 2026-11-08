@@ -82,8 +82,9 @@ def test_list_batches_quotes_and_reuses_generation_cache_without_full_history(pe
     for symbol in market.data:
         assert add(client, symbol).status_code == 200
     reads = []
-    monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': 'watchlist-fixture'}, raising=False)
+    monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': 'watchlist-fixture', 'files': []}, raising=False)
     monkeypatch.setattr(market, 'data_dir', tmp_path, raising=False)
+    monkeypatch.setattr(market, 'verify_condition_sources', lambda: ('verified-watchlist-fixture',), raising=False)
     def batch(symbols, start=None, end=None):
         reads.append((symbols, start, end))
         return {symbol: [deepcopy(bar) for bar in market.data[symbol] if start <= bar['date'] <= end] for symbol in symbols}
@@ -100,6 +101,103 @@ def test_list_batches_quotes_and_reuses_generation_cache_without_full_history(pe
     filtered = client.get('/api/v1/watchlist', params={'query': '600001'}).json()
     assert filtered['total'] == 2 and filtered['matched_count'] == 1
     assert filtered['items'][0]['instrument_id'] == '600001.SH'
+
+
+def test_warm_watchlist_reuses_security_evidence_and_refreshes_personal_state(personal, monkeypatch, tmp_path):
+    market, client = personal
+    symbol = '600001.SH'
+    for item in market.data:
+        assert add(client, item).status_code == 200
+    advance(market, 74)
+    day = market.days[74]
+    source = {'token': ('quotes-a', 'actions-a'), 'action_dates': []}
+    quote_reads, action_reads, proofs = [], [], []
+    batch = market.history_for_instruments
+
+    def quotes(symbols, start=None, end=None):
+        quote_reads.append((symbols, start, end))
+        return batch(symbols, start=start, end=end)
+
+    def actions(symbols):
+        action_reads.append(symbols)
+        return {item: [{'date': value} for value in source['action_dates']] if item == symbol else []
+                for item in symbols}
+
+    def verify():
+        proofs.append(source['token'])
+        return source['token']
+
+    monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': 'market-fixed', 'files': []}, raising=False)
+    monkeypatch.setattr(market, 'data_dir', tmp_path, raising=False)
+    monkeypatch.setattr(market, 'verify_condition_sources', verify, raising=False)
+    monkeypatch.setattr(market, 'history_for_instruments', quotes)
+    monkeypatch.setattr(market, 'actions_for_instruments', actions)
+    clear_tracking_quote_cache()
+
+    cold = client.get('/api/v1/watchlist').json()
+    assert client.get('/api/v1/watchlist').json() == cold
+    assert len(quote_reads) == len(action_reads) == 1
+    assert len(proofs) == 2
+    assert set(action_reads[0]) == set(market.data)
+    first = next(row for row in cold['items'] if row['instrument_id'] == symbol)
+    assert first['watchlist_change_pct'] > 0
+
+    source.update(token=('quotes-b', 'actions-b'), action_dates=[market.days[72]])
+    latest = next(bar for bar in market.data[symbol] if bar['date'] == day)
+    latest['close'] += .5
+    changed = client.get('/api/v1/watchlist').json()
+    assert len(quote_reads) == len(action_reads) == 2
+    revised = next(row for row in changed['items'] if row['instrument_id'] == symbol)
+    assert revised['latest_price'] == latest['close']
+    assert revised['watchlist_change_pct'] is None
+    assert '公司行动' in revised['watchlist_change_reason']
+
+    assert client.delete('/api/v1/watchlist/'+symbol).json()['removed']
+    assert client.get('/api/v1/watchlist').json()['total'] == 1
+    assert add(client, symbol).status_code == 200
+    reads_after_add = len(quote_reads)
+    collected_again = client.get('/api/v1/watchlist', params={'query': '600001'}).json()['items'][0]
+    assert collected_again['watchlist_entry_date'] == day
+    assert collected_again['watchlist_change_pct'] == 0
+    assert len(quote_reads) == reads_after_add
+    assert len(action_reads) == 2
+
+    def corrupt():
+        raise ValueError('测试来源损坏')
+
+    monkeypatch.setattr(market, 'verify_condition_sources', corrupt)
+    unavailable = client.get('/api/v1/watchlist', params={'query': '600001'}).json()['items'][0]
+    assert unavailable['watchlist_entry_date'] == day
+    assert unavailable['latest_price'] is unavailable['watchlist_change_pct'] is None
+    assert '未通过核验' in unavailable['quote_reason']
+    assert unavailable['watchlist_change_reason'] == unavailable['quote_reason']
+    assert len(quote_reads) == reads_after_add and len(action_reads) == 2
+
+
+def test_watchlist_does_not_keep_quotes_from_a_batch_crossing_publication(personal, monkeypatch, tmp_path):
+    market, client = personal
+    assert add(client).status_code == 200
+    advance(market, 74)
+    publication = {'generation': 'market-before'}
+    monkeypatch.setattr(market, 'status', lambda: {'snapshot_id': publication['generation'], 'files': []}, raising=False)
+    monkeypatch.setattr(market, 'data_dir', tmp_path, raising=False)
+    monkeypatch.setattr(market, 'verify_condition_sources', lambda: ('verified-source',), raising=False)
+    action_reads = []
+
+    def actions(symbols):
+        action_reads.append(symbols)
+        if len(action_reads) == 1:
+            publication['generation'] = 'market-after'
+        return {item: [] for item in symbols}
+
+    monkeypatch.setattr(market, 'actions_for_instruments', actions)
+    clear_tracking_quote_cache()
+    assert client.get('/api/v1/watchlist').status_code == 409
+    publication['generation'] = 'market-before'
+    retry = client.get('/api/v1/watchlist')
+    assert retry.status_code == 200
+    assert retry.json()['items'][0]['quote_date'] == market.days[74]
+    assert len(action_reads) == 2
 
 
 def test_invalid_stock_origin_date_and_mismatched_round_are_rejected(personal):

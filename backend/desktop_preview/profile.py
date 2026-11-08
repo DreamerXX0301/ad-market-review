@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack, closing, contextmanager
-from hashlib import file_digest
+from hashlib import file_digest, sha256
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -15,7 +15,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from cryptography.fernet import Fernet
 
-from app.infrastructure.database import MIGRATIONS_DIR, check_sqlite_runtime
+from app.infrastructure.config import APP_VERSION
+from app.infrastructure.database import MIGRATIONS_DIR, check_sqlite_runtime, ensure_ready
 from app.infrastructure.file_operations import (
     bound_file, flush_file, is_link_or_reparse, locked_file, move_path, open_exclusive_file,
     path_is_link_or_reparse,
@@ -24,11 +25,15 @@ from app.infrastructure.storage import atomic_json, dumps, hash_file
 
 LEGACY_COMMIT = "9b39537add6cd098bfc5e99ace004aa4459e9895"
 LEGACY_TRAY_COMMIT = "3839e431c22fe855fec2c94e8e9dbc2d6b2486c9"
+LEGACY_NATIVE_COMMIT = "74880c2c9b138877e7e4bef04d8604afbd85ad31"
 LEGACY_SCHEMA = 39
+TARGET_SCHEMA = 40
+_TARGET_MIGRATION = "040_auction_retention_30_days.sql"
 _PREVIEW = "workbench-preview-v1"
 _TRAY = "workbench-tray-v1"
-_NATIVE = "workbench-tray-native-v1"
-_SOURCE_COMMITS = {_PREVIEW: LEGACY_COMMIT, _TRAY: LEGACY_TRAY_COMMIT}
+_NATIVE_V1 = "workbench-tray-native-v1"
+_NATIVE = "workbench-tray-native-v2"
+_SOURCE_COMMITS = {_PREVIEW: LEGACY_COMMIT, _TRAY: LEGACY_TRAY_COMMIT, _NATIVE_V1: LEGACY_NATIVE_COMMIT}
 _LEGACY_APP_VERSION = "0.1.24"
 _DATABASE = ("business", "app.sqlite3")
 _KEY = ("secrets", "credential-master.key")
@@ -37,12 +42,13 @@ _DISPOSABLE_WORK = {"worker.lock", ".condition-basis-cache", ".supplement-retent
 _BUSINESS_TABLES = (
     "dataset_snapshot", "snapshot_artifact", "job", "strategy", "strategy_version",
     "tracking_round", "tracking_event", "sector_strategy", "sector_tracking_round",
-    "watchlist_item", "research_report", "backtest_run", "market_auction_snapshot",
-    "market_noon_snapshot", "market_noon_close_review", "market_noon_note", "ai_session",
+    "watchlist_item", "research_report", "backtest_run", "market_auction_capture",
+    "market_auction_snapshot", "market_auction_purge", "market_noon_snapshot",
+    "market_noon_close_review", "market_noon_note", "market_intraday_capture", "ai_session",
 )
 
 
-def roots(license_directory: Path) -> tuple[Path, Path, Path]:
+def roots(license_directory: Path) -> tuple[Path, Path, Path, Path]:
     if license_directory.parent.name != "license-preview-v1" or not re.fullmatch(
         r"[0-9a-f]{20}", license_directory.name
     ):
@@ -51,6 +57,7 @@ def roots(license_directory: Path) -> tuple[Path, Path, Path]:
     return (
         base / _PREVIEW / license_directory.name,
         base / _TRAY / license_directory.name,
+        base / _NATIVE_V1 / license_directory.name,
         base / _NATIVE / license_directory.name,
     )
 
@@ -68,15 +75,16 @@ def _ordinary(path: Path, *, directory: bool, optional: bool = False):
     return info
 
 
-def select_import_source(preview_root: Path, tray_root: Path) -> Path | None:
-    """Choose the latest installed business database without opening it."""
-    for root in (tray_root, preview_root):
+def select_import_source(preview_root: Path, tray_root: Path, native_v1_root: Path) -> Path | None:
+    """Prefer the newest installed business database and stop on invalid evidence."""
+    for root in (native_v1_root, tray_root, preview_root):
         for directory in (root.parent, root, root / "data", root / "data" / "business"):
             if _ordinary(directory, directory=True, optional=True) is None:
                 break
         else:
             business = root / "data" / "business"
             if _ordinary(business / "app.sqlite3", directory=False, optional=True) is not None:
+                _source_commit(root)
                 return root
             if any((business / ("app.sqlite3" + suffix)).exists()
                    or path_is_link_or_reparse(business / ("app.sqlite3" + suffix))
@@ -95,6 +103,17 @@ def _read_small(root: Path, parts: tuple[str, ...], limit: int) -> bytes:
         if len(result) != info.st_size:
             raise ValueError(f"导入文件读取时发生变化，{parts[-1]}")
         return result
+
+
+def _source_commit(root: Path) -> str:
+    expected = _SOURCE_COMMITS.get(root.parent.name)
+    try:
+        marker = json.loads(_read_small(root, ("release.json",), 4096))
+    except FileNotFoundError as error:
+        raise ValueError("旧版业务库缺少发行标记，请先核对该版本的恢复资料") from error
+    if expected is None or marker != {"format": 1, "source_commit": expected, "app_version": _LEGACY_APP_VERSION}:
+        raise ValueError("旧版发行标记与本次导入支持的版本不符")
+    return expected
 
 
 def _legacy_lock(stack: ExitStack, path: Path, *, required: bool = False) -> None:
@@ -140,8 +159,7 @@ def _copy_source_database(data: Path, shadow: Path) -> None:
 
 
 @contextmanager
-def _backup_inputs(data: Path, key: Path):
-    updates = {"SHIXU_RAW_DIR": str(data / "raw"), "SHIXU_CREDENTIAL_MASTER_KEY_FILE": str(key)}
+def _temporary_environment(updates: dict[str, str]):
     original = {name: os.environ.get(name) for name in updates}
     os.environ.update(updates)
     try:
@@ -164,16 +182,29 @@ def _maintenance():
     return check_db, connect_sqlite, perform_backup, perform_restore
 
 
-def _business_identity(database: Path, *, check_db, connect_sqlite) -> dict:
+def _migration_shas() -> tuple[dict[str, str], dict[str, str]]:
+    files = sorted(MIGRATIONS_DIR.glob("[0-9]*.sql"))
+    if not files or files[-1].name != _TARGET_MIGRATION:
+        raise ValueError("安装包缺少本次升级需要的迁移清单")
+    current = {path.name: hash_file(path) for path in files}
+    prefix = {name: sha for name, sha in current.items() if name != _TARGET_MIGRATION}
+    return prefix, current
+
+
+def _business_identity(database: Path, *, schema: int, expected: dict[str, str], check_db, connect_sqlite) -> dict:
     with closing(connect_sqlite(database, "ro")) as connection:
-        check_db(connection)
         version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version != schema:
+            raise ValueError(f"业务库结构版本不符，期望 schema {schema}")
         migrations = dict(connection.execute("SELECT name, sha256 FROM _schema_migration"))
-        expected = {path.name: hash_file(path) for path in MIGRATIONS_DIR.glob("[0-9]*.sql")}
-        if version != LEGACY_SCHEMA or migrations != expected:
-            raise ValueError("旧版数据库结构与本次托盘预览不一致，请使用独立版本升级流程")
+        if migrations != expected:
+            raise ValueError("业务库迁移登记或 SHA 与发行清单不一致")
+        check_db(connection)
+        receipts = sha256()
+        for row in connection.execute("SELECT * FROM market_auction_purge ORDER BY snapshot_id"):
+            receipts.update(dumps(dict(row)).encode("utf-8") + b"\n")
         return {
-            "schema": version,
+            "auction_purge_sha256": receipts.hexdigest(),
             "business_clock": [dict(row) for row in connection.execute("SELECT * FROM business_clock")],
             "published_heads": [dict(row) for row in connection.execute(
                 "SELECT * FROM published_head ORDER BY module, scope_key"
@@ -183,7 +214,6 @@ def _business_identity(database: Path, *, check_db, connect_sqlite) -> dict:
                 for table in _BUSINESS_TABLES
             },
         }
-
 
 def _safe_member(key: str) -> PurePosixPath:
     path = PurePosixPath(key)
@@ -289,12 +319,18 @@ def _stage_import(
     if available_before < required:
         raise ValueError(f"可用空间不足，导入预计需要 {required / 1024**3:.1f} GiB")
 
+    prefix, current = _migration_shas()
     shadow = stage / "shadow" / "app.sqlite3"
     _copy_source_database(old_data, shadow)
-    before = _business_identity(shadow, check_db=check_db, connect_sqlite=connect_sqlite)
+    before = _business_identity(
+        shadow, schema=LEGACY_SCHEMA, expected=prefix, check_db=check_db, connect_sqlite=connect_sqlite,
+    )
 
     bundle = stage / "standard"
-    with _backup_inputs(old_data, old_key):
+    with _temporary_environment({
+        "SHIXU_RAW_DIR": str(old_data / "raw"),
+        "SHIXU_CREDENTIAL_MASTER_KEY_FILE": str(old_key),
+    }):
         perform_backup(old_data, bundle, sqlite_path=shadow, published_dir=old_data / "published",
                        credential_dir=old_data / "credentials")
     shutil.rmtree(shadow.parent)
@@ -313,9 +349,27 @@ def _stage_import(
     data = profile / "data"
     restored = perform_restore(verification / "standard", data)
     _restore_extras(verification, data, extras)
-    after = _business_identity(data.joinpath(*_DATABASE), check_db=check_db, connect_sqlite=connect_sqlite)
-    if before != after:
-        raise ValueError("恢复后的业务日期、发布头或业务记录数量不一致")
+    database = data.joinpath(*_DATABASE)
+    restored_identity = _business_identity(
+        database, schema=LEGACY_SCHEMA, expected=prefix, check_db=check_db, connect_sqlite=connect_sqlite,
+    )
+    if before != restored_identity:
+        raise ValueError("恢复后的业务日期、发布头或业务记录不一致")
+    # Route every runtime path to the independent staged copy before migrating.
+    with _temporary_environment({
+        "SHIXU_DATA_DIR": str(data),
+        "SHIXU_SQLITE_PATH": str(database),
+        "SHIXU_PUBLISHED_DIR": str(data / "published"),
+        "SHIXU_RAW_DIR": str(data / "raw"),
+        "SHIXU_WORK_DIR": str(data / "work"),
+        "SQLITE_TMPDIR": str(data / "work"),
+    }):
+        ensure_ready()
+    after = _business_identity(
+        database, schema=TARGET_SCHEMA, expected=current, check_db=check_db, connect_sqlite=connect_sqlite,
+    )
+    if restored_identity != after:
+        raise ValueError("迁移后的业务日期、发布头或业务记录不一致")
 
     new_key = profile.joinpath(*_KEY)
     new_key.parent.mkdir(mode=0o700)
@@ -333,7 +387,10 @@ def _stage_import(
         "target_commit": record["source_commit"],
         "backup_id": restored["backup_id"],
         "archive_sha256": hash_file(recovery),
-        "schema": after["schema"],
+        "source_schema": LEGACY_SCHEMA,
+        "schema": TARGET_SCHEMA,
+        "migration_sha256": current[_TARGET_MIGRATION],
+        "auction_purge_sha256": after["auction_purge_sha256"],
         "files_verified": len(archived),
         "business_rows": after["rows"],
         "paused_jobs": len(restored["paused_jobs"]),
@@ -357,12 +414,12 @@ def import_legacy(legacy_root: Path, native_root: Path, release_record: dict) ->
             or not re.fullmatch(r"[0-9a-f]{20}", native_root.name)):
         raise ValueError("新旧工作台目录身份不同")
     target_commit = release_record.get("source_commit")
-    if (release_record.get("format") != 1 or release_record.get("app_version") != _LEGACY_APP_VERSION
+    if (release_record.get("format") != 1 or release_record.get("app_version") != APP_VERSION
             or target_commit in _SOURCE_COMMITS.values()
             or not isinstance(target_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", target_commit)):
         raise ValueError("新版发行标记无效")
-    instance_lock = (legacy_root.parent / f"instance-{legacy_root.name}.lock"
-                     if namespace == _TRAY else legacy_root / "instance.lock")
+    instance_lock = (legacy_root / "instance.lock" if namespace == _PREVIEW
+                     else legacy_root.parent / f"instance-{legacy_root.name}.lock")
     with ExitStack() as locks:
         _legacy_lock(locks, instance_lock, required=True)
         _ordinary(legacy_root / "data", directory=True)
@@ -371,9 +428,7 @@ def import_legacy(legacy_root: Path, native_root: Path, release_record: dict) ->
         _legacy_lock(locks, legacy_root / "data" / "work" / "worker.lock")
         _legacy_lock(locks, legacy_root / "data" / "business" / "supplement-access.lock")
         _legacy_lock(locks, legacy_root / "data" / "business" / "migration.lock")
-        old = json.loads(_read_small(legacy_root, ("release.json",), 4096))
-        if old != {"format": 1, "source_commit": source_commit, "app_version": _LEGACY_APP_VERSION}:
-            raise ValueError("旧版发行标记与本次导入支持的版本不符")
+        _source_commit(legacy_root)
         available_before = shutil.disk_usage(native_root.parent).free
         with TemporaryDirectory(prefix=".tray-import-", dir=native_root.parent) as temporary:
             stage = Path(temporary)

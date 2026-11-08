@@ -752,7 +752,8 @@ def _watchlist(ladder, day):
 
 
 def build_market_outlook(market, status, day, reference, rows, breadth, emotion, sentiment, history,
-                         *, previous_breadth=None, ladder=None, turnover_history=None, universe_upper_bound=None):
+                         *, previous_breadth=None, ladder=None, turnover_history=None, universe_upper_bound=None,
+                         ladder_evidence=None):
     """One existing panel, one bounded ladder read; never a task or data writer."""
     calendar_method = getattr(market, 'calendar', None)
     calendar = calendar_method() if callable(calendar_method) else []
@@ -775,9 +776,10 @@ def build_market_outlook(market, status, day, reference, rows, breadth, emotion,
                               reference=reference, bottom=bottom, routes=gate['routes'], universe_upper_bound=universe_upper_bound)
     if ladder is None:
         if temperature['calendar_valid'] and callable(getattr(market, 'history_for_instruments', None)):
-            from app.services.market_ladder import build_ladder
+            from app.services.market_ladder import read_ladder
             from app.services.market_service import dated_events
-            ladder = build_ladder(market, status, day, reference, rows, dated_events(reference, day), include_patterns=True)
+            ladder = read_ladder(market, status, day, reference, rows, dated_events(reference, day),
+                                 evidence=ladder_evidence)
         else:
             ladder = {}
     watchlist = _watchlist(ladder, day)

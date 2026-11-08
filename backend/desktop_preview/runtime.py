@@ -64,14 +64,14 @@ def _license_client(package: Path) -> DesktopClient:
     return DesktopClient(profile, key, protect=protect, unprotect=unprotect)
 
 
-def _install_roots(client: DesktopClient) -> tuple[Path, Path, Path]:
+def _install_roots(client: DesktopClient) -> tuple[Path, Path, Path, Path]:
     base = client.directory.parents[1]
     local = base.parent
     _ordinary(local, directory=True)
     require_local_ntfs(local)
-    preview, tray, native = roots(client.directory)
+    preview, tray, native_v1, native = roots(client.directory)
     _directory(_directory(local, base.name), native.parent.name)
-    return preview, tray, native
+    return preview, tray, native_v1, native
 
 
 def _release_record(package: Path) -> dict:
@@ -283,17 +283,17 @@ def run_preview(package: Path, *, import_previous: bool = False) -> dict | None:
     from app.infrastructure.file_operations import locked_file
 
     client = _license_client(package)
-    preview, tray, root = _install_roots(client)
+    preview, tray, native_v1, root = _install_roots(client)
     instance_lock = root.parent / f"instance-{root.name}.lock"
     try:
         with locked_file(instance_lock, exclusive=True, blocking=False):
             if import_previous:
-                source = select_import_source(preview, tray)
+                source = select_import_source(preview, tray, native_v1)
                 if source is None:
                     raise ValueError("没有找到可导入的旧版工作台数据")
                 return import_legacy(source, root, _release_record(package))
             if not root.exists() and not root.is_symlink():
-                source = select_import_source(preview, tray)
+                source = select_import_source(preview, tray, native_v1)
                 if source is not None:
                     choice = choose_previous()
                     if choice == "cancel":

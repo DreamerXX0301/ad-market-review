@@ -3,10 +3,12 @@ from fastapi import APIRouter,Body,Query
 from fastapi.responses import JSONResponse
 from app.core import json_clean
 from app.services import dragon_tiger
+from app.services.pane_read_cache import with_historical_cache
 
 router=APIRouter(prefix='/api/v1/market/dragon-tiger',tags=['dragon-tiger'])
 
 @router.get('')
+@with_historical_cache
 def day_view(date:str|None=None):
     return JSONResponse(json_clean(dragon_tiger.read_view(date)))
 

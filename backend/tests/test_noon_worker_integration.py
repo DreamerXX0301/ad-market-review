@@ -34,7 +34,7 @@ def isolated_worker(tmp_path, monkeypatch):
 def claimed_increment(*, policy=True, kind='increment'):
     params = {'source_id': 'fuyao'}
     if policy:
-        params['noon_retention_policy'] = noon_retention.VERSION
+        params['noon_retention_policy'] = noon_retention.VERSION if policy is True else policy
     created = tasks.create_task(kind, params, DAY, request_key='fixture-increment')
     claimed = tasks.claim_next('fixture-worker')
     assert claimed['job_id'] == created['task_id']
@@ -46,8 +46,9 @@ def claimed_increment(*, policy=True, kind='increment'):
     ({'quality': 'partial', 'data_status': {'data_end': DAY, 'snapshot_id': 'fixture-generation'}}, 'partial'),
     ({'status': 'no_change', 'quality': 'partial', 'data_status': {'data_end': DAY, 'snapshot_id': 'fixture-generation'}}, 'no_change'),
 ])
-def test_dispatch_calls_cleanup_after_persisted_sync_success_including_no_change(isolated_worker, monkeypatch, result, expected_status):
-    calls = isolated_worker; claimed = claimed_increment()
+@pytest.mark.parametrize('policy', [noon_retention.LEGACY_VERSION, noon_retention.VERSION])
+def test_dispatch_calls_cleanup_after_persisted_sync_success_including_no_change(isolated_worker, monkeypatch, result, expected_status, policy):
+    calls = isolated_worker; claimed = claimed_increment(policy=policy)
     def execute(identifier, callback):
         assert tasks.task_view(identifier)['status'] == 'running'
         core.set_setting('fixture-publication', {'accepted': True, 'day': DAY})

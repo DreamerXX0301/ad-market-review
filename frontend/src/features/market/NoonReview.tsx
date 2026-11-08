@@ -1500,7 +1500,11 @@ export default function NoonReview({
       <div className="noon-scope-strip">
         <span>{selected || "正在读取观察日"}</span>
         <Badge>每天只提交一次</Badge>
-        <span>保留28天 · 到期随盘后增量自动清理</span>
+        <span>
+          {view?.retention?.calendar_days
+            ? `保留 ${view.retention.calendar_days} 个自然日 · 到期随盘后增量自动清理`
+            : "到期随盘后增量自动清理"}
+        </span>
       </div>
       <p className="noon-control-reason">
         {tab === "close"
@@ -1579,7 +1583,7 @@ export default function NoonReview({
               title={noonStateText[view.state] || "尚无可展示快照"}
               description={
                 view.state === "purged"
-                  ? "该日午评正文与专属原件已按28天策略清理。当天名额与清理回执保留，不会重新采集历史日。"
+                  ? "该日午评正文与专属原件已按当时的保留期限清理。当天名额与清理回执继续保留。"
                   : view.state === "failed" || view.state === "cancelled"
                     ? view.task?.message ||
                       "本日已有采集任务，不能再次新建。没有有效快照的内容保持缺失。"

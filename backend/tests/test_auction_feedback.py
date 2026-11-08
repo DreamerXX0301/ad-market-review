@@ -213,16 +213,29 @@ def test_invalid_scope_dates_or_identity_do_not_expand_or_invent_classification(
 
 
 def test_reader_validates_sha_and_never_changes_immutable_capture(auction_environment, monkeypatch):
+    from app.services import pane_read_cache
+
+    monkeypatch.setattr(pane_read_cache, 'retained_days', lambda *args, **kwargs: [DAY])
     environment = auction_environment
     for pool in environment.previous['event_cohorts'].values():
         for item in pool.get('items', []): item['date'] = PREVIOUS
+    builds = []
+    original_build = feedback.build_feedback
+
+    def build(payload):
+        builds.append(payload['date'])
+        return original_build(payload)
+
+    monkeypatch.setattr(feedback, 'build_feedback', build)
     job = claim(environment)
     worker.dispatch(job)
+    assert builds == [DAY]
     with core.connect() as connection:
         before = tuple(connection.execute('SELECT payload_json,content_sha256 FROM market_auction_snapshot').fetchone())
     result = feedback.read_view(DAY)
     assert result['coverage']['requested'] == result['coverage']['classified'] == 2
     assert 'stock_classifications' not in result
+    assert feedback.read_view(DAY) == result and builds == [DAY]
     from app.services import auction_topic_summary
     from app.services.intraday_auction_reference import read_auction_reference
 
@@ -247,7 +260,7 @@ def test_reader_validates_sha_and_never_changes_immutable_capture(auction_enviro
         connection.execute('UPDATE market_auction_snapshot SET content_sha256=?', ('0' * 64,))
     with pytest.raises(HTTPException) as error:
         read_auction_reference(DAY)
-    assert error.value.status_code == 409
+    assert error.value.status_code == 409 and builds == [DAY]
 
 
 def reference_packet(specifications):

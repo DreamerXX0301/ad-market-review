@@ -21,8 +21,8 @@ def local(tmp_path, monkeypatch):
     return tmp_path
 
 
-def job(identifier, *, kind='increment', status='succeeded', target='2026-11-25', policy=True):
-    params = {'noon_retention_policy': retention.VERSION} if policy else {}
+def job(identifier, *, kind='increment', status='succeeded', target='2026-11-27', policy=retention.VERSION):
+    params = {'noon_retention_policy': policy} if policy else {}
     with core.connect() as connection:
         connection.execute('''INSERT INTO job(job_id,request_key,logical_key,kind,target_date,
             parameters_json,parameters_hash,status,created_at_ms) VALUES(?,?,?,?,?,?,?,?,?)''',
@@ -30,7 +30,7 @@ def job(identifier, *, kind='increment', status='succeeded', target='2026-11-25'
     return {'job_id': identifier, 'kind': kind, 'parameters_json': core.dumps(params)}
 
 
-def publication(owner, day='2026-11-25'):
+def publication(owner, day='2026-11-27'):
     with core.connect() as connection:
         now = core.now_ms(); identifier = 'raw-fixture-' + owner
         connection.execute('''INSERT INTO dataset_snapshot(snapshot_id,module,scope_key,job_id,
@@ -68,12 +68,17 @@ def capture(day='2026-10-28', *, suffix='1', sources=None, token=None, payload=N
     return identifier, source, path
 
 
-def test_calendar_boundary_purges_body_and_raw_but_retains_daily_slot(local):
-    increment = job('increment-new'); publication(increment['job_id'])
-    expired, _, path = capture('2026-10-28')
-    retained, _, retained_path = capture('2026-10-29', suffix='2')
+@pytest.mark.parametrize(('policy', 'window', 'expired_day', 'retained_day'), [
+    (retention.VERSION, 30, '2026-10-28', '2026-10-29'),
+    (retention.LEGACY_VERSION, 28, '2026-10-30', '2026-10-31'),
+])
+def test_calendar_boundary_purges_body_and_raw_but_retains_daily_slot(local, policy, window, expired_day, retained_day):
+    increment = job('increment-new', policy=policy); publication(increment['job_id'])
+    expired, _, path = capture(expired_day)
+    retained, _, retained_path = capture(retained_day, suffix='2')
     result = retention.after_increment(increment)
-    assert result['status'] == 'completed' and result['cutoff_date'] == '2026-10-29'
+    assert result['status'] == 'completed' and result['cutoff_date'] == retained_day
+    assert result['version'] == policy and result['calendar_days'] == window
     assert result['purged_snapshots'] == 1 and not path.exists() and retained_path.exists()
     with core.connect() as connection:
         assert connection.execute('SELECT snapshot_id FROM market_noon_snapshot').fetchone()[0] == retained
@@ -91,8 +96,32 @@ def test_no_change_requires_result_or_frozen_date_matching_current_head(local):
     _, _, path = capture()
     assert retention.after_increment(increment)['status'] == 'skipped' and path.exists()
     result = retention.after_increment(increment, {'status': 'no_change', 'data_status': {
-        'data_end': '2026-11-25', 'snapshot_id': 'market-fixture'}})
+        'data_end': '2026-11-27', 'snapshot_id': 'market-fixture'}})
     assert result['purged_snapshots'] == 1 and not path.exists()
+
+
+@pytest.mark.parametrize(('policy', 'included'), [(retention.VERSION, True), (retention.LEGACY_VERSION, False)])
+def test_close_review_candidate_range_matches_frozen_retention(local, monkeypatch, policy, included):
+    from app.services import noon_close_inputs, noon_close_service
+
+    capture('2026-10-29')
+    increment = job('fixture-close', policy=policy)
+    params = json.loads(increment['parameters_json'])
+    params['noon_close_policy'] = noon_close_service.VERSION
+    increment['parameters_json'] = core.dumps(params)
+    monkeypatch.setattr(noon_close_service, '_anchor', lambda *_, **_kwargs: {
+        'date': '2026-11-27', 'generation': 'fixture',
+    })
+    attempted = []
+
+    def missing_close(_generation, day, _payload):
+        attempted.append(day)
+        raise ValueError('缺少同日留存的收盘数据')
+
+    monkeypatch.setattr(noon_close_inputs, 'load_inputs', missing_close)
+    result = noon_close_service.after_increment(increment)
+    assert attempted == (['2026-10-29'] if included else [])
+    assert bool(result['warnings']) is included
 
 
 @pytest.mark.parametrize('status', ['failed', 'cancelled', 'paused', 'running'])

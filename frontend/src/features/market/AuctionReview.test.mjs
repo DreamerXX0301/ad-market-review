@@ -262,8 +262,8 @@ const technicalView={...retained,snapshot:{...retained.snapshot,content_sha256:'
 html=render(technicalView);
 assert.doesNotMatch(html,/来源与留存证据|正文SHA256|auction-evidence|来源原件/,'technical evidence has no reading-page section or directory entry');
 assert.ok(!html.includes('a'.repeat(64))&&!html.includes('b'.repeat(64)),'API evidence metadata is not rendered as product content');
-html=render({...view,state:'purged',locked_for_day:true,retention:{notice:'保留28个自然日，到期随成功盘后增量清理。'}});
-assert.match(html,/竞价已按保留规则清理/);assert.match(html,/只保留日任务台账和清理回执/);assert.match(html,/保留28个自然日/);assert.doesNotMatch(html,/自动竞价尚未开启/);
+html=render({...view,state:'purged',locked_for_day:true,retention:{notice:'保留30个自然日，到期随成功盘后增量清理。'}});
+assert.match(html,/竞价已按保留规则清理/);assert.match(html,/只保留日任务台账和清理回执/);assert.match(html,/保留30个自然日/);assert.doesNotMatch(html,/自动竞价尚未开启/);
 
 const {default:AuctionFeedback}=await import(await moduleUrl(new URL('./AuctionFeedback.tsx',import.meta.url)));
 const unknownLimit={key:'limit_up_open',title:'今日涨停价开盘',state:'unknown',count:null,valid_count:0,missing_count:0,average_auction_pct:null,median_auction_pct:null,items:[],reason:'原竞价来源未提供今日涨停价及涨停开盘标记，暂不能核验。'};

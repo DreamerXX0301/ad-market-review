@@ -2,14 +2,9 @@
 import math
 
 
-def feedback_view(market, status, reference, day, indexed):
-    from app.services.market_service import prior_ladder_feedback, dated_events
+def _first_board_feedback(market, status, reference, day, indexed, previous):
+    from app.services.market_service import dated_events
     from app.services.stock_board_presentation import decorate_board_collections
-    reader = getattr(market, 'calendar', None)
-    calendar = (reader() or []) if callable(reader) else []
-    position = calendar.index(day) if day in calendar else 0
-    detail = prior_ladder_feedback(market, reference, day, indexed) if day in calendar else []
-    previous = calendar[position - 1] if position else None
     events = dated_events(reference, previous) if previous else {}
     candidates = {}
     source_unknown = set()
@@ -48,4 +43,19 @@ def feedback_view(market, status, reference, day, indexed):
     coverage = {'previous_date': previous, 'source_available': available, 'confirmed_count': len(first),
                 'unverified_count': len(source_unknown), 'state': 'ready' if available and not source_unknown else 'partial' if first else 'unknown',
                 'scope': '昨日涨停池中明确标记且通过收盘证据核验的首板；仅加入概览，不加入连板明细。来源缺失或高度未核验不按零补齐。'}
-    return {'feedback': detail, 'first_board_feedback': first, 'first_board_feedback_coverage': coverage}
+    return {'first_board_feedback': first, 'first_board_feedback_coverage': coverage}
+
+
+def feedback_view(market, status, reference, day, indexed, *, evidence=None):
+    from app.services.market_service import prior_ladder_feedback
+    from app.services.pane_read_cache import read_block
+
+    reader = getattr(market, 'calendar', None)
+    calendar = (reader() or []) if callable(reader) else []
+    position = calendar.index(day) if day in calendar else 0
+    detail = prior_ladder_feedback(market, reference, day, indexed,
+                                  **({'evidence': evidence} if evidence is not None else {})) if day in calendar else []
+    previous = calendar[position - 1] if position else None
+    first = read_block('emotion-first-board-facts', day, evidence,
+                       lambda: _first_board_feedback(market, status, reference, day, indexed, previous), market=market)
+    return {'feedback': detail, **first}

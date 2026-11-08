@@ -1309,7 +1309,7 @@ export default function NoonCloseReview({
                 <p>午评SHA {review.noon_sha256 || "未提供"}</p>
                 <p>同日收盘输入SHA {review.close_input_sha256 || "未提供"}</p>
                 <p className="noon-footnote">
-                  原午评保持不变；回看仅使用已保存同日事实，没有分时证据时不推断回封时刻、次数或稳定性。随午评保留28天，后补结果标实际生成时间。
+                  回看使用已保存的同日事实，随原午评一并保留。回封时刻、次数与稳定性按实际分时证据展示，后补结果标明实际生成时间。
                 </p>
               </details>
             </>

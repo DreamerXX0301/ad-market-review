@@ -8,11 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from contextvars import ContextVar
-from collections import OrderedDict
-from threading import RLock
 from hashlib import sha256
 import json
-import pickle
 from pathlib import Path
 
 from app.analytics.indicators import aggregate_weekly, enrich_bars, INDICATOR_VERSION
@@ -20,6 +17,7 @@ from app.analytics.monthly import aggregate_monthly, enrich_monthly_bars
 from app.analytics.waves import candidate_waves
 from app.core import digest, json_clean
 from app.infrastructure.config import published_dir
+from app.services.chart_read_cache import ChartReadCache, recent_chart_day
 from app.services.sector_history import _catalog, _day, _midnight, _number, CHINA
 from app.services.three_year_calendar import years_before
 
@@ -32,50 +30,22 @@ INCREMENT_CONTRACT = 'fuyao-sector-chart-increment-v1'
 MAX_LINEAGE_SEGMENTS = 1600
 SCOPE = '当前同花顺目录板块的来源历史指数点位；按正式留存窗口截取，不依赖或证明历史成分股'
 _read_files = ContextVar('sector_chart_verified_files', default=None)
-_chart_views = OrderedDict()
-_chart_views_lock = RLock()
-MAX_VIEW_BYTES = 12*1024*1024
+_chart_views = ChartReadCache(entries=8, bytes_limit=12 * 1024 * 1024)
 
 
 def _view_key(plan, calendar, period):
     return (str(_root().resolve()), digest(plan), digest(calendar), period, INDICATOR_VERSION)
 
 
-def _read_view(key):
-    with _chart_views_lock:
-        entry = _chart_views.get(key)
-    if entry is None: return None
-    serialized, pointer_path, pointer_sha, files = entry
-    try:
-        # No mtime-only shortcut: every visit rehashes every actual source,
-        # including a same-size edit or replacement with restored timestamps.
-        _verified_bytes(pointer_path, pointer_sha)
-        for relative, checksum in files: _verified_bytes(relative, checksum)
-        # These bytes exist only in this process and are emitted by
-        # _remember_view below. Never accept pickle from disk, a source or API.
-        result = pickle.loads(serialized)
-    except (OSError, ValueError, TypeError, EOFError, pickle.UnpicklingError):
-        with _chart_views_lock: _chart_views.pop(key, None)
-        return None
-    with _chart_views_lock:
-        if key in _chart_views: _chart_views.move_to_end(key)
-    return result
-
-
-def _remember_view(key, result, verified):
-    # Later-cache projections retain their original path until independently
-    # bound proof metadata is available. Never infer their dependency closure.
-    if not isinstance(verified, _VerifiedRead): return
-    try:
-        serialized = pickle.dumps(result, protocol=5)
-    except (TypeError, ValueError, pickle.PicklingError):
-        return
-    if len(serialized) > MAX_VIEW_BYTES: return
-    with _chart_views_lock:
-        _chart_views[key] = (serialized, verified.pointer_path, verified.pointer_sha256, verified.files)
-        _chart_views.move_to_end(key)
-        while len(_chart_views)>8 or sum(len(value[0]) for value in _chart_views.values())>MAX_VIEW_BYTES:
-            _chart_views.popitem(last=False)
+def _revalidate_view(evidence):
+    pointer_path, pointer_sha, files, absent_pointers = evidence
+    # Every visit rehashes the actual source, including a same-size edit with
+    # restored timestamps.
+    _verified_bytes(pointer_path, pointer_sha)
+    for relative, checksum in files:
+        _verified_bytes(relative, checksum)
+    if any((_root() / relative).is_file() for relative in absent_pointers):
+        raise ValueError('板块K线出现优先级更高的已留存来源')
 
 
 class _VerifiedRead(tuple):
@@ -89,6 +59,7 @@ class _VerifiedRead(tuple):
         value.pointer_value_sha256 = digest(pointer)
         value.record_sha256 = digest(record)
         value.calendar_sha256 = digest(calendar)
+        value.view_evidence = (value.pointer_path, value.pointer_sha256, value.files, ())
         return value
 
 
@@ -97,6 +68,14 @@ class _Collected(dict):
     def __init__(self, value, verified=None):
         super().__init__(value)
         self.verified = verified
+
+
+class _ProjectedRead(tuple):
+    """A clipped history with proof of the higher-priority pointers' absence."""
+    def __new__(cls, record, verified, absent_pointers):
+        value = super().__new__(cls, (record, verified[1]))
+        value.view_evidence = (*verified.view_evidence[:3], tuple(absent_pointers))
+        return value
 
 
 def _root():
@@ -418,18 +397,24 @@ def _read_cached(plan, calendar, capability='sector-chart', cache_key=None, proj
         _read_files.reset(token)
 
 
-def _read_chart_cache(market, plan, calendar):
+def _read_chart_cache(market, plan, calendar, *, cache_projection=False):
     """Project verified raw history, never already-computed future indicators."""
     exact = _read_cached(plan, calendar)
     if exact is not None:
         return exact
     root = _root().resolve()
+    pointer_folder = Path('accepted/fuyao/sector-chart')
+    absent = [str(pointer_folder / (_cache_key(plan) + '.json'))]
     end = market.status()['data_end']
     later = sorted({day for day in calendar if plan['as_of'] < day <= end}, reverse=True)
     inspected = 0
     for candidate in later[:MAX_PROJECTION_DAYS]:
-        pointer = root/'accepted/fuyao/sector-chart'/(candidate+'-'+plan['topic_code']+'.json')
-        if not pointer.is_file(): continue
+        relative = pointer_folder / (candidate + '-' + plan['topic_code'] + '.json')
+        pointer = root / relative
+        if not pointer.is_file():
+            if cache_projection:
+                absent.append(str(relative))
+            continue
         inspected += 1
         if inspected > MAX_PROJECTION_CANDIDATES: break
         try:
@@ -466,6 +451,8 @@ def _read_chart_cache(market, plan, calendar):
                 cache_source_request=record.get('source_request'), projected_from_later_cache=True)
             projected['coverage']['notice'] += (' 本图从'+candidate+'已核验原始日K截至所选日，'
                 '只用所选日及之前报价重新计算指标；原获取窗口单独保留，不表示历史成员已留存。')
+            if cache_projection and inspected == 1:
+                return _ProjectedRead(projected, verified, absent)
             return projected, original_pointer
         except (OSError, ValueError, TypeError, AttributeError):
             continue
@@ -641,8 +628,11 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
     plan = plan_sector_chart(market, topic_code, as_of)
     calendar = market.calendar()
     from app.analytics.chart_session_distance import attach_chart_session_distance
-    key = _view_key(plan, calendar, period)
-    remembered = _read_view(key)
+    status = market.status()
+    cacheable = (status.get('snapshot_id') == plan['snapshot_id']
+                 and recent_chart_day(calendar, status.get('data_end'), plan['as_of']))
+    key = _view_key(plan, calendar, period) if cacheable else None
+    remembered = _chart_views.read(key, _revalidate_view) if key is not None else None
     if remembered is not None:
         return attach_chart_session_distance(remembered, calendar, same_snapshot=market.status().get('snapshot_id') == plan['snapshot_id'])
     base = {'instrument': plan['instrument'], 'period': period, 'as_of': plan['as_of'],
@@ -656,7 +646,7 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
             'indicator_version': INDICATOR_VERSION+'+'+NORMALIZATION_VERSION,
             'breadth_scope': None, 'coverage': {}, 'scope': SCOPE,
             'unavailable_reason': '该板块所选日完整K线尚未下载，请手动同步这个板块；读取不会联网'}
-    try: cached = _read_chart_cache(market, plan, calendar)
+    try: cached = _read_chart_cache(market, plan, calendar, cache_projection=cacheable)
     except (OSError, ValueError, TypeError, AttributeError):
         base['unavailable_reason'] = '该板块所选日K线缓存校验失败，保持未知；未回填其它日期'
         return attach_chart_session_distance(base, calendar)
@@ -686,5 +676,8 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
             'indicator_gaps': _indicator_gaps(bars),
             'waves': candidate_waves(bars, threshold_pct=2.0 if period == 'D' else 4.0 if period == 'W' else 8.0)}
 
-    _remember_view(key, result, cached)
-    return attach_chart_session_distance(result, calendar, same_snapshot=market.status().get('snapshot_id') == plan['snapshot_id'])
+    same_snapshot = market.status().get('snapshot_id') == plan['snapshot_id']
+    evidence = getattr(cached, 'view_evidence', None)
+    if key is not None and same_snapshot and evidence is not None:
+        _chart_views.remember(key, result, evidence)
+    return attach_chart_session_distance(result, calendar, same_snapshot=same_snapshot)

@@ -1,4 +1,4 @@
-"""午评专属28自然日清理；仅在已授权增量发布后由唯一worker调用。"""
+"""午评专属自然日清理，仅在已授权增量发布后由唯一 worker 调用。"""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -14,8 +14,10 @@ from app.core import connect, dumps, now_ms, raw_dir
 from app.infrastructure.file_operations import bound_file
 from app.services.supplement_access import supplement_access
 
-VERSION = 'noon-retention-28d-v1'
-WINDOW_DAYS = 28
+LEGACY_VERSION = 'noon-retention-28d-v1'
+VERSION = 'noon-retention-30d-v1'
+WINDOW_DAYS = 30
+SUPPORTED_POLICIES = {LEGACY_VERSION: 28, VERSION: WINDOW_DAYS}
 MAX_SNAPSHOTS = 32
 MAX_FILES = 4096
 MAX_BYTES = 256 * 1024 * 1024
@@ -37,10 +39,10 @@ def _day(value):
     return isinstance(value, str) and date.fromisoformat(value).isoformat() == value
 
 
-def cutoff_date(anchor):
+def cutoff_date(anchor, *, window_days=WINDOW_DAYS):
     if not _day(anchor):
         raise ValueError('午评清理缺少已核验交易日')
-    return (date.fromisoformat(anchor) - timedelta(days=WINDOW_DAYS - 1)).isoformat()
+    return (date.fromisoformat(anchor) - timedelta(days=window_days - 1)).isoformat()
 
 
 def validate_source(source, source_job_id=None):
@@ -107,12 +109,12 @@ def source_bytes(root, source, *, remove=False):
         return content
 
 
-def _anchor(connection, job_id, result):
+def _anchor(connection, job_id, result, policy):
     saved = connection.execute('SELECT * FROM job WHERE job_id=?', (job_id,)).fetchone()
     if not saved or saved['kind'] != 'increment' or saved['status'] not in ('succeeded', 'partial', 'no_change'):
         return None, '盘后任务尚未成功发布或已停止'
     parameters = json.loads(saved['parameters_json'])
-    if parameters.get('noon_retention_policy') != VERSION:
+    if parameters.get('noon_retention_policy') != policy:
         return None, '旧冻结任务未授权午评清理'
     own = connection.execute("SELECT data_end FROM dataset_snapshot WHERE job_id=? AND module='daily_raw' AND state='published' ORDER BY published_at_ms DESC LIMIT 1", (job_id,)).fetchone()
     if own:
@@ -341,16 +343,17 @@ def _save_receipt(connection, snapshot, job_id, anchor, cutoff, status, manifest
     connection.commit()
 
 
-def _collect(job_id, result):
-    report = {'version': VERSION, 'status': 'skipped', 'purged_snapshots': 0, 'protected_snapshots': 0,
+def _collect(job_id, result, policy):
+    report = {'version': policy, 'status': 'skipped', 'purged_snapshots': 0, 'protected_snapshots': 0,
               'purged_failed_captures': 0, 'removed_files': 0, 'removed_bytes': 0, 'warnings': []}
     with supplement_access(exclusive=True), connect() as ledger:
-        anchor, reason = _anchor(ledger, job_id, result)
+        anchor, reason = _anchor(ledger, job_id, result, policy)
         if reason:
             report['reason'] = reason
             return report
-        cutoff = cutoff_date(anchor)
-        report.update(anchor_date=anchor, cutoff_date=cutoff, calendar_days=WINDOW_DAYS)
+        window_days = SUPPORTED_POLICIES[policy]
+        cutoff = cutoff_date(anchor, window_days=window_days)
+        report.update(anchor_date=anchor, cutoff_date=cutoff, calendar_days=window_days)
         # Persist a logical check round rather than a wall-clock cursor: equal
         # milliseconds or clock rollback must not let retained rows starve others.
         check_sequence = ledger.execute('SELECT coalesce(max(' + _CHECK_SEQUENCE_SQL +
@@ -420,7 +423,7 @@ def _collect(job_id, result):
                 for source in manifest['files']:
                     if source['state'] != 'pending':
                         continue
-                    current_anchor, stopped = _anchor(ledger, job_id, result)
+                    current_anchor, stopped = _anchor(ledger, job_id, result, policy)
                     version = ledger.execute('PRAGMA data_version').fetchone()[0]
                     if version != guard_version:
                         protected, backup, guard_version = _protection_snapshot(ledger, snapshots)
@@ -445,7 +448,7 @@ def _collect(job_id, result):
                 ledger.execute('BEGIN IMMEDIATE')
                 if ledger.execute('PRAGMA data_version').fetchone()[0] != guard_version:
                     raise ValueError('午评正文清理事务边界出现外部写入')
-                current_anchor, stopped = _anchor(ledger, job_id, result)
+                current_anchor, stopped = _anchor(ledger, job_id, result, policy)
                 if stopped or current_anchor != anchor or ledger.execute("SELECT 1 FROM retention_pin WHERE owner_kind='backup' LIMIT 1").fetchone():
                     raise ValueError('午评正文清理边界的授权已变化')
                 if snapshot.get('orphan'):
@@ -480,13 +483,14 @@ def after_increment(job, result=None):
             parameters = {}
     if not isinstance(parameters, dict):
         parameters = {}
-    if job.get('kind') != 'increment' or parameters.get('noon_retention_policy') != VERSION:
+    policy = parameters.get('noon_retention_policy')
+    if job.get('kind') != 'increment' or not isinstance(policy, str) or policy not in SUPPORTED_POLICIES:
         return {'version': VERSION, 'status': 'skipped', 'reason': '任务未冻结午评清理策略'}
     identifier = job.get('job_id') or job.get('task_id')
     try:
-        report = _collect(identifier, result)
+        report = _collect(identifier, result, policy)
     except Exception as error:
-        report = {'version': VERSION, 'status': 'warning', 'reason': '午评清理未完成：' + type(error).__name__,
+        report = {'version': policy, 'status': 'warning', 'reason': '午评清理未完成：' + type(error).__name__,
                   'purged_snapshots': 0, 'removed_files': 0, 'removed_bytes': 0}
     _emit(identifier, report)
     return report

@@ -254,7 +254,7 @@ def read_view(day, *, include_topics=False):
     if row is None:
         if retention['purged']:
             result = build_feedback({'date': day})
-            result.update(state='purged', retention=retention, reason='竞价已超过28自然日保留窗口，原正文及内嵌原件已清理。')
+            result.update(state='purged', retention=retention, reason='竞价正文及内嵌原件已按当时的保留规则清理。')
             result['gaps'] = ['该日竞价已到期清理，不重建昨日与今日强弱对照。']
             return result
         return build_feedback({'date': day})
@@ -262,7 +262,10 @@ def read_view(day, *, include_topics=False):
         payload = validate_snapshot(dict(row))
     except ValueError:
         raise HTTPException(409, '原竞价正文或来源原件未通过SHA核验，未派生前日事件对照') from None
-    result = build_feedback(payload)
+    from app.services.pane_read_cache import read_block
+
+    result = read_block('auction-feedback', day, (row['snapshot_id'], row['content_sha256']),
+                        lambda: build_feedback(payload), live_snapshot=True)
     if include_topics:
         from app.services.auction_topic_summary import build_topic_summary
 

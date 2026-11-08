@@ -41,8 +41,8 @@ def test_new_increment_freezes_both_cleanup_policies_and_keeps_old_job(scheduled
         assert automatic.AutomaticReviewScheduler().tick()['created'] == []
     parameters = created['parameters']
     assert parameters['sync_completion_date'] == DAY
-    assert parameters['noon_retention_policy'] == 'noon-retention-28d-v1'
-    assert parameters['auction_retention_policy'] == 'auction-retention-28d-v1'
+    assert parameters['noon_retention_policy'] == 'noon-retention-30d-v1'
+    assert parameters['auction_retention_policy'] == 'auction-retention-30d-v2'
     assert parameters['noon_close_policy'] == 'noon-close-v1'
     assert parameters['increment_session_version'] == 'increment-workbench-lock-v1'
     assert parameters['workspace_followup_version'] == 'after-data-chain-v1'

@@ -4,7 +4,7 @@ from copy import deepcopy
 import pytest
 
 from app.domain.conditions import metrics_for
-from app.services.tracking_quotes import tracking_quotes, clear_tracking_quote_cache
+from app.services.tracking_quotes import tracking_quotes, watchlist_quotes, clear_tracking_quote_cache
 
 CALENDAR = [f'2026-01-{day:02}' for day in range(5, 15)]
 SYMBOL = '600001.SH'
@@ -118,3 +118,29 @@ def test_strict_personal_close_cache_is_separate_from_default_tracking_display(t
     assert tracking_quotes(market,[round_()],CALENDAR,day,strict_close=True)[(SYMBOL,day)]==strict
     assert tracking_quotes(market,[round_()],CALENDAR,day)[(SYMBOL,day)]==default
     assert market.reads==2
+
+
+def test_watchlist_cache_bypasses_unverified_sources_and_never_masks_corruption(tmp_path):
+    clear_tracking_quote_cache()
+    market = Market(tmp_path)
+    day = CALENDAR[-1]
+    market.status = lambda: {'snapshot_id': market.generation, 'files': []}
+    market.verify_condition_sources = lambda: ('verified-a',)
+    result = watchlist_quotes(market, [SYMBOL], CALENDAR, day)[(SYMBOL, day)]
+    assert result['action_dates'] == ()
+    assert market.reads == 1
+
+    market.verify_condition_sources = lambda: None
+    market.actions_for_instruments = lambda symbols: None
+    unverified = watchlist_quotes(market, [SYMBOL], CALENDAR, day)[(SYMBOL, day)]
+    assert unverified['action_dates'] is None and unverified['change_pct'] is None
+    assert market.reads == 2
+
+    def corrupt():
+        raise ValueError('行情来源 SHA 校验失败')
+
+    market.verify_condition_sources = corrupt
+    unavailable = watchlist_quotes(market, [SYMBOL], CALENDAR, day)[(SYMBOL, day)]
+    assert unavailable['close'] is unavailable['change_pct'] is unavailable['action_dates'] is None
+    assert '未通过核验' in unavailable['source_reason']
+    assert market.reads == 2

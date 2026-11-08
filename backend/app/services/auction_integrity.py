@@ -13,6 +13,15 @@ CHINA = ZoneInfo('Asia/Shanghai')
 SYMBOL = re.compile(r'[0-9]{6}\.(?:SH|SZ|BJ)\Z')
 LIMIT = 4 * 1024 * 1024
 TERMINAL_RETRY_POLICY = 'fuyao-terminal-retry-once-v1'
+AUCTION_RETENTION_VERSION = 'auction-retention-30d-v2'
+AUCTION_RETENTION_WINDOWS = {
+    'auction-retention-28d-v1': 28,
+    AUCTION_RETENTION_VERSION: 30,
+}
+
+
+def retention_window(policy):
+    return AUCTION_RETENTION_WINDOWS.get(policy) if isinstance(policy, str) else None
 
 
 def is_retryable_terminal_failure(source):
@@ -226,8 +235,15 @@ def validate_purges(connection):
     for values in cursor:
         row = dict(zip(columns, values))
         try:
+            owner = connection.execute('SELECT kind,status,parameters_json FROM job WHERE job_id=?', (row['cleanup_job_id'],)).fetchone()
+            if not owner or owner[0] != 'increment' or owner[1] not in ('succeeded', 'partial', 'no_change'):
+                raise ValueError('Auction purge has no successful authorized increment')
+            parameters = json.loads(owner[2])
+            window_days = retention_window(parameters.get('auction_retention_policy')) if isinstance(parameters, dict) else None
+            if window_days is None:
+                raise ValueError('Auction purge has no successful authorized increment')
             anchor = date.fromisoformat(row['anchor_date'])
-            cutoff = (anchor - timedelta(days=27)).isoformat()
+            cutoff = (anchor - timedelta(days=window_days - 1)).isoformat()
             if (anchor.isoformat() != row['anchor_date'] or cutoff != row['cutoff_date']
                     or date.fromisoformat(row['trade_date']).isoformat() != row['trade_date']
                     or row['trade_date'] >= cutoff
@@ -237,10 +253,6 @@ def validate_purges(connection):
             capture = connection.execute('SELECT job_id FROM market_auction_capture WHERE trade_date=?', (row['trade_date'],)).fetchone()
             if not capture or capture[0] != row['source_job_id']:
                 raise ValueError('Auction purge differs from permanent capture ledger')
-            owner = connection.execute('SELECT kind,status,parameters_json FROM job WHERE job_id=?', (row['cleanup_job_id'],)).fetchone()
-            if (not owner or owner[0] != 'increment' or owner[1] not in ('succeeded', 'partial', 'no_change')
-                    or json.loads(owner[2]).get('auction_retention_policy') != 'auction-retention-28d-v1'):
-                raise ValueError('Auction purge has no successful authorized increment')
             retained = connection.execute('SELECT snapshot_id,job_id,content_sha256 FROM market_auction_snapshot WHERE trade_date=?', (row['trade_date'],)).fetchone()
             if row['status'] == 'purged':
                 if retained or row['purged_at_ms'] is None or row['reason'] is not None or row['evidence_count'] < 2:

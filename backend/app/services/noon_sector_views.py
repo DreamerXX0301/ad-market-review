@@ -205,7 +205,7 @@ def read_sector_view(snapshot_id, topic_code, **filters):
         row = connection.execute('SELECT payload_json,content_sha256 FROM market_noon_snapshot WHERE snapshot_id=?',
                                  (snapshot_id,)).fetchone()
     if row is None:
-        raise HTTPException(404, '午评正文未留存或已按28自然日清理')
+        raise HTTPException(404, '午评正文未留存或已按保留期限清理')
     encoded = row['payload_json']
     if len(encoded.encode()) > 8 * 1024 * 1024 or sha256(encoded.encode()).hexdigest() != row['content_sha256']:
         raise HTTPException(409, '午评内容SHA核验失败，原记录保留')

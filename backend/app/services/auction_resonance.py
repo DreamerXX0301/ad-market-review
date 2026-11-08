@@ -173,7 +173,7 @@ def read_view(day):
     if row is None:
         result = _base({'date': day})
         if retention['purged']:
-            result.update(state='purged', retention=retention, reason='竞价已超过28自然日保留窗口，原正文及内嵌原件已清理。')
+            result.update(state='purged', retention=retention, reason='竞价正文及内嵌原件已按当时的保留规则清理。')
             result['gaps'].append('该日竞价已到期清理，不重建历史集中度或一字关联样本。')
             return result
         result['gaps'].append('所选日尚无已留存竞价，不重建竞价或题材样本。')

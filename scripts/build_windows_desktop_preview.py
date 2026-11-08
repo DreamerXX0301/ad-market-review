@@ -172,11 +172,15 @@ def install_packages(package: Path, scratch: Path, wheelhouse: Path | None) -> N
                 record.write_text(portable, encoding="utf-8")
 
 
-def build_frontend(package: Path, offline: bool) -> dict[str, str]:
+def build_frontend(package: Path, offline: bool, desktop_version: str) -> dict[str, str]:
     frontend = ROOT / "frontend"
     run("npm", "ci", "--no-audit", "--no-fund", "--offline" if offline else "--prefer-offline", cwd=frontend)
-    run("npm", "run", "build", cwd=frontend,
-        env={**os.environ, "VITE_DESKTOP_PREVIEW": "1", "VITE_READONLY_PREVIEW": "0"})
+    run("npm", "run", "build", cwd=frontend, env={
+        **os.environ,
+        "VITE_DESKTOP_PREVIEW": "1",
+        "VITE_DESKTOP_VERSION": desktop_version,
+        "VITE_READONLY_PREVIEW": "0",
+    })
     dist = package / "frontend" / "dist"
     copy_tree(frontend / "dist", dist, exclude=frozenset({Path("author-wechat.jpg")}))
     for asset in dist.rglob("*.js"):
@@ -361,7 +365,7 @@ def main() -> None:
         stage_runtime(package, args.auth_preview.expanduser(), sqlite)
         wheels = inputs / "wheels"
         install_packages(package, scratch, wheels if wheels.is_dir() else None)
-        frontend_obfuscation = build_frontend(package, args.npm_offline)
+        frontend_obfuscation = build_frontend(package, args.npm_offline, desktop_version)
         stage_application(package)
         cython = fetch(inputs / native.CYTHON_WHEEL, native.CYTHON_URL, "sha256", native.CYTHON_SHA256)
         zig = fetch(inputs / "zig.tar.xz", native.ZIG_URL, "sha256", native.ZIG_SHA256)

@@ -18,9 +18,10 @@ from app.services.noon_collection import (CHINA, VERSION, CAPTURE_START, CAPTURE
     verified_empty_noon_pool_page)
 from app.services.noon_analysis import (INDEX_NAMES, board_summary, build_analysis, build_summary,
     normalize_pool, normalize_quotes, sector_members)
+from app.services.noon_retention import WINDOW_DAYS
 
-RETENTION = {'calendar_days': 28, 'automatic': True, 'trigger': 'after_increment',
-             'notice': '保留28个自然日，到期随成功盘后增量自动清理，不弹确认；未运行增量时暂留。'}
+RETENTION = {'calendar_days': WINDOW_DAYS, 'automatic': True, 'trigger': 'after_increment',
+             'notice': f'保留{WINDOW_DAYS}个自然日，到期随成功盘后增量自动清理，未运行增量时暂留。'}
 
 
 def now_china():
@@ -152,16 +153,29 @@ def _snapshot_view(row):
         context_payload = {**context_payload, 'previous_review': {**previous, 'event_cohorts': cohorts}}
     value['membership_context'] = build_member_limit_context(context_payload)
     from app.services.noon_close_context import retained_close_classifications
+    from app.services.pane_read_cache import read_block
+
     restored_pools = retained_empty_event_pools(value, value['payload'])
+    close_classifications = retained_close_classifications(value['payload'])
     workbench_payload = value['payload']
     if restored_pools:
         workbench_payload = {**workbench_payload, 'events': {**workbench_payload['events'], **restored_pools}}
-    value['workbench'] = build_workbench(workbench_payload, membership_context=value['membership_context'],
-        prior_event_context=value['prior_event_context'], close_classifications=retained_close_classifications(value['payload']))
-    if restored_pools:
-        value['workbench']['verified_empty_event_pools'] = restored_pools
-        if 'limit_down' in restored_pools:
-            value['workbench']['limit_down_source_pool'] = restored_pools['limit_down']
+
+    def project_workbench():
+        result = build_workbench(workbench_payload, membership_context=value['membership_context'],
+            prior_event_context=value['prior_event_context'], close_classifications=close_classifications)
+        if restored_pools:
+            result['verified_empty_event_pools'] = restored_pools
+            if 'limit_down' in restored_pools:
+                result['limit_down_source_pool'] = restored_pools['limit_down']
+        return result
+
+    # Archive recovery and the exact zero-pool raw receipts are reverified above.
+    # Their current projections also distinguish lost proof from a confirmed 0.
+    evidence = (value['snapshot_id'], value['content_sha256'], value['membership_context'],
+                value['prior_event_context'], restored_pools, close_classifications)
+    value['workbench'] = read_block('noon-workbench', value['trade_date'], evidence,
+                                    project_workbench, live_snapshot=True)
     value['date'] = value.pop('trade_date')
     value.pop('sources_json', None)
     return value
@@ -317,7 +331,7 @@ def create_capture(payload):
 
                 params = {'operation': 'noon_snapshot', 'version': VERSION, 'source_id': 'fuyao',
                           'date': day, 'window_end_at': window['end_at'], 'daily_once': True,
-                          'retention_calendar_days': 28, 'suspension_evidence': SUSPENSION_VERSION}
+                          'retention_calendar_days': WINDOW_DAYS, 'suspension_evidence': SUSPENSION_VERSION}
                 identifier = new_id('job'); stamp = int(now_china().timestamp() * 1000)
                 connection.execute('''INSERT INTO job(job_id,request_key,logical_key,kind,target_date,parameters_json,
                     parameters_hash,status,planned_batches,created_at_ms) VALUES(?,?,?,'source_check',?,?,?,'queued',100,?)''',

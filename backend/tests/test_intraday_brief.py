@@ -278,6 +278,10 @@ def test_worker_retains_audited_fallback_without_repeating_failed_model(tmp_path
     for key in ('SHIXU_SQLITE_PATH', 'SHIXU_PUBLISHED_DIR', 'SHIXU_RAW_DIR', 'SHIXU_WORK_DIR'):
         monkeypatch.delenv(key, raising=False)
     core.set_setting(AUTOMATION_KEY, {'enabled': True, 'revision': 1})
+    with core.connect() as connection:
+        for day in ('2026-10-05', '2026-10-06'):
+            connection.execute("INSERT INTO market_intraday_brief VALUES(?,'1000',?,'{}',1,0)",
+                               (day, 'a' * 64))
     calls = []
     monkeypatch.setattr(brief, '_metadata', lambda *_: {'1000': {'time': 1, 'ready': 1, 'sha': 'verified'}})
     monkeypatch.setattr(brief, '_read_projection', lambda *_: _projection('1000', 18))
@@ -290,6 +294,10 @@ def test_worker_retains_audited_fallback_without_repeating_failed_model(tmp_path
     clock = datetime(2026, 11, 4, 10, 1, tzinfo=brief.CHINA)
     brief._tick(clock, Event())
     brief._tick(clock, Event())
+    with core.connect() as connection:
+        assert [row[0] for row in connection.execute(
+            'SELECT trade_date FROM market_intraday_brief WHERE trade_date<? ORDER BY trade_date', (DAY,)
+        )] == ['2026-10-06']
     payload = brief.read_brief_view('2026-11-04')
     assert calls == ['1000']
     assert payload['briefs'][0]['origin'] == 'deterministic'

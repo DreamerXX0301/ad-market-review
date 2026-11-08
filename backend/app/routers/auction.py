@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 
 from app.core import json_clean
 from app.services import auction_service as service
+from app.services.pane_read_cache import with_historical_cache
 
 router = APIRouter(prefix='/api/v1/market/auction', tags=['auction-snapshots'])
 
@@ -38,6 +39,7 @@ def topic_summary(date: str):
 
 
 @router.get('/feedback')
+@with_historical_cache
 def feedback(date: str):
     from app.services.auction_feedback import read_view
     return JSONResponse(json_clean(read_view(date)))
@@ -62,6 +64,7 @@ def resonance(date: str):
 
 
 @router.get('')
+@with_historical_cache
 def view(date: str | None = None):
     return JSONResponse(json_clean(service.read_view(date)))
 

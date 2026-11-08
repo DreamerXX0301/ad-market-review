@@ -675,6 +675,8 @@ def _can_work(connection):
 
 
 def _tick(now, stopping, *, allow_start=None):
+    from app.services.intraday_service import CAPTURE_RETENTION_DAYS
+
     def blocked():
         return stopping.is_set() or allow_start is not None and not allow_start()
 
@@ -688,7 +690,7 @@ def _tick(now, stopping, *, allow_start=None):
         metadata = _metadata(connection, day, at_ms)
         existing = {row['slot']: row for row in connection.execute(
             'SELECT slot,source_sha256,model_attempted FROM market_intraday_brief WHERE trade_date=?', (day,))}
-        cutoff = (now.date() - timedelta(days=27)).isoformat()
+        cutoff = (now.date() - timedelta(days=CAPTURE_RETENTION_DAYS - 1)).isoformat()
         expired = connection.execute('SELECT 1 FROM market_intraday_brief WHERE trade_date<? LIMIT 1', (cutoff,)).fetchone()
         if expired:
             connection.execute('DELETE FROM market_intraday_brief WHERE trade_date<?', (cutoff,))

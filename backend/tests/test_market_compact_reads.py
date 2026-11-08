@@ -316,3 +316,23 @@ def test_undeclared_legacy_condition_source_cannot_authorize_cache_probe(retaine
     monkeypatch.setattr(market,'_daily_source',lambda *_:pytest.fail('legacy fallback should not issue a cache token'))
     assert market.verify_condition_sources() is None
     market.close()
+
+
+def test_watchlist_warm_read_checks_actual_published_action_file(retained_market, monkeypatch):
+    from app.services.tracking_quotes import watchlist_quotes
+
+    _, days, symbols = retained_market
+    market, files = declared_condition_market(retained_market, partitioned=True)
+    symbol = symbols[1]
+    first = watchlist_quotes(market, [symbol], days, days[-1])
+    assert first[(symbol, days[-1])]['action_dates'] == (days[1], days[1])
+    monkeypatch.setattr(market, 'history_for_instruments', lambda *a, **kw: pytest.fail('warm quote read'))
+    monkeypatch.setattr(market, 'actions_for_instruments', lambda *a, **kw: pytest.fail('warm action read'))
+    assert watchlist_quotes(market, [symbol], days, days[-1]) == first
+    path = market.data_dir / next(row['path'] for row in files if row['role'] == 'corporate-actions.parquet')
+    original = path.read_bytes()
+    path.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+    unavailable = watchlist_quotes(market, [symbol], days, days[-1])[(symbol, days[-1])]
+    assert unavailable['close'] is unavailable['change_pct'] is unavailable['action_dates'] is None
+    assert '未通过核验' in unavailable['source_reason']
+    market.close()

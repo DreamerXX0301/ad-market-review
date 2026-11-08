@@ -84,3 +84,37 @@ def test_revisited_date_still_invalidates_on_source_revision_with_same_timestamp
     assert len(calls)==2
     assert original[0][0]['last_limit_up_date']==source_day
     assert revised[0][0]['last_limit_up_date'] is None
+
+
+def test_full_rank_reuses_overview_prices_and_survives_restart(tmp_path, monkeypatch):
+    from app.services import pane_read_cache, topic_member_metrics
+
+    market, reference, status, days, rows = _inputs()
+    day = days[0]
+    proof = ('fixed-snapshot', 'actual-price-and-reference-sha', 'retained-pool-sha')
+    market.verify_condition_sources = lambda: proof
+    monkeypatch.setattr(pane_read_cache, '_root', lambda: tmp_path)
+    monkeypatch.setattr(pane_read_cache, '_memory', pane_read_cache.OrderedDict())
+    monkeypatch.setattr(pane_read_cache, '_memory_bytes', 0)
+    expected = service.gainers_rows(market, reference, day, rows[day])
+    top = service.cached_gainers(market, status, reference, day, rows[day], 5, source_evidence=proof)
+    assert top[0] == expected[0][:5]
+    assert (tmp_path / day / 'gainers-price-rank-v1.json').is_file()
+
+    def must_use_cache(*args, **kwargs):
+        pytest.fail('unexpected ranking recomputation')
+
+    monkeypatch.setattr(service, '_gainers_price_rank', must_use_cache)
+    assert service.cached_gainers(market, status, reference, day, rows[day], source_evidence=proof) == expected
+    assert (tmp_path / day / 'gainers-full-events-v1.json').is_file()
+
+    service._gainers_cache.clear()
+    pane_read_cache._memory.clear()
+    monkeypatch.setattr(pane_read_cache, '_memory_bytes', 0)
+    monkeypatch.setattr(topic_member_metrics, 'limit_metrics', must_use_cache)
+    new_panel = [{**row, 'name': '页面数据仍取当前输入'} for row in rows[day]]
+    actual, summary = service.cached_gainers(market, status, reference, day, new_panel, source_evidence=proof)
+    quoted = {row['instrument_id'] for row in new_panel}
+    assert actual == [{**row, 'name': '页面数据仍取当前输入'} if row['instrument_id'] in quoted else row
+                      for row in expected[0]]
+    assert summary == expected[1]
