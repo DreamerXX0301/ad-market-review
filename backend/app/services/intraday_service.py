@@ -239,7 +239,13 @@ def read_view(day=None, *, read_context=None):
         narrative_sources = {value['id']: {**value, 'ladder': deepcopy(value.get('ladder', {}))}
                              for value in saved}
     _restore_legacy_turnover(saved)
-    attach_changes(saved, rows, noon_row, read_cache=read_context)
+    cache_market = None
+    if saved and read_context is not None:
+        try:
+            cache_market = get_market()
+        except (OSError, ValueError, OperationalError):
+            pass
+    attach_changes(saved, rows, noon_row, read_cache=read_context, cache_market=cache_market)
     for value in saved:
         attach_current_states(value)
     references = _attach_saved_stock_references(saved, read_context=read_context)

@@ -113,7 +113,22 @@ def execute(noon):
 @pytest.mark.parametrize(('key', 'component', 'value'), [
     ('limit_up', 'seal_sample', 0), ('limit_down', 'limit_balance', 100), ('limit_break', 'seal_sample', 100),
 ])
-def test_explicit_empty_event_pool_is_observed_and_old_snapshot_is_read_only(noon, key, component, value):
+def test_explicit_empty_event_pool_is_observed_and_old_snapshot_is_read_only(noon, key, component, value, monkeypatch):
+    from app.services import noon_workbench, pane_read_cache
+
+    def days(market, *, live_snapshot=False, status=None):
+        assert live_snapshot
+        return [DAY]
+
+    monkeypatch.setattr(pane_read_cache, 'retained_days', days)
+    original_build = noon_workbench.build_workbench
+    builds = []
+
+    def build(payload, **kwargs):
+        builds.append(payload['date'])
+        return original_build(payload, **kwargs)
+
+    monkeypatch.setattr(noon_workbench, 'build_workbench', build)
     _, client, source, _, _, _, _ = noon
     endpoint = service.NOON_EVENT_POOLS[key]
     source.hook = lambda path, _: ({
@@ -149,6 +164,8 @@ def test_explicit_empty_event_pool_is_observed_and_old_snapshot_is_read_only(noo
         assert restored['workbench']['limit_down_source_pool'] == restored_pool
     assert next(row for row in restored['workbench']['temperature']['components']
                 if row['key'] == component)['value'] == value
+    before = len(builds)
+    assert service._snapshot_view(archived) == restored and len(builds) == before
     from app.services.intraday_brief import _noon_anchor
     if key == 'limit_up':
         ladder = _noon_anchor(archived)['ladder']
@@ -163,6 +180,7 @@ def test_explicit_empty_event_pool_is_observed_and_old_snapshot_is_read_only(noo
     receipt = core.raw_dir() / 'noon' / job['job_id'] / f'{key}_page_1.json.gz'
     receipt.write_bytes(receipt.read_bytes() + b'invalid')
     unverified = service._snapshot_view(archived)
+    assert len(builds) == before + 1
     unverified_baseline = noon_frame(archived)
     assert unverified_baseline['events'][key]['state'] == 'unknown'
     assert unverified_baseline['events'][key]['count'] is None

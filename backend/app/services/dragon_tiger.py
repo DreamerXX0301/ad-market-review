@@ -168,6 +168,15 @@ def _coverage(index,calendar,target,selected):
             'failures':list(index.get('failures',{}).values()),'latest_market_date':target}
 
 
+def _hot_view(board):
+    projected = project_hot_statistics(board)
+    labels = [{'name': group['name'], 'stock_count_by_range': {
+        str(period): len({row['instrument_id'] for row in group['rows']
+                          if row.get('instrument_id') and row['range_days'] == period})
+        for period in (1, 3)}} for group in projected['items']]
+    return {'board': projected, 'labels': labels}
+
+
 def read_view(day=None, *, market=None):
     market,status,day=_context(day,market=market);store=Store();reason=None
     with supplement_access():
@@ -177,9 +186,13 @@ def read_view(day=None, *, market=None):
     if record is None:
         reason=reason or index.get('failures',{}).get(day,{}).get('reason') or '该日龙虎榜尚未留存；请在最新行情日手动补齐最近30个交易日'
         return {'date':day,'snapshot_id':status['snapshot_id'],'state':'unknown','availability':{'available':False,'reason':reason},'boards':{},'labels':[],'coverage':coverage,'warnings':[reason]}
-    boards={**record['boards'],'hot_money':project_hot_statistics(record['boards']['hot_money'])};labels=[]
-    for group in boards['hot_money']['items']:
-        labels.append({'name':group['name'],'stock_count_by_range':{str(period):len({r['instrument_id'] for r in group['rows'] if r.get('instrument_id') and r['range_days']==period}) for period in (1,3)}})
+    from app.services.pane_read_cache import read_block
+
+    proof = index['days'][day].get('sha256')
+    hot = read_block('dragon-tiger-labels', day, proof,
+                     lambda: _hot_view(record['boards']['hot_money']), market=market)
+    boards = {**record['boards'], 'hot_money': hot['board']}
+    labels = hot['labels']
     warnings=list(dict.fromkeys([*record.get('warnings',[]),*boards['hot_money'].get('warnings',[])]))
     return {'date':day,'snapshot_id':status['snapshot_id'],'collection_snapshot_id':record.get('snapshot_id'),'state':'partial' if warnings else 'ready',
         'availability':{'available':True,'reason':None,'sources':['fuyao','eastmoney'],'date':day},'boards':boards,'labels':labels,'coverage':coverage,'warnings':warnings}

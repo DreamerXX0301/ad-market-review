@@ -4,7 +4,7 @@ import math
 import re
 
 from app.core import connect, get_market, now_ms
-from app.services.tracking_quotes import tracking_quotes
+from app.services.tracking_quotes import watchlist_quotes
 from app.services.stock_memberships import current_memberships
 from app.services.workspace_common import code_info, current, e8, fail, freeze_inputs, identities, js, money, obj, rows
 
@@ -112,27 +112,20 @@ def _backfill_entries(saved, market, calendar, day, primary):
     return latest
 
 
-def _since_added(row, quote, actions, day):
+def _since_added(row, quote, action_dates, day):
     """Only the personal added-date baseline participates in this return."""
     added=row['added_business_date'];base=row.get('watchlist_entry_price');price=quote.get('close')
     def unknown(reason):return {'watchlist_change_pct':None,'watchlist_change_state':'unknown','watchlist_change_reason':reason}
     if base is None:return unknown(row.get('watchlist_entry_reason') or '加入自选日收盘基准待核验')
     if added>day:return unknown('行情观察日早于加入自选日，不能计算加入后涨幅')
-    if price is None:return unknown('当前业务日缺少唯一有效收盘价，不使用旧报价替代')
+    if price is None:return unknown(quote.get('source_reason') or '当前业务日缺少唯一有效收盘价，不使用旧报价替代')
     if row.get('watchlist_entry_price_basis')!='none':return unknown('加入自选价格口径未知，不能直接比较')
     if added!=day:
-        evidence=actions.get(row['instrument_id']) if isinstance(actions,dict) else None
-        if not isinstance(evidence,list) or any(not isinstance(event,dict) or not isinstance(event.get('date'),str)
-                or not _canonical_date(event['date']) for event in evidence):
+        if action_dates is None:
             return unknown('加入自选后公司行动覆盖尚未核验，原始价格可比性未知')
-        if any(added<event['date']<=day for event in evidence):
+        if any(added<event_day<=day for event_day in action_dates):
             return unknown('加入自选后存在公司行动，尚无可核验的冻结基准价格转换')
     return {'watchlist_change_pct':(price/base-1)*100,'watchlist_change_state':'ready','watchlist_change_reason':None}
-
-
-def _canonical_date(value):
-    try:return date.fromisoformat(value).isoformat()==value
-    except (ValueError,TypeError):return False
 
 
 def add_item(payload):
@@ -233,21 +226,21 @@ def list_items(query=''):
                    current_topics_observed_date=day)
     if query:
         selected = [row for row in selected if query in ' '.join([*(str(row.get(key) or '') for key in ('name', 'code', 'instrument_id', 'source_name')), *(tag['name'] for tag in row['current_topics'])]).lower()]
-    # This shares the immutable-generation two-session cache with tracking,
-    # rather than loading years of bars once per watchlist item.
-    quotes = tracking_quotes(market, [dict(row, status='tracking') for row in selected], calendar, day,strict_close=True) if day and selected else {}
-    action_reader=getattr(market,'actions_for_instruments',None)
-    need_actions=[row['instrument_id'] for row in selected if row.get('watchlist_entry_price') is not None and row['added_business_date']!=day]
-    actions=action_reader(need_actions) if need_actions and callable(action_reader) else None
+    from app.services.line_alerts import latest_by_stock
+    selected_symbols = [row['instrument_id'] for row in selected]
+    with connect() as connection:
+        alerts = latest_by_stock(connection, selected_symbols, day)
+    # Reuse the fixed security inputs. The personal baseline and alert are
+    # combined with those inputs afresh for the currently selected items.
+    quotes = watchlist_quotes(market, selected_symbols if day else [], calendar, day,
+                             require_current=lambda: require_scope(hot_scope, market))
     for row in selected:
         quote = quotes.get((row['instrument_id'], day), {})
-        row.update(latest_price=quote.get('close'), today_change_pct=quote.get('change_pct'), quote_date=day)
-        row.update(_since_added(row,quote,actions,day))
-    from app.services.line_alerts import latest_by_stock
-    with connect() as connection:
-        alerts=latest_by_stock(connection,[row['instrument_id'] for row in selected],day)
-    for row in selected:row['latest_line_alert']=alerts.get(row['instrument_id'])
-    require_scope(hot_scope,market)
+        row.update(latest_price=quote.get('close'), today_change_pct=quote.get('change_pct'), quote_date=day,
+                   latest_line_alert=alerts.get(row['instrument_id']))
+        if quote.get('source_reason'):
+            row['quote_reason'] = quote['source_reason']
+        row.update(_since_added(row,quote,quote.get('action_dates'),day))
     return {'items': selected, 'total': len(saved), 'matched_count': len(selected), 'business_date': day,'hot_filter_scope':hot_scope,
             'current_topics_scope': membership_data['scope'],
             'baseline_notice': '加入后涨幅以首次加入自选业务日的独立冻结收盘为基准；原跟踪入池日期和事件日收盘单独保留，不参与自选涨幅计算。重复收藏不重置，移除自选不影响策略跟踪。'}

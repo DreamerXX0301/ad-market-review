@@ -108,7 +108,19 @@ def _coverage(day, previous, before, states, reason):
             'complete': counts['unknown'] == 0, 'reason': reason}
 
 
-def build_ladder(market, status, day, reference, rows, current_events, *, include_patterns=True):
+def read_ladder(market, status, day, reference, rows, current_events, *, evidence=None):
+    if evidence is None:
+        return build_ladder(market, status, day, reference, rows, current_events)
+    from app.infrastructure.storage import digest
+    from app.services.pane_read_cache import read_block
+
+    membership = resolve_reference('sectors', day, status, reference)
+    return read_block('closing-ladder', day, (evidence, digest(membership)),
+                      lambda: build_ladder(market, status, day, reference, rows, current_events,
+                                           membership=membership), market=market)
+
+
+def build_ladder(market, status, day, reference, rows, current_events, *, include_patterns=True, membership=None):
     calendar = sorted(set(value for value in market.calendar() if value <= day))
     position = calendar.index(day)
     previous = calendar[position - 1] if position else None
@@ -196,7 +208,8 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
             patterns[symbol] = {key: evaluated['bars'][0][key] for key in ('pattern_events', 'pattern_status')}
             patterns[symbol].update(pattern_date=day, pattern_as_of=day,
                                     pattern_coverage=evaluated['pattern_coverage'])
-    local, membership_coverage = resolve_reference('sectors', day, status, reference)
+    local, membership_coverage = (membership if membership is not None
+                                  else resolve_reference('sectors', day, status, reference))
     topics = local.get('topics', []) if membership_coverage.get('selected_date_available') else []
     by_member = {}
     for topic in topics:

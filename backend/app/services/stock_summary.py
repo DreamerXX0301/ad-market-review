@@ -9,14 +9,16 @@ from datetime import date
 import re
 from threading import RLock
 
-from app.core import get_market
+from app.core import dumps, get_market
 from app.domain.conditions import metrics_for
 from app.domain.universe import BOARDS, identity_flags
 from app.services import topic_member_metrics
+from app.services.chart_read_cache import recent_chart_day
 from app.services.market_supplement import load_supplement_with_fingerprint
 from app.services.workspace_common import fail
 
 MAX_SUMMARIES = 128
+MAX_SUMMARY_BYTES = 64 * 1024
 _CACHE = OrderedDict()
 _LOCK = RLock()
 STOCK_KINDS = ('stock', 'equity', 'a_share', 'A')
@@ -135,7 +137,7 @@ def summary_for(market, identifier, as_of=None):
     # Reuse the verified generation/candidate/quote/source-digest key. Fake or
     # mutable market objects have no reliable key and must never reuse results.
     key = topic_member_metrics._cache_key(market, day, [symbol], quotes, supplement,
-        supplement_fingerprint=fingerprint)
+        supplement_fingerprint=fingerprint) if recent_chart_day(calendar, status.get('data_end'), day) else None
     with _LOCK:
         cached = _CACHE.get(key) if key is not None else None
         if cached is not None: _CACHE.move_to_end(key)
@@ -182,7 +184,7 @@ def summary_for(market, identifier, as_of=None):
         before_previous_up=proof._state(symbol, before, own_quotes.get(before)),
         break_events=dated_events({**reference, '_supplement': supplement}, day).get('breakpool', []),
         board_text_events=source_events)
-    if key is not None:
+    if key is not None and len(dumps(value).encode()) <= MAX_SUMMARY_BYTES:
         with _LOCK:
             _CACHE[key] = deepcopy(value); _CACHE.move_to_end(key)
             while len(_CACHE) > MAX_SUMMARIES: _CACHE.popitem(last=False)

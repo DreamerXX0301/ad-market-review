@@ -1,6 +1,7 @@
 """Adjacent saved observations describe point-in-time pool changes, never tick events."""
 from collections import Counter
 from datetime import datetime, time, timedelta
+from functools import partial
 from hashlib import sha256
 import json
 import re
@@ -19,22 +20,22 @@ SCOPE = '对照两份已留存观察，非连续分时；新入池不等于首�
 
 
 def _record_payload(row, maximum, read_cache=None, *, binding_only=False):
-    """Reuse syntax trees only for the identical row/body within one GET.
+    """Reuse an original row's checked body within one GET.
 
-    Size and the original body SHA are still checked at every entry. Holding
-    both objects prevents identity reuse; a different SQLite row, body string
-    or digest must be parsed again. A small independent binding projection is
-    protected from the display enrichments later attached to live snapshots.
+    A different row, body string or digest must be checked again. The binding
+    projection is protected from display enrichments attached to live snapshots.
     """
     text = row['payload_json']
-    raw = text.encode()
     digest = row['content_sha256']
-    if len(raw) > maximum or sha256(raw).hexdigest() != digest:
-        raise ValueError('快照原文大小或SHA校验失败')
     records = read_cache.setdefault('record_payloads', {}) if read_cache is not None else None
     entry = records.get(id(row)) if records is not None else None
     if entry is not None and entry[0] is row and entry[1] is text and entry[2] == digest:
+        if entry[5] > maximum:
+            raise ValueError('快照原文大小或SHA校验失败')
         return entry[4] if binding_only else entry[3]
+    raw = text.encode()
+    if len(raw) > maximum or sha256(raw).hexdigest() != digest:
+        raise ValueError('快照原文大小或SHA校验失败')
     value = json.loads(raw)
     if records is not None and len(records) < 32:
         from copy import deepcopy
@@ -42,7 +43,7 @@ def _record_payload(row, maximum, read_cache=None, *, binding_only=False):
         binding = {key: deepcopy(value[key]) for key in (
             'id', 'date', 'slot', 'version', 'collected_start_at', 'collected_end_at',
             'source_binding', 'source_checks', 'sources') if key in value}
-        records[id(row)] = row, text, digest, value, binding
+        records[id(row)] = row, text, digest, value, binding, len(raw)
         return binding if binding_only else value
     return value
 
@@ -346,20 +347,40 @@ def read_noon_row(connection, day):
         AND length(CAST(payload_json AS BLOB))<=?''', (day, 8 * 1024 * 1024)).fetchone()
 
 
-def attach_changes(snapshots, rows, noon_row=None, *, read_cache=None):
+def attach_changes(snapshots, rows, noon_row=None, *, read_cache=None, cache_market=None):
     from app.services.intraday_service import MODERN_VERSIONS, baseline_for_slot
+    from app.services.pane_read_cache import read_block
 
     records = {row['slot']: row for row in rows}
     by_slot = {snapshot['slot']: snapshot for snapshot in snapshots}
     noon = noon_frame(noon_row, read_cache=read_cache)
+    cacheable = []
     for snapshot in snapshots:
         if snapshot.get('version') not in MODERN_VERSIONS:
             continue
         key = baseline_for_slot(snapshot['slot'], snapshot['version'])
         prior = noon if key == 'noon' else by_slot.get(key)
-        snapshot['board_changes'] = build_changes(snapshot, prior, current_row=records.get(snapshot['slot']),
-                                                  previous_row=noon_row if key == 'noon' else records.get(key),
-                                                  read_cache=read_cache)
+        current_row = records.get(snapshot['slot'])
+        previous_row = noon_row if key == 'noon' else records.get(key)
+        project = partial(build_changes, snapshot, prior, current_row=current_row,
+                          previous_row=previous_row, read_cache=read_cache)
+        if cache_market is not None and prior is not None:
+            current_proof = _read_binding(snapshot, current_row, read_cache)
+            prior_proof = _read_binding(prior, previous_row, read_cache)
+            if current_proof is not None and prior_proof is not None:
+                # The noon frame can recover a true zero only while its raw
+                # receipt still exists. The snapshot SHA alone cannot bind it.
+                noon_evidence = prior['events'] if key == 'noon' else None
+                cacheable.append((snapshot, (current_proof, prior_proof, noon_evidence), project))
+                continue
+        snapshot['board_changes'] = project()
+    if cacheable:
+        projections = read_block(
+            'intraday-board-changes', cacheable[0][0]['date'], [proof for _, proof, _ in cacheable],
+            lambda: {snapshot['slot']: project() for snapshot, _, project in cacheable}, market=cache_market,
+        )
+        for snapshot, _, _ in cacheable:
+            snapshot['board_changes'] = projections[snapshot['slot']]
 
 
 def stock_rows(snapshot):

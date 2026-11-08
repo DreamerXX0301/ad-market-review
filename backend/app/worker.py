@@ -325,6 +325,60 @@ def _workspace_after_data(job):
         except (tasks.TaskPaused,tasks.TaskCancelled):return None
 
 
+def _warm_pane_after_supplement(job, result):
+    """Warm derived reads only for the just-finished closing data chain."""
+    try:
+        parameters = _parameters(job)
+        parent_id = parameters.get('parent_sync_job_id')
+        day = job.get('target_date')
+        snapshot = result.get('snapshot_id')
+        if (not parent_id or not day or not snapshot or result.get('job_id') != job['job_id']
+                or result.get('target_date') != day or result.get('quality') not in ('complete', 'partial')):
+            return
+        from app.services.sync_progress import chain_stop_action
+        with connect() as connection:
+            parent = connection.execute("SELECT * FROM job WHERE job_id=? AND kind='increment'",
+                                        (parent_id,)).fetchone()
+            if (not parent or parent['status'] not in ('succeeded', 'partial', 'no_change')
+                    or _parameters(dict(parent)).get('data_chain_version') != 'sector-charts-increment-v1'
+                    or chain_stop_action(connection, job)):
+                return
+            # The daily_raw SQL snapshot id differs from the filesystem market
+            # generation id. Join by the recorded lineage and the active head.
+            published = connection.execute("""SELECT 1 FROM (
+                SELECT snapshot_id FROM published_head WHERE module='daily_raw'
+                ORDER BY changed_at_ms DESC LIMIT 1
+            ) h
+                JOIN dataset_snapshot s ON s.snapshot_id=h.snapshot_id
+                JOIN job j ON j.job_id=? AND j.status IN ('succeeded','partial')
+                WHERE s.state='published' AND s.job_id=?
+                    AND s.data_end=? AND json_extract(s.lineage_json,'$.market_snapshot_id')=?""",
+                (job['job_id'], parent_id, day, snapshot)).fetchone()
+        if published:
+            from app.services.pane_read_cache import warm_closed_day
+            warm_closed_day(day)
+    except Exception as error:
+        logger.warning('盘后盘面读取缓存预热暂未完成 %s %s', job['job_id'], type(error).__name__)
+
+
+def _warm_pane_after_noon(job, result):
+    try:
+        day = job.get('target_date')
+        snapshot = result.get('snapshot_id')
+        if not day or not snapshot:
+            return
+        with connect() as connection:
+            saved = connection.execute("""SELECT 1 FROM market_noon_snapshot s
+                JOIN job j ON j.job_id=s.job_id AND j.status IN ('succeeded','partial')
+                WHERE s.job_id=? AND s.trade_date=? AND s.snapshot_id=?""",
+                (job['job_id'], day, snapshot)).fetchone()
+        if saved:
+            from app.services.pane_read_cache import warm_noon
+            warm_noon(day)
+    except Exception as error:
+        logger.warning('午评读取缓存预热暂未完成 %s %s', job['job_id'], type(error).__name__)
+
+
 @provider_connection_scope()
 def dispatch(job):
     with connect() as connection:
@@ -392,6 +446,7 @@ def dispatch(job):
         tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',
                      result.get('message','午评快照已独立留存，缺口见详情'),lease_owner=job.get('lease_owner'))
         _capture_suspensions(job)
+        _warm_pane_after_noon(job,result)
     elif kind=='cleanup' and _parameters(job).get('operation')=='workspace_purge':
         from app.services.workspace_purge import execute
         execute(job)
@@ -437,6 +492,7 @@ def dispatch(job):
         _noon_close_after_supplement(job,callback)
         tasks.finish(identifier,'partial' if result.get('quality')!='complete' else 'succeeded',result.get('message','盘面补充数据已核验'))
         _workspace_after_data(job)
+        _warm_pane_after_supplement(job,result)
     elif kind=='source_check' and _parameters(job).get('operation')=='sector_chart':
         from app.services.sector_chart_jobs import execute_chart_job
         result=execute_chart_job(identifier,callback)
@@ -489,6 +545,8 @@ def run(once=False):
         next_research_cleanup=0
         from app.services.automatic_tasks import AutomaticReviewScheduler
         automatic_scheduler=AutomaticReviewScheduler()
+        from app.services.pane_read_cache import closed_day_warm_steps
+        startup_cache = closed_day_warm_steps() if not once else None
         while not stop.is_set():
             if time.monotonic()>=next_research_cleanup:
                 try:
@@ -530,6 +588,14 @@ def run(once=False):
                 job=tasks.claim_next(owner)
             if not job:
                 if once:return
+                if startup_cache is not None:
+                    try:
+                        next(startup_cache)
+                    except StopIteration:
+                        startup_cache = None
+                    except Exception as error:
+                        startup_cache = None
+                        logger.warning('启动盘面缓存预热暂未完成 %s', type(error).__name__)
                 stop.wait(1.5);continue
             heartbeat_stop=threading.Event()
             def heartbeat(identifier=job['job_id'],stop_event=heartbeat_stop,lease_owner=job['lease_owner']):

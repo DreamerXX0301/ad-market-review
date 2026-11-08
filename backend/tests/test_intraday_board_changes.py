@@ -2,6 +2,7 @@
 from copy import deepcopy
 from hashlib import sha256
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -53,6 +54,46 @@ def test_exact_pool_changes_and_intersections_are_separate_and_immutable():
         assert row.get('limit_down_state') == 'sealed' if key == 'new_limit_down' else row['limit_up_state'] in ('sealed', 'broken')
     assert result['source_bindings']['previous']['content_sha256'] == raw_row(prior)['content_sha256']
     assert (prior, current) == original
+
+
+def test_research_cache_requires_published_close_and_rechecks_original_rows(tmp_path, monkeypatch):
+    from app.services import pane_read_cache
+
+    monkeypatch.setattr(pane_read_cache, 'sqlite_path', lambda: tmp_path / 'business.sqlite3')
+    published = '2026-11-04'
+    market = SimpleNamespace(status=lambda: {'data_end': published},
+                             calendar=lambda: ['2026-11-04', DAY])
+    prior, current = frame('1400'), frame('1430', [A])
+    builds = []
+    original = changes.build_changes
+
+    def build(snapshot, previous, **kwargs):
+        if snapshot['slot'] == '1430':
+            builds.append(snapshot['id'])
+        return original(snapshot, previous, **kwargs)
+
+    monkeypatch.setattr(changes, 'build_changes', build)
+
+    def read(value, row=None):
+        snapshots = deepcopy([prior, value])
+        changes.attach_changes(snapshots, [raw_row(prior), row or raw_row(value)],
+                               read_cache={}, cache_market=market)
+        return snapshots[-1]['board_changes']
+
+    before = read(current)
+    assert read(current) == before and len(builds) == 2
+    assert not (tmp_path / pane_read_cache.VERSION).exists()
+
+    published = DAY
+    after = read(current)
+    assert after == before and len(builds) == 3
+    after['groups']['new_sealed']['count'] = -1
+    assert read(current) == before and len(builds) == 3
+
+    changed = frame('1430', [A, B])
+    assert read(changed)['groups']['new_sealed']['count'] == 2 and len(builds) == 4
+    tampered = {**raw_row(changed), 'payload_json': raw_row(current)['payload_json']}
+    assert read(changed, tampered)['state'] == 'unknown' and len(builds) == 5
 
 
 def test_old_partial_broken_samples_are_lower_bounds_and_missing_down_is_unknown():

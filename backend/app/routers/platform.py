@@ -58,12 +58,13 @@ def index_overview(date:str|None=None):
     return JSONResponse(market_service.index_overview(date))
 
 @router.get('/market/{kind}')
-def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000),monitor_scope:str=Query('historical',pattern='^(historical|latest)$'),rank_state:str=Query('all',pattern='^(all|unranked)$')):
+def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000),monitor_scope:str=Query('historical',pattern='^(historical|latest)$'),rank_state:str=Query('all',pattern='^(all|unranked)$'),summary_only:bool=False):
     if rank_state!='all' and kind!='gainers':raise HTTPException(422,'未排名范围仅适用于近30日涨幅榜')
     if monitor_scope!='historical' and kind!='abnormal':raise HTTPException(422,'最新监控名单范围仅适用于监管页')
+    if summary_only and kind!='emotion':raise HTTPException(422,'首屏摘要范围仅适用于市场情绪')
     # Services already return JSON-native read models. Avoid FastAPI recursively
     # copying every bar/evidence field again before JSON encoding large charts.
-    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope,rank_state=rank_state,include_latest_classification_reference=True))
+    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope,rank_state=rank_state,include_latest_classification_reference=True,**({'summary_only':True} if summary_only else {})))
 
 @router.get('/instruments')
 def instruments(query:str='',limit:int=Query(50,ge=1,le=10000),fuzzy:bool=False):
@@ -87,14 +88,22 @@ def topic_hotspots(limit:int=Query(8,ge=1,le=20)):
 
 @router.get('/instruments/{instrument_id}/chart')
 def chart(instrument_id:str,period:str='D',as_of:str|None=None,price_basis:str='none',indicator_continuity:str=Query('quotes',pattern='^(quotes|market_sessions)$'),encoding:str=Query('rows',pattern='^(rows|columns-v1)$')):
+    from app.analytics.market import canonical
     from app.analytics.chart_trendlines import automatic_trendlines
     from app.services.chart_limits import enrich_chart_limits
-    market,status,_=market_service.context(as_of)
-    result=market.chart(instrument_id,period,as_of,price_basis,indicator_continuity=indicator_continuity)
-    if not result['bars']:raise HTTPException(404,'该标的没有已留存K线')
-    expected_snapshot = market.status().get('snapshot_id') if status.get('snapshot_id') else None
-    result['automatic_trendlines'] = automatic_trendlines(result, market.calendar(), expected_snapshot=expected_snapshot)
+    from app.services.chart_read_cache import instrument_projection
     from app.services.chart_transport import chart_payload
+    market,status,day=market_service.context(as_of)
+
+    def build():
+        result=market.chart(instrument_id,period,as_of,price_basis,indicator_continuity=indicator_continuity)
+        if not result['bars']:raise HTTPException(404,'该标的没有已留存K线')
+        expected_snapshot = market.status().get('snapshot_id') if status.get('snapshot_id') else None
+        result['automatic_trendlines'] = automatic_trendlines(result, market.calendar(), expected_snapshot=expected_snapshot)
+        return result
+
+    variant = ('chart', canonical(instrument_id), period.upper(), price_basis, indicator_continuity)
+    result = instrument_projection(market, status, day, variant, build)
     return JSONResponse(chart_payload(enrich_chart_limits(market,result),encoding))
 
 @router.get('/instruments/{instrument_id}/summary')
@@ -109,12 +118,15 @@ def instrument_tracking_baselines(instrument_id:str,as_of:str|None=None):
 
 @router.get('/instruments/{instrument_id}')
 def instrument_detail(instrument_id:str,as_of:str|None=None):
+    from app.services.chart_read_cache import instrument_projection
     from app.services.stock_memberships import stock_membership_fields
     from app.services.stock_chart_patterns import stock_pattern_fields
     market,status,day=market_service.context(as_of)
     symbol=market.instrument(instrument_id)['instrument_id']
     detail_chart=getattr(market,'detail_chart',None)
-    chart=detail_chart(symbol,as_of=day) if callable(detail_chart) else market.chart(symbol,as_of=day)
+    def build():
+        return detail_chart(symbol,as_of=day) if callable(detail_chart) else market.chart(symbol,as_of=day)
+    chart=instrument_projection(market,status,day,('detail',symbol),build)
     row=chart['bars'][-1] if chart['bars'] else {}
     patterns=stock_pattern_fields(market,chart,day)
     current=day==status['data_end']

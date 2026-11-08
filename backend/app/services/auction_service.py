@@ -189,11 +189,20 @@ def read_view(day=None):
     snapshot = _snapshot_view(retained)
     # Classification is a read projection, never part of the immutable quote body.
     # validate_snapshot has already checked both the identities and the 100-row bound.
-    from app.services.market_broken_boards import _board_fields
     payload = snapshot['payload'] if snapshot else {}
     quotes = (payload.get('quotes') or {}).get('items', [])
     benchmark = (payload.get('benchmark') or {}).get('items', [])
-    stock_boards = {item['instrument_id']: _board_fields(item['instrument_id']) for item in quotes}
+    stock_boards = {}
+    if quotes:
+        from app.services.market_broken_boards import _board_fields
+        from app.services.pane_read_cache import read_block
+
+        stock_boards = read_block(
+            'auction-stock-boards', day,
+            (snapshot['snapshot_id'], snapshot['content_sha256']),
+            lambda: {item['instrument_id']: _board_fields(item['instrument_id']) for item in quotes},
+            live_snapshot=True,
+        )
     return {'date': day, 'today': now.date().isoformat(), 'now': now.isoformat(),
             'capture_window': window, 'capture_reason': reason,
             'can_capture': False, 'can_retry': False, 'can_resume': False,

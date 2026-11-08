@@ -15,7 +15,7 @@ from app.services.market_supplement import load_supplement_with_fingerprint
 from app.services.member_turnover import turnover_index, turnover_for
 from app.services.stock_memberships import current_memberships
 from app.services.stock_summary import _master, summary_fields
-from app.services.tracking_quotes import tracking_quotes
+from app.services.tracking_quotes import action_dates_for, tracking_quotes
 from app.services.watchlist import _since_added
 from app.services.workspace_common import fail, rows
 from app.services import zodiac
@@ -37,7 +37,7 @@ def process_metrics(row, history, actions, calendar, day, quote, benchmark, benc
     start = row['added_business_date']
     since = _since_added({'instrument_id': row['instrument_id'], 'added_business_date': start,
         'watchlist_entry_price': row['entry_price'], 'watchlist_entry_price_basis': row['entry_basis'].get('price_basis'),
-        'watchlist_entry_reason': row['entry_basis'].get('reason')}, quote, actions, day)
+        'watchlist_entry_reason': row['entry_basis'].get('reason')}, quote, action_dates_for(actions, row['instrument_id']), day)
     result = {'since_entry_pct': since['watchlist_change_pct'], 'since_entry_reason': since['watchlist_change_reason'],
         'holding_sessions': calendar.index(day)-calendar.index(start) if start in calendar and day in calendar and start <= day else None,
         'peak_return_pct': None, 'drawdown_pct': None, 'max_drawdown_pct': None, 'relative_benchmark_pp': None,
