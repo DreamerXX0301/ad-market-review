@@ -1,13 +1,18 @@
 import json
 import os
 from hashlib import sha256
+from pathlib import Path
+import tempfile
 from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.infrastructure.config import APP_VERSION
+from desktop_licensing.ledger import Ledger
 from desktop_preview import runtime
 
 
@@ -74,6 +79,139 @@ def test_same_windows_profile_uses_the_existing_preview_authorization(tmp_path, 
     monkeypatch.setattr(runtime, "default_state_directory", lambda: user_root / "licensing")
     client = runtime._license_client(tmp_path)
     assert client.directory == user_root / "license-preview-v1" / sha256(public.public_bytes_raw()).hexdigest()[:20]
+
+
+def test_install_starts_clean_on_selected_volume_with_same_license_identity(tmp_path, monkeypatch):
+    package = tmp_path / "selected" / "AMR-Desktop" / "app"
+    package.mkdir(parents=True)
+    (package / "AMR-INSTALLATION.json").write_text('{"format":1}', encoding="utf-8")
+    _record(package, "a" * 40)
+    signer = Ed25519PrivateKey.generate()
+    public = signer.public_key()
+    (package / "verify.pem").write_bytes(public.public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
+    ))
+    fingerprint = sha256(public.public_bytes_raw()).hexdigest()[:20]
+    local = tmp_path / "other-volume" / "Local"
+    base = local / "ad-market-review"
+    old_data = base / "workbench-tray-native-v2" / fingerprint / "data"
+    old_data.mkdir(parents=True)
+    old_file = old_data / "previous-work.txt"
+    old_file.write_bytes(b"prior data")
+    old_temp = tmp_path / "old-temp"
+    old_temp.mkdir()
+    monkeypatch.setattr(os, "environ", {
+        **os.environ, "TEMP": str(old_temp), "SHIXU_DATA_DIR": str(old_data),
+    })
+    monkeypatch.setattr(tempfile, "tempdir", str(old_temp))
+    monkeypatch.setattr(runtime, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(runtime, "default_state_directory", lambda: base / "licensing")
+    monkeypatch.setattr(runtime, "_install_roots", lambda *_: pytest.fail("legacy setup called"))
+    protector = Fernet(Fernet.generate_key())
+    monkeypatch.setattr(runtime, "protect", protector.encrypt)
+    monkeypatch.setattr(runtime, "unprotect", protector.decrypt)
+    existing = runtime._license_client(package)
+    machine = existing.machine_code()
+    ledger = Ledger(tmp_path / "issuer.sqlite3")
+    ledger.initialize(signer)
+    card = ledger.issue("permanent", "fixture", machine, signer)
+    assert existing.activate(card["code"])["state"] == "active"
+    checked = []
+    monkeypatch.setattr(runtime, "require_local_ntfs", checked.append)
+    launched = []
+
+    def serve(actual_package, profile, client):
+        assert actual_package == package
+        assert client.directory == base / "license-preview-v1" / fingerprint
+        assert client.machine_code() == machine
+        assert client.status()["state"] == "active"
+        assert profile.name == fingerprint
+        assert profile.parent.parent == package.parent / "workspace"
+        data = profile / "data"
+        work = data / "work"
+        scratch = work / "tmp"
+        assert Path.cwd() == scratch
+        assert os.environ["SHIXU_DATA_DIR"] == str(data)
+        assert os.environ["SHIXU_CREDENTIAL_MASTER_KEY_FILE"] == str(profile / "secrets/credential-master.key")
+        assert os.environ["SQLITE_TMPDIR"] == str(work)
+        assert {os.environ[name] for name in ("TEMP", "TMP", "TMPDIR")} == {str(scratch)}
+        assert tempfile.gettempdir() == str(scratch)
+        with tempfile.TemporaryDirectory() as created:
+            assert Path(created).parent == scratch
+        assert not any((data / "business").iterdir())
+        launched.append(profile)
+
+    monkeypatch.setattr(runtime, "_serve", serve)
+    before = Path.cwd()
+    runtime.run_preview(package)
+    assert Path.cwd() == before
+    assert os.environ["TEMP"] == str(old_temp)
+    assert tempfile.tempdir == str(old_temp)
+    assert checked == [package, local]
+    assert launched and old_file.read_bytes() == b"prior data"
+    with pytest.raises(ValueError, match="独立工作台"):
+        runtime.run_preview(package, import_previous=True)
+
+
+@pytest.mark.parametrize("marker", [None, '{"format":true}', '{"format":1,"data":"C:/other"}'])
+def test_installed_layout_fails_closed_with_missing_or_invalid_marker(tmp_path, monkeypatch, marker):
+    package = tmp_path / "AMR-Desktop" / "app"
+    package.mkdir(parents=True)
+    if marker is not None:
+        (package / "AMR-INSTALLATION.json").write_text(marker, encoding="utf-8")
+    monkeypatch.setattr(runtime, "require_local_ntfs", lambda _: None)
+    with pytest.raises(ValueError, match="安装标记"):
+        runtime._installed_workspace(package)
+    assert not (package.parent / "workspace").exists()
+
+
+def test_installed_layout_rejects_ancestor_symlink(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    package = target / "AMR-Desktop" / "app"
+    package.mkdir(parents=True)
+    (package / "AMR-INSTALLATION.json").write_text('{"format":1}', encoding="utf-8")
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    monkeypatch.setattr(runtime, "require_local_ntfs", lambda _: pytest.fail("path traversed"))
+    with pytest.raises(ValueError, match="普通目录"):
+        runtime._installed_workspace(alias / "AMR-Desktop" / "app")
+    assert not (package.parent / "workspace").exists()
+
+
+def test_installed_diagnostic_routes_temporary_files_before_worker_start(tmp_path, monkeypatch):
+    package = tmp_path / "AMR-Desktop" / "app"
+    package.mkdir(parents=True)
+    (package / "AMR-INSTALLATION.json").write_text('{"format":1}', encoding="utf-8")
+    _record(package, "a" * 40)
+    workspace = package.parent / "workspace"
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.setattr(runtime, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(runtime, "require_local_ntfs", lambda _: None)
+    monkeypatch.setattr(runtime, "protect", lambda value: value)
+    monkeypatch.setattr(runtime, "unprotect", lambda value: value)
+
+    class VerifiedPaths(Exception):
+        pass
+
+    def verify_before_worker(actual_package):
+        assert actual_package == package
+        data = Path(os.environ["SHIXU_DATA_DIR"])
+        assert data.parent.parent == workspace
+        assert Path.cwd() == data / "work/tmp"
+        assert tempfile.gettempdir() == str(Path.cwd())
+        assert os.environ["TEMP"] == str(Path.cwd())
+        assert os.environ["SQLITE_TMPDIR"] == str(data / "work")
+        raise VerifiedPaths
+
+    monkeypatch.setattr(runtime, "_verify_native_modules", verify_before_worker)
+    before_cwd, before_tempdir = Path.cwd(), tempfile.tempdir
+    with pytest.raises(VerifiedPaths):
+        runtime.diagnose(package)
+    assert not list(workspace.iterdir())
+    assert Path.cwd() == before_cwd and tempfile.tempdir == before_tempdir
 
 
 def test_reopen_keeps_the_local_browser_origin(tmp_path):

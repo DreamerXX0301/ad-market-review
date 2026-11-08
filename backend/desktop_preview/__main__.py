@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import sys
 
@@ -16,7 +17,7 @@ def main(argv=None) -> int:
     operation.add_argument("--diagnose", action="store_true", help="用隔离空库检查运行时、页面与工作进程")
     operation.add_argument("--import-previous", action="store_true", help="从已关闭的旧版导入独立数据副本")
     args = parser.parse_args(argv)
-    package = Path(__file__).resolve().parents[2]
+    package = Path(os.path.abspath(__file__)).parents[2]
     if sys.platform == "win32":
         multiprocessing.set_executable(str(package / "runtime" / "pythonw.exe"))
     try:

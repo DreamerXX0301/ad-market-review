@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble a private Windows x64 desktop preview without collecting user data."""
+"""Build the private Windows x64 workbench installer or portable ZIP."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ GO_URL = "https://dl.google.com/go/go1.27.3.darwin-arm64.tar.gz"
 GO_SHA256 = "dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2"
 CONTRACT_FILES = ("ai-evidence-answer-v2.schema.json", "ai-research-interpretation-v1.schema.json")
 LAUNCHER = "AMR-Desktop-Preview.exe"
+GUIDE = "使用说明.html"
 
 
 def run(*args: str, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
@@ -218,25 +219,28 @@ def stage_application(package: Path) -> None:
     copy_file(ROOT / "DESKTOP_VERSION", package / "DESKTOP_VERSION")
 
 
-def build_launcher(package: Path, scratch: Path, go_archive: Path) -> None:
-    with tarfile.open(go_archive) as archive:
-        archive.extractall(scratch, filter="data")
-    go = scratch / "go"
-    env = {
+def windows_go_environment(scratch: Path) -> dict[str, str]:
+    return {
         **os.environ,
         "GOOS": "windows", "GOARCH": "amd64", "GOAMD64": "v1", "GOENV": "off", "GOTOOLCHAIN": "local",
         "GOPROXY": "off", "GOSUMDB": "off", "GOWORK": "off", "CGO_ENABLED": "0",
         "GOFLAGS": "", "GOEXPERIMENT": "",
         "GOCACHE": str(scratch / "go-cache"), "GOPATH": str(scratch / "go-path"),
     }
+
+
+def build_launcher(package: Path, scratch: Path, go_archive: Path) -> None:
+    with tarfile.open(go_archive) as archive:
+        archive.extractall(scratch, filter="data")
+    go = scratch / "go"
     run(str(go / "bin" / "go"), "build", "-trimpath", "-ldflags=-s -w -buildid= -H=windowsgui",
         "-o", str(package / LAUNCHER),
-        str(ROOT / "scripts" / "windows_desktop_launcher.go"), env=env)
+        str(ROOT / "scripts" / "windows_desktop_launcher.go"), env=windows_go_environment(scratch))
     for filename in ("LICENSE", "PATENTS"):
         copy_file(go / filename, package / "licenses" / f"Go-{filename}.txt")
 
 
-def verify_binaries(package: Path) -> int:
+def verify_binaries(package: Path, *, gui_name: str = LAUNCHER) -> int:
     count = 0
     for path in package.rglob("*"):
         if path.suffix.lower() not in (".exe", ".dll", ".pyd"):
@@ -249,7 +253,7 @@ def verify_binaries(package: Path) -> int:
             file.seek(pe_offset)
             if file.read(6) != b"PE\0\0\x64\x86":
                 raise ValueError(f"Windows x64 PE required: {path.name}")
-            if path == package / LAUNCHER:
+            if path == package / gui_name:
                 file.seek(pe_offset + 24 + 68)  # IMAGE_OPTIONAL_HEADER64.Subsystem
                 if file.read(2) != b"\x02\0":
                     raise ValueError("The desktop launcher must use the Windows GUI subsystem")
@@ -329,9 +333,38 @@ def zip_package(package: Path, output: Path, epoch: int) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
+def build_installer(package: Path, output: Path, guide: Path, scratch: Path, epoch: int) -> None:
+    source = scratch / "installer-src"
+    source.mkdir()
+    names = []
+    for file in sorted((ROOT / "scripts/windows_installer").glob("*.go")):
+        if not file.name.endswith("_test.go"):
+            copy_file(file, source / file.name)
+            names.append(file.name)
+    if not names:
+        raise ValueError("Windows installer sources are missing")
+    payload = source / "payload.zip"
+    zip_package(package, payload, epoch)
+    linker = f"-s -w -buildid= -H=windowsgui -X main.payloadSHA256={digest(payload)}"
+    with tempfile.TemporaryDirectory(prefix=".amr-setup-", dir=output.parent) as temporary:
+        staging = Path(temporary)
+        executable = staging / output.name
+        run(str(scratch / "go/bin/go"), "build", "-trimpath", f"-ldflags={linker}",
+            "-o", str(executable), *names, cwd=source, env=windows_go_environment(scratch))
+        if verify_binaries(staging, gui_name=output.name) != 1:
+            raise ValueError("Expected a single Windows installer executable")
+        copy_file(package / GUIDE, staging / GUIDE)
+        os.link(staging / GUIDE, guide)
+        try:
+            os.link(executable, output)
+        except OSError:
+            guide.unlink()
+            raise
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True, help="New installer .exe or portable .zip")
     parser.add_argument("--auth-preview", type=Path, required=True, help="Verified Windows authorization ZIP")
     parser.add_argument("--inputs", type=Path, help="Optional pre-fetched go.tar.gz, sqlite-dll.zip and wheels/")
     parser.add_argument("--scratch", type=Path, help="Existing folder for an isolated build")
@@ -343,11 +376,14 @@ def main() -> None:
     if not re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", desktop_version):
         raise ValueError("Invalid desktop version")
     output = args.output.expanduser().absolute()
-    if output.suffix != ".zip" or output.exists() or output.is_symlink():
-        raise ValueError("Choose a new .zip output path")
+    if output.suffix not in {".zip", ".exe"} or output.exists() or output.is_symlink():
+        raise ValueError("Choose a new .exe or .zip output path")
+    guide = output.with_name(GUIDE) if output.suffix == ".exe" else None
+    if guide is not None and (guide.exists() or guide.is_symlink()):
+        raise ValueError("Choose a delivery directory without an existing user guide")
     dirty = bool(capture("git", "status", "--short", "--untracked-files=normal"))
-    if dirty and not args.allow_working_tree:
-        raise ValueError("Freeze the source before building a preview, or explicitly label a development build")
+    if dirty and (guide is not None or not args.allow_working_tree):
+        raise ValueError("Freeze the source before building an installer or release ZIP")
     source_commit = capture("git", "rev-parse", "HEAD")
     epoch = int(capture("git", "show", "-s", "--format=%ct", source_commit))
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -398,20 +434,24 @@ def main() -> None:
             f"Zig {native.ZIG_VERSION}: https://ziglang.org/ (see licenses/Zig-LICENSE.txt and MinGW-COPYING.txt).\n",
             encoding="utf-8",
         )
-        copy_file(ROOT / "docs/Windows使用说明.html", package / "使用说明.html")
+        copy_file(ROOT / "docs/Windows使用说明.html", package / GUIDE)
+        install_help = (
+            "双击安装 EXE，选择本机 NTFS 盘上的文件夹。安装完成后会打开工作台。\n"
+            "程序位于 AMR-Desktop\\app，业务数据和计算临时文件位于 AMR-Desktop\\workspace。\n"
+            "本安装版从空库开始。换装前请退出旧版，原业务文件留在原处。\n"
+            if guide else
+            "完整解压 ZIP，再双击 AMR-Desktop-Preview.exe。\n"
+            "从旧便携版换装时请先退出旧版。首次打开时按界面提示选择是否导入。\n"
+        )
         (package / "READ-ME.txt").write_text(
             f"冒险的梦想家 Windows x64 桌面版 {desktop_version}\n\n"
-            "完整解压 ZIP，再双击 AMR-Desktop-Preview.exe。\n"
+            f"{install_help}"
             "双击同目录的 使用说明.html，可离线查看首次配置、自动采集、全部菜单和图表操作。\n"
             "在任务栏通知区域找到工作台图标，图标也可能位于折叠菜单。\n"
             "双击图标，或右键选择「打开工作台」，使用 Windows 默认浏览器打开。\n"
             "关闭浏览器页面后工作台继续运行。右键选择「退出工作台」可安全停止。\n"
-            "找不到托盘图标时，可在解压目录的 PowerShell 运行 .\\AMR-Desktop-Preview.exe --quit 请求安全退出。\n"
+            "找不到托盘图标时，可在程序目录的 PowerShell 运行 .\\AMR-Desktop-Preview.exe --quit 请求安全退出。\n"
             "同一 Windows 用户的有效测试授权可沿用，也可按页面提示导入新授权。\n\n"
-            "请先退出旧版。首次打开新版时，若检测到旧版数据，会提示选择迁移或开始新工作台。\n"
-            "也可在新版首次正常启动前，于解压目录的 PowerShell 执行以下命令。\n"
-            ".\\AMR-Desktop-Preview.exe --import-previous\n"
-            "原预览数据保留。按弹窗结果确认完成后，再正常启动新版。\n\n"
             "可在 PowerShell 运行 .\\AMR-Desktop-Preview.exe --diagnose 检查运行环境，结果会在弹窗显示。\n"
             "后端业务、授权和维护模块以原生扩展交付，启动引导保留 Python 字节码，前端提供编译后的文件。"
             "程序仍可被逆向分析。\n",
@@ -443,9 +483,13 @@ def main() -> None:
         (package / "BUILD-MANIFEST.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        zip_package(package, output, epoch)
+        if guide is None:
+            zip_package(package, output, epoch)
+        else:
+            build_installer(package, output, guide, scratch, epoch)
     print(json.dumps({"path": str(output), "sha256": digest(output), "size": output.stat().st_size,
-                      "source_commit": source_commit, "build_id": build_id}, ensure_ascii=False))
+                      "source_commit": source_commit, "build_id": build_id,
+                      **({"guide": str(guide), "guide_sha256": digest(guide)} if guide else {})}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

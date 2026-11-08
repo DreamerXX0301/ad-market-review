@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import ExitStack, chdir, contextmanager, nullcontext
 from hashlib import sha256
 from importlib import import_module
 from importlib.machinery import ExtensionFileLoader
@@ -16,7 +16,7 @@ import signal
 import socket
 import stat
 import sys
-from tempfile import TemporaryDirectory
+import tempfile
 import threading
 from time import monotonic
 
@@ -74,6 +74,46 @@ def _install_roots(client: DesktopClient) -> tuple[Path, Path, Path, Path]:
     return preview, tray, native_v1, native
 
 
+def _installed_workspace(package: Path) -> Path | None:
+    marker = package / "AMR-INSTALLATION.json"
+    installed_layout = package.name.lower() == "app" and package.parent.name.lower() == "amr-desktop"
+    if installed_layout:
+        if not package.is_absolute() or ".." in package.parts:
+            raise ValueError("工作台安装目录布局无效")
+        for component in (*reversed(package.parents), package):
+            _ordinary(component, directory=True)
+    try:
+        _ordinary(marker, directory=False)
+    except FileNotFoundError:
+        if installed_layout:
+            raise ValueError("安装目录缺少安装标记，请从安装程序重新安装") from None
+        return None
+    if not installed_layout:
+        raise ValueError("工作台安装目录布局无效")
+    require_local_ntfs(package)
+    from app.infrastructure.file_operations import bound_file
+
+    with bound_file(package, (marker.name,)) as file:
+        with os.fdopen(file.descriptor, "rb", closefd=False) as stream:
+            contents = stream.read(129)
+    try:
+        record = json.loads(contents) if len(contents) <= 128 else None
+    except (ValueError, UnicodeError):
+        record = None
+    if (not isinstance(record, dict) or set(record) != {"format"}
+            or type(record["format"]) is not int or record["format"] != 1):
+        raise ValueError("工作台安装标记无效")
+    return _directory(package.parent, "workspace")
+
+
+def _installed_profile(workspace: Path, client: DesktopClient) -> Path:
+    local = client.directory.parents[2]
+    _ordinary(local, directory=True)
+    require_local_ntfs(local)
+    account = sha256(os.path.normcase(os.path.normpath(local)).encode("utf-8")).hexdigest()[:20]
+    return _directory(workspace, account) / client.directory.name
+
+
 def _release_record(package: Path) -> dict:
     from app.infrastructure.config import APP_VERSION
 
@@ -94,6 +134,27 @@ def _configure_environment(data: Path, key: Path) -> None:
         SHIXU_CREDENTIAL_MASTER_KEY_FILE=str(key),
         SQLITE_TMPDIR=str(data / "work"),
     )
+
+
+@contextmanager
+def _selected_temp(data: Path):
+    work = _directory(_directory(data, "work"), "tmp")
+    original = {name: os.environ.get(name) for name in ("TEMP", "TMP", "TMPDIR")}
+    original_tempdir = tempfile.tempdir
+    os.environ.update({name: str(work) for name in original})
+    # Libraries may have queried tempfile before the runtime was configured.
+    tempfile.tempdir = str(work)
+    try:
+        # DuckDB's default relative .tmp directory also belongs here.
+        with chdir(work):
+            yield
+    finally:
+        tempfile.tempdir = original_tempdir
+        for name, value in original.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _configure_instance(root: Path, package: Path) -> None:
@@ -282,8 +343,14 @@ def run_preview(package: Path, *, import_previous: bool = False) -> dict | None:
         raise ValueError("请在 Windows x64 测试机运行")
     from app.infrastructure.file_operations import locked_file
 
+    workspace = _installed_workspace(package)
+    if workspace is not None and import_previous:
+        raise ValueError("安装版使用所选磁盘上的独立工作台")
     client = _license_client(package)
-    preview, tray, native_v1, root = _install_roots(client)
+    if workspace is None:
+        preview, tray, native_v1, root = _install_roots(client)
+    else:
+        root = _installed_profile(workspace, client)
     instance_lock = root.parent / f"instance-{root.name}.lock"
     try:
         with locked_file(instance_lock, exclusive=True, blocking=False):
@@ -292,7 +359,7 @@ def run_preview(package: Path, *, import_previous: bool = False) -> dict | None:
                 if source is None:
                     raise ValueError("没有找到可导入的旧版工作台数据")
                 return import_legacy(source, root, _release_record(package))
-            if not root.exists() and not root.is_symlink():
+            if workspace is None and not root.exists() and not root.is_symlink():
                 source = select_import_source(preview, tray, native_v1)
                 if source is not None:
                     choice = choose_previous()
@@ -302,7 +369,8 @@ def run_preview(package: Path, *, import_previous: bool = False) -> dict | None:
                         import_legacy(source, root, _release_record(package))
             _directory(root.parent, root.name)
             _configure_instance(root, package)
-            _serve(package, root, client)
+            with _selected_temp(root / "data") if workspace is not None else nullcontext():
+                _serve(package, root, client)
     except BlockingIOError:
         raise RuntimeError("工作台已经打开或正在收尾") from None
 
@@ -347,7 +415,11 @@ def diagnose(package: Path) -> dict:
     import sqlite3
 
     manifest = json.loads((package / "BUILD-MANIFEST.json").read_text(encoding="utf-8"))
-    with TemporaryDirectory(prefix="amr-desktop-diagnose-") as temporary:
+    workspace = _installed_workspace(package) if sys.platform == "win32" else None
+    with ExitStack() as diagnostics:
+        temporary = diagnostics.enter_context(tempfile.TemporaryDirectory(
+            prefix="amr-desktop-diagnose-", dir=workspace,
+        ))
         root = Path(temporary).resolve()
         if sys.platform == "win32":
             require_local_ntfs(root)
@@ -358,6 +430,8 @@ def diagnose(package: Path) -> dict:
         key = root / "diagnostic-only.key"
         key.write_bytes(Fernet.generate_key())
         _configure_environment(data, key)
+        if workspace is not None:
+            diagnostics.enter_context(_selected_temp(_directory(root, "data")))
         native_modules = {"native_modules": _verify_native_modules(package)} if sys.platform == "win32" else {}
 
         from app.infrastructure.database import check_sqlite_runtime, connect

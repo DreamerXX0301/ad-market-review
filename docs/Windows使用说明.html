@@ -55,7 +55,7 @@ footer{color:var(--sub);max-width:1180px;padding:0 20px 26px;margin:auto;font-si
 </head>
 <body>
 <header class="hero" id="guide-top">
-<p class="eyebrow">WINDOWS 0.1.26 · 离线使用手册</p>
+<p class="eyebrow">WINDOWS 0.1.26 安装版 · 离线使用手册</p>
 <h1>冒险的梦想家</h1>
 <p class="desc">从首次配置到日常盘面、策略筛选、跟踪提醒和复盘。每个章节说明入口、操作、读数和使用边界。应用内数据以实际核验结果为准。</p>
 <div class="shortcuts">
@@ -75,24 +75,25 @@ footer{color:var(--sub);max-width:1180px;padding:0 20px 26px;margin:auto;font-si
 </nav>
 <main>
 <section id="getting-started">
-<h2>从解压到第一次看到行情</h2>
+<h2>从安装到第一次看到行情</h2>
 <p>这份手册可以离线打开。授权在本机核验，验证或更新外部行情、调用 AI 模型时需要网络。</p>
 <ol class="steps">
-<li><strong>完整解压并启动。</strong> 在 Windows 11 x64 的本机磁盘新建目录，把 ZIP 整包解压，双击 <code>AMR-Desktop-Preview.exe</code>。应用会用默认浏览器打开本机工作台。蓝紫色图标可能在任务栏右下角的隐藏图标「∧」里，悬停时显示「冒险的梦想家」。</li>
+<li><strong>双击安装程序并选盘。</strong> 在 Windows 11 x64 打开 <code>AMR-Desktop-0.1.26-Windows-x64-Setup.exe</code>，选择本机 NTFS 磁盘上有写权限的文件夹。选择 <code>D:\</code> 时，程序会安装到 <code>D:\AMR-Desktop</code>。首次初始化前，给所选盘预留约 10 GB 可用空间，供下载、校验和临时计算使用。</li>
+<li><strong>打开工作台。</strong> 安装完成后会启动工作台，使用默认浏览器显示页面。以后可以从托盘双击图标，或在安装目录的 <code>app</code> 子目录运行 <code>AMR-Desktop-Preview.exe</code>。托盘图标也可能在任务栏右下角的隐藏图标中。</li>
 <li><strong>激活工作台。</strong> 授权页可以复制机器码。拿到为该机器码签发的 <code>.amr-license</code> 后选择文件并导入。激活后可点「打开工作台」。以后可从右上角「授权管理」查看到期时间、导入新卡。同一 Windows 用户且本地授权身份保留时，已激活的有效卡可沿用。</li>
-<li><strong>先确认是否导入旧数据。</strong> 新装会打开空工作台。如果这台电脑有 Windows 0.1 或更早的受支持桌面版数据，先从旧版退出并等任务收尾，再在新版首次启动提示中选择导入。系统先做备份并核验独立恢复副本，再启用新版数据目录。多个旧版本的数据同时存在时，优先导入 Windows 0.1 原生托盘版。导入后的排队任务保持暂停，自动计划需按需重新开启。</li>
+<li><strong>测试版换装。</strong> 先从旧版托盘退出并等待任务收尾。这份安装版从空工作台开始，需重新配置行情 Key 和执行初始化。旧测试版文件继续保存在原处。</li>
 <li><strong>配置扶摇并验证。</strong> 左侧「数据源」→「行情数据源」→ 扶摇「配置」。填自己的 API Key，开启「启用此数据源」和「设为当前来源」，点击「保存配置」，再点「验证能力」。看日 K、指数、日历、批量等本次实际核验结果。也可从数据中心点「配置数据源」。</li>
 <li><strong>手动首次初始化。</strong> 进入「数据中心」的「首次初始化」卡片，确认同步来源和目标范围，提交后查看「当前任务」。等待主行情发布及题材、板块 K 和盘面补充的后续阶段。初始化可能较久，时间取决于网络、权限和覆盖范围。详见<a href="#data-initialize">首次初始化</a>。</li>
 <li><strong>看一份已发布交易日。</strong> 先确认数据中心的「当前业务日」与「数据覆盖」，再打开「盘面总览」看当日结构，点一只股票检查 K 线。随后可按需设置<a href="#data-automation">自动采集计划</a>和<a href="#model-setup">AI 模型</a>。模型未配置时，可以先使用行情、图表和本地研究功能。</li>
 </ol>
-<div class="callout"><strong>网页与后台是两件事</strong><p>关闭网页后，本机任务继续运行。双击托盘图标、右键「打开工作台」或再次双击 EXE 可以重开。正式退出用托盘「退出工作台」，等待正在执行的任务收尾。找不到图标时，可在解压目录的 PowerShell 运行 <code>.\AMR-Desktop-Preview.exe --quit</code>。电脑关机、休眠或工作台退出时，后台无法在时窗内采集。</p></div>
+<div class="callout"><strong>网页与后台是两件事</strong><p>关闭网页后，本机任务继续运行。双击托盘图标、右键「打开工作台」或再次双击程序 EXE 可以重开。正式退出用托盘「退出工作台」，等待正在执行的任务收尾。找不到图标时，可在安装目录的 <code>app</code> 子目录打开 PowerShell，运行 <code>.\AMR-Desktop-Preview.exe --quit</code>。电脑关机、休眠或工作台退出时，后台无法在时窗内采集。</p></div>
 
 <h3 id="license-and-files">授权、数据目录和升级</h3>
 <ul>
 <li><strong>授权离线核验。</strong> 签发时已经确定截止时间，导入有效的新卡后以新卡的签名截止时间为准。同一文件重导沿用其截止时间。到期后可进入授权管理并导入新卡，已开始的任务按规则收尾。机器码随本地 Windows 用户身份保存，系统重装或清理该用户的应用数据可能需要补发。</li>
-<li><strong>程序与业务数据分开。</strong> 解压目录装的是程序。业务库、已发布文件、研究记录等在当前 Windows 用户的 <code>%LOCALAPPDATA%\ad-market-review\workbench-tray-native-v2</code> 下，以验签指纹再分目录。授权使用独立的 <code>license-preview-v1</code>。凭据密文与主密钥分开保存，迁移时需要保留原主密钥，或在新实例重新配置 Key。</li>
-<li><strong>升级先保留旧数据。</strong> 先正常退出旧版，保留旧程序和原数据，再解压新版本到新目录。以迁移提示、核验结果和恢复回执为准。首次启动已经选择新库时，旧数据导入需另建独立恢复目录。</li>
-<li><strong>启动诊断。</strong> 在解压目录运行 <code>.\AMR-Desktop-Preview.exe --diagnose</code>，在临时空库检查 API、前端、独立 worker、备份恢复、DPAPI 及原生扩展加载。结果窗口中 <code>api</code>、<code>frontend</code>、<code>worker_once</code>、<code>backup_restore</code> 应为 <code>ok</code>。</li>
+<li><strong>安装目录。</strong> <code>AMR-Desktop\app</code> 保存程序，<code>AMR-Desktop\workspace</code> 保存业务库、行情、缓存和工作台临时文件。授权身份继续由 Windows 当前用户的 <code>%LOCALAPPDATA%\ad-market-review\license-preview-v1</code> 保存，以便同一账号沿用有效卡。</li>
+<li><strong>现有目录。</strong> 安装器会创建独立的 <code>AMR-Desktop</code> 目录。所选文件夹已有同名目录时，请选择另一个文件夹，并保留原安装和业务数据。</li>
+<li><strong>启动诊断。</strong> 在安装目录的 <code>app</code> 子目录运行 <code>.\AMR-Desktop-Preview.exe --diagnose</code>，在临时空库检查 API、前端、独立 worker、备份恢复、DPAPI 及原生扩展加载。结果窗口中 <code>api</code>、<code>frontend</code>、<code>worker_once</code>、<code>backup_restore</code> 应为 <code>ok</code>。</li>
 </ul>
 </section>
 
@@ -449,6 +450,7 @@ footer{color:var(--sub);max-width:1180px;padding:0 20px 26px;margin:auto;font-si
 <thead><tr><th scope="col">现象</th><th scope="col">优先核对</th></tr></thead>
 <tbody>
 <tr><th scope="row">初始化按钮不可用</th><td>数据中心的同步来源、扶摇 Key 是否已保存并启用、是否设为当前来源、是否已有主行情或任务正在运行。</td></tr>
+<tr><th scope="row">初始化下载后出现 OutOfMemoryException</th><td>查看安装盘剩余空间和「同步历史」的阶段日志。下载后的校验、排序和发布仍会占用内存与磁盘临时空间。保留工作台目录和失败任务记录，腾出空间后按失败阶段重试。</td></tr>
 <tr><th scope="row">图表和榜单停留在上一交易日</th><td>观察日是否被固定，当日盘后任务是否已发布，当前业务日和模块覆盖日分别是哪天。</td></tr>
 <tr><th scope="row">自动任务没生成</th><td>后台与授权是否有效、对应开关是否保存、电脑是否在时窗内保持唤醒，随后看「最近检查」及其跳过原因。</td></tr>
 <tr><th scope="row">只有部分行业有涨跌停家数</th><td>分别看指数行情、成员名单日期及事件池覆盖。指数价格可以已发布，历史成员仍可能缺档。</td></tr>
