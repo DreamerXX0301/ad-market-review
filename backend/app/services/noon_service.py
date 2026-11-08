@@ -18,9 +18,10 @@ from app.services.noon_collection import (CHINA, VERSION, CAPTURE_START, CAPTURE
     verified_empty_noon_pool_page)
 from app.services.noon_analysis import (INDEX_NAMES, board_summary, build_analysis, build_summary,
     normalize_pool, normalize_quotes, sector_members)
+from app.services.noon_retention import WINDOW_DAYS
 
-RETENTION = {'calendar_days': 28, 'automatic': True, 'trigger': 'after_increment',
-             'notice': '保留28个自然日，到期随成功盘后增量自动清理，不弹确认；未运行增量时暂留。'}
+RETENTION = {'calendar_days': WINDOW_DAYS, 'automatic': True, 'trigger': 'after_increment',
+             'notice': f'保留{WINDOW_DAYS}个自然日，到期随成功盘后增量自动清理，未运行增量时暂留。'}
 
 
 def now_china():
@@ -330,7 +331,7 @@ def create_capture(payload):
 
                 params = {'operation': 'noon_snapshot', 'version': VERSION, 'source_id': 'fuyao',
                           'date': day, 'window_end_at': window['end_at'], 'daily_once': True,
-                          'retention_calendar_days': 28, 'suspension_evidence': SUSPENSION_VERSION}
+                          'retention_calendar_days': WINDOW_DAYS, 'suspension_evidence': SUSPENSION_VERSION}
                 identifier = new_id('job'); stamp = int(now_china().timestamp() * 1000)
                 connection.execute('''INSERT INTO job(job_id,request_key,logical_key,kind,target_date,parameters_json,
                     parameters_hash,status,planned_batches,created_at_ms) VALUES(?,?,?,'source_check',?,?,?,'queued',100,?)''',

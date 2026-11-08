@@ -11,7 +11,7 @@ from app.core import get_market, json_clean, digest
 from app.services.market_supplement import load_supplement, load_supplement_with_fingerprint, annual_coverage
 from app.services.market_history import resolve_reference, data_coverage
 from app.services.market_amount import amount_change_metadata
-from app.services.pane_read_cache import read_block, retained_days, snapshot_evidence
+from app.services.pane_read_cache import historical_cache_requested, read_block, retained_days, snapshot_evidence
 from app.services.sector_history import sector_prices_for_date
 from app.services.sector_views import sector_view
 
@@ -57,7 +57,7 @@ def dated_events(reference,day):
     return existing
 
 
-def prior_ladder_feedback(market,reference,day,indexed):
+def prior_ladder_feedback(market,reference,day,indexed,*,evidence=None):
     calendar=market.calendar();position=calendar.index(day)
     if not position:return []
     previous=calendar[position-1]
@@ -96,7 +96,18 @@ def prior_ladder_feedback(market,reference,day,indexed):
             industries=[tag for tag in tags if tag.get('kind')=='industry'],topics_state=state,
             topics_observed_date=day,topics_scope=scope)
     from app.services.stock_board_presentation import decorate_board_collections
-    decorated=decorate_board_collections(market,status,day,reference,{'feedback':list(found.values())})['feedback']
+    def decorate():
+        return decorate_board_collections(market,status,day,reference,{'feedback':list(found.values())})['feedback']
+    if evidence is None:
+        decorated=decorate()
+    else:
+        def presentation_facts():
+            return {row['instrument_id']:row['board_presentation'] for row in decorate() if 'board_presentation' in row}
+        # Today's editable tags are read above on every request. The cached
+        # presentation uses only retained event pools and the verified quotes.
+        facts=read_block('emotion-ladder-feedback-facts',day,evidence,presentation_facts,market=market)
+        decorated=[{**row,'board_presentation':facts[symbol]} if symbol in facts else row
+                   for symbol,row in found.items()]
     def feedback_order(row):
         height=row.get('board_presentation',{}).get('previous_height',{})
         value=height.get('value')
@@ -274,7 +285,7 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
     latest = day == reference.get("pool_trade_date")
     events=dated_events(reference,day)
     base = {"date": day, "snapshot_id": status["snapshot_id"], "items": [], "total": 0, "summary": {}, "warnings": [], "quality": "partial"}
-    evidence = snapshot_evidence(market, status, reference) if kind in ('sectors', 'ladder', 'emotion', 'gainers') else None
+    evidence = snapshot_evidence(market, status, reference) if kind in ('sectors', 'ladder', 'emotion', 'gainers', 'broken-boards') else None
     latest_memberships = None
     if kind == "emotion" and day == status.get("data_end") and include_latest_classification_reference:
         from app.services.stock_memberships import current_memberships
@@ -330,7 +341,8 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
     elif kind == "broken-boards":
         from app.services.market_broken_boards import build_analysis
         base['broken_board_analysis'] = build_analysis(market,status,day,reference,rows,
-                                                      history_days=1,include_feedback=False,with_memberships=True)
+                                                      history_days=1,include_feedback=False,with_memberships=True,
+                                                      **({'evidence':evidence} if evidence is not None else {}))
     elif kind == "emotion":
         from app.services.emotion import describe_emotion
         history=market.breadth_history(day)
@@ -369,7 +381,8 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         if not summary_only:
             from app.services.market_broken_boards import build_analysis
             base['broken_board_analysis'] = build_analysis(market,status,day,reference,rows,with_memberships=True,
-                                                          latest_memberships=latest_memberships)
+                                                          latest_memberships=latest_memberships,
+                                                          **({'evidence':evidence} if evidence is not None else {}))
         from app.services.market_outlook import build_market_outlook
         base['market_outlook']=build_market_outlook(market,status,day,reference,rows,breadth,emotion,
                                                      base['sentiment'],history,previous_breadth=previous,
@@ -379,7 +392,8 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base["items"] = [{"name": "上涨家数", "value": breadth["up"], "reference": "普涨参考3000"}, {"name": "下跌家数", "value": breadth["down"], "reference": "已留存可比样本"}, {"name": "收盘涨停", "value": len(events["limitup"]) if "limitup" in events else None}, {"name": "收盘跌停", "value": len(events["limitdown"]) if "limitdown" in events else None}, {"name": "炸板池", "value": len(events["breakpool"]) if "breakpool" in events else None}]
         if not summary_only:
             from app.services.market_feedback import feedback_view
-            base.update(feedback_view(market,status,reference,day,indexed))
+            base.update(feedback_view(market,status,reference,day,indexed,
+                                      **({'evidence':evidence} if evidence is not None else {})))
             base["history"] = history
         base["warnings"] = [emotion['notice'],"情绪页使用同口径沪深序列；主行情页的沪深京范围不同。未知、缺报价和除权不可比样本不计作平盘。"]
         if breadth.get('universe_expected_known') is False:base['warnings'].append('部分证券上市日期未知，无法确认全市场应有家数与缺报价家数；可比率以已观察样本为分母，不把应有范围记为0。')
@@ -618,13 +632,16 @@ def cached_gainers(market,status,reference,day,rows,max_items=None, *, source_ev
     revision = suspension_revision()
     rank_key = None
     if callable(getattr(market, 'verify_condition_sources', None)):
-        if source_evidence is None or day not in retained_days(market, status=status):
+        recent = source_evidence is not None and day in retained_days(market, status=status)
+        if source_evidence is None or (not recent and not historical_cache_requested()):
             return gainers_rows(market,reference,day,rows,max_items)
         rank_key = (source_evidence, revision)
         if max_items == 5:
             result = read_block('gainers-overview', day, (source_evidence, revision),
                                 lambda: gainers_rows(market,reference,day,rows,max_items,rank_key=rank_key), market=market)
             return tuple(result)
+        if not recent:
+            return gainers_rows(market, reference, day, rows, max_items, rank_key=rank_key)
     key=(status['snapshot_id'],status.get('path'),day,fingerprint if fingerprint is not None else digest(supplement),revision,source_evidence,max_items)
     with _gainers_lock:
         if key not in _gainers_cache:

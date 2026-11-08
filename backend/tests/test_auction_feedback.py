@@ -219,10 +219,6 @@ def test_reader_validates_sha_and_never_changes_immutable_capture(auction_enviro
     environment = auction_environment
     for pool in environment.previous['event_cohorts'].values():
         for item in pool.get('items', []): item['date'] = PREVIOUS
-    job = claim(environment)
-    worker.dispatch(job)
-    with core.connect() as connection:
-        before = tuple(connection.execute('SELECT payload_json,content_sha256 FROM market_auction_snapshot').fetchone())
     builds = []
     original_build = feedback.build_feedback
 
@@ -231,6 +227,11 @@ def test_reader_validates_sha_and_never_changes_immutable_capture(auction_enviro
         return original_build(payload)
 
     monkeypatch.setattr(feedback, 'build_feedback', build)
+    job = claim(environment)
+    worker.dispatch(job)
+    assert builds == [DAY]
+    with core.connect() as connection:
+        before = tuple(connection.execute('SELECT payload_json,content_sha256 FROM market_auction_snapshot').fetchone())
     result = feedback.read_view(DAY)
     assert result['coverage']['requested'] == result['coverage']['classified'] == 2
     assert 'stock_classifications' not in result

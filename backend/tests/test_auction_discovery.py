@@ -9,7 +9,7 @@ from app import core, worker
 from app.adapters.providers import ProviderError
 from app.services import auction_automation as automation, auction_discovery as discovery, auction_service
 from app.services.auction_integrity import validate_snapshots
-from test_auction_retention import capture, encode, job, local, publication
+from test_auction_retention import EXPIRED, capture, encode, job, local, publication
 from test_auction_snapshots import DAY, NOW, PREVIOUS, claim, isolated
 
 OPPORTUNITY_CODES = ('688001.SH', '688002.SH')
@@ -286,7 +286,7 @@ def test_discovery_is_retained_and_purged_with_exact_primary(local):
     from app.services import auction_retention
 
     parent_id, source_job = capture()
-    date = '2026-10-28'
+    date = EXPIRED
     payload = discovery._empty(date, 'unavailable', 'synthetic expired data')
     payload.update(sources=[], evidence=[], requested=[])
     encoded = encode(payload)

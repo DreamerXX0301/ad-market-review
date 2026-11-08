@@ -215,6 +215,7 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
         parameters = json.loads(connection.execute("SELECT parameters_json FROM job WHERE request_key='a'").fetchone()[0])
         assert parameters['board_change_evidence'] == service.BOARD_CHANGE_EVIDENCE
         assert parameters['request_budget'] == service.REQUEST_BUDGETS[service.VERSION] + 2
+        assert parameters['retention_calendar_days'] == 30
         assert saved['board_pool_evidence']['limit_down'] == {'state': 'observed', 'count': 0, 'items': []}
         chart = next(row for row in saved['comparison_input']['stocks'] if row['instrument_id'] == '000001.SZ')
         assert (chart['open'], chart['high'], chart['low'], chart['latest_price']) == (10, 10.1, 10, 10.1)
@@ -308,9 +309,11 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert prior['items'][0]['themes'] == expected_themes
     assert first['snapshots'][0]['relay_feedback']['same_day']['state'] == 'unknown'
 
-    # Successful new-flag captures use the same 28-natural-day retention boundary.
+    # Successful new captures retain 30 natural days. A legacy capture still
+    # uses its original 28-day boundary when resumed.
     with core.connect() as connection:
-        for older_day, key in (('2026-09-30', 'expired-intraday'), ('2026-10-01', 'retained-boundary')):
+        for older_day, key in (('2026-09-28', 'expired-intraday'), ('2026-09-29', 'retained-new-boundary'),
+                               ('2026-10-01', 'retained-legacy-boundary')):
             identifier = service._enqueue(connection, key, older_day, next(slot for slot in service.SLOTS if slot['key'] == '1000'), clock)
             connection.execute("UPDATE job SET status='succeeded' WHERE job_id=?", (identifier,))
             raw = core.dumps({'retained': key})
@@ -346,8 +349,9 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert groups['resealed']['items'][0]['themes'] == expected_themes
     assert groups['resealed']['items'][0]['continue_day_cnt'] == 1
     with core.connect() as connection:
-        assert connection.execute("SELECT count(*) FROM market_intraday_capture WHERE trade_date='2026-09-30'").fetchone()[0] == 0
-        assert connection.execute("SELECT count(*) FROM market_intraday_capture WHERE trade_date='2026-10-01'").fetchone()[0] == 1
+        assert [row[0] for row in connection.execute(
+            'SELECT trade_date FROM market_intraday_capture WHERE trade_date<? ORDER BY trade_date', (DAY,)
+        )] == ['2026-09-29', '2026-10-01']
     prior_broken = second['relay_feedback']['prior_broken_session']
     assert prior_broken['date'] == PRIOR and prior_broken['state'] == 'observed'
     assert prior_broken['sealed_count'] == 1 and prior_broken.get('promotion_count') is None
@@ -383,6 +387,9 @@ def test_worker_only_slots_comparison_and_source_date(tmp_path, monkeypatch):
     assert not any(endpoint.endswith('limit-down-pool') for endpoint, _ in requests[before:])
     with core.connect() as connection:
         assert 'board_pool_evidence' not in service._saved_slot(connection, DAY, '1400')
+        assert [row[0] for row in connection.execute(
+            'SELECT trade_date FROM market_intraday_capture WHERE trade_date<? ORDER BY trade_date', (DAY,)
+        )] == ['2026-10-01']
 
     # The added evidence must not bypass the unchanged 2MiB atomic publication guard.
     clock = clock.replace(hour=13, minute=30)

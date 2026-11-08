@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from app.core import APP_NAME,APP_ID,json_clean,connect
 from app.services import platform_service,market_service,task_service,source_service,research_service,workspace_automation
 from app.adapters.public_fund_budget import FUND_REQUEST_BUDGET_VERSION
+from app.services.pane_read_cache import with_historical_cache
 
 router=APIRouter(prefix='/api/v1',tags=['platform'])
 
@@ -25,6 +26,7 @@ def bootstrap(scope:str=Query('full',pattern='^(full|navigation)$')):
     return JSONResponse(json_clean(platform_service.bootstrap(scope=scope)))
 
 @router.get('/overview')
+@with_historical_cache
 def overview(date:str|None=None):return JSONResponse(market_service.overview(date))
 
 @router.get('/market/topic-members')
@@ -54,10 +56,12 @@ def sector_chart_create(payload:dict=Body(...)):
     return json_clean(create_chart_job(market,payload.get('topic_code'),day,payload.get('request_key')))
 
 @router.get('/market/indices')
+@with_historical_cache
 def index_overview(date:str|None=None):
     return JSONResponse(market_service.index_overview(date))
 
 @router.get('/market/{kind}')
+@with_historical_cache
 def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000),monitor_scope:str=Query('historical',pattern='^(historical|latest)$'),rank_state:str=Query('all',pattern='^(all|unranked)$'),summary_only:bool=False):
     if rank_state!='all' and kind!='gainers':raise HTTPException(422,'未排名范围仅适用于近30日涨幅榜')
     if monitor_scope!='historical' and kind!='abnormal':raise HTTPException(422,'最新监控名单范围仅适用于监管页')

@@ -12,7 +12,7 @@ from test_sync_workspace_followup import chain, event
 from test_workspace import ws
 
 
-@pytest.mark.parametrize('scenario', ['current', 'old-head', 'legacy', 'stopped', 'warm-error'])
+@pytest.mark.parametrize('scenario', ['current', 'initialisation', 'old-head', 'legacy', 'stopped', 'warm-error'])
 def test_closing_worker_warms_only_the_current_published_chain(chain, monkeypatch, scenario):
     tasks.finish(chain.sector['job_id'], 'succeeded')
     task = tasks.create_task('source_check', {'operation': 'market_supplement',
@@ -23,11 +23,15 @@ def test_closing_worker_warms_only_the_current_published_chain(chain, monkeypatc
     if scenario != 'old-head':
         with core.connect() as connection:
             connection.execute("UPDATE published_head SET snapshot_id='daily_raw-fixture-increment' WHERE module='daily_raw'")
-            if scenario == 'legacy':
+            if scenario in ('legacy', 'initialisation'):
                 saved = connection.execute('SELECT parameters_json FROM job WHERE job_id=?',
                                            (chain.root['job_id'],)).fetchone()
                 params = json.loads(saved[0])
-                params.pop('data_chain_version')
+                if scenario == 'legacy':
+                    params.pop('data_chain_version')
+                else:
+                    params['data_chain_version'] = 'sector-charts-v1'
+                    connection.execute("UPDATE job SET kind='initialise' WHERE job_id=?", (chain.root['job_id'],))
                 connection.execute('UPDATE job SET parameters_json=?,parameters_hash=? WHERE job_id=?',
                                    (core.dumps(params), core.digest(params), chain.root['job_id']))
     monkeypatch.setattr(market_supplement, 'execute_supplement',
@@ -50,7 +54,7 @@ def test_closing_worker_warms_only_the_current_published_chain(chain, monkeypatc
 
     monkeypatch.setitem(sys.modules, 'app.services.pane_read_cache', SimpleNamespace(warm_closed_day=warm))
     worker.dispatch(job)
-    assert calls == ['noon-close', 'workspace'] + (['warm'] if scenario in ('current', 'warm-error') else [])
+    assert calls == ['noon-close', 'workspace'] + (['warm'] if scenario in ('current', 'initialisation', 'warm-error') else [])
     assert tasks.task_view(job['job_id'])['status'] == 'partial'
 
 
@@ -70,10 +74,11 @@ def test_noon_worker_warms_after_snapshot_and_task_commit(noon, monkeypatch):
         assert tasks.task_view(job['job_id'])['status'] == 'partial'
         calls.append('warm')
 
-    monkeypatch.setitem(sys.modules, 'app.services.pane_read_cache', SimpleNamespace(warm_noon=warm))
+    from app.services import pane_read_cache
+    monkeypatch.setattr(pane_read_cache, 'warm_noon', warm)
     worker.dispatch(job)
     assert calls == ['suspension-evidence', 'warm']
-    worker._warm_pane_after_noon(job, {'snapshot_id': 'unpublished'})
+    worker._warm_pane_after_snapshot(job, {'snapshot_id': 'unpublished'}, kind='noon')
     assert calls == ['suspension-evidence', 'warm']
 
 
@@ -135,14 +140,17 @@ def test_startup_reuses_verified_files_and_rebuilds_a_missing_block(monkeypatch,
 
     def page(kind, *_args, **_kwargs):
         read(*{'gainers': ('gainers-price-rank-v1', 'gainers-full-events-v1'),
-               'emotion': ('emotion-facts',), 'sectors': ('sector-overview',),
+               'emotion': ('emotion-facts', 'emotion-broken-board-facts', 'emotion-ladder-feedback-facts',
+                           'emotion-first-board-facts'), 'sectors': ('sector-overview',),
                'ladder': ('closing-ladder',)}.get(kind, ()))
 
     monkeypatch.setattr(market_service, 'market_page', page)
     monkeypatch.setattr(market_service, 'index_overview', lambda *_: read('index-summary'))
     monkeypatch.setattr(market_service, 'overview', lambda *_: read('gainers-overview', 'overview-breadth'))
     list(pane_read_cache.closed_day_warm_steps())
-    assert set(builds) == set(pane_read_cache._CLOSED_BLOCKS)
+    assert set(builds) == set(pane_read_cache._CLOSED_BLOCKS) | {
+        'emotion-broken-board-facts', 'emotion-ladder-feedback-facts', 'emotion-first-board-facts',
+    }
     assert (tmp_path / day / 'closed-day-warm.json').is_file()
     reads.clear()
     builds.clear()

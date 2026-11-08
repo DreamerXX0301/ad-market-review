@@ -527,8 +527,13 @@ def _feedback(day, previous, current, prior, quotes, current_rows, snapshot_id):
             'scope': '昨日已核验炸板来源队列的今日可比收盘反馈，不代表实际买入可成交收益'}
 
 
-def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAYS, include_feedback=True,
-                   with_memberships=False, latest_memberships=None):
+def _history_item(summary):
+    return {key: value for key, value in summary.items()
+            if key not in ('items', 'concept_distribution', 'industry_distribution')}
+
+
+def _analysis_facts(market, status, day, reference, rows, *, history_days, include_feedback,
+                    with_previous_events):
     calendar_method = getattr(market, 'calendar', None)
     calendar_values = calendar_method() if callable(calendar_method) else None
     if not isinstance(calendar_values, Iterable) or isinstance(calendar_values, (str, bytes, dict)):
@@ -540,7 +545,7 @@ def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAY
     days = calendar[-max(1, min(history_days, MAX_DAYS)):] if day in calendar else []
     calendar_previous = calendar[-2] if len(calendar) > 1 and calendar[-1] == day else None
     previous = calendar_previous if include_feedback else None
-    event_previous = calendar_previous if with_memberships else None
+    event_previous = calendar_previous if with_previous_events else None
     required_previous = previous or event_previous
     if required_previous and required_previous not in days:
         read_days = [required_previous, *days]
@@ -592,21 +597,11 @@ def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAY
     if calendar_reason and include_feedback:
         feedback['reason'] = calendar_reason
     current.update(previous_event_version=PRIOR_EVENT_VERSION, previous_event_date=calendar_previous)
-    classification_reference = None
-    if with_memberships:
+    if with_previous_events:
         prior = internal.get(event_previous)
         for row in [*current['items'], *feedback.get('items', [])]:
             row.update(_previous_fact(row['instrument_id'], event_previous, prior, quotes))
-        memberships = _cohort_memberships(
-            current['items'], membership_day=day, sample_day=day, status=status, reference=reference, broken_only=True,
-            latest_memberships=latest_memberships if day == status.get('data_end') else None)
-        classification_reference = memberships.pop('classification_reference', None)
-        current.update(memberships)
-        if include_feedback:
-            feedback.update(_cohort_memberships(feedback['items'], membership_day=previous, sample_day=day, status=status,
-                                                reference=reference))
-    history = [{key: value for key, value in summaries[target].items()
-                if key not in ('items', 'concept_distribution', 'industry_distribution')} for target in days]
+    history = [_history_item(summaries[target]) for target in days]
     prior_summary = summaries.get(previous, {})
     prior_rate = prior_summary.get('broken_rate_pct')
     same_scope = (current.get('source') is not None and current.get('source') == prior_summary.get('source')
@@ -622,6 +617,44 @@ def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAY
         observations.append(f'较严格前一交易日变化{delta:+.1f}个百分点；只描述封板结果，不单独判定情绪阶段。')
     if feedback.get('valid_count'):
         observations.append(f"昨日炸板队列今日{feedback['valid_count']}只报价可比，中位涨幅{feedback['median_change_pct']:+.2f}%。")
+    return {'version': VERSION, 'date': day, 'snapshot_id': status.get('snapshot_id'), 'scope': SCOPE,
+            'current': current, 'history': history, 'previous_feedback': feedback,
+            'comparison': {'previous_date': previous, 'broken_rate_delta_pp': delta}, 'observations': observations,
+            'limits': ['完整炸板率=收盘未封住证券数÷同源已核验涨停与炸板证券并集；数据不齐保留未知。',
+                       '盘中开板后回封与收盘未封住分开，开板次数不是炸板家数；当前没有完整开板时序。',
+                       '日高至收盘回落只描述价格；不推断洗盘、出货、资金净流出、明日方向或开仓权限。',
+                       '这些为可核验描述统计，尚未形成经过历史检验的预测模型。']}
+
+
+def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAYS, include_feedback=True,
+                   with_memberships=False, latest_memberships=None, evidence=None):
+    def facts():
+        return _analysis_facts(market, status, day, reference, rows, history_days=history_days,
+                               include_feedback=include_feedback, with_previous_events=with_memberships)
+
+    if evidence is None:
+        result = facts()
+    else:
+        from app.services.pane_read_cache import read_block
+
+        name = 'emotion-broken-board-facts' if include_feedback else 'broken-board-day-facts'
+        result = read_block(name, day, (VERSION, evidence, history_days, include_feedback, with_memberships),
+                            facts, market=market)
+    current, feedback = result['current'], result['previous_feedback']
+    if with_memberships:
+        # Classification always follows the actual dated archive or today's
+        # live local reference. Only verified closing-price/event facts persist.
+        memberships = _cohort_memberships(
+            current['items'], membership_day=day, sample_day=day, status=status, reference=reference, broken_only=True,
+            latest_memberships=latest_memberships if day == status.get('data_end') else None)
+        classification_reference = memberships.pop('classification_reference', None)
+        current.update(memberships)
+        if classification_reference:
+            result['classification_reference'] = classification_reference
+        result['history'] = [_history_item(current) if row['date'] == day else row for row in result['history']]
+        if include_feedback:
+            feedback.update(_cohort_memberships(feedback['items'], membership_day=result['comparison']['previous_date'],
+                                                sample_day=day, status=status, reference=reference))
     final_status = market.status() if callable(getattr(market, 'status', None)) else status
     if (final_status.get('snapshot_id') != status.get('snapshot_id')
             or final_status.get('source') != status.get('source')):
@@ -635,14 +668,7 @@ def build_analysis(market, status, day, reference, rows, *, history_days=MAX_DAY
                             'membership_reason': '读取期间行情代际变化，行业与概念归属未返回',
                             'items': [], 'reason': '读取期间行情代际变化，未返回混合来源统计'},
                 'history': [], 'previous_feedback': {}, 'observations': [], 'limits': ['行情代际变化，请重新读取。']}
-    return {'version': VERSION, 'date': day, 'snapshot_id': status.get('snapshot_id'), 'scope': SCOPE,
-            **({'classification_reference': classification_reference} if classification_reference else {}),
-            'current': current, 'history': history, 'previous_feedback': feedback,
-            'comparison': {'previous_date': previous, 'broken_rate_delta_pp': delta}, 'observations': observations,
-            'limits': ['完整炸板率=收盘未封住证券数÷同源已核验涨停与炸板证券并集；数据不齐保留未知。',
-                       '盘中开板后回封与收盘未封住分开，开板次数不是炸板家数；当前没有完整开板时序。',
-                       '日高至收盘回落只描述价格；不推断洗盘、出货、资金净流出、明日方向或开仓权限。',
-                       '这些为可核验描述统计，尚未形成经过历史检验的预测模型。']}
+    return result
 
 
 def decorate_sectors(items, local, membership, analysis):

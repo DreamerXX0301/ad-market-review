@@ -254,7 +254,7 @@ def read_view(day, *, include_topics=False):
     if row is None:
         if retention['purged']:
             result = build_feedback({'date': day})
-            result.update(state='purged', retention=retention, reason='竞价已超过28自然日保留窗口，原正文及内嵌原件已清理。')
+            result.update(state='purged', retention=retention, reason='竞价正文及内嵌原件已按当时的保留规则清理。')
             result['gaps'] = ['该日竞价已到期清理，不重建昨日与今日强弱对照。']
             return result
         return build_feedback({'date': day})

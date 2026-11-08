@@ -282,7 +282,7 @@ def test_1700_is_real_sync_factory_and_execution_clock_boundary(configured, monk
     configured.clock[0] += timedelta(seconds=1)
     value = sync_requests.create_sync_request({'mode': 'increment', 'request_key': 'synthetic-at17'})
     assert value['parameters']['sync_completion_date'] == DAY
-    assert value['parameters']['noon_retention_policy'] == 'noon-retention-28d-v1'
-    assert value['parameters']['auction_retention_policy'] == 'auction-retention-28d-v1'
+    assert value['parameters']['noon_retention_policy'] == 'noon-retention-30d-v1'
+    assert value['parameters']['auction_retention_policy'] == 'auction-retention-30d-v2'
     assert sync_clock.sync_window()['increment_allowed'] and sync_clock.sync_window()['cutoff'] == '17:00'
     sync_clock.validate_frozen_target(DAY)

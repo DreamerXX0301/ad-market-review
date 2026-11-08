@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from hashlib import sha256
 import json
 import math
@@ -379,13 +379,20 @@ def _save(snapshot, job, anchor, inputs, origin, result):
 
 def after_increment(job, result=None, *, allow_running=False, progress=None):
     """Only a newly frozen manual increment may derive existing local facts."""
-    if job.get('kind') != 'increment' or _parameters(job).get('noon_close_policy') != VERSION:
+    parameters = _parameters(job)
+    if job.get('kind') != 'increment' or parameters.get('noon_close_policy') != VERSION:
         return {'status': 'skipped', 'reason': '旧冻结任务未扩大午评核验范围'}
+    from app.services.noon_retention import LEGACY_VERSION, SUPPORTED_POLICIES, cutoff_date
+
+    retention_policy = parameters.get('noon_retention_policy')
+    window_days = SUPPORTED_POLICIES[LEGACY_VERSION]
+    if isinstance(retention_policy, str):
+        window_days = SUPPORTED_POLICIES.get(retention_policy, window_days)
     started = time.monotonic()
     with connect() as connection:
         anchor = _anchor(connection, job, result, allow_running=allow_running)
         if anchor is None: return {'status': 'skipped', 'reason': '盘后尚无对应已发布或已核验的同日行情'}
-        cutoff = (date.fromisoformat(anchor['date']) - timedelta(days=27)).isoformat()
+        cutoff = cutoff_date(anchor['date'], window_days=window_days)
         snapshots = [dict(r) for r in connection.execute('''SELECT s.* FROM market_noon_snapshot s
           LEFT JOIN market_noon_close_attempt a USING(snapshot_id) WHERE s.trade_date BETWEEN ? AND ?
           ORDER BY coalesce(a.checked_sequence,0),s.trade_date DESC LIMIT ?''', (cutoff, anchor['date'], MAX_DAYS))]

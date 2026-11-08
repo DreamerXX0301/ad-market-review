@@ -1,8 +1,9 @@
-"""竞价28自然日清理的隔离验收；原件、业务库、发布目录均为临时合成值。"""
+"""竞价自然日清理的隔离验收，使用独立的业务库及合成原件。"""
 from copy import deepcopy
 from datetime import date, datetime, timedelta
 from hashlib import sha256
 import json
+import shutil
 import sqlite3
 
 import pytest
@@ -14,8 +15,11 @@ from app.services.auction_integrity import validate_snapshot
 
 
 ANCHOR = '2026-11-25'
-EXPIRED = '2026-10-28'
-BOUNDARY = '2026-10-29'
+EXPIRED = '2026-10-26'
+BOUNDARY = '2026-10-27'
+LEGACY_EXPIRED = '2026-10-28'
+LEGACY_BOUNDARY = '2026-10-29'
+LEGACY_POLICY = 'auction-retention-28d-v1'
 CODE = '600001.SH'
 MARKET = 'market-' + 'a' * 24
 
@@ -162,6 +166,7 @@ def test_calendar_cutoff_retains_boundary_and_preserves_capture_automatic_and_jo
     increment = job('successful-increment'); publication(increment['job_id'])
     expired, original = capture(automatic=True)
     boundary, _ = capture(BOUNDARY)
+    within_new_window, _ = capture(LEGACY_EXPIRED)
     with core.connect() as connection:
         before_job = dict(connection.execute('SELECT * FROM job WHERE job_id=?', (original['job_id'],)).fetchone())
         automatic = dict(connection.execute('SELECT * FROM market_auction_automation_run').fetchone())
@@ -169,8 +174,9 @@ def test_calendar_cutoff_retains_boundary_and_preserves_capture_automatic_and_jo
     shared.write_text('unrelated synthetic source')
     result = retention.after_increment(increment)
     assert retention.cutoff_date(ANCHOR) == BOUNDARY
+    assert result['calendar_days'] == 30
     assert result['cutoff_date'] == BOUNDARY and result['purged_snapshots'] == 1
-    assert not exists(expired) and exists(boundary)
+    assert not exists(expired) and exists(boundary) and exists(within_new_window)
     tombstone = receipt(expired)
     assert tombstone['status'] == 'purged' and tombstone['content_sha256'] == original['content_sha256']
     assert tombstone['source_job_id'] == original['job_id'] and tombstone['cleanup_job_id'] == increment['job_id']
@@ -178,7 +184,7 @@ def test_calendar_cutoff_retains_boundary_and_preserves_capture_automatic_and_jo
     assert MARKET not in core.dumps(tombstone)
     assert shared.read_text() == 'unrelated synthetic source'
     with core.connect() as connection:
-        assert connection.execute('SELECT count(*) FROM market_auction_capture').fetchone()[0] == 2
+        assert connection.execute('SELECT count(*) FROM market_auction_capture').fetchone()[0] == 3
         assert dict(connection.execute('SELECT * FROM market_auction_automation_run').fetchone()) == automatic
         assert dict(connection.execute('SELECT * FROM job WHERE job_id=?', (original['job_id'],)).fetchone()) == before_job
     again = retention.after_increment(increment)
@@ -186,6 +192,54 @@ def test_calendar_cutoff_retains_boundary_and_preserves_capture_automatic_and_jo
     with pytest.raises(sqlite3.DatabaseError, match='purged|retain'):
         with core.connect() as connection:
             connection.execute('INSERT INTO market_auction_snapshot VALUES(?,?,?,?,?,?,?,?,?)', tuple(original.values()))
+
+
+def test_migration_preserves_legacy_receipt_and_both_frozen_cutoffs(local, monkeypatch):
+    from app.infrastructure import database
+    from app.services.auction_integrity import validate_purges
+
+    old_migrations = local / 'schema39-migrations'
+    old_migrations.mkdir()
+    for path in database.MIGRATIONS_DIR.glob('[0-9]*.sql'):
+        if int(path.name.split('_', 1)[0]) <= 39:
+            shutil.copyfile(path, old_migrations / path.name)
+    monkeypatch.setenv('SHIXU_DATA_DIR', str(local / 'upgrade-data'))
+    with monkeypatch.context() as old:
+        old.setattr(database, 'MIGRATIONS_DIR', old_migrations)
+        core.ensure_ready()
+        increment = job('legacy-cutoff', extra={'auction_retention_policy': LEGACY_POLICY})
+        publication(increment['job_id'])
+        expired, original = capture(LEGACY_EXPIRED)
+        retained, _ = capture(LEGACY_BOUNDARY)
+        result = retention.after_increment(increment)
+        assert result['calendar_days'] == 28 and result['cutoff_date'] == LEGACY_BOUNDARY
+        assert not exists(expired) and exists(retained)
+        old_receipt = receipt(expired)
+
+    core.ensure_ready()
+    assert receipt(expired) == old_receipt
+    with core.connect() as connection:
+        validate_purges(connection)
+        assert not connection.execute('PRAGMA foreign_key_check').fetchall()
+    with pytest.raises(sqlite3.IntegrityError, match='purged'):
+        with core.connect() as connection:
+            connection.execute('INSERT INTO market_auction_snapshot VALUES(?,?,?,?,?,?,?,?,?)', tuple(original.values()))
+
+    increment = job('current-cutoff')
+    publication(increment['job_id'])
+    new_expired, row = capture()
+    boundary, _ = capture(BOUNDARY)
+    # The 28-day cutoff would satisfy the table's compatible CHECK, but is
+    # rejected when the newly frozen owner authorizes only the 30-day policy.
+    with pytest.raises(sqlite3.IntegrityError, match='frozen retention'):
+        with core.connect() as connection:
+            retention._receipt(connection, row, increment['job_id'], ANCHOR, LEGACY_BOUNDARY,
+                               'protected', 'fixture', 2, 3)
+    assert retention.after_increment(increment)['purged_snapshots'] == 1
+    assert not exists(new_expired) and exists(boundary) and exists(retained)
+    assert receipt(expired) == old_receipt
+    with core.connect() as connection:
+        validate_purges(connection)
 
 
 @pytest.mark.parametrize('status', ['failed', 'cancelled', 'paused', 'running', 'queued'])
@@ -250,7 +304,7 @@ def test_explicit_business_reference_and_backup_pin_protect_then_release(local, 
 def test_paused_capture_and_active_frozen_reference_protect_without_rewriting_jobs(local):
     increment = job('activity-protection'); publication(increment['job_id'])
     paused, original = capture()
-    referenced, _ = capture('2026-10-27')
+    referenced, _ = capture('2026-10-25')
     active = job('manual-active-reference', kind='research', status='paused', policy=False,
                  extra={'retained_auction': referenced})
     with core.connect() as connection:
@@ -412,11 +466,12 @@ def test_standard_backup_and_restore_reject_invalid_tombstone_even_after_manifes
     assert not restored.exists()
 
 
-def test_worker_dispatch_cleans_only_after_committed_success_and_replay_is_idempotent(local, monkeypatch):
+@pytest.mark.parametrize('policy', [LEGACY_POLICY, retention.VERSION])
+def test_worker_dispatch_cleans_only_after_committed_success_and_replay_is_idempotent(local, monkeypatch, policy):
     from app import worker
     from app.services import sync_service, task_service as tasks, workspace_automation
     identifier, _ = capture()
-    queued = job('real-worker-increment', status='queued')
+    queued = job('real-worker-increment', status='queued', extra={'auction_retention_policy': policy})
     for name in ('_queue_followup', '_queue_local_sync_checks', '_noon_close_after_increment'):
         monkeypatch.setattr(worker, name, lambda *_args, **_kwargs: None)
     monkeypatch.setattr(workspace_automation, 'run_after_sync', lambda *_args: None)
@@ -434,6 +489,7 @@ def test_worker_dispatch_cleans_only_after_committed_success_and_replay_is_idemp
     assert tasks.task_view(queued['job_id'])['status'] == 'succeeded'
     assert not exists(identifier)
     before = receipt(identifier)
+    assert before['cutoff_date'] == (LEGACY_BOUNDARY if policy == LEGACY_POLICY else BOUNDARY)
     worker.dispatch(claimed)
     assert receipt(identifier) == before
 

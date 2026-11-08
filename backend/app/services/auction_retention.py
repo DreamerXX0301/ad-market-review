@@ -5,17 +5,21 @@ from datetime import date, timedelta
 import json
 
 from app.core import connect, now_ms
-from app.services.auction_integrity import LIMIT, validate_discovery, validate_snapshot
+from app.services.auction_integrity import (
+    AUCTION_RETENTION_VERSION as VERSION,
+    AUCTION_RETENTION_WINDOWS as POLICY_WINDOWS,
+    LIMIT, retention_window, validate_discovery, validate_snapshot,
+)
 from app.services.supplement_access import supplement_access
 
-VERSION = 'auction-retention-28d-v1'
 DISCOVERY_POLICY = 'auction-discovery-retention-v1'
-WINDOW_DAYS = 28
+WINDOW_DAYS = POLICY_WINDOWS[VERSION]
 MAX_SNAPSHOTS = 32
 MAX_BYTES = 128 * 1024 * 1024
 MAX_REFERENCE_BYTES = 256 * 1024 * 1024
 MAX_REFERENCE_ROWS = 100000
-NOTICE = '保留28个自然日，到期随成功盘后增量自动清理快照正文及内嵌原件；未运行增量时暂留。小型采集日账与清理回执继续保留。'
+NOTICE = (f'保留{WINDOW_DAYS}个自然日，快照正文、竞价发现和内嵌原件到期后随成功盘后增量清理。'
+          '等待增量期间继续留存，采集日账与清理回执长期保留。')
 _INTERNAL = {'_schema_migration', 'market_auction_capture', 'market_auction_purge',
              'market_auction_automation_run', 'market_auction_discovery', 'job_event', 'sync_batch', 'snapshot_gc',
              'market_storage_collection', 'market_storage_collection_file',
@@ -23,14 +27,14 @@ _INTERNAL = {'_schema_migration', 'market_auction_capture', 'market_auction_purg
              'workspace_purge', 'workspace_purge_file', 'workspace_purge_audit'}
 
 
-def cutoff_date(anchor):
+def cutoff_date(anchor, *, window_days=WINDOW_DAYS):
     try:
         valid = isinstance(anchor, str) and date.fromisoformat(anchor).isoformat() == anchor
     except ValueError:
         valid = False
     if not valid:
         raise ValueError('竞价清理缺少已核验交易日')
-    return (date.fromisoformat(anchor) - timedelta(days=WINDOW_DAYS - 1)).isoformat()
+    return (date.fromisoformat(anchor) - timedelta(days=window_days - 1)).isoformat()
 
 
 def retention_status(connection, day=None):
@@ -43,12 +47,12 @@ def retention_status(connection, day=None):
     return result
 
 
-def _anchor(connection, job_id, result):
+def _anchor(connection, job_id, result, policy):
     saved = connection.execute('SELECT * FROM job WHERE job_id=?', (job_id,)).fetchone()
     if not saved or saved['kind'] != 'increment' or saved['status'] not in ('succeeded', 'partial', 'no_change'):
         return None, '盘后任务尚未成功发布或已停止'
-    if json.loads(saved['parameters_json']).get('auction_retention_policy') != VERSION:
-        return None, '旧冻结任务未授权竞价清理'
+    if json.loads(saved['parameters_json']).get('auction_retention_policy') != policy:
+        return None, '本任务冻结的竞价清理策略不匹配'
     own = connection.execute("SELECT data_end FROM dataset_snapshot WHERE job_id=? AND module='daily_raw' AND state='published' ORDER BY published_at_ms DESC LIMIT 1", (job_id,)).fetchone()
     if own:
         if saved['target_date'] is not None and saved['target_date'] != own['data_end']:
@@ -151,16 +155,16 @@ def _receipt(connection, snapshot, job_id, anchor, cutoff, status, reason, seque
         connection.commit()
 
 
-def _collect(job_id, result):
-    report = {'version': VERSION, 'status': 'skipped', 'purged_snapshots': 0,
+def _collect(job_id, result, policy, window_days):
+    report = {'version': policy, 'status': 'skipped', 'purged_snapshots': 0,
               'protected_snapshots': 0, 'removed_bytes': 0, 'warnings': []}
     with supplement_access(exclusive=True), connect() as ledger:
-        anchor, reason = _anchor(ledger, job_id, result)
+        anchor, reason = _anchor(ledger, job_id, result, policy)
         if reason:
             report.update(reason=reason, skipped_reason=reason)
             return report
-        cutoff = cutoff_date(anchor)
-        report.update(anchor_date=anchor, cutoff_date=cutoff, calendar_days=WINDOW_DAYS, status='completed')
+        cutoff = cutoff_date(anchor, window_days=window_days)
+        report.update(anchor_date=anchor, cutoff_date=cutoff, calendar_days=window_days, status='completed')
         sequence = ledger.execute('SELECT coalesce(max(check_sequence),0)+1 FROM market_auction_purge').fetchone()[0]
         snapshots = [dict(row) for row in ledger.execute('''SELECT s.* FROM market_auction_snapshot s
             LEFT JOIN market_auction_purge p USING(snapshot_id) WHERE s.trade_date<?
@@ -209,7 +213,7 @@ def _collect(job_id, result):
                 ledger.execute('BEGIN IMMEDIATE')
                 if ledger.execute('PRAGMA data_version').fetchone()[0] != guard_version:
                     raise ValueError('竞价正文清理事务边界出现外部写入')
-                current_anchor, stopped = _anchor(ledger, job_id, result)
+                current_anchor, stopped = _anchor(ledger, job_id, result, policy)
                 if stopped or current_anchor != anchor or ledger.execute("SELECT 1 FROM retention_pin WHERE owner_kind='backup' LIMIT 1").fetchone():
                     raise ValueError('竞价清理边界的授权或备份保护已变化')
                 if discovery and not _discovery_authorized(ledger, job_id):
@@ -247,13 +251,15 @@ def after_increment(job, result=None):
             parameters = json.loads(job.get('parameters_json', '{}'))
         except (TypeError, ValueError):
             parameters = {}
-    if job.get('kind') != 'increment' or not isinstance(parameters, dict) or parameters.get('auction_retention_policy') != VERSION:
+    policy = parameters.get('auction_retention_policy') if isinstance(parameters, dict) else None
+    window_days = retention_window(policy)
+    if job.get('kind') != 'increment' or window_days is None:
         return {'version': VERSION, 'status': 'skipped', 'reason': '任务未冻结竞价清理策略'}
     identifier = job.get('job_id') or job.get('task_id')
     try:
-        report = _collect(identifier, result)
+        report = _collect(identifier, result, policy, window_days)
     except Exception as error:
-        report = {'version': VERSION, 'status': 'warning', 'reason': '竞价清理未完成：' + type(error).__name__,
+        report = {'version': policy, 'status': 'warning', 'reason': '竞价清理未完成：' + type(error).__name__,
                   'purged_snapshots': 0, 'protected_snapshots': 0, 'removed_bytes': 0, 'warnings': ['竞价到期清理未完成，原件保留待后续核验']}
     from app.services.task_service import append_event
     try:

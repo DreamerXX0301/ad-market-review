@@ -3,11 +3,13 @@ from fastapi import APIRouter, Body, Query
 from fastapi.responses import JSONResponse
 
 from app.services import intraday_service
+from app.services.pane_read_cache import with_historical_cache
 
 router = APIRouter(prefix='/api/v1/market/intraday', tags=['intraday'])
 
 
 @router.get('')
+@with_historical_cache
 def view(date: str | None = None):
     from app.services.intraday_brief import read_brief_view
 

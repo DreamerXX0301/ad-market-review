@@ -239,7 +239,7 @@ def read_view(day):
         retention = retention_status(connection, day)
     if row is None:
         if retention['purged']:
-            return {**_empty({'date': day}, reason='竞价已超过28自然日保留窗口，原正文及内嵌原件已清理；不回填历史题材。'),
+            return {**_empty({'date': day}, reason='竞价正文及内嵌原件已按当时的保留规则清理。'),
                     'state': 'purged', 'retention': retention}
         return _empty({'date': day}, reason='所选日尚无已留存竞价，题材样本保持未知')
     try:

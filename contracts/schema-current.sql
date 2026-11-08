@@ -40,6 +40,7 @@
 -- 037_intraday_snapshots.sql sha256=3ddf75650bf2a5dee777e984d0edc8c35206ffbb59dc1c84a04c27451b98b659
 -- 038_intraday_briefs.sql sha256=e84574f5190c92ea2716d829e057d1c0718e3550b430a4e870bcedb339177bd0
 -- 039_auction_discovery.sql sha256=01681f2b4b20912a050e37256bb792c2482c15a0f46cd3622f3373b97ddd17da
+-- 040_auction_retention_30_days.sql sha256=77316c0066d358afe552f1d52043451505f0800d11443c80b6631128f3f07727
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -355,7 +356,7 @@ CREATE TABLE market_auction_discovery (
  CHECK(json_extract(payload_json,'$.state') IN ('available','partial','unavailable'))
 ) STRICT;
 
-CREATE TABLE market_auction_purge (
+CREATE TABLE "market_auction_purge" (
     snapshot_id TEXT PRIMARY KEY,
     trade_date TEXT NOT NULL UNIQUE REFERENCES market_auction_capture(trade_date),
     source_job_id TEXT NOT NULL REFERENCES job(job_id),
@@ -372,7 +373,7 @@ CREATE TABLE market_auction_purge (
     purged_at_ms INTEGER,
     CHECK(date(trade_date,'+0 days') IS trade_date AND date(anchor_date,'+0 days') IS anchor_date
       AND date(cutoff_date,'+0 days') IS cutoff_date),
-    CHECK(trade_date<cutoff_date AND cutoff_date=date(anchor_date,'-27 days')),
+    CHECK(trade_date<cutoff_date AND cutoff_date IN (date(anchor_date,'-27 days'),date(anchor_date,'-29 days'))),
     CHECK((status='purged' AND purged_at_ms IS NOT NULL AND reason IS NULL)
        OR (status<>'purged' AND purged_at_ms IS NULL))
 ) STRICT;
@@ -1326,13 +1327,27 @@ BEGIN SELECT RAISE(ABORT,'auction discovery identity mismatch or already retaine
 CREATE TRIGGER guard_auction_purge_insert BEFORE INSERT ON market_auction_purge
 WHEN auction_purge_allowed(NEW.snapshot_id)<>1 OR NOT EXISTS(
     SELECT 1 FROM market_auction_capture c WHERE c.trade_date=NEW.trade_date AND c.job_id=NEW.source_job_id)
-BEGIN SELECT RAISE(ABORT,'auction purge receipt requires exact worker authorization'); END;
+ OR NOT EXISTS(
+    SELECT 1 FROM job j WHERE j.job_id=NEW.cleanup_job_id AND j.kind='increment'
+     AND j.status IN ('succeeded','partial','no_change')
+     AND NEW.cutoff_date IS CASE json_extract(j.parameters_json,'$.auction_retention_policy')
+        WHEN 'auction-retention-28d-v1' THEN date(NEW.anchor_date,'-27 days')
+        WHEN 'auction-retention-30d-v2' THEN date(NEW.anchor_date,'-29 days')
+     END)
+BEGIN SELECT RAISE(ABORT,'auction purge receipt requires exact worker authorization and frozen retention'); END;
 
 CREATE TRIGGER guard_auction_purge_update BEFORE UPDATE ON market_auction_purge
 WHEN auction_purge_allowed(OLD.snapshot_id)<>1 OR OLD.status='purged'
  OR NEW.snapshot_id<>OLD.snapshot_id OR NEW.trade_date<>OLD.trade_date
  OR NEW.source_job_id<>OLD.source_job_id OR NEW.content_sha256<>OLD.content_sha256
-BEGIN SELECT RAISE(ABORT,'auction purge receipt is immutable outside exact worker authorization'); END;
+ OR NOT EXISTS(
+    SELECT 1 FROM job j WHERE j.job_id=NEW.cleanup_job_id AND j.kind='increment'
+     AND j.status IN ('succeeded','partial','no_change')
+     AND NEW.cutoff_date IS CASE json_extract(j.parameters_json,'$.auction_retention_policy')
+        WHEN 'auction-retention-28d-v1' THEN date(NEW.anchor_date,'-27 days')
+        WHEN 'auction-retention-30d-v2' THEN date(NEW.anchor_date,'-29 days')
+     END)
+BEGIN SELECT RAISE(ABORT,'auction purge receipt is immutable outside exact worker authorization and frozen retention'); END;
 
 CREATE TRIGGER guard_auction_snapshot_after_purge BEFORE INSERT ON market_auction_snapshot
 WHEN EXISTS(SELECT 1 FROM market_auction_purge p WHERE p.trade_date=NEW.trade_date AND p.status='purged')

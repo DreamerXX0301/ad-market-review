@@ -34,6 +34,8 @@ MODERN_VERSIONS = (SIX_SLOT_VERSION, SEVEN_SLOT_VERSION, VERSION)
 MAX_BOARDS = 800
 REQUEST_BUDGETS = {LEGACY_VERSION: 25, STRENGTH_VERSION: 27, FEEDBACK_VERSION: 28, POOL_VERSION: 30, SIX_SLOT_VERSION: 30, SEVEN_SLOT_VERSION: 30, VERSION: 30}
 MAX_PAYLOAD = 2 * 1024 * 1024
+LEGACY_RETENTION_DAYS = 28
+CAPTURE_RETENTION_DAYS = 30
 AUTOMATION_KEY = 'intraday-automation-v1'
 AUTOMATION_CALENDAR_KEY = 'intraday-automation-calendar-v1'
 LEGACY_SLOTS = tuple(dict(key=key, label=label, start=start, end=end) for key, label, start, end in (
@@ -283,6 +285,8 @@ def _enqueue(connection, key, day, slot, now, *, version=VERSION, authorization=
     if version in MODERN_VERSIONS:
         parameters['suspension_evidence'] = SUSPENSION_VERSION
         parameters.update(board_change_evidence=BOARD_CHANGE_EVIDENCE, request_budget=REQUEST_BUDGETS[version] + 2)
+    if version == VERSION:
+        parameters['retention_calendar_days'] = CAPTURE_RETENTION_DAYS
     if authorization:
         parameters['automation'] = authorization
     signature = digest(parameters)
@@ -778,6 +782,8 @@ def execute_capture(job, progress=None):
         raise ValueError('盘中板况采集预算冻结参数无效')
     if extended_pools:
         expected.update(board_change_evidence=BOARD_CHANGE_EVIDENCE, request_budget=REQUEST_BUDGETS[version] + 2)
+    if version == VERSION and 'retention_calendar_days' in params:
+        expected['retention_calendar_days'] = CAPTURE_RETENTION_DAYS
     if authorization is not None:
         if (version not in MODERN_VERSIONS or not isinstance(authorization, dict)
                 or set(authorization) != {'revision', 'calendar_sha256'}
@@ -1001,7 +1007,8 @@ def execute_capture(job, progress=None):
             raise tasks.TaskCancelled()
         conn.execute('''UPDATE market_intraday_capture SET snapshot_id=?,payload_json=?,content_sha256=?
             WHERE job_id=? AND snapshot_id IS NULL''', (snapshot_id, raw.decode(), sha256(raw).hexdigest(), job['job_id']))
-        cutoff = (date.fromisoformat(day) - timedelta(days=27)).isoformat()
+        window_days = expected.get('retention_calendar_days', LEGACY_RETENTION_DAYS)
+        cutoff = (date.fromisoformat(day) - timedelta(days=window_days - 1)).isoformat()
         conn.execute('DELETE FROM market_intraday_capture WHERE trade_date<? AND job_id IN '
                      "(SELECT job_id FROM job WHERE status NOT IN ('queued','running'))", (cutoff,))
     return {'snapshot_id': snapshot_id, 'quality': quality, 'message': '盘中快照已留存'}

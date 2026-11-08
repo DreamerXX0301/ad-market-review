@@ -172,7 +172,7 @@ def read_view(day=None):
     if ledger and retained:
         reason = '当天竞价终态已留存，不再次采集'
     elif state == 'purged':
-        reason = '该日竞价已超过28自然日保留窗口，正文及内嵌原件已随成功增量清理；采集日账保留，不补造历史竞价。'
+        reason = '该日竞价正文及内嵌原件已按当时的保留规则随成功增量清理，采集日账仍可查看。'
     elif state == 'cancelled':
         reason = '当天竞价任务已显式取消，不自动继续或创建第二个任务'
     elif ledger:

@@ -254,9 +254,10 @@ def _queue_local_sync_checks(job, completed_result=None):
 
 def _auction_after_increment(job, completed_result=None):
     """竞价清理仅在原授权成功发布后执行，失败不影响行情。"""
-    if job['kind']!='increment' or _parameters(job).get('auction_retention_policy')!='auction-retention-28d-v1':return
+    if job['kind']!='increment':return
     try:
-        from app.services.auction_retention import after_increment
+        from app.services.auction_retention import after_increment, retention_window
+        if retention_window(_parameters(job).get('auction_retention_policy')) is None:return
         return after_increment(job,completed_result)
     except Exception as error:
         logger.warning('竞价到期清理暂未完成 %s %s',job['job_id'],type(error).__name__)
@@ -272,9 +273,11 @@ def _auction_after_increment(job, completed_result=None):
 
 def _noon_after_increment(job, completed_result=None):
     """An independent, versioned cleanup cannot roll back an accepted market day."""
-    if job['kind']!='increment' or _parameters(job).get('noon_retention_policy')!='noon-retention-28d-v1':return
+    if job['kind']!='increment':return
     try:
-        from app.services.noon_retention import after_increment
+        from app.services.noon_retention import after_increment, SUPPORTED_POLICIES
+        policy = _parameters(job).get('noon_retention_policy')
+        if not isinstance(policy, str) or policy not in SUPPORTED_POLICIES:return
         return after_increment(job,completed_result)
     except Exception as error:
         logger.warning('午评到期清理暂未完成 %s %s',job['job_id'],type(error).__name__)
@@ -326,7 +329,7 @@ def _workspace_after_data(job):
 
 
 def _warm_pane_after_supplement(job, result):
-    """Warm derived reads only for the just-finished closing data chain."""
+    """Warm the published initial or closing chain after its supplement."""
     try:
         parameters = _parameters(job)
         parent_id = parameters.get('parent_sync_job_id')
@@ -337,10 +340,11 @@ def _warm_pane_after_supplement(job, result):
             return
         from app.services.sync_progress import chain_stop_action
         with connect() as connection:
-            parent = connection.execute("SELECT * FROM job WHERE job_id=? AND kind='increment'",
+            parent = connection.execute("SELECT * FROM job WHERE job_id=? AND kind IN ('initialise','increment')",
                                         (parent_id,)).fetchone()
             if (not parent or parent['status'] not in ('succeeded', 'partial', 'no_change')
-                    or _parameters(dict(parent)).get('data_chain_version') != 'sector-charts-increment-v1'
+                    or _parameters(dict(parent)).get('data_chain_version') != (
+                        'sector-charts-v1' if parent['kind'] == 'initialise' else 'sector-charts-increment-v1')
                     or chain_stop_action(connection, job)):
                 return
             # The daily_raw SQL snapshot id differs from the filesystem market
@@ -358,25 +362,27 @@ def _warm_pane_after_supplement(job, result):
             from app.services.pane_read_cache import warm_closed_day
             warm_closed_day(day)
     except Exception as error:
-        logger.warning('盘后盘面读取缓存预热暂未完成 %s %s', job['job_id'], type(error).__name__)
+        logger.warning('已发布盘面读取缓存预热暂未完成 %s %s', job['job_id'], type(error).__name__)
 
 
-def _warm_pane_after_noon(job, result):
+def _warm_pane_after_snapshot(job, result, *, kind):
     try:
         day = job.get('target_date')
         snapshot = result.get('snapshot_id')
         if not day or not snapshot:
             return
+        table = {'auction': 'market_auction_snapshot', 'noon': 'market_noon_snapshot'}[kind]
         with connect() as connection:
-            saved = connection.execute("""SELECT 1 FROM market_noon_snapshot s
+            saved = connection.execute(f"""SELECT 1 FROM {table} s
                 JOIN job j ON j.job_id=s.job_id AND j.status IN ('succeeded','partial')
                 WHERE s.job_id=? AND s.trade_date=? AND s.snapshot_id=?""",
                 (job['job_id'], day, snapshot)).fetchone()
         if saved:
-            from app.services.pane_read_cache import warm_noon
-            warm_noon(day)
+            from app.services import pane_read_cache
+            warm = pane_read_cache.warm_auction if kind == 'auction' else pane_read_cache.warm_noon
+            warm(day)
     except Exception as error:
-        logger.warning('午评读取缓存预热暂未完成 %s %s', job['job_id'], type(error).__name__)
+        logger.warning('快照读取缓存预热暂未完成 %s %s %s', kind, job['job_id'], type(error).__name__)
 
 
 @provider_connection_scope()
@@ -431,6 +437,7 @@ def dispatch(job):
                      result.get('message','竞价终态已独立留存，缺口见详情'),lease_owner=job.get('lease_owner'))
         if result.get('status') != 'no_change':
             _capture_suspensions(job)
+            _warm_pane_after_snapshot(job,result,kind='auction')
     elif kind=='source_check' and _parameters(job).get('operation')=='intraday_snapshot':
         from app.services.intraday_service import execute_capture
         result=execute_capture(job,lambda stage,percent:tasks.progress(
@@ -446,7 +453,7 @@ def dispatch(job):
         tasks.finish(identifier,'succeeded' if result.get('quality')=='complete' else 'partial',
                      result.get('message','午评快照已独立留存，缺口见详情'),lease_owner=job.get('lease_owner'))
         _capture_suspensions(job)
-        _warm_pane_after_noon(job,result)
+        _warm_pane_after_snapshot(job,result,kind='noon')
     elif kind=='cleanup' and _parameters(job).get('operation')=='workspace_purge':
         from app.services.workspace_purge import execute
         execute(job)
@@ -545,7 +552,7 @@ def run(once=False):
         next_research_cleanup=0
         from app.services.automatic_tasks import AutomaticReviewScheduler
         automatic_scheduler=AutomaticReviewScheduler()
-        from app.services.pane_read_cache import closed_day_warm_steps
+        from app.services.pane_read_cache import closed_day_warm_steps, prune_historical
         startup_cache = closed_day_warm_steps() if not once else None
         while not stop.is_set():
             if time.monotonic()>=next_research_cleanup:
@@ -554,6 +561,10 @@ def run(once=False):
                     cleanup_expired(limit=100)
                 except Exception:
                     logger.warning('个股研究缓存清理稍后重试')
+                try:
+                    prune_historical()
+                except OSError:
+                    logger.warning('历史盘面临时缓存清理稍后重试')
                 next_research_cleanup=time.monotonic()+3600
             set_setting('worker_heartbeat',{'owner':owner,'at_ms':now_ms()})
             from app.services.line_alerts import recover_sync_followups

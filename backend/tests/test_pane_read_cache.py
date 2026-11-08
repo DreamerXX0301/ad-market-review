@@ -105,3 +105,68 @@ def test_result_built_during_publication_is_not_cached(market, monkeypatch):
     assert cache.read_block('example', day, 'old', build, market=market) == {'count': None}
     assert not (cache._root() / day / 'example.json').exists()
     assert cache.read_block('example', day, 'new', lambda: {'count': 3}, market=market) == {'count': 3}
+
+
+def test_historical_dates_have_independent_fixed_deadlines(market, monkeypatch):
+    older, old, closed = market.days[0], market.days[1], market.latest
+    start = 2 * cache.HISTORY_TTL_MS
+    at = start
+    monkeypatch.setattr(cache, 'now_ms', lambda: at)
+    monkeypatch.setattr(market, 'status', lambda: {
+        'data_begin': older, 'data_end': closed, 'snapshot_id': 'verified',
+    })
+    calls = []
+
+    def build():
+        calls.append(True)
+        return {'count': len(calls), 'unknown': None}
+
+    @cache.with_historical_cache
+    def browse(day, name='example', proof='actual-source'):
+        return cache.read_block(name, day, proof, build, market=market)
+
+    history = cache._root() / 'historical'
+    assert cache.read_block('example', old, 'actual-source', build, market=market)['count'] == 1
+    assert not history.exists()
+    assert browse(old)['count'] == 2
+    deadline = history / old / cache._HISTORY_EXPIRY
+    assert int(deadline.read_text()) == start + cache.HISTORY_TTL_MS
+    at += 1000
+    assert browse(older)['count'] == 3
+    assert browse(old, 'second-block')['count'] == 4
+    assert browse(old)['count'] == 2
+    assert int(deadline.read_text()) == start + cache.HISTORY_TTL_MS
+    assert browse(old, proof='replaced-source')['count'] == 5
+    assert int(deadline.read_text()) == start + cache.HISTORY_TTL_MS
+    assert browse(closed)['count'] == 6
+    at = start + cache.HISTORY_TTL_MS
+    cache.prune_historical()
+    assert not (history / old).exists()
+    assert (history / older / 'example.json').is_file()
+    assert (cache._root() / closed / 'example.json').is_file()
+    assert browse(old)['count'] == 7
+    assert browse(older)['count'] == 3
+
+
+def test_historical_caps_and_unavailable_dates_do_not_affect_regular_cache(market, monkeypatch):
+    closed, future = market.latest, market.days[-1]
+    monkeypatch.setattr(market, 'status', lambda: {
+        'data_begin': market.days[0], 'data_end': closed,
+    })
+    monkeypatch.setattr(cache, 'MAX_HISTORY_FILES', 1)
+
+    @cache.with_historical_cache
+    def browse(day, proof='actual-source'):
+        return cache.read_block('example', day, proof, lambda: {}, market=market)
+
+    browse('2026-01-04')
+    browse(market.days[1], proof=None)
+    browse(future)
+    history = cache._root() / 'historical'
+    assert not history.exists()
+    browse(closed)
+    browse(market.days[0])
+    browse(market.days[1])
+    assert (cache._root() / closed / 'example.json').is_file()
+    assert not (history / market.days[0]).exists()
+    assert (history / market.days[1] / 'example.json').is_file()

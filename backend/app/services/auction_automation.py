@@ -123,7 +123,7 @@ def _run_view(connection, row):
     return {'date': result['trade_date'], 'job_id': result['job_id'], 'state': state,
             'attempts': result['attempts'], 'max_attempts': MAX_ATTEMPTS,
             'retry_after_at_ms': None if state == 'purged' else result['retry_after_at_ms'],
-            'reason': '竞价已超过28自然日保留窗口，正文及原件已清理；原日名额继续保留。' if state == 'purged' else result['reason'],
+            'reason': '竞价正文及原件已按当时的保留规则清理，原日名额继续保留。' if state == 'purged' else result['reason'],
             'automatic_control': False if state == 'purged' else bool(result['automatic_control']),
             'schedule_revision': result['schedule_revision']}
 

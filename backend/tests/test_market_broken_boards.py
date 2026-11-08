@@ -658,6 +658,52 @@ def test_emotion_route_keeps_both_required_cohorts_and_current_non_cohort_facts(
     assert report['previous_feedback']['concept_distribution'][0]['sample_avg_change_pct'] == pytest.approx(0.)
 
 
+def test_emotion_http_only_caches_requested_details_and_keeps_member_archives_live(monkeypatch, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.routers.platform import router
+    from app.services import market_service, market_broken_boards, market_sentiment, market_outlook, stock_memberships
+
+    market = Market()
+    monkeypatch.setenv('SHIXU_DATA_DIR', str(tmp_path))
+    monkeypatch.setattr(market_service, 'panel', lambda *_args, **_kwargs:
+                        (market, market.status(), DAY, market.ref, market.rows()))
+    monkeypatch.setattr(market_service, 'snapshot_evidence', lambda *_args: 'verified-fixture')
+    monkeypatch.setattr(market, 'breadth_history', lambda *_args: [], raising=False)
+    monkeypatch.setattr(market_service, '_breadth', lambda *_args: {'up': 0, 'down': 0, 'flat': 0, 'unknown': 4})
+    monkeypatch.setattr(market_service, 'data_coverage', lambda *_args: {})
+    monkeypatch.setattr(market_sentiment, 'describe_sentiment', lambda *_args: {})
+    monkeypatch.setattr(market_outlook, 'build_market_outlook', lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(stock_memberships, 'current_memberships', lambda *_args, **_kwargs: {'memberships': {}})
+    title = ['初始留存归属']
+    monkeypatch.setattr(market_broken_boards, 'resolve_reference',
+                        lambda _kind, day, *_: member_archive(day, [topic(day, name=title[0], members=[X])]))
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+
+    def read(**params):
+        response = client.get('/api/v1/market/emotion', params={'date': DAY, **params})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    summary = read(summary_only=True)
+    assert 'broken_board_analysis' not in summary and 'history' not in summary and not market.calls
+    assert not list(tmp_path.rglob('emotion-broken-board-facts.json'))
+    first = read()['broken_board_analysis']
+    assert len(market.calls) == 1
+    assert first['current']['concept_distribution'][0]['name'] == '初始留存归属'
+    assert first['history'][-1]['membership_summary'] == first['current']['membership_summary']
+    assert list(tmp_path.rglob('emotion-broken-board-facts.json'))
+    assert read()['broken_board_analysis'] == first
+    assert len(market.calls) == 1
+    title[0] = '重新核验的归属'
+    changed = read()['broken_board_analysis']
+    assert changed['current']['concept_distribution'][0]['name'] == '重新核验的归属'
+    assert changed['current']['broken_rate_pct'] == first['current']['broken_rate_pct']
+    assert len(market.calls) == 1
+
+
 @pytest.mark.parametrize('mode', ['missing', 'future_archive', 'future_topic', 'unknown_source', 'conflicting_duplicate'])
 def test_missing_or_future_member_evidence_never_fills_prior_cohort_from_today(monkeypatch, mode):
     from app.services import market_broken_boards

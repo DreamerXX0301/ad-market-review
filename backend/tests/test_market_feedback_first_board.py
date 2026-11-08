@@ -85,6 +85,33 @@ def test_missing_calendar_keeps_first_board_scope_unknown_without_borrowing_a_da
     assert result['first_board_feedback_coverage']['state'] == 'unknown'
 
 
+def test_immutable_board_facts_hit_cache_and_manual_memberships_stay_live(feedback, monkeypatch, tmp_path):
+    monkeypatch.setenv('SHIXU_DATA_DIR', str(tmp_path))
+    title = ['初始人工题材']
+    monkeypatch.setattr(stock_memberships, 'current_memberships', lambda *_args, **_kwargs: {
+        'memberships': {OTHER: [{'topic_id': 'manual', 'name': title[0], 'kind': 'concept'}]}, 'scope': 'fixture only'})
+
+    def read(evidence):
+        indexed = {row['instrument_id']: row for row in feedback.rows()}
+        return feedback_view(feedback, feedback.status(), feedback.ref, TODAY, indexed, evidence=evidence)
+
+    uncached = build(feedback)
+    feedback.history_calls.clear()
+    first = read('source-proof')
+    assert first == uncached
+    assert len(feedback.history_calls) == 2
+    assert list(tmp_path.rglob('emotion-ladder-feedback-facts.json'))
+    assert list(tmp_path.rglob('emotion-first-board-facts.json'))
+    title[0] = '已更新人工题材'
+    updated = read('source-proof')
+    assert len(feedback.history_calls) == 2
+    assert updated['feedback'][0]['topics'][0]['name'] == '已更新人工题材'
+    assert updated['feedback'][0]['board_presentation'] == first['feedback'][0]['board_presentation']
+    assert updated['first_board_feedback'] == first['first_board_feedback']
+    assert read('changed-source-proof') == updated
+    assert len(feedback.history_calls) == 4
+
+
 def test_flow_no_longer_computes_feedback(monkeypatch, feedback):
     monkeypatch.setattr(market_service, 'panel', lambda *a, **k: (feedback, feedback.status(), TODAY, feedback.ref, feedback.rows()))
     monkeypatch.setattr(market_service, 'prior_ladder_feedback', lambda *a, **k: pytest.fail('flow cannot compute removed feedback'))

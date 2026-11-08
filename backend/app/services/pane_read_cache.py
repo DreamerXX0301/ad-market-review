@@ -3,6 +3,7 @@ from collections import OrderedDict
 from contextvars import ContextVar
 from datetime import datetime
 import fcntl
+from functools import wraps
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -12,7 +13,7 @@ from threading import RLock
 from zoneinfo import ZoneInfo
 
 from app.infrastructure.config import published_dir, sqlite_path
-from app.infrastructure.storage import atomic_json, digest, hash_file, json_clean
+from app.infrastructure.storage import atomic_json, digest, hash_file, json_clean, now_ms
 from app.services.market_source_proof import verified_price_source
 
 VERSION = 'pane-read-cache-v1'
@@ -21,13 +22,19 @@ MAX_BLOCK_BYTES = 2 * 1024 * 1024
 MAX_MEMORY_BYTES = 16 * 1024 * 1024
 MAX_FILES = 128
 MAX_DISK_BYTES = 64 * 1024 * 1024
+HISTORY_TTL_MS = 24 * 60 * 60 * 1000
+MAX_HISTORY_FILES = 64
+MAX_HISTORY_BYTES = 32 * 1024 * 1024
+_HISTORY_EXPIRY = '.expires-at'
 _DATE = re.compile(r'\d{4}-\d{2}-\d{2}\Z')
 _NAME = re.compile(r'[a-z][a-z0-9-]{0,47}\Z')
 _CLOSED_BLOCKS = ('index-summary', 'gainers-price-rank-v1', 'gainers-full-events-v1', 'gainers-overview',
                   'overview-breadth', 'emotion-facts', 'closing-ladder', 'sector-overview')
-_CLOSED_OPTIONAL_BLOCKS = ('monitor-historical', 'monitor-latest')
+_CLOSED_OPTIONAL_BLOCKS = ('monitor-historical', 'monitor-latest', 'emotion-broken-board-facts',
+                           'emotion-ladder-feedback-facts', 'emotion-first-board-facts')
 _CLOSED_RECEIPT = 'closed-day-warm'
 _warming = ContextVar('closed_day_cache_warming', default=None)
+_history_requested = ContextVar('historical_pane_cache_requested', default=False)
 _lock = RLock()
 _memory = OrderedDict()
 _memory_bytes = 0
@@ -37,6 +44,22 @@ def _root():
     # API and worker already share the writable business volume. This separate
     # directory is disposable and never becomes part of a business transaction.
     return sqlite_path().parent / VERSION
+
+
+def with_historical_cache(read):
+    """Only interactive market reads can create the temporary historical cache."""
+    @wraps(read)
+    def wrapped(*args, **kwargs):
+        token = _history_requested.set(True)
+        try:
+            return read(*args, **kwargs)
+        finally:
+            _history_requested.reset(token)
+    return wrapped
+
+
+def historical_cache_requested():
+    return _history_requested.get()
 
 
 def retained_days(market, *, live_snapshot=False, status=None):
@@ -49,7 +72,7 @@ def retained_days(market, *, live_snapshot=False, status=None):
     if live_snapshot:
         today = datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()
         if not dates or today > dates[-1]:
-            dates = [*dates[-(SESSIONS - 1):], today]
+            dates.append(today)
     return dates
 
 
@@ -89,34 +112,72 @@ def _on_disk(path, token):
     return None
 
 
-def _files(root):
-    return [file for directory in root.iterdir()
-            if _DATE.fullmatch(directory.name) and directory.is_dir() and not directory.is_symlink()
-            for file in directory.iterdir()
+def _date_folders(root):
+    return [directory for directory in root.iterdir()
+            if _DATE.fullmatch(directory.name) and directory.is_dir() and not directory.is_symlink()]
+
+
+def _folder_files(directory):
+    return [file for file in directory.iterdir()
             if file.suffix == '.json' and _NAME.fullmatch(file.stem) and file.is_file() and not file.is_symlink()]
 
 
-def _prune_files(root, days=None, *, newest=None):
+def _prune_files(root, days=None, *, newest=None, historical=False):
     records = []
-    for file in _files(root):
-        try:
-            if days is not None and file.parent.name not in days:
-                file.unlink(missing_ok=True)
-                try:
-                    file.parent.rmdir()
-                except OSError:
-                    pass
+    folders = _date_folders(root)
+    for folder in folders:
+        for file in _folder_files(folder):
+            try:
+                if days is not None and folder.name not in days:
+                    file.unlink(missing_ok=True)
+                    continue
+                stat = file.stat()
+                records.append((file == newest, stat.st_mtime_ns, stat.st_size, file))
+            except OSError:
                 continue
-            stat = file.stat()
-            records.append((file == newest, stat.st_mtime_ns, stat.st_size, file))
-        except OSError:
-            continue
+    file_limit, byte_limit = (MAX_HISTORY_FILES, MAX_HISTORY_BYTES) if historical else (MAX_FILES, MAX_DISK_BYTES)
     total = sum(item[2] for item in records)
     for index, (_, _, size, file) in enumerate(sorted(records)):
-        if len(records) - index <= MAX_FILES and total <= MAX_DISK_BYTES:
+        if len(records) - index <= file_limit and total <= byte_limit:
             break
         file.unlink(missing_ok=True)
         total -= size
+    for folder in folders:
+        if not _folder_files(folder):
+            if historical:
+                (folder / _HISTORY_EXPIRY).unlink(missing_ok=True)
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+
+
+def _history_active(folder, at):
+    try:
+        if folder.is_symlink() or (folder / _HISTORY_EXPIRY).is_symlink():
+            return False
+        with (folder / _HISTORY_EXPIRY).open('rb') as stream:
+            deadline = int(stream.read(24))
+        return at < deadline <= at + HISTORY_TTL_MS
+    except (OSError, ValueError):
+        return False
+
+
+def _prune_history(root, at, *, newest=None):
+    keep = {folder.name for folder in _date_folders(root) if _history_active(folder, at)}
+    _prune_files(root, keep, newest=newest, historical=True)
+
+
+def prune_historical():
+    root = _root() / 'historical'
+    if root.is_dir():
+        with (root / '.write-lock').open('a') as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            _prune_history(root, now_ms())
+
+
+def _write_record(path, token, body):
+    atomic_json(path, {'key': token, 'sha256': sha256(body).hexdigest(), 'body': body.decode()})
 
 
 def _save(root, path, token, body):
@@ -126,7 +187,7 @@ def _save(root, path, token, body):
         root.mkdir(parents=True, exist_ok=True)
         with (root / '.write-lock').open('a') as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            atomic_json(path, {'key': token, 'sha256': sha256(body).hexdigest(), 'body': body.decode()})
+            _write_record(path, token, body)
             _prune_files(root, newest=path)
     except OSError:
         # Disk caches are optional, including on read-only deployments.
@@ -137,6 +198,56 @@ def _record_warm_file(name, path, token):
     checked = _warming.get()
     if checked is not None and name in _CLOSED_BLOCKS and _on_disk(path, token) is not None:
         checked.add(name)
+
+
+def _read_historical(name, day, evidence, build, market, status):
+    if not historical_cache_requested():
+        return build()
+    try:
+        if market is None:
+            from app.core import get_market
+
+            market = get_market()
+        status = market.status() if status is None else status
+        eligible = status['data_begin'] <= day <= status['data_end'] and day in market.calendar()
+        root = _root() / 'historical'
+        token = digest((VERSION, name, day, evidence))
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, OperationalError):
+        return build()
+    if not eligible:
+        return build()
+    folder = root / day
+    if root.is_symlink() or folder.is_symlink():
+        return build()
+    path = folder / (name + '.json')
+    if _history_active(folder, now_ms()):
+        body = _on_disk(path, token)
+        if body is not None:
+            try:
+                return json.loads(body)
+            except ValueError:
+                pass
+    value = build()
+    if status.get('snapshot_id') and market.status().get('snapshot_id') != status['snapshot_id']:
+        return value
+    try:
+        body = _encode(value)
+        if len(body) <= MAX_BLOCK_BYTES:
+            root.mkdir(parents=True, exist_ok=True)
+            with (root / '.write-lock').open('a') as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                at = now_ms()
+                create_window = not _history_active(folder, at)
+                if create_window:
+                    _prune_history(root, at)
+                _write_record(path, token, body)
+                if create_window:
+                    at = now_ms()
+                    atomic_json(folder / _HISTORY_EXPIRY, at + HISTORY_TTL_MS)
+                _prune_history(root, at, newest=path)
+    except (OSError, ValueError, TypeError):
+        pass
+    return value
 
 
 def read_block(name, day, evidence, build, *, market=None, live_snapshot=False):
@@ -152,7 +263,7 @@ def read_block(name, day, evidence, build, *, market=None, live_snapshot=False):
     except (OSError, ValueError, TypeError, AttributeError, OperationalError):
         days = ()
     if day not in days:
-        return build()
+        return _read_historical(name, day, evidence, build, market, status)
     try:
         root = _root()
         token = digest((VERSION, name, day, evidence))
@@ -226,6 +337,12 @@ def warm_noon(day):
     _warm((lambda: read_view(day),))
 
 
+def warm_auction(day):
+    from app.services import auction_feedback, auction_service
+
+    _warm((lambda: auction_service.read_view(day), lambda: auction_feedback.read_view(day)))
+
+
 def _warm_source(market, status):
     from app.services.market_suspensions import suspension_revision
 
@@ -253,7 +370,7 @@ def _warm_token(folder, source):
             files.append((name, info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
     except OSError:
         return None
-    return digest((VERSION, _CLOSED_RECEIPT, source, files))
+    return digest((VERSION, _CLOSED_RECEIPT, _CLOSED_BLOCKS, _CLOSED_OPTIONAL_BLOCKS, source, files))
 
 
 def closed_day_warm_steps(day=None):
@@ -279,14 +396,15 @@ def closed_day_warm_steps(day=None):
         if root.is_dir():
             with (root / '.write-lock').open('a') as lock:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-                _prune_files(root, dates)
+                today = datetime.now(ZoneInfo('Asia/Shanghai')).date().isoformat()
+                _prune_files(root, {*dates, today})
     except OSError:
         pass
     closed_readers = (
         partial(market_service.index_overview, day),
         partial(market_service.market_page, 'gainers', day, 25, top_n=100, page_size=25),
         partial(market_service.overview, day),
-        partial(market_service.market_page, 'emotion', day, 1000, summary_only=True),
+        partial(market_service.market_page, 'emotion', day, 1000),
         partial(market_service.market_page, 'sectors', day, 1000),
         partial(market_service.market_page, 'ladder', day, 1000),
         partial(market_service.market_page, 'abnormal', day, 1000),

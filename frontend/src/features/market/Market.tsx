@@ -714,7 +714,6 @@ export function MarketPage({
   const info = pageDetails[route];
   const isSector = route === "sectors" || route === "flow";
   const isGainers = route === "gainers";
-  const [emotionDetailDay, setEmotionDetailDay] = useState("");
   const [filter, setFilter] = useState(""),
     [kind, setKind] = useState(route === "flow" ? "industry" : "concept"),
     [level, setLevel] = useState("all"),
@@ -746,20 +745,10 @@ export function MarketPage({
   };
   const result = useApi<Row>(
     date && route !== "abnormal"
-      ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${route === "emotion" ? "&summary_only=true" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
+      ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
       : null,
   );
-  const wantsEmotionDetails =
-    route === "emotion" && !!date && emotionDetailDay === date;
-  const emotionDetails = useApi<Row>(
-    wantsEmotionDetails ? `/market/emotion?date=${date}&limit=1000` : null,
-  );
-  const hasEmotionDetails =
-    wantsEmotionDetails &&
-    !emotionDetails.error &&
-    emotionDetails.data?.date === date &&
-    emotionDetails.data?.snapshot_id === result.data?.snapshot_id;
-  const data = hasEmotionDetails ? emotionDetails.data : result.data;
+  const data = result.data;
   const sectorResult = useApi<Row>(
     route === "flow" && kind === "concept" && date
       ? `/market/sectors?date=${date}&limit=1000`
@@ -942,10 +931,7 @@ export function MarketPage({
             <button
               className="icon-btn"
               aria-label="刷新市场情绪"
-              onClick={() => {
-                result.reload();
-                if (wantsEmotionDetails) emotionDetails.reload();
-              }}
+              onClick={result.reload}
             >
               <RefreshCw size={15} />
             </button>
@@ -955,7 +941,7 @@ export function MarketPage({
           date={date}
           outlook={!!data?.market_outlook}
           statistics={!!data?.sentiment}
-          feedback={hasEmotionDetails}
+          feedback={!!data}
           brokenBoard={!!data?.broken_board_analysis}
           history={data?.history?.length > 0}
         >
@@ -1037,33 +1023,6 @@ export function MarketPage({
               </Panel>
             )
           )}
-          {data && !hasEmotionDetails && (
-            <Panel title="盘面明细">
-              {emotionDetails.error && wantsEmotionDetails ? (
-                <ErrorBox
-                  message={emotionDetails.error}
-                  retry={emotionDetails.reload}
-                />
-              ) : wantsEmotionDetails &&
-                (emotionDetails.loading || result.loading) ? (
-                <Loading />
-              ) : (
-                <button
-                  className="btn"
-                  onClick={() => {
-                    if (wantsEmotionDetails) {
-                      result.reload();
-                      emotionDetails.reload();
-                    } else {
-                      setEmotionDetailDay(date);
-                    }
-                  }}
-                >
-                  加载炸板、连板反馈与广度历史
-                </button>
-              )}
-            </Panel>
-          )}
           {data?.broken_board_analysis && (
             <BrokenBoardAnalysis
               data={data.broken_board_analysis}
@@ -1072,7 +1031,7 @@ export function MarketPage({
               onStock={onStock}
             />
           )}
-          {data && hasEmotionDetails && (
+          {data && (
             <section
               id="emotion-ladder-feedback"
               aria-label="连板样本反馈与概览"
