@@ -333,12 +333,13 @@ export default function MarketOutlook({
         id="emotion-reading"
         className={`outlook-hero outlook-stage-${stage.code || "unknown"}`}
       >
+        <header className="outlook-eyebrow outlook-reading-header">
+          <Thermometer size={16} aria-hidden="true" />
+          <span>今日市场读数</span>
+          <time dateTime={date}>{date} 收盘</time>
+        </header>
         <div className="outlook-hero-main">
-          <div className="outlook-eyebrow">
-            <Thermometer size={16} />
-            <span>今日市场读数</span>
-            <time>{date} 收盘</time>
-          </div>
+          <span className="outlook-reading-label">当日阶段</span>
           <div className="outlook-stage-title">
             <h2>{stage.label || "待核验"}</h2>
             <span>
@@ -349,24 +350,9 @@ export default function MarketOutlook({
                   : "阶段观察"}
             </span>
           </div>
-          <p className="outlook-summary">
-            {headline.summary ||
-              stage.summary ||
-              "当前依据尚不足以形成阶段观察。"}
-          </p>
-          {headline.label && (
-            <div
-              className={`outlook-headline ${headline.observation_state === "unknown" ? "unknown" : "observed"}`}
-            >
-              <span>今日观察</span>
-              <strong>{headline.label}</strong>
-              <small>下一交易日执行条件尚未观察</small>
-            </div>
-          )}
-          <Lines items={stage.reasons} className="outlook-reasons" />
         </div>
         <div className="outlook-thermometer">
-          <span>沪深广度温度</span>
+          <span className="outlook-reading-label">沪深广度温度</span>
           <div className="outlook-temperature-number">
             <strong>{validReading ? num(reading, 1) : "—"}</strong>
             <span>/ 100</span>
@@ -402,23 +388,47 @@ export default function MarketOutlook({
               </>
             )}
           </p>
-          <small>
+        </div>
+        <div className="outlook-reading-context">
+          <small className="outlook-reading-basis">
             {temperature.scope || "沪深可比样本"} · 可比率{" "}
             {coverage == null ? "待核验" : `${num(coverage, 1)}%`}
             {temperature.coverage_basis === "retained_master_upper_bound" && (
               <> · 按留存主表上界保守核验，应有范围未全核实</>
             )}
           </small>
-        </div>
-        <div className="outlook-axis-strip">
-          {axes.map((axis) => (
-            <div key={axis.id}>
-              <span>{axis.label}</span>
-              <strong>{axis.state_label || "待核验"}</strong>
-              <small>{outlookAxisEvidence(axis)}</small>
+          <p className="outlook-summary">
+            {headline.summary ||
+              stage.summary ||
+              "当前依据尚不足以形成阶段观察。"}
+          </p>
+          {headline.label && (
+            <div
+              className={`outlook-headline ${headline.observation_state === "unknown" ? "unknown" : "observed"}`}
+            >
+              <span>今日观察</span>
+              <strong>{headline.label}</strong>
+              <small>下一交易日执行条件尚未观察</small>
             </div>
-          ))}
+          )}
+          {!!outlookLines(stage.reasons).length && (
+            <details className="outlook-stage-evidence">
+              <summary>查看阶段判定依据</summary>
+              <Lines items={stage.reasons} className="outlook-reasons" />
+            </details>
+          )}
         </div>
+        {!!axes.length && (
+          <div className="outlook-axis-strip">
+            {axes.map((axis) => (
+              <div key={axis.id}>
+                <span>{axis.label}</span>
+                <strong>{axis.state_label || "待核验"}</strong>
+                <small>{outlookAxisEvidence(axis)}</small>
+              </div>
+            ))}
+          </div>
+        )}
         {!!outlookLines(stage.conflicts).length && (
           <div className="outlook-conflicts">
             <strong>盘面分歧</strong>

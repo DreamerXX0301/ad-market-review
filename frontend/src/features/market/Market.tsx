@@ -1,7 +1,7 @@
 import { StockEventBadges } from "./BoardTags";
 import AbnormalMonitor from "./AbnormalMonitor";
 import { useEffect, useState } from "react";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronRight, RefreshCw, Search } from "lucide-react";
 import { list, useApi, usePageActive } from "../../lib/api";
 import IntradayPageNavigation from "./IntradayPageNavigation";
 import { intradayReadingProps } from "./intradayReadingNavigation";
@@ -33,6 +33,7 @@ import {
 import { CandleChart, EChart } from "../../components/Charts";
 import "./Market.css";
 import "./MarketOverview.css";
+import "./GainerLeaderboard.css";
 import { AmountActivityCell, AmountActivitySummary } from "./AmountActivity";
 import { SectorActivityCell, SectorActivityCoverage } from "./SectorActivity";
 import LadderFeedback, { LadderFeedbackOverview } from "./LadderFeedback";
@@ -701,9 +702,9 @@ const pageDetails: Record<
     desc: "按已完成交易日计算区间涨幅；缺历史身份和监管材料时单列提示。",
     columns: [
       "name",
-      "topics",
-      "change_pct",
       "change_30d_pct",
+      "change_pct",
+      "topics",
       "last_limit_up_date",
       "limit_up_ytd",
       "board_count",
@@ -1184,6 +1185,7 @@ export function MarketPage({
       <MarketDataCoverage
         coverage={tableData?.data_coverage}
         loading={tableLoading}
+        compact={isGainers}
       />
       {route === "flow" && (
         <div className="market-concept-flow-note" aria-label="行业资金数据状态">
@@ -1258,7 +1260,7 @@ export function MarketPage({
           </details>
         </>
       )}
-      {entries.length > 0 && (
+      {!isGainers && entries.length > 0 && (
         <div className="stats-grid">
           {entries.map(([key, value]) => (
             <ExplainedMetric
@@ -1277,6 +1279,7 @@ export function MarketPage({
         </div>
       )}
       <Panel
+        className={isGainers ? "gainer-leaderboard" : undefined}
         title={
           conceptFlow
             ? "概念行情观察"
@@ -1291,18 +1294,28 @@ export function MarketPage({
         }
         actions={
           <>
-            <input
-              className="search-input compact"
-              placeholder={
-                isGainers
-                  ? gainerUnranked
-                    ? "搜索未排名证券名称、题材、代码…"
-                    : "搜索全市场名称、题材、代码（含未排名）…"
-                  : "筛选名称、题材、代码…"
-              }
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
+            {isGainers ? (
+              <label className="gainer-search">
+                <Search size={15} aria-hidden="true" />
+                <input
+                  className="search-input compact"
+                  type="search"
+                  aria-label={
+                    gainerUnranked ? "搜索未排名证券" : "搜索全市场证券"
+                  }
+                  placeholder="搜索名称、题材、代码"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                />
+              </label>
+            ) : (
+              <input
+                className="search-input compact"
+                placeholder="筛选名称、题材、代码…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+            )}
             <button
               className="icon-btn"
               onClick={conceptFlow ? sectorResult.reload : result.reload}
@@ -1314,69 +1327,96 @@ export function MarketPage({
         }
       >
         {isGainers && (
-          <div className="market-gainer-range">
-            <span>近30日涨幅范围</span>
-            <div className="segmented">
-              {[100, 200, 300, 500, 1000].map((count) => (
+          <div className="gainer-overview">
+            <section className="gainer-scope" aria-label="榜单范围">
+              <h3>榜单范围</h3>
+              <div
+                className="gainer-scope-options"
+                role="group"
+                aria-label="榜单范围筛选"
+              >
+                {[100, 200, 300, 500, 1000, null].map((count) => (
+                  <button
+                    type="button"
+                    key={count ?? "all"}
+                    aria-pressed={!gainerUnranked && gainerTopN === count}
+                    onClick={() => {
+                      setGainerUnranked(false);
+                      setGainerTopN(count);
+                      setGainerPage(1);
+                    }}
+                  >
+                    {count == null ? "全市场" : `前${count}`}
+                  </button>
+                ))}
                 <button
-                  key={count}
-                  className={
-                    !gainerUnranked && gainerTopN === count ? "active" : ""
-                  }
+                  type="button"
+                  aria-pressed={gainerUnranked}
                   onClick={() => {
-                    setGainerUnranked(false);
-                    setGainerTopN(count);
+                    setGainerUnranked(true);
                     setGainerPage(1);
                   }}
                 >
-                  前{count}
+                  未排名
                 </button>
-              ))}
-              <button
-                className={
-                  !gainerUnranked && gainerTopN == null ? "active" : ""
-                }
-                onClick={() => {
-                  setGainerUnranked(false);
-                  setGainerTopN(null);
-                  setGainerPage(1);
-                }}
-              >
-                全市场
-              </button>
-              <button
-                className={gainerUnranked ? "active" : ""}
-                onClick={() => {
-                  setGainerUnranked(true);
-                  setGainerPage(1);
-                }}
-              >
-                未排名 {integer(summary.available_unranked_total)} 只
-              </button>
-            </div>
-            <small>
-              {gainerUnranked
-                ? "仅查看未排名证券；缺少端点报价或复权依据时保留未知"
-                : gainerQuery
-                  ? "搜索全市场（含未排名），不受前N名限制"
-                  : gainerTopN == null
-                    ? "全部匹配证券"
-                    : `先按近30日涨幅选前${gainerTopN}名，再在该范围内搜索或重排`}{" "}
-              · 榜内实际 {integer(summary.rank_scope_total)} 只 · 全部可排名{" "}
-              {integer(
-                summary.available_ranked_total ?? data?.summary?.covered_stocks,
-              )}{" "}
-              只 · 未排名 {integer(summary.available_unranked_total)}{" "}
-              只，可切换查看原因
-            </small>
+              </div>
+              <p className="gainer-scope-note">
+                {gainerUnranked
+                  ? "仅查看未排名证券。缺少端点报价或复权依据时保留未知。"
+                  : gainerQuery
+                    ? "搜索全市场（含未排名），不受前 N 名限制。"
+                    : gainerTopN == null
+                      ? "查看全市场已返回的证券，未排名一并保留。"
+                      : `先按近 30 日涨幅取前 ${gainerTopN} 名，可在此范围内重排。`}
+              </p>
+              <dl className="gainer-scope-counts">
+                <div>
+                  <dt>当前范围</dt>
+                  <dd>{integer(summary.rank_scope_total)}</dd>
+                </div>
+                <div>
+                  <dt>全部可排名</dt>
+                  <dd>
+                    {integer(
+                      summary.available_ranked_total ?? summary.covered_stocks,
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>未排名</dt>
+                  <dd>{integer(summary.available_unranked_total)}</dd>
+                </div>
+              </dl>
+              {data && !data.unavailable_reason && (
+                <details className="gainer-method">
+                  <summary>
+                    涨幅区间 {textValue(summary.start)} 至{" "}
+                    {textValue(summary.end)}
+                  </summary>
+                  <p>
+                    {textValue(summary.return_basis)}。全部样本{" "}
+                    {integer(summary.universe_count)}{" "}
+                    只，其中可排名但区间内缺报价{" "}
+                    {integer(summary.with_intermediate_gaps)} 只。
+                  </p>
+                </details>
+              )}
+            </section>
+            <GainerDistribution
+              key={date}
+              data={data?.ranking_distribution}
+              classificationReference={data?.classification_reference}
+            />
           </div>
         )}
         {isGainers && (
-          <GainerDistribution
-            key={date}
-            data={data?.ranking_distribution}
-            classificationReference={data?.classification_reference}
-          />
+          <div className="gainer-table-heading">
+            <h3>证券榜单</h3>
+            <span>
+              点击表头排序
+              <span className="gainer-scroll-hint"> · 左右滑动查看全部列</span>
+            </span>
+          </div>
         )}
         {isSector && (
           <>
@@ -1658,9 +1698,14 @@ export function MarketPage({
                                 `${row.return_30d_start} → ${row.return_30d_end}，按市场交易日端点计算`
                               }
                             >
-                              <span className={tone(value)}>
+                              <span className={`gainer-return ${tone(value)}`}>
                                 {value == null ? "未排名" : percent(value)}
                               </span>
+                              {typeof row.rank === "number" && row.rank > 0 && (
+                                <small className="gainer-original-rank">
+                                  原始第 {integer(row.rank)} 名
+                                </small>
+                              )}
                               {suspendedEndpoints && (
                                 <small className="market-gap-note">
                                   {suspendedEndpoints}

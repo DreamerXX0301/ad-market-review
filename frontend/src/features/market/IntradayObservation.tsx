@@ -3459,6 +3459,10 @@ export default function IntradayObservation({
   const partialNote = partialSnapshotNote(snapshot);
   const historical = !!today && !!date && date < today;
   const aiStage = aiMarketStage(selectedSlot);
+  const selectedWindow = slots.find((slot) => slot.key === selectedSlot);
+  const selectedLabel =
+    snapshot?.label || snapshot?.slot_label || selectedWindow?.label;
+  const pulse = (anchor || snapshot)?.market_pulse;
   return (
     <div className="intraday-workbench">
       <section className="panel intraday-header" aria-label="盘中观察">
@@ -3472,13 +3476,15 @@ export default function IntradayObservation({
             {historical && (
               <span className="intraday-history-tag">历史快照</span>
             )}
-            {snapshot && (
+            {selectedLabel && (
               <span className="intraday-snapshot-time">
                 <Clock3 size={13} />
-                {snapshot.label ||
-                  snapshot.slot_label ||
-                  slots.find((slot) => slot.key === snapshot.slot)?.label}{" "}
-                · {clock(snapshot.collected_end_at)}
+                <strong>{selectedLabel}</strong>
+                <span>
+                  {snapshot?.collected_end_at
+                    ? `留存 ${clock(snapshot.collected_end_at)}`
+                    : selectedWindow?.start}
+                </span>
               </span>
             )}
           </div>
@@ -3575,6 +3581,23 @@ export default function IntradayObservation({
             })}
           </div>
         )}
+        {(pulse?.breadth || pulse?.turnover) && (
+          <div className="intraday-quick-read" aria-label="所选时段市场读数">
+            <strong>本档市场</strong>
+            {pulse.breadth && (
+              <div>
+                <span className="up">涨 {integer(pulse.breadth.up)}</span>
+                <span className="down">跌 {integer(pulse.breadth.down)}</span>
+                <span>平 {integer(pulse.breadth.flat)}</span>
+              </div>
+            )}
+            {pulse.turnover && (
+              <span>
+                样本累计成交额 <b>{amount(pulse.turnover.amount)}</b>
+              </span>
+            )}
+          </div>
+        )}
         {partialNote && (
           <div className="intraday-coverage-note" role="status">
             <strong>部分留存</strong>
@@ -3584,10 +3607,8 @@ export default function IntradayObservation({
       </section>
       <IntradayPageNavigation
         scopeKey={`${date}:${selectedSlot}`}
-        label={
-          snapshot?.label ||
-          slots.find((slot) => slot.key === selectedSlot)?.label
-        }
+        label={selectedLabel}
+        inlineSectionNavigation
       >
         {brief && (
           <div {...intradayReadingProps("brief")}>

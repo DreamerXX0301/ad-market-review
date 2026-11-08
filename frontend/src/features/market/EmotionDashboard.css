@@ -44,51 +44,46 @@
 .sentiment-dimension {
   --sentiment-accent: var(--blue);
   min-width: 0;
-  border: 1px solid
-    color-mix(in srgb, var(--sentiment-accent) 22%, var(--border));
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--sentiment-accent) 6%, var(--surface)),
-    var(--surface) 70%
-  );
-  border-radius: 13px;
-  padding: 18px 20px 15px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 15px 16px 12px;
 }
 .sentiment-dimension--short_term {
   --sentiment-accent: var(--accent, #a99afa);
 }
 .sentiment-index-environment {
-  border: 1px solid var(--border);
-  border-radius: 13px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
   background: var(--surface);
-  padding: 18px 20px 15px;
+  padding: 13px 16px 11px;
 }
 .sentiment-index-environment .sentiment-dimension-head {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 .sentiment-index-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
 }
 .sentiment-index-card {
   min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--border-soft);
-  border-radius: 9px;
-  background: var(--surface2);
+  padding: 10px 12px 8px;
+  border-top: 1px solid var(--border-soft);
+}
+.sentiment-index-card + .sentiment-index-card {
+  border-inline-start: 1px solid var(--border-soft);
 }
 .sentiment-index-card > header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 17px;
+  margin-bottom: 9px;
 }
 .sentiment-index-card h3 {
   font-size: var(--workbench-type-body, 13px);
   font-weight: 600;
-  margin: 0 0 5px;
+  margin: 0;
 }
 .sentiment-index-card header span,
 .sentiment-index-coverage {
@@ -98,7 +93,7 @@
 }
 .sentiment-index-card .sentiment-metrics {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px 10px;
+  gap: 9px 8px;
   min-height: 0;
 }
 .sentiment-index-card .sentiment-metric > strong {
@@ -108,9 +103,7 @@
   font-size: var(--workbench-type-caption, 10px);
 }
 .sentiment-index-coverage {
-  margin: 16px 0 0;
-  border-top: 1px solid var(--border-soft);
-  padding-top: 9px;
+  margin: 8px 0 0;
 }
 .sentiment-cohort-controls {
   display: flex;
@@ -587,6 +580,9 @@
   .sentiment-index-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .sentiment-index-card:nth-child(odd) {
+    border-inline-start: 0;
+  }
   .sentiment-dimensions {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -603,10 +599,16 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .sentiment-index-environment {
-    padding: 16px;
+    padding: 12px 14px;
   }
   .sentiment-index-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .sentiment-index-card + .sentiment-index-card {
+    border-inline-start: 0;
+  }
+  .sentiment-index-card {
+    padding-inline: 0;
   }
   .sentiment-atmosphere {
     gap: 8px 10px;

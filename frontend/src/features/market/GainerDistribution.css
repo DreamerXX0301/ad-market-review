@@ -1,6 +1,6 @@
 .gainer-distribution {
-  margin: 0 18px 16px;
-  padding: 15px 17px 12px;
+  min-width: 0;
+  padding: 14px;
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   background: color-mix(in srgb, var(--blue) 3%, var(--surface));
@@ -16,44 +16,61 @@
 .gainer-distribution-heading > div:first-child {
   display: flex;
   align-items: baseline;
-  flex-wrap: wrap;
-  gap: 5px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
-.gainer-distribution-heading strong {
-  font-size: var(--workbench-type-title, 13px);
-  font-weight: 600;
+.gainer-distribution-heading h3 {
+  margin: 0;
+  font-size: var(--workbench-type-title, 14px);
+  font-weight: 650;
   color: var(--text);
 }
 .gainer-distribution-heading > div > span,
 .gainer-distribution-footnote {
   color: var(--workbench-type-muted, var(--muted));
-  font-size: var(--workbench-type-caption, 10px);
+  font-size: max(11px, var(--workbench-type-caption, 11px));
+}
+.gainer-distribution .segmented button {
+  min-height: 28px;
+}
+.gainer-distribution .segmented button.active {
+  background: var(--blue-bg);
+  color: var(--blue);
+  font-weight: 650;
 }
 .gainer-distribution-bars {
   margin: 13px 0 11px;
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 9px;
+  gap: 7px;
 }
 .gainer-distribution-bars > li {
   display: grid;
-  grid-template-columns: minmax(100px, 180px) minmax(50px, 1fr) max(110px, 8em);
+  grid-template-columns: minmax(80px, 1fr) minmax(24px, 1fr) minmax(
+      max-content,
+      7em
+    );
   align-items: center;
-  gap: 15px;
+  gap: 9px;
   font-size: var(--workbench-type-body, 12px);
 }
 .gainer-distribution-name {
   display: flex;
-  gap: 10px;
+  gap: 7px;
   align-items: center;
   min-width: 0;
 }
 .gainer-distribution-name small {
-  min-width: 1.1em;
+  min-width: 18px;
   flex: 0 0 auto;
+  border-radius: 4px;
+  background: var(--surface2);
   color: var(--workbench-type-muted, var(--muted));
-  font-size: var(--workbench-type-caption, 10px);
+  font-size: max(10px, var(--workbench-type-caption, 10px));
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .gainer-distribution-name > span {
   overflow: hidden;
@@ -61,10 +78,10 @@
   white-space: nowrap;
 }
 .gainer-distribution-track {
-  height: 6px;
+  height: 5px;
   overflow: hidden;
   border-radius: 6px;
-  background: var(--surface2);
+  background: var(--surface3);
 }
 .gainer-distribution-track > span {
   display: block;
@@ -76,12 +93,12 @@
 .gainer-distribution-value {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 6px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 .gainer-distribution-value b {
-  font-weight: 500;
+  font-weight: 650;
 }
 .gainer-distribution-value > span {
   min-width: 39px;
@@ -89,6 +106,8 @@
   color: var(--muted);
 }
 .gainer-distribution-footnote {
+  justify-content: flex-start;
+  gap: 3px 12px;
   line-height: 1.5;
 }
 .gainer-distribution-empty {
@@ -98,15 +117,10 @@
 }
 @media (max-width: 640px) {
   .gainer-distribution {
-    margin: 0 12px 12px;
     padding: 12px;
   }
   .gainer-distribution-bars > li {
-    grid-template-columns: minmax(85px, 115px) minmax(20px, 1fr) 98px;
-    gap: 8px;
-    font-size: 11px;
-  }
-  .gainer-distribution-value {
     gap: 6px;
+    font-size: 11px;
   }
 }
