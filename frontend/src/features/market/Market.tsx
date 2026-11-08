@@ -103,13 +103,19 @@ export function IndexCards({
   indices,
   selected,
   onSelect,
+  compact = false,
 }: {
   indices: Row[];
   selected?: string;
   onSelect: (id: string) => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="index-cards market-overview-indices">
+    <div
+      className={
+        "index-cards market-overview-indices" + (compact ? " is-compact" : "")
+      }
+    >
       {indexIds.map((id, i) => {
         const row =
           indices.find(
@@ -121,12 +127,14 @@ export function IndexCards({
         return (
           <button
             key={id}
+            type="button"
             className={"index-card " + (selected === id ? "selected" : "")}
+            aria-pressed={selected === id}
             onClick={() => onSelect(row.instrument_id || id)}
           >
             <div className="index-card-label">
               <span>{row.name || indexNames[i]}</span>
-              <ChevronRight size={14} />
+              {!compact && <ChevronRight size={14} aria-hidden="true" />}
             </div>
             <div className="index-price-line">
               <span className={"index-price " + tone(row.change_pct)}>
@@ -161,6 +169,9 @@ export function IndexCards({
 }
 function Breadth({ data }: { data: Row }) {
   const breadth = data.breadth || {};
+  const countsKnown = [breadth.up, breadth.down, breadth.flat].every(
+    (count) => count != null,
+  );
   const total =
     Number(breadth.up || 0) +
     Number(breadth.down || 0) +
@@ -218,7 +229,8 @@ function Breadth({ data }: { data: Row }) {
           待核验 / 缺失 <b>{integer(breadth.missing)}</b>
         </p>
         <p>
-          统计标的 <b>{integer(breadth.total ?? total)}</b>
+          统计标的{" "}
+          <b>{integer(breadth.total ?? (countsKnown ? total : null))}</b>
         </p>
       </div>
       <div className="market-reference">
@@ -273,6 +285,7 @@ export function MarketOverview({
           indices={indices}
           selected={selected}
           onSelect={setSelected}
+          compact={!indicesOnly}
         />
         <Panel title="正在读取所选日行情">
           <Loading />
@@ -285,8 +298,8 @@ export function MarketOverview({
       scopeKey={pageTitle + date}
       pageTitle={pageTitle}
       pageActive={pageActive}
+      inlineSectionNavigation={!indicesOnly}
     >
-      {!indicesOnly && <AIEntry key={date} kind="market" asOf={date} />}
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
@@ -294,6 +307,7 @@ export function MarketOverview({
         <MarketDataCoverage
           coverage={data?.data_coverage}
           loading={result.loading}
+          compact={!indicesOnly}
         />
       </div>
       <div {...intradayReadingProps("indexQuotes")}>
@@ -301,10 +315,14 @@ export function MarketOverview({
           indices={indices}
           selected={selected}
           onSelect={setSelected}
+          compact={!indicesOnly}
         />
       </div>
       {!indicesOnly && (
-        <div {...intradayReadingProps("market")} className="summary-strip">
+        <div
+          {...intradayReadingProps("market")}
+          className="summary-strip market-overview-summary"
+        >
           <Stat
             label="沪深京总成交额"
             value={marketMoney(data?.total_amount)}
@@ -339,7 +357,7 @@ export function MarketOverview({
             sub="来源当日池 · 非开板总次数"
           />
           <Stat
-            label="行情覆盖"
+            label="最新行情覆盖"
             value={integer(bootstrap?.data_summary?.stock_count)}
             sub={
               bootstrap?.data_date
@@ -347,16 +365,25 @@ export function MarketOverview({
                 : "等待首次初始化"
             }
           />
+          <div
+            className="market-overview-mobile-breadth"
+            aria-label="市场广度摘要"
+          >
+            <strong>市场广度</strong>
+            <span className="up">涨 {integer(data?.breadth?.up)}</span>
+            <span className="down">跌 {integer(data?.breadth?.down)}</span>
+            <span>平 {integer(data?.breadth?.flat)}</span>
+          </div>
         </div>
       )}
       <div
         {...intradayReadingProps("indexChart")}
-        className={indicesOnly ? "" : "market-layout"}
+        className={indicesOnly ? "" : "market-layout market-overview-plot"}
       >
         <Panel
           title={
             <>
-              <span className="live-dot" />
+              {indicesOnly && <span className="live-dot" />}
               {selectedName}
             </>
           }
@@ -388,6 +415,9 @@ export function MarketOverview({
                 </div>
               </div>
               <Warnings items={data?.warnings} />
+              <div className="market-overview-ai">
+                <AIEntry key={date} kind="market" asOf={date} />
+              </div>
             </Panel>
           </div>
         )}

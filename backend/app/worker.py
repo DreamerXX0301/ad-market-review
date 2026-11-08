@@ -552,6 +552,8 @@ def run(once=False):
         next_research_cleanup=0
         from app.services.automatic_tasks import AutomaticReviewScheduler
         automatic_scheduler=AutomaticReviewScheduler()
+        from app.services.news_scheduler import NewsScheduler
+        news_scheduler=NewsScheduler() if not once else None
         from app.services.pane_read_cache import closed_day_warm_steps, prune_historical
         startup_cache = closed_day_warm_steps() if not once else None
         while not stop.is_set():
@@ -599,6 +601,10 @@ def run(once=False):
                 job=tasks.claim_next(owner)
             if not job:
                 if once:return
+                if news_scheduler is not None:
+                    try:news_scheduler.tick()
+                    except Exception as error:
+                        logger.warning('消息与事件采集检查暂未完成 %s',type(error).__name__)
                 if startup_cache is not None:
                     try:
                         next(startup_cache)

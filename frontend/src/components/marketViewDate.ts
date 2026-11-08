@@ -8,6 +8,9 @@ export type MarketDateChoice = {
 export const isIntradayReview = (route: string) =>
   route === "auction" || route === "noon" || route === "intraday";
 
+const usesCurrentDate = (route: string) =>
+  isIntradayReview(route) || route === "news-events";
+
 /** An explicit selection is shared; automatic defaults follow each page's data scope. */
 export function marketViewDate(
   route: string,
@@ -15,9 +18,9 @@ export function marketViewDate(
   latest: string,
   today: string,
 ): string {
-  if (choice && (choice.mode === "manual" || isIntradayReview(route)))
+  if (choice && (choice.mode === "manual" || usesCurrentDate(route)))
     return choice.date;
-  const value = isIntradayReview(route) ? today : latest;
+  const value = usesCurrentDate(route) ? today : latest;
   return isCalendarDate(value) ? value : "";
 }
 
@@ -38,7 +41,7 @@ export function completedReviewDate(
 export function updateReviewDateLink(hash: string, date?: string): string {
   const [route, query = ""] = hash.replace(/^#/, "").split("?", 2);
   const search = new URLSearchParams(query);
-  if (!isIntradayReview(route) || !search.has("date")) return hash;
+  if (!usesCurrentDate(route) || !search.has("date")) return hash;
   if (date) search.set("date", date);
   else search.delete("date");
   return `#${route}${search.size ? `?${search}` : ""}`;

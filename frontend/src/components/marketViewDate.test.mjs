@@ -104,6 +104,7 @@ const routes = [
   "auction",
   "noon",
   "intraday",
+  "news-events",
   "indices",
   "emotion",
   "sectors",
@@ -288,6 +289,15 @@ render();
 assert.equal(location.hash, "#intraday");
 assert.equal(shell().date, "2026-10-30");
 assert.ok(elements(tree).some((node) => node.type === "page" && node.props.date === "2026-10-30"), "intraday loads before the daily close is published");
+reset("#news-events?date=2026-10-28");
+assert.equal(shell().date, "2026-10-28", "news uses the explicit shared date");
+assert.equal(navigate("market").date, "2026-10-28", "news history survives switching market pages");
+reset("#news-events?date=2026-10-28");
+shell().onResetDate();
+render();
+assert.equal(location.hash, "#news-events");
+assert.equal(shell().date, "2026-10-30");
+assert.ok(elements(tree).some((node) => node.type === "page" && node.props.date === "2026-10-30"), "news loads before the daily close is published");
 reset("#noon?date=2026-10-28");
 assert.equal(shell().date, "2026-10-28");
 shell().onDate("2026-10-29");
@@ -342,7 +352,7 @@ const currentNotice = () => {
       date: state.date,
       today: state.today,
       latest: state.dataDate,
-      intraday: ["auction", "noon", "intraday"].includes(state.route),
+      intraday: ["auction", "noon", "intraday", "news-events"].includes(state.route),
       fixed: state.dateFixed,
       published: state.datePublished,
       onReset: state.onResetDate,

@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Moon,
   Network,
+  Newspaper,
   PanelLeftClose,
   Settings2,
   Search,
@@ -49,6 +50,7 @@ export const navigation = [
       },
       { id: "intraday", name: "盘中观察", icon: TrendingUp },
       { id: "noon", name: "午评快照", icon: Sun },
+      { id: "news-events", name: "消息与事件", icon: Newspaper },
       { id: "indices", name: "指数行情", icon: ChartCandlestick },
       { id: "emotion", name: "市场情绪", icon: Activity },
       { id: "sectors", name: "行业与概念", icon: Layers3 },
@@ -315,7 +317,7 @@ export default function AppShell({
         )}
         <div className="page-container">
           <ActiveTaskBanner onNavigate={onNavigate} />
-          {isMarket && route !== "intraday" && (
+          {isMarket && route !== "intraday" && route !== "news-events" && (
             <MarketDateNotice
               date={date}
               today={today}
