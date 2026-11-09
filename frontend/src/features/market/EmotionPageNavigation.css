@@ -34,11 +34,11 @@
   font-size: var(--workbench-type-label, 11px);
   font-weight: 500;
 }
-.emotion-reader-nav > div {
+.emotion-reader-nav-items {
   display: grid;
   gap: 4px;
 }
-.emotion-reader-nav button {
+.emotion-reader-nav-items button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -52,21 +52,21 @@
   text-align: left;
   cursor: pointer;
 }
-.emotion-reader-nav button > span {
+.emotion-reader-nav-items button > span {
   font-size: var(--workbench-type-caption, 9px);
   color: var(--workbench-type-muted, var(--muted));
   font-variant-numeric: tabular-nums;
 }
-.emotion-reader-nav button:hover {
+.emotion-reader-nav-items button:hover {
   color: var(--text);
   background: var(--surface2);
 }
-.emotion-reader-nav button[aria-current="location"] {
+.emotion-reader-nav-items button[aria-current="location"] {
   color: var(--blue);
   border-color: color-mix(in srgb, var(--blue) 30%, var(--border));
   background: var(--blue-bg);
 }
-.emotion-reader-nav button:focus-visible {
+.emotion-reader-nav-items button:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
@@ -87,14 +87,19 @@
     top: 81px;
     z-index: 12;
     padding: 5px;
-    overflow-x: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
   }
-  .emotion-reader-nav > div {
+  .emotion-reader-nav-items {
     display: flex;
-    width: max-content;
-    min-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
   }
-  .emotion-reader-nav button {
+  .emotion-reader-nav-items button {
     width: auto;
     flex-shrink: 0;
     padding: 9px 11px;
@@ -102,7 +107,7 @@
   }
   .emotion-reader-nav > strong,
   .emotion-reader-nav > p,
-  .emotion-reader-nav button > span {
+  .emotion-reader-nav-items button > span {
     display: none;
   }
   .emotion-reader [id^="emotion-"] {

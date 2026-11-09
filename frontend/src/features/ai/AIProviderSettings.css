@@ -1,0 +1,63 @@
+.ai-settings .ai-provider-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  align-items: start;
+}
+.ai-provider-usage {
+  min-width: 0;
+  padding: 13px 15px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--subtle);
+}
+.ai-provider-usage header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  font-size: var(--workbench-type-label, 12px);
+}
+.ai-provider-usage header strong {
+  color: var(--text);
+}
+.ai-provider-usage time,
+.ai-provider-usage p {
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+}
+.ai-provider-usage dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  max-width: 440px;
+  margin: 10px 0 6px;
+}
+.ai-provider-usage dt {
+  font-size: var(--workbench-type-caption, 11px);
+}
+.ai-provider-usage dd {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: var(--workbench-type-body, 14px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.ai-settings .ai-checks li > div {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.ai-settings .ai-actions > .btn {
+  min-height: 34px;
+  max-width: 100%;
+  white-space: normal;
+}
+.ai-settings .ai-task > div > span {
+  overflow-wrap: anywhere;
+}
+.ai-editor-limits > summary {
+  cursor: pointer;
+}
+.ai-editor-limits > summary > svg {
+  flex: none;
+}

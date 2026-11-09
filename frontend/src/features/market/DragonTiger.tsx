@@ -365,7 +365,7 @@ export default function DragonTiger({
         }
       >
         <div className="dragon-tiger-controls">
-          <div className="segmented">
+          <div className="segmented" role="group" aria-label="龙虎榜类别">
             {(["all", "org", "hot_money"] as const).map((value) => (
               <button
                 key={value}
@@ -377,7 +377,7 @@ export default function DragonTiger({
               </button>
             ))}
           </div>
-          <div className="segmented">
+          <div className="segmented" role="group" aria-label="龙虎榜期间">
             {([1, 3] as const).map((value) => (
               <button
                 key={value}
@@ -458,7 +458,7 @@ export default function DragonTiger({
         <Loading />
       ) : (
         <>
-          <div className="dragon-tiger-summary">
+          <div className="dragon-tiger-summary" aria-label="龙虎榜摘要">
             {[
               [
                 "已留存上榜A股",

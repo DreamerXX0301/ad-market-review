@@ -237,3 +237,88 @@
     flex-wrap: wrap;
   }
 }
+
+.strategy-workspace > .workspace-split {
+  grid-template-columns: clamp(210px, 20vw, 260px) minmax(0, 1fr);
+  gap: 14px;
+}
+.strategy-workspace > .workspace-split > .page-stack,
+.strategy-workspace .panel-head > div:first-child {
+  min-width: 0;
+}
+.strategy-workspace .panel-head h2 {
+  overflow-wrap: anywhere;
+}
+.strategy-workspace > .section-intro > .button-group {
+  flex-wrap: wrap;
+}
+.strategy-workspace .strategy-sidebar > .strategy-list {
+  display: grid;
+  gap: 4px;
+  max-height: min(34rem, max(12rem, calc(100svh - 185px)));
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.strategy-workspace .strategy-list:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -3px;
+}
+.strategy-workspace .strategy-select-card {
+  margin: 0;
+}
+.strategy-workspace .strategy-card {
+  padding: 9px 8px;
+}
+.strategy-workspace .strategy-card > div {
+  align-items: start;
+}
+.strategy-workspace .strategy-card strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: max(12px, var(--workbench-type-label, 12px));
+  font-weight: 600;
+}
+.strategy-workspace .strategy-card .badge {
+  flex: none;
+}
+.strategy-workspace .strategy-card p,
+.strategy-workspace .strategy-card footer {
+  margin-top: 6px;
+}
+.strategy-workspace .strategy-select-checkbox {
+  padding-block: 11px;
+}
+.strategy-workspace .strategy-batch-history select {
+  min-width: 0;
+  max-width: min(100%, 330px);
+}
+@media (max-width: 1040px) {
+  .strategy-workspace > .workspace-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .strategy-workspace .strategy-sidebar {
+    position: static;
+  }
+  .strategy-workspace .strategy-sidebar > .strategy-list {
+    display: flex;
+    max-height: none;
+    overflow: auto hidden;
+  }
+  .strategy-workspace .strategy-list > .strategy-select-card {
+    flex: 0 0 min(76%, 240px);
+  }
+}
+@media (max-width: 640px) {
+  .strategy-workspace .panel-head {
+    padding-inline: 14px;
+  }
+  .strategy-workspace
+    .workspace-split
+    > .page-stack
+    > .panel
+    > .panel-head
+    > .panel-actions {
+    margin-inline-start: 0;
+    justify-content: flex-start;
+  }
+}

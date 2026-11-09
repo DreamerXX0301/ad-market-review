@@ -60,7 +60,12 @@ export default function DragonTigerTable({
   ];
   return (
     <>
-      <div className="dragon-tiger-table-scroll">
+      <div
+        className="dragon-tiger-table-scroll"
+        role="region"
+        aria-label="龙虎榜记录，可横向滚动查看金额列"
+        tabIndex={0}
+      >
         <table className="dragon-tiger-table">
           <caption className="sr-only">
             点击股票名称查看K线；行内其余位置展开买卖席位，代码按钮只复制。

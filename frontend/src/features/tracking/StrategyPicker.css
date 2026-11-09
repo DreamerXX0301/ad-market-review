@@ -2,7 +2,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 280px;
+  width: min(320px, 100%);
+  min-width: 0;
   min-height: 52px;
   padding: 9px 12px;
   border: 1px solid var(--border);
@@ -23,11 +24,13 @@
   background: var(--blue-bg);
   width: 34px;
   height: 34px;
+  flex: none;
   border-radius: 8px;
 }
 .tracking-picker-caption {
   display: grid;
   gap: 2px;
+  min-width: 0;
   flex: 1;
 }
 .tracking-picker-caption small {
@@ -37,6 +40,9 @@
 .tracking-picker-caption strong {
   font-size: 14px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tracking-picker-total {
   font-size: var(--workbench-type-caption, 11px);
@@ -52,6 +58,7 @@
   display: flex;
   flex-direction: column;
   padding: 8px;
+  overflow: hidden;
 }
 .tracking-picker-search {
   display: flex;
@@ -97,6 +104,8 @@
 .tracking-picker-list button span {
   display: grid;
   gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .tracking-picker-list strong {
   font-size: 14px;
@@ -127,7 +136,7 @@
 }
 @media (max-width: 640px) {
   .tracking-strategy-picker {
-    min-width: 230px;
     width: 100%;
+    gap: 8px;
   }
 }

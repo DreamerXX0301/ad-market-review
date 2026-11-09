@@ -1,3 +1,15 @@
+.sources-workspace {
+  min-width: 0;
+  container: source-workspace / inline-size;
+}
+.sources-workspace > [role="tabpanel"] {
+  min-width: 0;
+}
+.sources-workspace > [role="tabpanel"]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 4px;
+  border-radius: var(--radius);
+}
 .sources-page {
   gap: 14px;
 }
@@ -21,7 +33,8 @@
   border-color: var(--blue);
 }
 .source-editor-key .secret-input input {
-  height: 37px;
+  height: 39px;
+  min-width: 0;
   box-shadow: none;
 }
 .source-editor-options {
@@ -47,6 +60,7 @@
   position: relative;
   width: 34px;
   height: 20px;
+  flex: 0 0 34px;
   border-radius: 20px;
   background: var(--surface3);
   cursor: pointer;
@@ -86,7 +100,8 @@
   background: transparent;
   border: 0;
   border-radius: 5px;
-  padding: 8px 16px;
+  min-height: 36px;
+  padding: 6px 16px;
   color: var(--subtle);
   cursor: pointer;
   font-size: var(--workbench-type-label, 12px);
@@ -106,7 +121,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 9px 12px;
+}
+.sources-heading,
+.sources-supplement-head {
+  flex-wrap: wrap;
 }
 .sources-heading p {
   color: var(--subtle);
@@ -121,8 +140,8 @@
 }
 .sources-connections {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 13px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 12px;
   align-items: start;
 }
 .sources-connection {
@@ -136,16 +155,11 @@
 }
 .sources-connection.is-active {
   border-color: color-mix(in srgb, var(--blue) 48%, var(--border));
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--blue) 5%, var(--surface)),
-    var(--surface) 55%
-  );
 }
 .sources-connection.is-active::before {
   content: "";
   position: absolute;
-  height: 3px;
+  height: 2px;
   inset: 0 0 auto;
   background: var(--blue);
 }
@@ -169,6 +183,10 @@
 .sources-identity h2 {
   font-size: 15px;
   line-height: 1.4;
+}
+.sources-identity h2,
+.sources-identity > span {
+  overflow-wrap: anywhere;
 }
 .sources-identity > span {
   display: block;
@@ -201,7 +219,7 @@
   padding: 5px 7px;
   color: var(--workbench-type-muted, var(--muted));
   font-size: var(--workbench-type-caption, 10px);
-  line-height: 1;
+  line-height: 1.35;
   background: var(--surface2);
 }
 .sources-capability.is-verified {
@@ -321,13 +339,17 @@
 }
 .sources-connection-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 7px;
   margin-top: 12px;
 }
 .sources-connection-actions .btn {
-  height: 30px;
-  font-size: var(--workbench-type-label, 10px);
+  min-height: 36px;
+  height: auto;
+  max-width: 100%;
+  white-space: normal;
+  font-size: var(--workbench-type-label, 11px);
 }
 .sources-next-step {
   display: block;
@@ -497,42 +519,20 @@
   white-space: nowrap;
   border: 0;
 }
-@media (min-width: 1600px) {
-  .sources-identity h2,
-  .sources-identity > span {
-    overflow-wrap: anywhere;
-  }
-  .sources-purpose,
-  .sources-capability,
-  .sources-details-body,
-  .sources-guide-content {
-    line-height: 1.55;
-  }
-  .sources-connection-actions {
-    flex-wrap: wrap;
-  }
-  .sources-connection-actions .btn {
-    min-height: 34px;
-  }
-}
-@media (max-width: 1180px) {
-  .sources-connections {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media (max-width: 760px) {
-  .sources-connections,
+@container source-workspace (max-width: 45rem) {
   .sources-guide-grid {
-    grid-template-columns: 1fr;
-  }
-  .sources-heading,
-  .sources-supplement-head {
-    align-items: flex-start;
-    flex-wrap: wrap;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 11px;
   }
   .sources-supplement-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px 0;
+    gap: 0;
+  }
+  .sources-supplement-stats > div {
+    padding-block: 8px;
+  }
+  .sources-supplement-stats > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border-soft);
   }
   .sources-supplement-stats > div:nth-child(odd) {
     padding-left: 0;
@@ -540,7 +540,23 @@
   .sources-supplement-stats > div:nth-child(even) {
     border-right: 0;
   }
-  .sources-guide > summary > span {
-    font-size: 0;
+}
+@container source-workspace (max-width: 34rem) {
+  .sources-tabs {
+    align-self: stretch;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sources-tabs button {
+    min-height: 42px;
+    padding-inline: 6px;
+  }
+  .sources-heading,
+  .sources-supplement-head {
+    align-items: flex-start;
+  }
+  .sources-supplement-stats strong {
+    font-size: 16px;
+    overflow-wrap: anywhere;
   }
 }

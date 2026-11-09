@@ -491,15 +491,14 @@ export default function LimitLadder({
       scopeKey={date}
       pageTitle="涨停梯队"
       pageActive={pageActive}
+      inlineSectionNavigation
     >
       <div className="ladder-intro">
         <div className="ladder-compact-caption">
           <Layers3 size={14} />
           <strong>连板高度与归属分布</strong>
-          <span>全部样本展开</span>
         </div>
         <div className="button-group">
-          <Badge>{date || "日期待核验"}</Badge>
           <button
             className="btn small"
             onClick={onReload}

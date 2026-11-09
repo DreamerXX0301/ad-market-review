@@ -1,5 +1,6 @@
 .noon-workbench {
-  gap: 18px;
+  gap: 14px;
+  min-width: 0;
 }
 .noon-workbench .panel-head p {
   font-size: var(--workbench-type-body, 12px);
@@ -120,7 +121,7 @@
 .noon-page-head {
   justify-content: space-between;
   align-items: center;
-  padding: 18px 20px;
+  padding: 13px 16px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   background: linear-gradient(
@@ -129,9 +130,9 @@
     var(--surface) 70%
   );
 }
-.noon-page-head h1 {
-  margin: 3px 0 6px;
-  font-size: 26px;
+.noon-page-head h2 {
+  margin: 2px 0 4px;
+  font-size: 21px;
   font-weight: 600;
 }
 .noon-page-head p {
@@ -150,11 +151,14 @@
   justify-content: flex-end;
   padding-top: 0;
 }
-.noon-scope-strip {
-  padding: 10px 13px;
+.noon-reading-status {
+  min-width: 0;
+  padding: 9px 13px;
   border: 1px solid var(--border-soft);
   background: var(--surface);
   border-radius: var(--radius);
+}
+.noon-scope-strip {
   font-size: var(--workbench-type-label, 12px);
   color: var(--workbench-type-muted, var(--muted));
 }
@@ -165,7 +169,8 @@
 .noon-control-reason {
   color: var(--workbench-type-muted, var(--muted));
   font-size: var(--workbench-type-label, 12px);
-  margin: -7px 0 0;
+  margin: 5px 0 0;
+  line-height: 1.6;
 }
 .noon-capture-proof {
   padding: 11px 13px;
@@ -503,8 +508,8 @@ th[aria-sort="descending"] > .noon-sort-button {
 }
 @media (max-width: 700px) {
   .noon-page-head {
-    padding: 16px;
-    gap: 16px;
+    padding: 12px;
+    gap: 10px;
   }
   .noon-head-actions {
     justify-content: flex-start;
@@ -820,8 +825,8 @@ th[aria-sort="descending"] > .noon-sort-button {
   .noon-panel-body {
     padding: 12px;
   }
-  .noon-page-head h1 {
-    font-size: 23px;
+  .noon-page-head h2 {
+    font-size: 19px;
   }
   .noon-head-actions {
     justify-content: flex-start;

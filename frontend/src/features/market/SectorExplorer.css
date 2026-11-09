@@ -3,13 +3,19 @@
 }
 .sector-explorer-controls {
   display: grid;
-  gap: 12px;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 .sector-explorer-control-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  min-width: 0;
+  gap: 8px 12px;
 }
 .sector-explorer-source {
   display: inline-flex;
@@ -28,7 +34,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 200px;
+  min-width: min(200px, 100%);
 }
 .sector-explorer-search input {
   flex: 1;
@@ -39,7 +45,7 @@
   margin: 0;
   padding: 0;
   border: 0;
-  gap: 7px;
+  gap: 5px;
 }
 .sector-explorer-scope {
   display: flex;
@@ -552,6 +558,9 @@
   .sector-explorer-search {
     width: 100%;
     flex-basis: 100%;
+  }
+  .sector-explorer-search > button {
+    flex-shrink: 0;
   }
   .sector-explorer-detail-metrics {
     padding: 13px;

@@ -3,7 +3,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 14px;
-  padding: 16px 24px;
+  padding: 11px 18px;
   border-bottom: 1px solid var(--border-soft);
 }
 .watchlist-view-tabs,
@@ -60,7 +60,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 18px;
-  padding: 11px 24px;
+  padding: 9px 18px;
   background: color-mix(in srgb, var(--blue) 3%, var(--surface));
   border-bottom: 1px solid var(--border-soft);
   color: var(--workbench-type-muted, var(--muted));
@@ -82,7 +82,7 @@
   color: var(--blue);
 }
 .watchlist-line-check-stale {
-  color: #c9a052;
+  color: var(--amber);
 }
 .watchlist-line-latest {
   display: grid;
@@ -90,8 +90,8 @@
   padding: 7px 9px;
   border: 1px solid var(--border-soft);
   border-radius: 7px;
-  background: color-mix(in srgb, #45c6a4 5%, var(--surface));
-  color: #45c6a4;
+  background: color-mix(in srgb, var(--green) 5%, var(--surface));
+  color: var(--green);
   cursor: pointer;
   text-align: left;
   white-space: nowrap;
@@ -108,12 +108,12 @@
   font-variant-numeric: tabular-nums;
 }
 .watchlist-line-latest.touch {
-  color: #c9a052;
-  background: color-mix(in srgb, #e8c16b 5%, var(--surface));
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 5%, var(--surface));
 }
 .watchlist-line-latest.invalidated {
-  color: #e0737b;
-  background: color-mix(in srgb, #e0737b 5%, var(--surface));
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 5%, var(--surface));
 }
 .line-alert-view-intro {
   display: flex;
@@ -182,9 +182,9 @@
   font-size: var(--workbench-type-caption, 11px);
 }
 .line-alert-state-filter > button:last-child.selected {
-  color: #e0737b;
-  border-color: color-mix(in srgb, #e0737b 30%, var(--border));
-  background: color-mix(in srgb, #e0737b 8%, var(--surface));
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 30%, var(--border));
+  background: color-mix(in srgb, var(--red) 8%, var(--surface));
 }
 .line-alert-search {
   display: inline-flex;
@@ -225,18 +225,18 @@
   display: inline-block;
   padding: 5px 8px;
   border-radius: 5px;
-  background: color-mix(in srgb, #45c6a4 9%, var(--surface));
-  color: #45c6a4;
+  background: color-mix(in srgb, var(--green) 9%, var(--surface));
+  color: var(--green);
   white-space: nowrap;
   font-size: var(--workbench-type-caption, 11px);
 }
 .line-alert-rule.touch {
-  background: color-mix(in srgb, #e8c16b 9%, var(--surface));
-  color: #c9a052;
+  background: color-mix(in srgb, var(--amber) 9%, var(--surface));
+  color: var(--amber);
 }
 .line-alert-rule.invalidated {
-  background: color-mix(in srgb, #e0737b 9%, var(--surface));
-  color: #e0737b;
+  background: color-mix(in srgb, var(--red) 9%, var(--surface));
+  color: var(--red);
 }
 .line-alert-auto-state {
   font-size: var(--workbench-type-caption, 11px);
@@ -268,7 +268,7 @@
 }
 .line-alert-unknowns summary {
   cursor: pointer;
-  color: #c9a052;
+  color: var(--amber);
 }
 .line-alert-unknowns ul {
   display: grid;
@@ -289,13 +289,13 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  color: #45c6a4;
+  color: var(--green);
 }
 .line-alert-evidence-heading.invalidated {
-  color: #e0737b;
+  color: var(--red);
 }
 .line-alert-evidence-heading.touch {
-  color: #c9a052;
+  color: var(--amber);
 }
 .line-alert-evidence-heading > div {
   display: grid;
@@ -388,8 +388,18 @@
     width: 100%;
   }
   .watchlist-view-tabs > button {
+    min-width: 0;
     flex: 1;
-    padding: 7px 10px;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 7px 6px;
+  }
+  .line-alert-state-filter {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .line-alert-period-tabs {
+    padding-inline: 16px;
   }
   .watchlist-alert-date,
   .watchlist-line-check small {

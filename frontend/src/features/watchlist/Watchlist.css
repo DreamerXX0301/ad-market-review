@@ -17,34 +17,32 @@
   padding: 0;
 }
 .watchlist-intro {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 8px 0 24px;
+  gap: 8px 14px;
+  padding: 3px 0 18px;
 }
 .watchlist-intro-icon {
   display: grid;
   place-items: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
-  color: #e9b956;
-  background: color-mix(in srgb, #e9b956 12%, transparent);
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
 }
 .watchlist-intro h2 {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 0 0 8px;
-  font-size: 21px;
+  gap: 6px 10px;
+  flex-wrap: wrap;
+  margin: 0 0 4px;
+  font-size: clamp(16px, 2vw, 21px);
 }
 .watchlist-intro p {
   margin: 0;
   color: var(--muted);
-}
-.watchlist-intro > .muted {
-  margin-left: auto;
 }
 .watchlist-source {
   display: flex;
@@ -66,20 +64,21 @@
   white-space: nowrap;
 }
 .watchlist-panel > .panel-head {
-  padding: 18px 24px;
+  padding: 14px 18px;
 }
 .watchlist-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  padding: 16px 24px;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--border-soft);
 }
 .watchlist-search {
   display: flex;
   align-items: center;
-  flex: 1 1 360px;
+  flex: 1 1 240px;
   max-width: 520px;
   min-width: 0;
   gap: 10px;
@@ -259,8 +258,11 @@
   line-height: 1.7;
 }
 @media (max-width: 640px) {
+  .watchlist-intro {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
   .watchlist-intro > .muted {
-    margin-left: 68px;
+    grid-column: 2;
   }
   .watchlist-panel > .panel-head {
     padding: 16px;
@@ -294,4 +296,21 @@
   .watchlist-empty-actions > a {
     flex: 1 1 220px;
   }
+}
+
+.watchlist-stock-view .table-wrap > table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.watchlist-stock-view .table-wrap :is(th, td):first-child {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  border-inline-end: 1px solid var(--border-soft);
+}
+.watchlist-stock-view .table-wrap td:first-child {
+  background: var(--surface);
+}
+.watchlist-stock-view .table-wrap tr:hover > td:first-child {
+  background: color-mix(in srgb, var(--surface3) 36%, var(--surface));
 }

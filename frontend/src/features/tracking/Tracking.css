@@ -206,3 +206,50 @@
   max-width: 260px;
   white-space: normal;
 }
+
+.stock-tracking-workspace > .section-intro > .button-group {
+  flex-wrap: wrap;
+}
+.stock-tracking-workspace > .stats-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+  gap: 8px;
+}
+.stock-tracking-workspace > .stats-grid > .stat {
+  padding: 11px 13px;
+  gap: 4px;
+}
+.stock-tracking-workspace > .stats-grid > .stat > strong {
+  font-size: clamp(15px, 2vw, 20px);
+}
+.tracking-topic-selection > button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.tracking-topic-selection > button > svg {
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .stock-tracking-workspace .panel-head > .panel-actions {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .tracking-filter-fields {
+    gap: 8px;
+  }
+  .tracking-filter-fields > label {
+    min-width: 0;
+    max-width: none;
+    flex-basis: min(100%, 180px);
+  }
+  .tracking-view-tabs button {
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 4px;
+  }
+  .tracking-view-tabs button strong {
+    min-width: 0;
+    padding-inline: 4px;
+  }
+}
