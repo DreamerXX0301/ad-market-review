@@ -10,6 +10,7 @@ import json
 
 import pyarrow.parquet as pq
 
+from app.services.chart_read_cache import ChartReadCache
 from app.services.noon_analysis import number
 from app.services.noon_collection import CHINA, STOCK_CODE
 
@@ -18,6 +19,8 @@ MAX_STOCKS = 10000
 MAX_QUOTES = 22000
 MAX_ACTIONS = 8 * 1024 * 1024
 POOL_NAMES = {'limit_up': 'limitup', 'limit_break': 'breakpool', 'limit_down': 'limitdown'}
+# Reuse only filtered source facts. Each request still verifies the named files.
+_source_projections = ChartReadCache(entries=16, bytes_limit=12 * 1024 * 1024)
 
 
 def _prices(root, generation, summary, days):
@@ -46,24 +49,36 @@ def _prices(root, generation, summary, days):
             raise ValueError('收盘行情对象不覆盖指定交易日')
         price_path = safe_object(root, part['object_key'])
         verify_immutable_file(price_path, digest, size)
-        metadata = pq.ParquetFile(price_path).metadata
-        if metadata.num_rows > 500000 or metadata.num_row_groups > 128:
-            raise ValueError('收盘行情对象超过有界读取预算')
-        columns = ['instrument_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'source', 'price_basis']
-        rows = pq.read_table(price_path, columns=columns, filters=[('date', 'in', wanted)]).to_pylist()
-        if len(rows) > MAX_QUOTES:
-            raise ValueError('收盘两日股票报价超过读取预算')
-        ids = Counter((row.get('date'), row.get('instrument_id')) for row in rows)
-        for row in rows:
-            key = row.get('date'), row.get('instrument_id')
-            if (key[0] not in wanted or not STOCK_CODE.fullmatch(str(key[1])) or ids[key] != 1
-                    or row.get('source') != 'fuyao' or row.get('price_basis') != 'none'
-                    or number(row.get('close'), positive=True) is None
-                    or number(row.get('volume'), positive=True) is None):
-                continue
-            output[key] = row
+        key = ('prices', price_path, digest, tuple(wanted))
+        projection = _source_projections.read(key)
+        if projection is None:
+            projection = _price_rows(price_path, wanted)
+            verify_immutable_file(price_path, digest, size)
+            _source_projections.remember(key, projection)
+        output.update(projection)
         hashes.update({day: digest for day in wanted})
     return output, manifest_sha, hashes
+
+
+def _price_rows(path, wanted):
+    metadata = pq.ParquetFile(path).metadata
+    if metadata.num_rows > 500000 or metadata.num_row_groups > 128:
+        raise ValueError('收盘行情对象超过有界读取预算')
+    columns = ['instrument_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'source', 'price_basis']
+    rows = pq.read_table(path, columns=columns, filters=[('date', 'in', wanted)]).to_pylist()
+    if len(rows) > MAX_QUOTES:
+        raise ValueError('收盘两日股票报价超过读取预算')
+    ids = Counter((row.get('date'), row.get('instrument_id')) for row in rows)
+    output = {}
+    for row in rows:
+        key = row.get('date'), row.get('instrument_id')
+        if (key[0] not in wanted or not STOCK_CODE.fullmatch(str(key[1])) or ids[key] != 1
+                or row.get('source') != 'fuyao' or row.get('price_basis') != 'none'
+                or number(row.get('close'), positive=True) is None
+                or number(row.get('volume'), positive=True) is None):
+            continue
+        output[key] = row
+    return output
 
 
 def _action_days(root, generation, summary, symbols):
@@ -73,8 +88,13 @@ def _action_days(root, generation, summary, symbols):
     try:
         path, digest = _file(root, generation, summary, 'corporate-actions.parquet',
                              ('corporate-actions.parquet',), MAX_ACTIONS)
+        wanted = sorted(symbols)
+        key = ('actions', path, digest, sha256(','.join(wanted).encode()).hexdigest())
+        cached = _source_projections.read(key)
+        if cached is not None:
+            return cached, digest
         rows = pq.read_table(path, columns=['thscode', 'ex_date_ms'],
-                             filters=[('thscode', 'in', sorted(symbols))]).to_pylist()
+                             filters=[('thscode', 'in', wanted)]).to_pylist()
         if len(rows) > 100000:
             raise ValueError('公司行动资料超过读取预算')
         blocked = defaultdict(set)
@@ -84,6 +104,8 @@ def _action_days(root, generation, summary, symbols):
             except (ValueError, TypeError, OverflowError, OSError):
                 day = None
             blocked[row['thscode']].add(day)
+        _file(root, generation, summary, 'corporate-actions.parquet', ('corporate-actions.parquet',), MAX_ACTIONS)
+        _source_projections.remember(key, blocked)
         return blocked, digest
     except (OSError, ValueError, KeyError, TypeError):
         return None, None  # Missing evidence is not proof of no actions.

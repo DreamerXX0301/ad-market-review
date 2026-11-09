@@ -2,6 +2,7 @@
 from copy import deepcopy
 from hashlib import sha256
 import json
+import os
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -161,11 +162,39 @@ def test_partial_pool_missing_height_and_conflicts_stay_unknown_not_zero(source)
 
 def test_missing_action_evidence_preserves_closing_prices_but_does_not_guess_change(source):
     _, directory, _, _ = source
+    original = closing.closing_data(DAY, GENERATION)
+    assert original['quotes'][A]['prev_close'] == 10.
     (directory / 'corporate-actions.parquet').unlink()
     context = closing.closing_data(DAY, GENERATION)
     assert all(row['latest_price'] > 0 and row['change_pct'] is None and row['prev_close'] is None
                for row in context['quotes'].values())
     assert context['pools']['limit_up']['count'] == 2
+
+
+def test_closing_reuses_filtered_parquet_without_bypassing_source_checks(source, monkeypatch):
+    root, directory, _, _ = source
+    original = pq.read_table
+    reads = []
+
+    def read_table(path, *args, **kwargs):
+        reads.append(path)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(pq, 'read_table', read_table)
+    first = closing.closing_data(DAY, GENERATION)
+    assert len(reads) == 2
+    assert closing.closing_data(DAY, GENERATION) == first
+    assert len(reads) == 2
+
+    part = json.loads((directory / 'daily.manifest.json').read_text())['partitions'][0]
+    price_path = root / part['object_key']
+    raw = price_path.read_bytes()
+    info = price_path.stat()
+    price_path.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+    os.utime(price_path, ns=(info.st_atime_ns, info.st_mtime_ns))
+    with pytest.raises(ValueError, match='SHA'):
+        closing.closing_data(DAY, GENERATION)
+    assert len(reads) == 2
 
 
 def test_close_transition_needs_same_previous_price_and_original_prior_sha(source):

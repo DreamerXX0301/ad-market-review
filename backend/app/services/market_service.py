@@ -11,7 +11,9 @@ from app.core import get_market, json_clean, digest
 from app.services.market_supplement import load_supplement, load_supplement_with_fingerprint, annual_coverage
 from app.services.market_history import resolve_reference, data_coverage
 from app.services.market_amount import amount_change_metadata
-from app.services.pane_read_cache import historical_cache_requested, read_block, retained_days, snapshot_evidence
+from app.services.pane_read_cache import (
+    historical_cache_requested, pane_warm_in_progress, read_block, retained_days, snapshot_evidence,
+)
 from app.services.sector_history import sector_prices_for_date
 from app.services.sector_views import sector_view
 
@@ -640,7 +642,7 @@ def cached_gainers(market,status,reference,day,rows,max_items=None, *, source_ev
             result = read_block('gainers-overview', day, (source_evidence, revision),
                                 lambda: gainers_rows(market,reference,day,rows,max_items,rank_key=rank_key), market=market)
             return tuple(result)
-        if not recent:
+        if not recent or pane_warm_in_progress():
             return gainers_rows(market, reference, day, rows, max_items, rank_key=rank_key)
     key=(status['snapshot_id'],status.get('path'),day,fingerprint if fingerprint is not None else digest(supplement),revision,source_evidence,max_items)
     with _gainers_lock:

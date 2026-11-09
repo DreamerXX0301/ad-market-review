@@ -11,7 +11,8 @@ import re
 
 from fastapi import HTTPException
 from app.core import atomic_json,connect,digest,dumps,get_market,hash_file,now_ms,published_dir
-from app.adapters.dragon_tiger import VERSION,FUYAO_PATH,REPORTS,DragonTigerPublicClient,normalize_board,normalize_seats,project_hot_statistics,project_seat_ranges
+from app.adapters.dragon_tiger import (VERSION,FUYAO_PATH,REPORTS,DragonTigerPublicClient,SeatCoverageMismatch,
+    normalize_board,normalize_seats,project_hot_statistics,project_seat_ranges)
 from app.adapters.providers import ProviderError
 from .supplement_access import supplement_access
 from .supplement_storage import _read_object
@@ -43,6 +44,15 @@ def _sanitize(value,secret=None):
     if isinstance(value,list):return [_sanitize(item,secret) for item in value]
     if isinstance(value,str) and secret and secret in value:return value.replace(secret,'[redacted]')
     return value
+
+
+def _part_record(capability,day,payload):
+    return {'version':VERSION,'date':day,'capability':capability,'fetched_at_ms':now_ms(),'payload':payload}
+
+
+def _validate_public_report(report,day,kind):
+    if not isinstance(report,dict) or report.get('date')!=day or report.get('kind')!=kind or not isinstance(report.get('rows'),list):raise ValueError('龙虎榜公开批次日期或类型不一致')
+    if any(not isinstance(row,dict) or str(row.get('TRADE_DATE',''))[:10]!=day for row in report['rows']):raise ValueError('龙虎榜公开批次实际日期不一致')
 
 
 class Store:
@@ -84,7 +94,7 @@ class Store:
             validate(saved['payload'])
             return saved['payload'],{'record_ref':pointer['record_ref'],'sha256':pointer['sha256']},True
         payload=fetch();validate(payload)
-        value={'version':VERSION,'date':day,'capability':capability,'fetched_at_ms':now_ms(),'payload':payload}
+        value=_part_record(capability,day,payload)
         pointer=self.save(value);atomic_json(pointer_path,pointer)
         return payload,pointer,False
     def _publish(self,index,guard=None):
@@ -258,14 +268,15 @@ def collect_for_market(market,target,*,dates=None,backfill=False,progress=None,g
     def tick(day,stage):
         check()
         if progress:progress('同步龙虎榜',min(98,int((statistics['accepted_days']+len(statistics['failures']))/len(dates)*98)),day+' · '+stage,dict(statistics))
+    def request(fetch):
+        check()
+        statistics['requested_components']+=1
+        return _sanitize(safe_payload(fetch()),getattr(adapter,'key',None))
     def component(capability,day,fetch,validate):
         check()
-        def request():
-            statistics['requested_components']+=1
-            return _sanitize(safe_payload(fetch()),getattr(adapter,'key',None))
-        result,pointer,cached=store.part(capability,day,request,validate)
+        result,pointer,cached=store.part(capability,day,lambda:request(fetch),validate)
         if cached:statistics['cached_components']+=1
-        return result,pointer
+        return result,pointer,cached
     blocked=None;consecutive_failures=0
     try:
         for day in dates:
@@ -278,22 +289,34 @@ def collect_for_market(market,target,*,dates=None,backfill=False,progress=None,g
                 boards={};refs=[]
                 for board_type in ('all','org','hot_money'):
                     tick(day,{'all':'全部榜','org':'机构榜','hot_money':'游资榜'}[board_type])
-                    raw,pointer=component('fuyao-'+board_type,day,lambda b=board_type:adapter.request(FUYAO_PATH,{'date':day,'board_type':b}),lambda p,b=board_type:normalize_board(p,day,b,master))
+                    raw,pointer,_=component('fuyao-'+board_type,day,lambda b=board_type:adapter.request(FUYAO_PATH,{'date':day,'board_type':b}),lambda p,b=board_type:normalize_board(p,day,b,master))
                     boards[board_type]=normalize_board(raw,day,board_type,master);refs.append(pointer)
                 # Hot-money metadata has an unverified upstream count basis.
                 # Only actual empty labels together with its zero metadata and
                 # the two verified empty stock boards may corroborate emptiness.
-                empty=all(board['source_count']==0 and board['source_stock_count']==0 for board in boards.values()) and not boards['hot_money']['items'];reports={}
-                for kind in ('buy','sell','disclosures'):
+                empty=all(board['source_count']==0 and board['source_stock_count']==0 for board in boards.values()) and not boards['hot_money']['items']
+                reports={};seat_refs=[];all_reports_cached=True
+                for kind in REPORTS:
                     tick(day,'买卖席位 · '+kind)
-                    def valid(report,k=kind):
-                        if not isinstance(report,dict) or report.get('date')!=day or report.get('kind')!=k or not isinstance(report.get('rows'),list):raise ValueError('龙虎榜公开批次日期或类型不一致')
-                        if any(str(row.get('TRADE_DATE',''))[:10]!=day for row in report['rows']):raise ValueError('龙虎榜公开批次实际日期不一致')
-                    raw,pointer=component('eastmoney-'+kind,day,lambda k=kind:public.report(day,k,allow_empty=empty),valid)
-                    reports[kind]=raw;refs.append(pointer)
-                seats=normalize_seats(reports,day,master,boards['all'])
+                    raw,pointer,cached=component('eastmoney-'+kind,day,lambda k=kind:public.report(day,k,allow_empty=empty),
+                                                 lambda report,k=kind:_validate_public_report(report,day,k))
+                    reports[kind]=raw;seat_refs.append(pointer);all_reports_cached=all_reports_cached and cached
+                try:
+                    seats=normalize_seats(reports,day,master,boards['all'])
+                except SeatCoverageMismatch:
+                    if not all_reports_cached:raise
+                    # Recheck the whole public group together. Failed refreshes
+                    # leave the original parts and the accepted day index intact.
+                    fresh_parts={}
+                    for kind in REPORTS:
+                        tick(day,'重新核验公开席位 · '+kind)
+                        raw=request(lambda k=kind:public.report(day,k,allow_empty=empty))
+                        _validate_public_report(raw,day,kind)
+                        fresh_parts[kind]=_part_record('eastmoney-'+kind,day,raw)
+                    seats=normalize_seats({kind:part['payload'] for kind,part in fresh_parts.items()},day,master,boards['all'])
+                    seat_refs=[store.save(part) for part in fresh_parts.values()]
                 record={'version':VERSION,'accepted':True,'date':day,'snapshot_id':status['snapshot_id'],'job_id':job_id,'captured_at_ms':now_ms(),
-                        'boards':boards,'seats':seats,'source_objects':refs,
+                        'boards':boards,'seats':seats,'source_objects':[*refs,*seat_refs],
                         'warnings':[warning for board in boards.values() for warning in board.get('warnings',[])]+list(seats.get('warnings',[]))}
                 check();store.accept(record,calendar,guard=guard);statistics['accepted_days']+=1;consecutive_failures=0
             except TaskError:raise

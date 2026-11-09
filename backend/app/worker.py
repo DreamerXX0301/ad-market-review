@@ -361,6 +361,7 @@ def _warm_pane_after_supplement(job, result):
         if published:
             from app.services.pane_read_cache import warm_closed_day
             warm_closed_day(day)
+            return True
     except Exception as error:
         logger.warning('已发布盘面读取缓存预热暂未完成 %s %s', job['job_id'], type(error).__name__)
 
@@ -499,7 +500,7 @@ def dispatch(job):
         _noon_close_after_supplement(job,callback)
         tasks.finish(identifier,'partial' if result.get('quality')!='complete' else 'succeeded',result.get('message','盘面补充数据已核验'))
         _workspace_after_data(job)
-        _warm_pane_after_supplement(job,result)
+        return _warm_pane_after_supplement(job,result)
     elif kind=='source_check' and _parameters(job).get('operation')=='sector_chart':
         from app.services.sector_chart_jobs import execute_chart_job
         result=execute_chart_job(identifier,callback)
@@ -552,10 +553,11 @@ def run(once=False):
         next_research_cleanup=0
         from app.services.automatic_tasks import AutomaticReviewScheduler
         automatic_scheduler=AutomaticReviewScheduler()
-        from app.services.news_scheduler import NewsScheduler
+        from app.services.news_scheduler import NewsScheduler, PROTECTED_START, PROTECTED_END
+        from app.services.sync_clock import now_china
         news_scheduler=NewsScheduler() if not once else None
-        from app.services.pane_read_cache import closed_day_warm_steps, prune_historical
-        startup_cache = closed_day_warm_steps() if not once else None
+        from app.services.pane_read_cache import recent_pane_warm_steps, prune_historical
+        pane_cache = recent_pane_warm_steps() if not once else None
         while not stop.is_set():
             if time.monotonic()>=next_research_cleanup:
                 try:
@@ -605,14 +607,14 @@ def run(once=False):
                     try:news_scheduler.tick()
                     except Exception as error:
                         logger.warning('消息与事件采集检查暂未完成 %s',type(error).__name__)
-                if startup_cache is not None:
+                if pane_cache is not None and not PROTECTED_START <= now_china().time() < PROTECTED_END:
                     try:
-                        next(startup_cache)
+                        next(pane_cache)
                     except StopIteration:
-                        startup_cache = None
+                        pane_cache = None
                     except Exception as error:
-                        startup_cache = None
-                        logger.warning('启动盘面缓存预热暂未完成 %s', type(error).__name__)
+                        pane_cache = None
+                        logger.warning('近七个交易日盘面缓存预热暂未完成 %s', type(error).__name__)
                 stop.wait(1.5);continue
             heartbeat_stop=threading.Event()
             def heartbeat(identifier=job['job_id'],stop_event=heartbeat_stop,lease_owner=job['lease_owner']):
@@ -623,7 +625,8 @@ def run(once=False):
             thread=threading.Thread(target=heartbeat,daemon=True);thread.start()
             try:
                 logger.info('执行 %s %s',job['kind'],job['job_id'])
-                dispatch(job)
+                if dispatch(job) and not once:
+                    pane_cache = recent_pane_warm_steps()
             except tasks.TaskPaused:logger.info('任务已暂停 %s',job['job_id'])
             except tasks.TaskCancelled:logger.info('任务已取消 %s',job['job_id'])
             except Exception as error:

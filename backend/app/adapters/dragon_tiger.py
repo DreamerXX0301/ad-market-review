@@ -26,6 +26,10 @@ HOT_COUNT_BASIS='来源上游统计；与返回游资标签、标签行或股票
 HOT_COUNT_WARNING='游资榜count/stock_count为未核验的上游统计；仅展示实际返回标签与股票，不按统计差额推断遗漏股票或补造记录'
 
 
+class SeatCoverageMismatch(ProviderError):
+    """Individually valid seat reports disagree about the disclosure records."""
+
+
 def number(value, *, nonnegative=False):
     if value is None:return None
     if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value):raise ProviderError('龙虎榜数值字段格式无效')
@@ -257,7 +261,7 @@ def normalize_seats(reports,day,master,all_board):
     for side in ('buy','sell'):
         for order,raw in enumerate(reports[side]['rows']):
             key=_identity(raw,day)
-            if key not in summaries:raise ProviderError('龙虎榜席位缺少对应披露汇总')
+            if key not in summaries:raise SeatCoverageMismatch('龙虎榜席位缺少对应披露汇总')
             meta=summaries[key];reason=raw.get('EXPLANATION')
             if not isinstance(reason,str) or reason!=meta['raw'].get('EXPLANATION') or str(raw.get('CHANGE_TYPE'))!=str(meta['raw'].get('CHANGE_TYPE')):raise ProviderError('龙虎榜席位披露原因不一致')
             if key not in groups:
@@ -273,7 +277,7 @@ def normalize_seats(reports,day,master,all_board):
             groups[key][side].append({'name':raw.get('OPERATEDEPT_NAME'),'source_id':raw.get('OPERATEDEPT_CODE'),'buy':buy,'sell':sell,'net':reported if complete else None,
                 'raw_net':reported,'amounts_complete':complete,'amount_check':amount_check,'amount_check_evidence':amount_evidence,
                 'source_order':order,'source':{'provider':'eastmoney','report':REPORTS[side],'date':day}})
-    if set(groups)!=set(summaries):raise ProviderError('龙虎榜披露汇总与席位记录范围不完整')
+    if set(groups)!=set(summaries):raise SeatCoverageMismatch('龙虎榜披露汇总与席位记录范围不完整')
     all_rows={(r['instrument_id'],r['range_days']):r for r in all_board['items'] if r['instrument_id'] and r['range_days'] in (1,3)}
     instruments={};unmatched=[];reconciled=0;differences=[]
     for (symbol,record_id),record in sorted(groups.items()):
