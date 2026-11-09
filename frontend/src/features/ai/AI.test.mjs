@@ -407,6 +407,42 @@ globalThis.fetch = () => {
   throw Error("render must not fetch");
 };
 renderToStaticMarkup(createElement(AIMessageView, { message: agent, context }));
+const archiveAnswer = renderToStaticMarkup(
+  createElement(AIMessageView, {
+    context,
+    message: {
+      ...agent,
+      sources: [],
+      citations: [],
+      source_context: {
+        tool_results: [
+          {
+            tool_name: "read_news_events",
+            evidence: [
+              {
+                title: "一条已留存消息",
+                source: "财联社电报",
+                data: { url: "https://www.cls.cn/detail/123" },
+              },
+              {
+                title: "无效消息",
+                data: { url: "javascript:alert(1)" },
+              },
+            ],
+          },
+          {
+            tool_name: "read_market_context",
+            evidence: [{ data: { url: "https://example.org/ignored" } }],
+          },
+        ],
+      },
+    },
+  }),
+);
+assert.match(archiveAnswer, /本机归档原文/);
+assert.match(archiveAnswer, /href="https:\/\/www\.cls\.cn\/detail\/123"/);
+assert.match(archiveAnswer, /一条已留存消息/);
+assert.doesNotMatch(archiveAnswer, /无效消息|example.org\/ignored/);
 let entry = await compile("./AIEntry.tsx");
 for (const [name, url] of Object.entries({
   react: import.meta.resolve("react"),
@@ -439,6 +475,15 @@ assert.match(
   stageShortcut,
   /href="#ai\?ai_kind=market&amp;ai_day=2026-10-30&amp;ai_stage=1430"/,
 );
+const newsShortcut = renderToStaticMarkup(
+  createElement(AIEntry, {
+    kind: "market",
+    asOf: "2026-11-10",
+    newsContext: { kind: "news", source: "财联社电报", id: "123" },
+  }),
+);
+assert.match(newsShortcut, /AI 解读这条消息/);
+assert.match(newsShortcut, /ai_day=2026-11-10&amp;ai_news=news.*ai_item=123/);
 const noApi = encode(
   'export function useApi(){throw Error("hook not expected")} export function usePageActive(){return false}',
 );

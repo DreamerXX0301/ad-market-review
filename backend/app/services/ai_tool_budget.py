@@ -41,6 +41,10 @@ def classify_tool(name, args):
     """Validate the declared function arguments and return its read category."""
     if not isinstance(args, dict):
         raise ValueError('invalid_tool_arguments')
+    if name == 'read_news_events':
+        if args != {'scope': 'selection'}:
+            raise ValueError('invalid_tool_arguments')
+        return 'data'
     if name == 'read_market_data':
         if set(args) != {'date', 'section'} or args['section'] not in _SECTIONS:
             raise ValueError('invalid_tool_arguments')

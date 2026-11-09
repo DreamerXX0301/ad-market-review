@@ -563,11 +563,15 @@ def _bound_session(row,session,limits):
     return any(session['config_signature']==config_signature(row,{**limits,'timeout_seconds':seconds}) for seconds in (30,45,60))
 
 
-def _agent_request(row,session,context,text,history):
+def _agent_request(row,session,context,text,history,*,opening=False):
     from app.services import ai_agent_protocol as agent
     from app.services.ai_read_tools import tool_schemas
     from app.services import ai_scope
     frozen=agent.protocol();clock=agent.request_time(now_ms());anchor=agent.page_anchor(session,context)
+    has_news=context.get('news_context') is not None
+    if has_news:
+        from app.services.ai_news_context import PROMPT
+        frozen['system_prompt'] += '\n' + PROMPT
     focus={}
     if context.get('instrument_id') and (context.get('stock_focus_verified') is True or (context.get('kind')=='stock_research' and context.get('evidence'))):
         focus={'instrument_id':context['instrument_id'],'name':context.get('subject') or (context.get('instrument') or {}).get('name') or context['instrument_id']}
@@ -576,8 +580,11 @@ def _agent_request(row,session,context,text,history):
     messages=agent.seed_messages(anchor,clock,history,text,frozen)
     request={'agent':True,'round_protocol':frozen,'page_anchor':anchor,'request_time':clock,
             'seed_messages':messages,'scope_input':scope_input,
-            'tool_schemas':tool_schemas(),'web_plan_schema':agent.web_plan_schema(),
+            'tool_schemas':tool_schemas(include_news=True) if has_news else tool_schemas(),
+            'web_plan_schema':agent.web_plan_schema(),
             'fallback_context':context,'max_input_bytes':frozen['max_input_bytes']}
+    if has_news and opening:
+        request['initial_news_read']=True
     from app.services.ai_scope_semantic import schema
     request['intent_plan_schema']=schema(request)
     ai_scope.apply_to_request(request)
@@ -608,7 +615,18 @@ def create_session(payload):
     prepared=files.prepare(payload.get('attachments',[]))
     _request_key(payload['request_key']);fingerprint=_attachment_fingerprint(payload,prepared)
     kind=payload['kind']
-    text=(payload.get('text') or '').strip() or ('请查看我上传的附件。' if prepared else '请复盘当前所选交易日。' if kind=='market' else '请分析当前所选股票。')
+    news_selection=payload.get('news_context')
+    if news_selection is not None:
+        from app.services.ai_news_context import validate_selection
+        if kind!='market' or payload.get('report_id') or payload.get('instrument_id'):
+            fail(422,'invalid_news_context','消息与事件解读不能同时绑定个股或研究报告')
+        try:
+            validate_selection(payload.get('as_of'),news_selection)
+        except (TypeError,ValueError):
+            fail(422,'invalid_news_context','消息与事件解读需要明确的观察日和归档范围')
+    default_question=('请用本地资料解读所选消息与事件，说明和 A 股有关的事实及待核验点。'
+                      if news_selection is not None else '请复盘当前所选交易日。' if kind=='market' else '请分析当前所选股票。')
+    text=(payload.get('text') or '').strip() or ('请查看我上传的附件。' if prepared else default_question)
     if not 1<=len(text)<=2000:fail(422,'invalid_message','问题须为1至2000字')
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
@@ -625,12 +643,14 @@ def create_session(payload):
         instrument=payload.get('instrument_id') or (report['instrument_id'] if report else None)
         as_of=payload.get('as_of') or (report['data_cutoff'] if report else day_key())
         context={'kind':'page_anchor','subject':instrument or 'A股市场复盘','instrument_id':instrument,'as_of':as_of,'report_id':payload.get('report_id')}
+        if news_selection is not None:
+            context.update(subject='消息与事件',news_context=news_selection)
         identifier=new_id('ai-session');stamp=now_ms();message_id=new_id('ai-message')
         session={'session_id':identifier,'kind':kind,'provider_id':row['provider_id'],'model':row['model'],'instrument_id':instrument,'as_of':as_of,'report_id':payload.get('report_id')}
         binding={'version':'ai-session-binding-v1','binding':{'credential_revision':row['credential_revision'],'credential_ref':row['credential_ref']}}
         db.execute('INSERT INTO ai_session(session_id,kind,report_id,instrument_id,as_of,provider_id,model,config_signature,context_digest,context_json,protocol_json,created_at_ms,updated_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                    (identifier,kind,payload.get('report_id'),instrument,as_of,row['provider_id'],row['model'],config_signature(row,limits),digest(context),dumps(context),dumps(binding),stamp,stamp,stamp+SESSION_TTL))
-        request=files.enrich_request(_agent_request(row,session,context,text,[]),[],message_id,prepared)
+        request=files.enrich_request(_agent_request(row,session,context,text,[],opening=True),[],message_id,prepared)
         result=_enqueue(db,row,limits,'message',payload['request_key'],fingerprint,request,identifier)
         db.execute('INSERT INTO ai_message VALUES(?,?,?,?,?,?,?,?)',(message_id,identifier,result['task_id'],'user',text,dumps(files.envelope(prepared)) if prepared else None,'completed',stamp))
     return result

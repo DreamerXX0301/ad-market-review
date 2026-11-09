@@ -257,6 +257,29 @@ export function nativeWebSources(message: AIItem): AIItem[] {
       typeof source.source_id === "string" && safeHttpUrl(source.url),
   );
 }
+export function archivedNewsSources(message: AIItem) {
+  const results = message.source_context?.tool_results;
+  const sources = new Map<
+    string,
+    { url: string; title: string; source: string }
+  >();
+  if (!Array.isArray(results)) return [];
+  for (const result of results) {
+    if (
+      result?.tool_name !== "read_news_events" ||
+      !Array.isArray(result.evidence)
+    )
+      continue;
+    for (const item of result.evidence) {
+      const url = safeHttpUrl(item?.data?.url);
+      if (!url?.startsWith("https://")) continue;
+      const title = plainText(item?.title, "归档原文");
+      const key = JSON.stringify([url, title]);
+      sources.set(key, { url, title, source: plainText(item?.source, "") });
+    }
+  }
+  return [...sources.values()];
+}
 export function nativeWebCitations(message: AIItem): AIItem[] {
   const sources = nativeWebSources(message);
   const length = Array.from(plainText(message.text, "")).length;

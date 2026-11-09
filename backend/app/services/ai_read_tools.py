@@ -33,7 +33,7 @@ _BRIEF_KIND = {'auction': 'auction', 'noon': 'noon', 'close': 'noon_close'}
 MAX_DETAIL_ROWS = 30
 
 
-def tool_schemas():
+def tool_schemas(*, include_news=False):
     """Responses function tools; names/arguments never accept filesystem/SQL."""
     specs = [
         ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。noon自动串同日竞价、截至午评实际结束已完成的上午观察与午评本体；close串联截至原正式收盘的竞价、盘中各档、午评及正式封板/炸板池，缺档保持未知。密集累计按phase_fact_columns解析values/rows和省略计数数组，null未知。auction包含已核验竞价发现和10:00同股开盘对照（如已保存），覆盖只限异动样本。未到时点与已到但未采集分开；成交额不是净流入。',
@@ -64,6 +64,10 @@ def tool_schemas():
           'section': {'type': 'string', 'enum': list(DETAIL_SECTIONS)},
           'query': {'type': 'string', 'description': '最多80字符。gainers_related传分类名称关键词，如电池；gainers_topic传真实topic_id。其他分区不筛选传空串。'}}, ['date', 'section', 'query']),
     ]
+    if include_news:
+        from app.services.ai_news_context import TOOL_DESCRIPTION, TOOL_NAME
+        specs.append((TOOL_NAME, TOOL_DESCRIPTION,
+                      {'scope': {'type': 'string', 'enum': ['selection']}}, ['scope']))
     return [{'type': 'function', 'name': name, 'description': description, 'strict': True,
              'parameters': {'type': 'object', 'properties': properties, 'required': required,
                             'additionalProperties': False}}
@@ -1022,14 +1026,18 @@ def _bounded(result):
 
 def execute_read_tool(name, args, *, page_context=None, fallback_context=None, include_auction_opening=True):
     """Execute declared local reads; always return bounded JSON, never collect."""
-    result = _result(name if name in {r['name'] for r in tool_schemas()} else 'unknown')
+    result = _result(name if name == 'read_news_events' or name in {r['name'] for r in tool_schemas()} else 'unknown')
     try:
         if not isinstance(args, dict):
             raise ValueError('工具参数须为对象')
         if page_context is not None and not isinstance(page_context, dict) or fallback_context is not None and not isinstance(fallback_context, dict):
             raise ValueError('页面或回退资料格式无效')
         now = local_now()
-        if name == 'read_stock_research':
+        if name == 'read_news_events':
+            from app.services.ai_news_context import fill_news_context
+            classify_tool(name, args)
+            fill_news_context(result, page_context or {})
+        elif name == 'read_stock_research':
             classify_tool(name, args)
             _research(result, args['instrument_id'], page_context or {}, fallback_context or {}, now)
         elif name == 'read_stock_trend':

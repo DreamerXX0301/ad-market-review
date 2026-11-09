@@ -1,6 +1,7 @@
 import { dateTime } from "../../lib/format";
 import {
   aiSourceLabel,
+  archivedNewsSources,
   itemText,
   metricSummary,
   plainText,
@@ -110,8 +111,12 @@ export function AIMessageView({
     ),
   ];
   const sources = nativeWebSources(message);
+  const newsSources = assistant ? archivedNewsSources(message) : [];
   const hasSources =
-    sources.length > 0 || evidenceIds.length > 0 || metricIds.length > 0;
+    sources.length > 0 ||
+    newsSources.length > 0 ||
+    evidenceIds.length > 0 ||
+    metricIds.length > 0;
   return (
     <article
       className={`ai-message ${assistant ? "is-assistant" : "is-user"}`}
@@ -227,6 +232,18 @@ export function AIMessageView({
             metricIds={metricIds}
             context={context}
           />
+          {newsSources.length > 0 && (
+            <ol className="ai-native-sources" aria-label="本机归档原文">
+              {newsSources.map(({ url, title, source }) => (
+                <li key={JSON.stringify([url, title])}>
+                  <a href={url} target="_blank" rel="noopener noreferrer">
+                    {title}
+                  </a>
+                  {source && <span>{source} · 本机归档</span>}
+                </li>
+              ))}
+            </ol>
+          )}
           {sources.length > 0 && (
             <ol className="ai-native-sources">
               {sources.map((source) => (

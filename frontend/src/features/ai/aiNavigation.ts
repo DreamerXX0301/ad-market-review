@@ -1,4 +1,4 @@
-import type { AIKind } from "./aiTypes";
+import type { AIKind, AINewsContext } from "./aiTypes";
 
 const marketStages = {
   auction: "09:25",
@@ -29,6 +29,7 @@ export interface AILaunchContext {
   reportId?: string;
   asOf?: string;
   marketStage?: AIMarketStage;
+  newsContext?: AINewsContext;
 }
 export interface AILaunch extends AILaunchContext {
   launchId?: string;
@@ -55,10 +56,30 @@ const safeDay = (value: string | null) => {
     : undefined;
 };
 
+const archiveKey = (value: string | null, limit: number) => {
+  if (!value || /[\x00-\x1f\x7f]/.test(value)) return undefined;
+  const key = value.trim();
+  return key && key.length <= limit ? key : undefined;
+};
+
+function readNewsContext(params: URLSearchParams): AINewsContext | undefined {
+  const kind = params.get("ai_news");
+  if (kind === "day") return { kind };
+  const source = archiveKey(params.get("ai_source"), 120);
+  const id = archiveKey(params.get("ai_item"), 200);
+  if (!source || !id) return undefined;
+  if (kind === "news") return { kind, source, id };
+  const days = params.get("ai_days");
+  if (kind === "event" && (days === "7" || days === "30"))
+    return { kind, source, id, days: days === "7" ? 7 : 30 };
+  return undefined;
+}
+
 export function aiLaunchQuestion({
   kind,
   asOf,
   marketStage,
+  newsContext,
   instrumentId,
   instrumentName,
   reportId,
@@ -77,6 +98,12 @@ export function aiLaunchQuestion({
     return `请研究${stock}。${basis}，分析主营业务、行业景气度、营收利润、现金流、估值和主要风险，标明关键数据的日期和来源。`;
   }
   if (!day) return "";
+  if (newsContext?.kind === "day")
+    return `请梳理 ${day} 的已收录消息。按主题归纳值得关注的变化，标明发布时间和来源，说明有哪些时段覆盖不完整。`;
+  if (newsContext?.kind === "news")
+    return `请解读我在 ${day} 选中的这条消息。概括已知事实和背景，标明发布时间和来源，区分已证实的影响与推测。`;
+  if (newsContext?.kind === "event")
+    return `请解读我在 ${day} 选中的这项日历事件。说明事件时间、确认状态、值得关注的细节和来源，区分已知日程与尚未公布的结果。`;
   const stage = aiMarketStage(marketStage);
   if (!stage)
     return `请复盘 ${day} 的 A 股盘面。梳理指数、成交额、市场情绪、行业与题材轮动和涨停梯队，说明当天的主要变化。若收盘数据还未发布，请分析截至最新已留存的时点。`;
@@ -130,7 +157,17 @@ export function aiLaunchLocation(context: AILaunchContext, launchId?: string) {
     context.kind === "market" && day
       ? aiMarketStage(context.marketStage)
       : undefined;
-  if (stage) params.set("ai_stage", stage);
+  const news = context.kind === "market" && day ? context.newsContext : null;
+  if (news) {
+    params.set("ai_news", news.kind);
+    if (news.kind !== "day") {
+      params.set("ai_source", news.source);
+      params.set("ai_item", news.id);
+      if (news.kind === "event") params.set("ai_days", String(news.days));
+    }
+  } else if (stage) {
+    params.set("ai_stage", stage);
+  }
   if (launchId) params.set("ai_launch", launchId);
   return `#ai?${params}`;
 }
@@ -152,8 +189,12 @@ export function readAILaunch(hash: string): AILaunch {
     kind === "stock" && instrumentId && !sessionId
       ? safeInstrumentName(params.get("ai_name"))
       : undefined;
+  const newsContext =
+    kind === "market" && asOf && !sessionId
+      ? readNewsContext(params)
+      : undefined;
   const marketStage =
-    kind === "market" && asOf
+    kind === "market" && asOf && !newsContext
       ? aiMarketStage(params.get("ai_stage"))
       : undefined;
   const explicit =
@@ -173,6 +214,7 @@ export function readAILaunch(hash: string): AILaunch {
     reportId,
     asOf,
     marketStage,
+    newsContext,
     explicit,
     launchId,
     key:
@@ -185,6 +227,7 @@ export function readAILaunch(hash: string): AILaunch {
         asOf,
         sessionId,
         marketStage,
+        newsContext,
       ]),
   };
 }

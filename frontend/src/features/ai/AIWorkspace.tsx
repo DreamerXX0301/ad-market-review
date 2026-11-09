@@ -39,14 +39,27 @@ import {
   sessionMatches,
   terminalTask,
 } from "./aiState";
-import type { AIKind, AIMessage, AIProvider, AISession } from "./aiTypes";
+import type {
+  AIKind,
+  AIMessage,
+  AINewsContext,
+  AIProvider,
+  AISession,
+} from "./aiTypes";
 import "./AI.css";
+
+const newsDraftLabels = {
+  day: "已留存消息",
+  news: "所选消息",
+  event: "所选日历事件",
+};
 
 export interface AIWorkspaceProps {
   kind: AIKind;
   reportId?: string;
   instrumentId?: string;
   asOf?: string;
+  newsContext?: AINewsContext;
   initialQuestion?: string;
   onConfigure?: () => void;
   onBusyChange?: (busy: boolean) => void;
@@ -60,6 +73,7 @@ export default function AIWorkspace({
   reportId,
   instrumentId,
   asOf,
+  newsContext,
   initialQuestion,
   onConfigure,
   onBusyChange,
@@ -85,6 +99,9 @@ export default function AIWorkspace({
   const [taskId, setTaskId] = useState("");
   const [text, setText] = useState(() =>
     sessionId ? "" : initialQuestion || "",
+  );
+  const [newsDraft, setNewsDraft] = useState(() =>
+    sessionId ? undefined : newsContext,
   );
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -201,6 +218,7 @@ export default function AIWorkspace({
         pageRoute,
         pageLaunchId,
         resolvedSession: !!session,
+        hasNewsDraft: !!newsDraft,
         instrumentId: session ? session.instrument_id : instrumentId,
         reportId: session ? session.report_id : reportId,
         asOf: session ? session.as_of : asOf,
@@ -216,6 +234,7 @@ export default function AIWorkspace({
     instrumentId,
     reportId,
     asOf,
+    newsDraft,
     pageRoute,
     pageLaunchId,
     session?.instrument_id,
@@ -390,6 +409,7 @@ export default function AIWorkspace({
     setTaskId("");
     if (!keepDraft) {
       setText("");
+      setNewsDraft(undefined);
       clearAttachments();
     }
     setError("");
@@ -448,6 +468,7 @@ export default function AIWorkspace({
           ...(reportId ? { report_id: reportId } : {}),
           ...(instrumentId ? { instrument_id: instrumentId } : {}),
           ...(asOf ? { as_of: asOf } : {}),
+          ...(newsDraft ? { news_context: newsDraft } : {}),
           provider_id: providerId,
           expected_config_revision: provider!.config_revision,
           expected_model: provider!.model,
@@ -487,6 +508,7 @@ export default function AIWorkspace({
       setSessionId(response.session_id || sessionId);
       setTaskId(response.task_id);
       setText("");
+      setNewsDraft(undefined);
       clearAttachments();
       attempt.current = null;
       detail.reload();
@@ -775,6 +797,7 @@ export default function AIWorkspace({
                     setSessionId(item.session_id);
                     setTaskId("");
                     setText("");
+                    setNewsDraft(undefined);
                     clearAttachments();
                     setError("");
                     setBusyDraft(false);
@@ -1152,7 +1175,11 @@ export default function AIWorkspace({
               {text.length ? `${text.length}/2000 · ` : ""}Ctrl / ⌘ + Enter
             </span>
           </div>
-          <p className="ai-egress-note">AI 可查询站内及网络资料，可能计费。</p>
+          <p className="ai-egress-note">
+            {newsDraft
+              ? `随问题引用 ${asOf} 的${newsDraftLabels[newsDraft.kind]}。AI 回答可能计费。`
+              : "AI 可查询站内及网络资料，可能计费。"}
+          </p>
           {!matches && !providers.loading && provider && (
             <p className="ai-chat-unavailable">
               模型设置已更改，请开始新对话。

@@ -32,6 +32,20 @@ class Attachment(Request):
     media_type: Annotated[str, Field(min_length=1,max_length=120)]
     data_base64: Annotated[str, Field(min_length=1,max_length=6990508)]
 
+class NewsDayContext(Request):
+    kind: Literal['day']
+
+class NewsItemContext(Request):
+    kind: Literal['news']
+    source: Annotated[str, Field(min_length=1,max_length=120)]
+    id: Annotated[str, Field(min_length=1,max_length=200)]
+
+class NewsEventContext(Request):
+    kind: Literal['event']
+    source: Annotated[str, Field(min_length=1,max_length=120)]
+    id: Annotated[str, Field(min_length=1,max_length=200)]
+    days: Literal[7,30]
+
 class SessionCreate(Request):
     attachments: Annotated[list[Attachment], Field(max_length=3)] = []
     allow_web: bool = False
@@ -41,6 +55,7 @@ class SessionCreate(Request):
     kind: Literal['stock','market']
     report_id: Annotated[str | None, Field(max_length=200)] = None
     as_of: Annotated[str | None, Field(max_length=10)] = None
+    news_context: Annotated[NewsDayContext | NewsItemContext | NewsEventContext, Field(discriminator='kind')] | None = None
     provider_id: Literal['deepseek','openai']
     instrument_id: Annotated[str | None, Field(max_length=30)] = None
     context_digest: Annotated[str | None, Field(max_length=100)] = None

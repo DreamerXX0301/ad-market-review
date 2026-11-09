@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Badge, Empty, ErrorBox, Loading, Panel } from "../../components/UI";
 import { useApi } from "../../lib/api";
+import AIEntry from "../ai/AIEntry";
 import {
   classifyNews,
   newsFilters,
@@ -249,6 +250,9 @@ export default function NewsEvents({
           >
             <RefreshCw size={13} aria-hidden="true" /> 重新读取
           </button>
+          {tab === "news" && !news.error && timeline.length > 0 && (
+            <AIEntry kind="market" asOf={date} newsContext={{ kind: "day" }} />
+          )}
         </div>
       </header>
       {tab === "news" ? (
@@ -407,7 +411,20 @@ export default function NewsEvents({
                   className="news-events-timeline-detail"
                   title="消息详情"
                   subtitle={`${message.source} · 原文发布 ${selection.time}`}
-                  actions={<SourceLink source={message} />}
+                  actions={
+                    <>
+                      <SourceLink source={message} />
+                      <AIEntry
+                        kind="market"
+                        asOf={date}
+                        newsContext={{
+                          kind: "news",
+                          source: message.source,
+                          id: message.id,
+                        }}
+                      />
+                    </>
+                  }
                 >
                   <div className="news-events-detail" aria-live="polite">
                     <div>
@@ -574,7 +591,21 @@ export default function NewsEvents({
                   <Panel
                     title="事件详情"
                     subtitle={`${event.event_date} · ${eventStatuses[event.status].label} · ${event.source}`}
-                    actions={<SourceLink source={event} />}
+                    actions={
+                      <>
+                        <SourceLink source={event} />
+                        <AIEntry
+                          kind="market"
+                          asOf={date}
+                          newsContext={{
+                            kind: "event",
+                            source: event.source,
+                            id: event.id,
+                            days,
+                          }}
+                        />
+                      </>
+                    }
                   >
                     <div className="news-events-detail" aria-live="polite">
                       <div>

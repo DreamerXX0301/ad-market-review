@@ -77,6 +77,7 @@ export default function AIHub({ onConfigure }: { onConfigure?: () => void }) {
             instrumentId={launch.instrumentId}
             reportId={launch.reportId}
             asOf={launch.asOf}
+            newsContext={launch.newsContext}
             initialQuestion={aiLaunchQuestion(launch)}
             onConfigure={onConfigure}
             allHistory

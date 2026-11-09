@@ -53,10 +53,12 @@ Provider含`provider_id,name,configured,enabled,model,config_revision,verificati
 ```text
 {kind:'stock'|'market',provider_id,consent:true,request_key,
  text?,instrument_id?,report_id?,as_of?,context_digest?,
- expected_config_revision?,expected_model?,allow_web?,attachments?}
+ expected_config_revision?,expected_model?,allow_web?,attachments?,news_context?}
 ```
 
 首问最多2000字符；空白兼容使用入口默认问题。instrument/report/as_of只是页面对象锚点；无有效研究、未发布当天日线或没有可发送预览，不妨碍创建对话和查询可用性。报告存在时可以取得其证券与行情截止；这不表示先前完整报告已经发给模型。context_digest保留兼容字段，新链路不要求匹配预览哈希。`allow_web`为旧客户端兼容字段，不控制本轮工具或构成用户模式选项。
+
+从「消息与事件」进入时使用 `kind:'market'` 和明确的 `as_of`。可选锚点 `news_context` 为 `{kind:'day'}`、`{kind:'news',source,id}` 或 `{kind:'event',source,id,days:7|30}`。日期按页面观察日解释，隔夜消息的发布时间仍按来源时间记录。消息和事件在服务端按锚点查找。打开对话后须主动发送才能开始解读。
 
 发送旁显示服务、资料查询与费用说明，点击发送对应本次`consent:true`；浏览、填建议问题或GET不产生授权调用。新前端提交看到的配置代际和模型，服务端短事务再次核对。
 
@@ -88,11 +90,12 @@ PDF最多20页，PDF/DOCX只在本地有界提取正文，不执行宏、脚本�
 
 用户说“今天/现在/最新”时，数据工具使用`today`并由服务器实际`Asia/Shanghai`时钟解析。页面as_of不是今天的替代值。工具结果的日期、实际采集窗口、报告期、获取/披露时间分别保存；现在取得的资料不倒填为历史当时可知。
 
-本地工具只由唯一worker内AI控制线程执行。工具种类和完整参数以[逐轮执行流程](../docs/AI对话执行流程.md)列出的八项能力及冻结协议为准：
+本地工具只由唯一worker内AI控制线程执行。工具种类和完整参数以[逐轮执行流程](../docs/AI对话执行流程.md)和每轮冻结协议为准：
 
 | 工具 | 参数 | 范围 |
 | --- | --- | --- |
 | `read_market_data` | `date:'today'|ISO,section` | section为availability/auction/noon/close/overview/fund_flow |
+| `read_news_events` | `scope:'selection'` | 在消息与事件会话内读取所选日、消息或日程的本地归档 |
 | `check_data_availability` | `date:'today'|ISO` | 检查资料与阶段，不采集 |
 | `read_stock_research` | `instrument_id`：完整代码、六位代码或准确证券名，最多80字符；空串沿用页面证券 | 名称与六位代码仅通过本地证券名录精确消歧，未命中或重名保持身份缺口，不借用页面其他证券、不联网；读取当前实例已存未过期v2报告，不延长TTL，不存在时仅可回退同股会话旧材料并说明旧日期 |
 

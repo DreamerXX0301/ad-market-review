@@ -38,7 +38,15 @@ def page_anchor(session, context):
         'kind':session.get('kind'), 'subject':context.get('subject') or context.get('instrument',{}).get('name'),
         'instrument_id':session.get('instrument_id') or context.get('instrument_id'),
         'as_of':session.get('as_of') or context.get('as_of'),
-        'report_id':session.get('report_id') or context.get('report_id') or context.get('source_report_id')}.items() if value not in (None,'')}
+        'report_id':session.get('report_id') or context.get('report_id') or context.get('source_report_id'),
+        'news_context':context.get('news_context')}.items() if value not in (None,'')}
+
+
+def model_page_anchor(anchor):
+    selection=anchor.get('news_context')
+    if not isinstance(selection,dict):
+        return anchor
+    return {**anchor,'news_context':{key:selection[key] for key in ('kind','days') if key in selection}}
 
 
 def protocol():
@@ -63,7 +71,7 @@ def history_items(rows):
 
 def seed_messages(anchor, clock, history, text, frozen):
     return [{'role':'system','content':frozen['system_prompt']},
-            {'role':'user','content':'页面锚点与本次时间（仅查询上下文）：\n'+json.dumps({'page_anchor':anchor,'request_time':clock},ensure_ascii=False)},
+            {'role':'user','content':'页面锚点与本次时间（仅查询上下文）：\n'+json.dumps({'page_anchor':model_page_anchor(anchor),'request_time':clock},ensure_ascii=False)},
             *history_items(history),{'role':'user','content':text}]
 
 

@@ -1,4 +1,8 @@
 export type AIKind = "stock" | "market";
+export type AINewsContext =
+  | { kind: "day" }
+  | { kind: "news"; source: string; id: string }
+  | { kind: "event"; source: string; id: string; days: 7 | 30 };
 export type AIItem = Record<string, any>;
 export interface AIProvider {
   provider_id: string;
