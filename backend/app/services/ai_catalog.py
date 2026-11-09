@@ -35,6 +35,7 @@ MAX_INPUT_BYTES = 96 * 1024
 MAX_RESPONSE_BYTES = 192 * 1024
 DETAILED_MARKET_REVIEW = 'detailed-market-review-v1'
 DETAILED_MARKET_REVIEW_SECONDS = 240
+MAX_AGENT_OUTPUT_TOKENS = 12288
 
 
 def price(provider, model):
@@ -52,7 +53,7 @@ def detailed_market_review(request):
 
 def request_max_output(provider, request, *, probe=False, planning=False):
     if provider == 'openai' and not probe and not planning and detailed_market_review(request):
-        return 12288
+        return MAX_AGENT_OUTPUT_TOKENS
     return max_output(provider, probe)
 
 
