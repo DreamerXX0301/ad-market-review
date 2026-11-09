@@ -130,6 +130,77 @@ const materialSupplyHeadline =
 const indexQuote =
   /^(台交所加权股价指数|韩国KOSPI指数|日经225指数|日本东证指数|MSCI亚太指数)(?:(涨幅扩大(?:至|，现涨)|(?:日内|最新)?(?:上涨|涨))|跌幅扩大(?:至|，现跌)|(?:日内|最新)?(?:下跌|跌))\d+(?:\.\d+)?%(?:[，,]?(?:最新报|至|报)[\d,.]+点)?[。.]*$/i;
 
+type Importance = { label: string; reason: string };
+
+const policyAuthority =
+  /^(?:国务院(?:关税税则委员会|办公厅)?|中共中央(?:办公厅)?|财政部|国家发展改革委|国家发改委|证监会|商务部(?:、海关总署)?|海关总署|中国人民银行|央行|美联储|欧洲央行|日本央行|英国央行|(?:美国|英国|日本|韩国|加拿大|澳大利亚)政府|欧盟委员会)[：:，,\s]*/;
+const policyDecision =
+  /^(?:公告[：:，,\s]*|宣布[：:，,\s]*|决定[：:，,\s]*|经批准[：:，,\s]*|自\d{1,4}[^，,。]{0,22}[，,]\s*|在\d+个?月内\s*)*(?:联合|继续)?(?:发布|公布|出台|施行|正式实施|通过|修订|取消|暂停|恢复|提高|降低|上调|下调|维持).{0,38}(?:关税|基准利率|政策利率|目标利率|联邦基金利率|存款准备金率|反制措施|出口管制|《[^》]{2,50}》)/;
+const policyOrder = /^.{2,8}签署国务院令[，,\s]*(?:公布|发布)《[^》]+》/;
+const approvedTradePolicy =
+  /^经批准[，,]自\d[^，,。]{0,40}[，,]\s*(?:商务部|海关总署).{0,65}公告.{0,100}(?:继续暂停实施|恢复实施)/;
+const centralBankDecision =
+  /^(?:宣布|决定)?(?:降息|加息|降准)\s*\d+(?:\.\d+)?(?:个)?(?:基点|个百分点)/;
+const coreEconomicData =
+  /^(?:国家统计局(?:[：:，,]\s*|发布\s*)|中国人民银行[：:，,]\s*)(?:公布|发布)?(?:\d{4}年)?(?:\d{1,2}月份?|上半年|全年|一季度|二季度|三季度|四季度|第[一二三四]季度|[一二三四]季度|前\d{1,2}个月)?\s*(?:全国)?(?:居民消费价格(?:总水平|指数)?|工业生产者(?:出厂价格|价格指数)|国内生产总值|制造业采购经理指数|GDP|CPI|PPI|PMI)(?=\s*(?:同比|环比|较上月|初值|终值|为|增长|上涨|下降|持平|[（(]?\d))/i;
+const unconfirmedHeadline =
+  /^(?:【[^】]+】\s*)?(?:传闻|网传|市场传言|未经证实|预告|前瞻)|(?:据传|据悉|未获证实|媒体称|或将|尚未获批|可能实施|征求意见|答记者问|澄清传闻|(?:不存在|未筹划)重大资产重组|问询函回复)/;
+const materialCompanyAction =
+  /(?:重大资产重组|并购重组|控制权变更|业绩预告|业绩快报|退市|(?:股票|股份)停牌|(?:股票|股份)复牌|重大合同|(?:证监会|监管部门)立案|收到.{0,10}立案告知书)/;
+const issuerHalt =
+  /^[\p{L}\p{N}*·（）() -]{2,24}[：:]\s*(?:股票|股份)(?:已|将)?(?:停牌|复牌).{0,24}(?:公告|刊发)/u;
+
+function newsImportance(
+  title: string,
+  companyDisclosure: boolean,
+): (Importance & { kind: "macro" | "disclosure" }) | undefined {
+  if (unconfirmedHeadline.test(title)) return;
+  const policy = policyAuthority.exec(title);
+  if (
+    (policy &&
+      (policyDecision.test(title.slice(policy[0].length)) ||
+        (/^(?:中国人民银行|央行|美联储|欧洲央行|日本央行|英国央行)/.test(
+          policy[0],
+        ) &&
+          centralBankDecision.test(title.slice(policy[0].length))))) ||
+    policyOrder.test(title) ||
+    approvedTradePolicy.test(title)
+  ) {
+    return {
+      kind: "macro",
+      label: "重要",
+      reason: "标题载明正式政策或监管决定",
+    };
+  }
+  if (coreEconomicData.test(title)) {
+    return { kind: "macro", label: "重要", reason: "标题载明官方核心经济数据" };
+  }
+  if (companyDisclosure && materialCompanyAction.test(title)) {
+    return {
+      kind: "disclosure",
+      label: "重要",
+      reason: "标题载明重大公司披露",
+    };
+  }
+}
+
+const coreCalendarRelease =
+  /^(?:居民消费价格指数月度报告|工业生产者价格指数月度报告|国民经济运行情况(?:新闻发布会)?|国内生产总值季度报告|采购经理指数月度报告)$/;
+
+export function calendarImportance(event: {
+  title: string;
+  source: string;
+  status: string;
+}): Importance | undefined {
+  if (
+    event.source === "国家统计局" &&
+    (event.status === "confirmed" || event.status === "tentative") &&
+    coreCalendarRelease.test(event.title.trim())
+  ) {
+    return { label: "重点日程", reason: "国家统计局核心经济数据发布日程" };
+  }
+}
+
 export function classifyNews(message: NewsClassificationInput) {
   const originalTitle = message.title.trim();
   const title = originalTitle.replace(
@@ -142,8 +213,13 @@ export function classifyNews(message: NewsClassificationInput) {
   );
   const regularQuote =
     !message.event_id && onlyMarketNotes ? indexQuote.exec(title) : null;
-  const officialMacro = macroHeadline.test(title) || policyHeadline.test(title);
-  const companyDisclosure = disclosureHeadline.test(title);
+  const companyDisclosure =
+    disclosureHeadline.test(title) || issuerHalt.test(title);
+  const importance = newsImportance(title, companyDisclosure);
+  const officialMacro =
+    importance?.kind === "macro" ||
+    macroHeadline.test(title) ||
+    policyHeadline.test(title);
   const sectorMove = industryHeadline.test(title);
   const industryTopic = topics.some((name) => industryTopics.has(name));
   const move = readNewsMove(originalTitle);
@@ -196,25 +272,35 @@ export function classifyNews(message: NewsClassificationInput) {
       columnTeaser.test(originalTitle) &&
       teaserWording.test(originalTitle));
   const mustShow = Boolean(message.event_id);
-  const priority = routine
-    ? 0
-    : officialMacro || companyDisclosure
-      ? 3
-      : move ||
-          (industryTopic && materialIndustryHeadline.test(title)) ||
-          spaceLaunchHeadline.test(title)
-        ? 2
-        : sectorMove ||
-            keyMarketAgenda.test(title) ||
-            (overseas && materialSupplyHeadline.test(title))
-          ? 1
-          : 0;
+  const priority = importance
+    ? 4
+    : routine
+      ? 0
+      : officialMacro || companyDisclosure
+        ? 3
+        : move ||
+            (industryTopic && materialIndustryHeadline.test(title)) ||
+            spaceLaunchHeadline.test(title)
+          ? 2
+          : sectorMove ||
+              keyMarketAgenda.test(title) ||
+              (overseas && materialSupplyHeadline.test(title))
+            ? 1
+            : 0;
 
   // Keep the latest selected quote per direction so a reversal stays visible.
   const quoteKey = regularQuote
     ? `${regularQuote[1].toUpperCase()}:${regularQuote[2] ? "up" : "down"}`
     : undefined;
-  return { ...category, filters, move, mustShow, priority, quoteKey };
+  return {
+    ...category,
+    filters,
+    move,
+    importance,
+    mustShow,
+    priority,
+    quoteKey,
+  };
 }
 
 const FEATURED_LIMIT = 30;
@@ -223,7 +309,7 @@ export function selectFeaturedNews<
   T extends { category: ReturnType<typeof classifyNews> },
 >(timeline: readonly T[]): T[] {
   const selected = new Set<T>();
-  const tiers: T[][] = [[], [], [], []];
+  const tiers: T[][] = [[], [], [], [], []];
   const seenQuotes = new Set<string>();
   for (const entry of timeline) {
     const { mustShow, priority, quoteKey } = entry.category;
@@ -234,7 +320,7 @@ export function selectFeaturedNews<
       tiers[priority].push(entry);
     }
   }
-  for (const tier of [tiers[3], tiers[2], tiers[1]]) {
+  for (const tier of [tiers[4], tiers[3], tiers[2], tiers[1]]) {
     for (const entry of tier) {
       if (selected.size >= FEATURED_LIMIT) break;
       selected.add(entry);

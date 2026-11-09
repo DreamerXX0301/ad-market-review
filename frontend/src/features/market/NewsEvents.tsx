@@ -5,11 +5,13 @@ import {
   CalendarDays,
   ExternalLink,
   RefreshCw,
+  Star,
 } from "lucide-react";
 import { Badge, Empty, ErrorBox, Loading, Panel } from "../../components/UI";
 import { useApi } from "../../lib/api";
 import AIEntry from "../ai/AIEntry";
 import {
+  calendarImportance,
   classifyNews,
   newsFilters,
   selectFeaturedNews,
@@ -128,12 +130,22 @@ function TopicEvidence({
   );
 }
 
+function ImportanceBadge({ label }: { label: string }) {
+  return (
+    <span className="news-events-importance">
+      <Star size={12} aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
+
 function NewsLabels({ category }: { category: TimelineEntry["category"] }) {
-  const { move } = category;
+  const { importance, move } = category;
   const DirectionIcon =
     move?.direction === "up" ? ArrowUpRight : ArrowDownRight;
   return (
     <span className="news-events-labels">
+      {importance && <ImportanceBadge label={importance.label} />}
       <span className="news-events-category">{category.label}</span>
       {move && (
         <span className="news-events-move" data-news-move={move.direction}>
@@ -155,6 +167,7 @@ export default function NewsEvents({
   const [tab, setTab] = useState<"news" | "calendar">("news");
   const [filter, setFilter] = useState<"featured" | "all">("featured");
   const [newsFilter, setNewsFilter] = useState<NewsFilterKey | "all">("all");
+  const [importantOnly, setImportantOnly] = useState(false);
   const [selectedMessageKey, setSelectedMessageKey] = useState<string>();
   const [days, setDays] = useState<7 | 30>(7);
   const [eventId, setEventId] = useState<string>();
@@ -185,21 +198,20 @@ export default function NewsEvents({
     );
     return { timeline, featured: selectFeaturedNews(timeline) };
   }, [news.data, date]);
-  const { allInCategory, featuredInCategory } = useMemo(() => {
-    if (newsFilter === "all") {
-      return { allInCategory: timeline, featuredInCategory: featured };
+  const { allInScope, featuredInScope } = useMemo(() => {
+    if (newsFilter === "all" && !importantOnly) {
+      return { allInScope: timeline, featuredInScope: featured };
     }
-    const inCategory = ({ category }: TimelineEntry) =>
-      category.filters.includes(newsFilter);
+    const inScope = ({ category }: TimelineEntry) =>
+      (newsFilter === "all" || category.filters.includes(newsFilter)) &&
+      (!importantOnly || Boolean(category.importance));
     return {
-      allInCategory: timeline.filter(inCategory),
-      featuredInCategory: featured.filter(inCategory),
+      allInScope: timeline.filter(inScope),
+      featuredInScope: featured.filter(inScope),
     };
-  }, [timeline, featured, newsFilter]);
-  const visibleMessages =
-    filter === "featured" ? featuredInCategory : allInCategory;
-  const canShowAllInCategory =
-    filter === "featured" && allInCategory.length > 0;
+  }, [timeline, featured, newsFilter, importantOnly]);
+  const visibleMessages = filter === "featured" ? featuredInScope : allInScope;
+  const canShowAllInScope = filter === "featured" && allInScope.length > 0;
   const selection =
     visibleMessages.find(({ key }) => key === selectedMessageKey) ||
     visibleMessages[0];
@@ -213,6 +225,7 @@ export default function NewsEvents({
   );
   const events = calendar.data?.events ?? [];
   const event = eventId ? events.find(({ id }) => id === eventId) : events[0];
+  const eventImportance = event && calendarImportance(event);
   const relatedMessage =
     event && timeline.find(({ item }) => item.event_id === event.id);
   const activeRead = tab === "news" ? news : calendar;
@@ -275,8 +288,8 @@ export default function NewsEvents({
                     >
                       {(
                         [
-                          ["featured", "精选", featured.length],
-                          ["all", "全部", timeline.length],
+                          ["featured", "精选", featuredInScope.length],
+                          ["all", "全部", allInScope.length],
                         ] as const
                       ).map(([mode, label, count]) => (
                         <button
@@ -318,18 +331,18 @@ export default function NewsEvents({
                           </button>
                         ))}
                       </div>
-                      {newsFilter !== "all" && (
-                        <span className="news-events-secondary">
-                          本类 {visibleMessages.length}
-                          {filter === "featured" &&
-                            allInCategory.length > visibleMessages.length &&
-                            ` / ${allInCategory.length}`}{" "}
-                          条
-                        </span>
-                      )}
+                      <button
+                        className="btn small news-events-importance-toggle"
+                        type="button"
+                        aria-pressed={importantOnly}
+                        onClick={() => setImportantOnly((current) => !current)}
+                      >
+                        <Star size={13} aria-hidden="true" />
+                        只看重要
+                      </button>
                     </div>
                     {filter === "featured" &&
-                      featured.length < timeline.length && (
+                      featuredInScope.length < allInScope.length && (
                         <p className="news-events-filter-note">
                           优先展示政策、公告和明显异动，完整时间轴见「全部」。
                         </p>
@@ -348,6 +361,9 @@ export default function NewsEvents({
                         key={key}
                         data-news-tone={category.tone}
                         data-news-move={category.move?.direction}
+                        data-news-important={
+                          category.importance ? "true" : undefined
+                        }
                       >
                         <button
                           type="button"
@@ -370,7 +386,11 @@ export default function NewsEvents({
                 ) : timeline.length > 0 ? (
                   <Empty
                     title={
-                      filter === "featured" ? "暂无精选消息" : "此分类暂无消息"
+                      importantOnly
+                        ? "当前筛选下暂无重要消息"
+                        : filter === "featured"
+                          ? "暂无精选消息"
+                          : "此分类暂无消息"
                     }
                     description={`该日已收录 ${timeline.length} 条消息。`}
                     action={
@@ -378,16 +398,20 @@ export default function NewsEvents({
                         className="btn small"
                         type="button"
                         onClick={() =>
-                          canShowAllInCategory
+                          canShowAllInScope
                             ? setFilter("all")
-                            : setNewsFilter("all")
+                            : importantOnly
+                              ? setImportantOnly(false)
+                              : setNewsFilter("all")
                         }
                       >
-                        {canShowAllInCategory
+                        {canShowAllInScope
                           ? newsFilter === "all"
                             ? "查看全部消息"
                             : "在全部中查看本类"
-                          : "查看所有分类"}
+                          : importantOnly
+                            ? "取消只看重要"
+                            : "查看所有分类"}
                       </button>
                     }
                   />
@@ -441,6 +465,12 @@ export default function NewsEvents({
                         )}
                       </div>
                       <h3>{message.title}</h3>
+                      {selection.category.importance && (
+                        <p className="news-events-importance-reason">
+                          <strong>标记依据</strong>
+                          {selection.category.importance.reason}
+                        </p>
+                      )}
                       {message.summary && <p>{message.summary}</p>}
                       {message.first_seen_at && (
                         <p className="news-events-secondary">
@@ -547,28 +577,39 @@ export default function NewsEvents({
                         </p>
                       )}
                       <ul className="news-events-list">
-                        {events.map((item) => (
-                          <li key={item.id}>
-                            <button
-                              type="button"
-                              aria-pressed={item.id === event?.id}
-                              onClick={() => setEventId(item.id)}
+                        {events.map((item) => {
+                          const importance = calendarImportance(item);
+                          return (
+                            <li
+                              key={item.id}
+                              data-news-important={
+                                importance ? "true" : undefined
+                              }
                             >
-                              <span className="news-events-row">
-                                <time dateTime={item.event_date}>
-                                  {item.event_date}
-                                </time>
-                                <Badge tone={eventStatuses[item.status].tone}>
-                                  {eventStatuses[item.status].label}
-                                </Badge>
-                              </span>
-                              <strong>{item.title}</strong>
-                              <span className="news-events-secondary">
-                                {item.source}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
+                              <button
+                                type="button"
+                                aria-pressed={item.id === event?.id}
+                                onClick={() => setEventId(item.id)}
+                              >
+                                <span className="news-events-row">
+                                  <time dateTime={item.event_date}>
+                                    {item.event_date}
+                                  </time>
+                                  {importance && (
+                                    <ImportanceBadge label={importance.label} />
+                                  )}
+                                  <Badge tone={eventStatuses[item.status].tone}>
+                                    {eventStatuses[item.status].label}
+                                  </Badge>
+                                </span>
+                                <strong>{item.title}</strong>
+                                <span className="news-events-secondary">
+                                  {item.source}
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
                       </ul>
                     </>
                   ) : (
@@ -609,7 +650,18 @@ export default function NewsEvents({
                   >
                     <div className="news-events-detail" aria-live="polite">
                       <div>
+                        {eventImportance && (
+                          <div className="news-events-detail-category">
+                            <ImportanceBadge label={eventImportance.label} />
+                          </div>
+                        )}
                         <h3>{event.title}</h3>
+                        {eventImportance && (
+                          <p className="news-events-importance-reason">
+                            <strong>标记依据</strong>
+                            {eventImportance.reason}
+                          </p>
+                        )}
                         {event.summary && <p>{event.summary}</p>}
                         {(event.published_at || event.published_date) && (
                           <p className="news-events-secondary">
@@ -632,6 +684,9 @@ export default function NewsEvents({
                             onClick={() => {
                               if (!featured.includes(relatedMessage)) {
                                 setFilter("all");
+                              }
+                              if (!relatedMessage.category.importance) {
+                                setImportantOnly(false);
                               }
                               if (
                                 newsFilter !== "all" &&

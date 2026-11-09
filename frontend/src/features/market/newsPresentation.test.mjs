@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { classifyNews, selectFeaturedNews } from "./newsPresentation.ts";
+import {
+  calendarImportance,
+  classifyNews,
+  selectFeaturedNews,
+} from "./newsPresentation.ts";
 
 const entry = (title, event_id) => ({
   title,
@@ -57,3 +61,56 @@ assert.deepEqual(entry("半导体板块盘中拉升 某甲科技涨停").categor
   "stocks",
   "industry",
 ]);
+
+assert.equal(policy.category.importance?.label, "重要");
+const officialData = entry("国家统计局：10月份居民消费价格同比上涨0.7%");
+assert.equal(
+  officialData.category.importance?.reason,
+  "标题载明官方核心经济数据",
+);
+const rateDecision = entry("美联储宣布下调联邦基金利率目标区间25个基点");
+assert.equal(rateDecision.category.importance?.kind, "macro");
+const halt = classifyNews({
+  title: "某甲地产：股票停牌 以待刊发有关内幕消息的公告",
+  topics: [{ name: "期货市场情报" }],
+});
+assert.equal(halt.importance?.kind, "disclosure");
+assert.equal(halt.key, "disclosure");
+assert.ok(halt.filters.includes("stocks"));
+
+for (const title of [
+  "国家统计局：10月汽油价格同比上涨22.4%",
+  "央行今日开展1820亿元隔夜逆回购操作",
+  "美联储12月加息的概率为78%",
+  "国务院：公布《某项条例（征求意见稿）》",
+  "商务部：公布出口管制措施答记者问",
+  "【公告】公司澄清未筹划重大资产重组",
+  "【公告】重大资产重组问询函回复",
+  "某甲科技大涨15%",
+]) {
+  assert.equal(entry(title).category.importance, undefined, title);
+}
+assert.equal(rise.category.importance, undefined);
+assert.deepEqual(selectFeaturedNews([...many, officialData]), [
+  ...many.slice(0, 29),
+  officialData,
+]);
+
+const calendar = {
+  title: "采购经理指数月度报告",
+  source: "国家统计局",
+  status: "tentative",
+};
+assert.equal(calendarImportance(calendar)?.label, "重点日程");
+assert.equal(
+  calendarImportance({ ...calendar, status: "cancelled" }),
+  undefined,
+);
+assert.equal(
+  calendarImportance({ ...calendar, source: "其他来源" }),
+  undefined,
+);
+assert.equal(
+  calendarImportance({ ...calendar, title: "例行工作会议" }),
+  undefined,
+);
