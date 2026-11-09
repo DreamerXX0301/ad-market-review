@@ -94,6 +94,12 @@ def planner_messages(request):
         try:
             if date.fromisoformat(observed).isoformat()==observed:context['observation_date']=observed
         except ValueError:pass
+    if (request.get('page_anchor') or {}).get('market_scope')=='full_review':
+        context['market_review_read_hint']=(
+            '通过领域校验后，系统会先汇集所选日的各盘面栏目，无需重复规划同日总览、全档盘中或其他已涵盖的概览；确需更多明细时才规划。'
+            if request.get('initial_market_overview_read') is True else
+            '若本轮明确要求重新完整复盘所选日，用 read_market_overview(scope=selected_day) 汇集各栏目。'
+            '单项追问或改问其他日期时，按实际问题选用相应工具。')
     return [{'role':'system','content':request['round_protocol']['system_prompt']},
             {'role':'user','content':json.dumps(context,ensure_ascii=False)}]
 

@@ -10,7 +10,8 @@ import time
 import uuid
 import httpx
 from app.adapters.ai_responses import BASE_URLS, ProviderError, error_code, usage_of
-from app.services.ai_catalog import MAX_RESPONSE_BYTES, max_output
+from app.services.ai_catalog import (MAX_RESPONSE_BYTES, DETAILED_MARKET_REVIEW_SECONDS,
+                                    detailed_market_review, request_max_output)
 from app.services import ai_web, ai_scope, ai_attachments as files
 from app.services.ai_tool_budget import assess_tool, classify_tool, tool_budget
 from app.services.ai_agent_protocol import FINALIZE_SYSTEM_PROMPT, planner_messages
@@ -38,10 +39,10 @@ class AgentBridge:
         return result
 
 
-def payload_for(request,items,tools):
+def payload_for(request,items,tools,*,planning=False):
     payload={'model':request['model'],'input':files.clean_input(items),'stream':True,'store':False,
              'reasoning':{'effort':'low' if request['provider_id']=='openai' else 'none'},
-             'max_output_tokens':max_output(request['provider_id']),
+             'max_output_tokens':request_max_output(request['provider_id'],request,planning=planning),
              'tools':tools,'parallel_tool_calls':request['provider_id']=='openai' and bool(tools) and not any(tool.get('type')=='web_search' for tool in tools)}
     if request['provider_id']=='openai':payload['include']=['reasoning.encrypted_content']
     if any(tool.get('type')=='web_search' for tool in tools):
@@ -127,7 +128,11 @@ async def stream_response(client,path,payload,cancel,bridge,*,emit_text=True):
     if not text and final:
         if emit_text:bridge.emit('delta',{'text':final})
         text=final
-    if body.get('status')!='completed':raise ProviderError('incomplete_response',usage=usage_of(body))
+    if body.get('status')!='completed':
+        incomplete=body.get('incomplete_details')
+        truncated=(body.get('status')=='incomplete' and isinstance(incomplete,dict)
+                   and incomplete.get('reason')=='max_output_tokens')
+        raise ProviderError('output_truncated' if truncated else 'incomplete_response',usage=usage_of(body))
     return body,text
 
 
@@ -157,7 +162,8 @@ async def _run(request,key,cancel,bridge):
                             'tool_calls':tool_calls,'web_request':web_request}},'response_model':body.get('model')}
     configured=os.environ.get('SHIXU_AI_AGENT_TIMEOUT_SECONDS')
     if configured in ('60','120'):timeout=int(configured)
-    async with asyncio.timeout(timeout):
+    deadline=max(timeout,DETAILED_MARKET_REVIEW_SECONDS) if detailed_market_review(request) else timeout
+    async with asyncio.timeout(deadline):
         async with httpx.AsyncClient(base_url=BASE_URLS[request['provider_id']],headers={'Authorization':'Bearer '+key},
             timeout=httpx.Timeout(timeout),trust_env=os.environ.get('SHIXU_AI_SYSTEM_PROXY_ENABLED')=='1',follow_redirects=False) as client:
             for ordinal in range(1,frozen['max_model_requests']+1):
@@ -186,7 +192,7 @@ async def _run(request,key,cancel,bridge):
                     # The router receives actual users and verified identity
                     # metadata, not previous assistant prose or local reports.
                     outbound=request.get('planner_messages') or planner_messages(request)
-                payload=payload_for(request,outbound,tools)
+                payload=payload_for(request,outbound,tools,planning=planning)
                 if planning:
                     payload['tool_choice']='required';payload['parallel_tool_calls']=False
                 if restricted:payload['max_output_tokens']=min(payload['max_output_tokens'],256)

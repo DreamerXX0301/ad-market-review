@@ -36,7 +36,18 @@ def sources(monkeypatch):
     monkeypatch.setattr(tools, '_availability', lambda *_a, **_kw: ({'phases': phases}, {}, {}))
     raw = {module: _raw(module, {}) for module in review._DETAILS}
     raw['overview'] = _raw('turnover', {'amount': 100})
-    raw['ladder'] = _raw('ladder', {})
+    raw['emotion']['evidence'][0]['data'] = review.project_emotion_review({
+        'breadth': {'up': 20, 'down': 30, 'scope': '沪深样本'},
+        'emotion': {'phase': '修复', 'previous_date': '2026-11-06'},
+        'sentiment': {'short_term': {'previous_date': '2026-11-06', 'metrics': [{'key': 'promoted_count', 'value': 9}]}},
+        'broken_board_analysis': {'date': DAY, 'current': {'date': DAY, 'broken_count': 44, 'touch_count': 101,
+            'concept_distribution': [{'name': '融资融券', 'observed_count': 25}, {'name': '样本题材', 'observed_count': 15}],
+            'items': [{'outcome': 'broken', 'date': DAY, 'name': '炸板样本', 'instrument_id': '000001.SZ'}]},
+            'comparison': {'previous_date': '2026-11-06', 'broken_rate_delta_pp': 15},
+            'history': [{'date': '2026-11-06', 'broken_rate_pct': 28}]}}, DAY)
+    stock = {'name': '最高板样本', 'instrument_id': '000001.SZ', 'board_count': 6}
+    raw['ladder'] = _raw('ladder', {'review_details': review.project_ladder_review({}, [stock],
+        [{'height': 6, 'count': 1, 'stocks': {'items': [stock]}}])})
     raw['sectors']['evidence'][0]['data'] = {'sectors': {'observed_count': 1, 'items': [{'name': '样本'}]}}
     raw['dragon_tiger']['evidence'][0]['data'] = {'availability': {'available': True, 'date': DAY}}
     raw['abnormal']['evidence'][0]['data'] = {'monitor_scope': 'historical', 'monitor_observed_date': DAY,
@@ -64,6 +75,40 @@ def test_full_review_keeps_all_modules_and_intraday_time_slots(sources):
     assert [row['slot'] for row in data['intraday']['slots']] == list(slots)
     assert data['abnormal']['stocks']['items'][0]['name'] == '监管样本'
     assert all(row['dates']['trade_date'] == DAY for row in result['evidence'])
+    assert data['emotion']['sentiment']['short_term']['metrics']['promoted_count'] == 9
+    broken = data['emotion']['broken_boards']
+    assert (broken['broken_count'], broken['touch_count']) == (44, 101)
+    assert broken['directions']['concept'] == [{'name': '样本题材', 'observed_count': 15}]
+    assert broken['comparison']['broken_rate_pct'] == 28
+    assert broken['representatives'][0]['name'] == '炸板样本'
+    assert data['ladder']['heights'][0]['representatives'][0]['name'] == '最高板样本'
+
+
+def test_unknown_broken_denominator_stays_unknown_and_other_date_samples_are_ignored():
+    analysis = {'date': DAY, 'current': {'date': DAY, 'state': 'partial', 'touch_count': None,
+        'observed_broken_count': 2, 'broken_rate_pct': None,
+        'items': [{'outcome': 'broken', 'date': '2026-11-06', 'name': '其他日期个股'}]},
+        'comparison': {'previous_date': '2026-11-06', 'broken_rate_delta_pp': None},
+        'history': [{'date': '2026-11-06', 'broken_rate_pct': 5}]}
+    result = review.project_broken_boards_review(analysis, DAY)
+    assert result['observed_broken_count'] == 2
+    assert result['touch_count'] is None and result['broken_rate_pct'] is None
+    assert 'broken_rate_pct' not in result['comparison']
+    assert result['representatives'] == []
+    assert review.project_broken_boards_review(analysis, '2026-11-08')['state'] == 'unknown'
+
+
+def test_sector_review_ranks_both_sides_from_same_day_quotes():
+    data = {'items': [
+        {'name': '历史行业', 'kind': 'industry', 'change_pct': 20, 'quote_date': '2026-11-06'},
+        {'name': '当日行业', 'kind': 'industry', 'change_pct': 2, 'quote_date': DAY},
+        {'name': '当日弱概念', 'kind': 'concept', 'change_pct': -3, 'quote_date': DAY},
+        {'name': '未报价概念', 'kind': 'concept', 'change_pct': None, 'quote_date': DAY}]}
+    result = review.project_sector_review(data, DAY)
+    assert result['industry']['priced_count'] == result['concept']['priced_count'] == 1
+    assert result['industry']['rising'][0]['name'] == '当日行业'
+    assert result['concept']['falling'][0]['name'] == '当日弱概念'
+    assert not result['industry']['falling'] and not result['concept']['rising']
 
 
 def test_historical_monitor_mismatch_is_a_gap_and_discards_wrong_day_facts(sources):

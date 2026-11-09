@@ -96,6 +96,7 @@ export interface AIMessage extends AIItem {
   interpretation?: AIItem;
   created_at_ms: number;
   state: string;
+  reason_code?: string;
   attachments?: AIAttachment[];
   response_type?: string;
   web?: {

@@ -1,5 +1,6 @@
 """Bounded, exact-date local evidence for the overview AI shortcut."""
 from datetime import date
+from math import isfinite
 import sqlite3
 
 from fastapi import HTTPException
@@ -16,11 +17,20 @@ TOOL_DESCRIPTION = (
     '部分、未知及时间边界。样本有界，不能外推完整名单。'
 )
 PROMPT = (
-    '这个会话从盘面总览进入。全面复盘时优先使用 read_market_overview(scope=selected_day)。'
-    '用同日已核验资料串联竞价、盘中、午评与正式收盘，交叉核对指数、量能、情绪、板块、梯队、'
-    '消息事件、龙虎榜、30日涨幅榜及异动与监管。列出影响结论的缺档并注明实际时点与来源。'
-    '未来日程只表示安排。成交额不是资金净流入，供应商监控标签不是官方监管措施。'
-    '页面绑定不为无关问题授权。'
+    '这个会话从盘面总览进入。全面复盘以 read_market_overview(scope=selected_day) 的同日证据为底稿，'
+    '结合数值和代表股解释盘中转折、主要矛盾及支持和限制该判断的证据。'
+    '用户要完整复盘时按下列结构，明确单项追问时只展开所问部分。\n'
+    '1. 市场定性：给出当日结论，再用指数涨跌、成交额及与前一交易日的对照、市场广度举证，注明统计范围。\n'
+    '2. 日内演变：串联竞价、八个盘中观察档、午评和正式收盘。按时间顺序覆盖有记录的档位，指出关键转折和缺档。\n'
+    '3. 情绪与接力：区分广度温度、样本涨幅中位数和昨日涨停队列。量化可比样本、涨跌分化、晋级和未晋级。\n'
+    '4. 炸板与封板：对照封住、炸板、触板分母及同口径变化。分析炸板集中方向、代表股及回落，区分今日炸板、昨日炸板反馈和昨日涨停未晋级；'
+    '方向关联样本占比与该板块炸板率口径不同。\n'
+    '5. 涨停梯队：列各已观察层级的家数和代表股，点出已确认最高板、首板厚度、断层及主要方向。来源原因聚类只能作为候选。\n'
+    '6. 行业与概念：对比强弱板块、收盘涨幅和涨停方向的广度，讨论强度、集中度及延续线索。\n'
+    '7. 外部线索与风险：结合已留存消息和同日事件、龙虎榜、30日榜、异动与监管，区分同期线索和可核验归因。未来日程仅为安排。\n'
+    '8. 下一交易日复核：按延续、分化或走弱等情景列出具体观察条件及否定条件，注明所需数据与缺口。\n'
+    '各节注明证据日期、时点和来源。成交额与净流入分开，供应商监控标签与官方监管措施分开。'
+    '缺档只在对应小节注明，观察样本不得外推全市场或填作零。页面绑定不为无关问题授权。'
 )
 
 _MODULES = (
@@ -112,10 +122,15 @@ def _phase(phase, raw, availability):
 
 
 def _intraday(raw):
+    from app.services.intraday_service import SLOTS
+
     phases = raw['summary'].get('phases', {})
     by_slot = {row['kind'].split(':', 1)[-1]: row for row in raw['evidence']}
     rows = []
-    for slot, phase in phases.items():
+    for item in SLOTS:
+        slot = item['key']
+        phase = phases.get(slot) or {'time': item['start'], 'phase_state': 'not_scheduled' if phases else 'unknown',
+                                     'reason': '该观察日留存的计划不含此档' if phases else '该观察日的时段计划暂不可核验'}
         record = by_slot.get(slot)
         projected = {'slot': slot, 'time': phase.get('time'), 'state': phase['phase_state']}
         if record:
@@ -152,18 +167,118 @@ def _overview(raw):
     return data
 
 
-def _emotion(data):
+def _number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+
+
+def _metrics(data):
+    return {row['key']: row.get('value') for row in data.get('metrics', []) if row.get('key')}
+
+
+def project_broken_boards_review(analysis, day):
+    analysis = analysis or {}
+    current = analysis.get('current') or {}
+    if analysis.get('date') != day or current.get('date') != day:
+        return {'state': 'unknown', 'reason': '该观察日暂无可核验炸板资料'}
+    output = _pick(current, 'state', 'source', 'scope', 'reason', 'limit_up_count', 'broken_count',
+                   'touch_count', 'broken_rate_pct', 'observed_limit_up_count', 'observed_broken_count',
+                   'observed_touch_count', 'unverified_count', 'drawdown_valid_count',
+                   'avg_drawdown_from_high_pct', 'large_drawdown_count', 'membership_snapshot_day', 'membership_reason')
+    output['membership'] = _pick(current.get('membership_summary'), 'stocks_with_industry', 'stocks_with_concept', 'unclassified_count')
+    from app.services.market_rank_distribution import TRADING_ATTRIBUTE_NAMES
+
+    direction_fields = ('name', 'source', 'observed_count', 'sample_avg_change_pct', 'sample_valid_count', 'membership_date')
+    output['directions'] = {kind: [_pick(row, *direction_fields) for row in [
+        row for row in current.get(kind + '_distribution', []) if row.get('name') not in TRADING_ATTRIBUTE_NAMES][:2]]
+                            for kind in ('concept', 'industry')}
+    output['directions_scope'] = '成员档案关联的已核验炸板样本，概念可重叠，组内涨幅是样本等权；无全板块触板分母'
+    broken = [row for row in current.get('items', []) if row.get('outcome') == 'broken' and row.get('date') == day]
+    # Show high-position failures and a sharp intraday giveback, instead of selecting by ticker order.
+    highs = sorted((row for row in broken if _number(row.get('previous_board_count'))),
+                   key=lambda row: (-row['previous_board_count'], row['instrument_id']))[:1]
+    drop = min((row for row in broken if _number(row.get('drawdown_from_high_pct'))),
+               key=lambda row: (row['drawdown_from_high_pct'], row['instrument_id']), default=None)
+    samples = {row['instrument_id']: row for row in [*highs, *([drop] if drop else [])]}
+    if not samples and broken:
+        samples[broken[0]['instrument_id']] = broken[0]
+    output['representatives'] = [_pick(row, 'instrument_id', 'name', 'change_pct', 'drawdown_from_high_pct',
+                                       'previous_board_count', 'previous_state') for row in samples.values()]
+    comparison = analysis.get('comparison') or {}
+    previous = comparison.get('previous_date')
+    if isinstance(previous, str) and previous < day:
+        output['comparison'] = _pick(comparison, 'previous_date', 'broken_rate_delta_pp')
+        # Only expose a previous comparison rate when the service certified a same-scope delta.
+        if comparison.get('broken_rate_delta_pp') is not None:
+            prior = next((row for row in analysis.get('history', []) if row.get('date') == previous), {})
+            output['comparison'].update(_pick(prior, 'broken_rate_pct', 'limit_up_count', 'broken_count', 'touch_count'))
+        feedback = analysis.get('previous_feedback') or {}
+        if feedback.get('date') == day and feedback.get('previous_date') == previous:
+            output['previous_feedback'] = _pick(feedback, 'state', 'previous_date', 'source', 'reason', 'observed_source_count',
+                'valid_count', 'unknown_count', 'up_count', 'down_count', 'avg_change_pct', 'median_change_pct',
+                'limit_up_count', 'limit_down_count', 'return_limit_rate_pct')
+    return output
+
+
+def project_sector_review(data, day):
+    highlights = {}
+    for kind in ('industry', 'concept'):
+        rows = [row for row in data.get('items', []) if row.get('kind') == kind
+                and row.get('quote_date') == day and _number(row.get('change_pct'))]
+        rows.sort(key=lambda row: (row['change_pct'], row.get('topic_id') or ''))
+        fields = ('name', 'change_pct', 'quote_source', 'quote_basis')
+        highlights[kind] = {'priced_count': len(rows),
+                            'rising': [_pick(row, *fields) for row in rows[-2:][::-1] if row['change_pct'] > 0],
+                            'falling': [_pick(row, *fields) for row in rows[:2] if row['change_pct'] < 0]}
+    return highlights
+
+
+def project_ladder_review(data, stocks, board_groups):
+    mainlines = data.get('system_mainlines') or {}
+    by_stock = {row['instrument_id']: row for row in stocks}
+    by_height = {row['height']: row for row in board_groups}
+    heights = list(by_height)[:8]
+    if 1 in by_height and 1 not in heights:
+        heights[-1] = 1
+    group_fields = ('name', 'count', 'max_known_height')
+    stock_fields = ('instrument_id', 'name')
+    directions = {}
+    for kind in ('groups', 'related_groups', 'other_groups'):
+        directions[kind] = [{**_pick(row, *group_fields),
+                             'representatives': [_pick(by_stock.get(symbol), *stock_fields)
+                                                 for symbol in row.get('high_stock_ids', [])[:1] if symbol in by_stock]}
+                            for row in mainlines.get(kind, [])[:4]]
+    return {'height_group_count': len(by_height),
+            'heights': [{**_pick(by_height[height], 'height', 'count', 'observed_count'),
+                         'representatives': [_pick(by_stock[row['instrument_id']], *stock_fields, 'last_limit_time')
+                                             for row in by_height[height]['stocks']['items'][:2]]}
+                        for height in heights],
+            'directions': {'state': mainlines.get('state'), **directions,
+                           'scope': '同日已核验涨停样本的来源原因候选，补充关联可重叠'},
+            'failed_promotion': {**_pick((data.get('classification_coverage') or {}).get('failed'),
+                                         'complete', 'previous_date', 'candidate_count', 'confirmed_count', 'unknown_count'),
+                                 'representatives': [_pick(row, *stock_fields, 'change_pct', 'previous_board_count')
+                                                     for row in data.get('failed_items', [])[:2]]}}
+
+
+def project_emotion_review(data, day):
     outlook = data.get('market_outlook') or {}
     sentiment = data.get('sentiment') or {}
+    market = sentiment.get('market') or {}
+    short = sentiment.get('short_term') or {}
+    cohort = _pick(short, 'state_label', 'previous_date', 'sample_count', 'observed_count', 'coverage_pct',
+                   'cohort_source_complete', 'promotion_unknown_count', 'promotion_bounds_pct', 'promotion_bounds_reason')
+    events = outlook.get('event_counts') or {}
     return {
-        'breadth': _pick(data.get('breadth'), *_BREADTH),
-        'emotion': _pick(data.get('emotion'), 'phase', 'cycle', 'temperature', 'previous_temperature',
-                         'temperature_delta', 'comparable_count', 'comparable_coverage', 'event_pools_complete'),
-        'sentiment': {**_pick(sentiment, 'atmosphere'),
-                      'market': _pick(sentiment.get('market'), 'state_label', 'coverage_pct'),
-                      'short_term': _pick(sentiment.get('short_term'), 'state_label', 'cohort_date',
-                                          'sample_count', 'promotion_bounds_pct')},
-        'retained_event_counts': outlook.get('event_counts'),
+        'breadth': _pick(data.get('breadth'), *_BREADTH, 'scope'),
+        'emotion': _pick(data.get('emotion'), 'phase', 'phase_reason', 'temperature', 'previous_temperature',
+                         'previous_date', 'temperature_delta', 'comparable_count', 'comparable_coverage', 'event_pools_complete'),
+        'sentiment': {'atmosphere': (sentiment.get('atmosphere') or {}).get('summary'),
+                      'market': {**_pick(market, 'state_label', 'scope', 'sample_count', 'observed_count', 'coverage_pct'),
+                                 'metrics': _metrics(market)},
+                      'short_term': {**cohort, 'metrics': _metrics(short)}},
+        'retained_event_counts': {**_pick(events, 'scope'), **{key: _pick(events.get(key), 'confirmed_count', 'unknown_count', 'complete')
+                                  for key in ('up', 'down')}},
+        'broken_boards': project_broken_boards_review(data.get('broken_board_analysis'), day),
     }
 
 
@@ -173,12 +288,14 @@ def _detail(module, raw):
     if module == 'indices':
         data = {'indices': _sample(value.get('indices'), (*_STOCK, 'date', 'quote_available', 'quote_reason'), 4)}
     elif module == 'emotion':
-        data = _emotion(value)
+        data = {key: item for key, item in value.items() if key != 'warnings'}
     elif module == 'sectors':
         data = {'sectors': _sample(value.get('sectors'), (*_DIRECTION, 'amount', 'quote_date',
                      'quote_source', 'membership_observed_date', 'members_complete'), 5),
                 'quote_coverage': _pick(value.get('quote_coverage'), 'selected_date_available', 'complete', 'accepted_count', 'failed_count'),
                 'member_coverage': _pick(value.get('membership_coverage'), 'selected_date_available', 'partial', 'source_snapshot_day')}
+        if 'strong_weak' in value:
+            data['strong_weak'] = value['strong_weak']
         if not data['sectors']['observed_count'] and value and not data['quote_coverage'].get('selected_date_available'):
             return data, 'unknown', '所选日暂无可核验板块样本'
     elif module == 'gainers':
@@ -209,9 +326,8 @@ def _ladder(raw):
                    'first_board_count', 'first_board_observed_count', 'unknown_height_count',
                    'highest_board_count', 'highest_board_observed_count')
     value = next((row['data'] for row in raw['evidence']), {})
-    data = {'counts': counts, 'heights': [{**_pick(group, 'height', 'count', 'observed_count'),
-                        'stocks': _sample(group.get('stocks'), ('instrument_id', 'name'), 1)}
-                        for group in (value.get('board_groups') or [])[:8]],
+    details = value.get('review_details') or {}
+    data = {'counts': counts, **details,
             'themes': _sample(value.get('theme_counts'), (*_DIRECTION, 'limit_up_observed_count', 'complete'), 3)}
     return data, _read_state(raw), _read_reason(raw)
 
@@ -290,31 +406,36 @@ def _inputs(day, now, market, selected):
         if not isinstance(end, str) or day > end or isinstance(begin, str) and day < begin:
             tools._gap(raw, 'overview', '所选日没有已发布完成日行情')
         else:
-            tools._published_overview(raw, day, market=market)
+            tools._published_overview(raw, day, market=market, turnover_only=bool(details['emotion']['evidence']))
 
     with supplement_access():
-        overview = _read(day, 'overview', overview_read)
-        details = {module: _read(day, module, lambda raw: tools._market_detail(raw, day, module, '', now, market=market))
+        details = {module: _read(day, module, lambda raw: tools._market_detail(raw, day, module, '', now, market=market,
+                                                                              full_review=True))
                    for module in _DETAILS}
-        ladder = _read(day, 'ladder', lambda raw: tools._limit_up(raw, day, now, market=market))
+        overview = _read(day, 'overview', overview_read)
+        ladder = _read(day, 'ladder', lambda raw: tools._limit_up(raw, day, now, market=market, full_review=True))
     briefs = _read(day, 'briefs', lambda raw: tools._add_blocks(raw, day, selected, tuple(_PHASE_KINDS)))
     intraday = _read(day, 'intraday', lambda raw: fill_intraday(raw, day, 'all', '', now))
     return {'overview': overview, 'ladder': ladder, 'intraday': intraday, 'briefs': briefs, **details}
 
 
-def _sample_lists(value):
+def _sample_lists(value, *, keep_one=False):
     """Find only optional whole rows. Slot identities and core counts stay."""
     if isinstance(value, dict):
-        if isinstance(value.get('items'), list) and 'sample_count' in value and value['items']:
+        if isinstance(value.get('items'), list) and 'sample_count' in value and len(value['items']) > int(keep_one):
             yield value['items'], value
         for key, child in value.items():
-            if key in ('industries', 'concepts', 'news_samples', 'events') and isinstance(child, list) and child:
+            if key in ('industries', 'concepts', 'news_samples', 'events', 'other_groups') and isinstance(child, list) and child:
+                if key == 'news_samples' and keep_one and len(child) == 1:
+                    continue
+                yield child, None
+            elif key in ('rising', 'falling', 'representatives', 'groups', 'related_groups') and isinstance(child, list) and len(child) > 1:
                 yield child, None
             elif key != 'indices':
-                yield from _sample_lists(child)
+                yield from _sample_lists(child, keep_one=keep_one)
     elif isinstance(value, list):
         for child in value:
-            yield from _sample_lists(child)
+            yield from _sample_lists(child, keep_one=keep_one)
 
 
 def _fit(result):
@@ -322,7 +443,10 @@ def _fit(result):
     limit = tools.MAX_RESULT_BYTES - 1024
     omitted = 0
     while len(dumps(result).encode()) > limit:
-        choices = [item for row in result['evidence'] for item in _sample_lists(row['data'])]
+        choices = [item for row in result['evidence'] for item in _sample_lists(row['data'],
+                   keep_one=row['kind'] in ('news_events', 'gainers', 'abnormal'))]
+        if not choices:
+            choices = [item for row in result['evidence'] for item in _sample_lists(row['data'])]
         if not choices:
             raise ValueError('全面盘面复盘必要资料超过容量')
         rows, table = max(choices, key=lambda item: (len(item[0]) > 1, len(dumps(item[0][-1]).encode())))
@@ -392,11 +516,12 @@ def fill_full_review(result, page_context):
         if not data or not module_raw['evidence'] and module not in ('intraday', 'news_events'):
             continue
         facts = [row for row in module_raw['evidence'] if module not in _PHASE_KINDS or row['kind'] in _PHASE_KINDS[module]]
-        module_sources = list(dict.fromkeys([*module_raw['source'], *[row['source'] for row in facts]]))
+        module_sources = list(dict.fromkeys([*[row['source'] for row in facts], *module_raw['source']]))
         bindings[module] = {'input_sha256': digest((module_raw['source_bindings'], facts))}
         if module_sources:
             sources.update(module_sources)
-            data['sources'] = module_sources[:4]
+            if len(module_sources) > 1:
+                data['additional_sources'] = module_sources[1:4]
         result['evidence'].append({'evidence_id': 'overview:' + module, 'kind': module, 'title': label,
                                    'source': module_sources[0] if module_sources else 'current_instance',
                                    'dates': {'trade_date': day}, 'data': data})

@@ -36,6 +36,7 @@ import {
   aiReason,
   canGenerate,
   chatSessionTitle,
+  failedTask,
   sessionMatches,
   terminalTask,
 } from "./aiState";
@@ -343,14 +344,6 @@ export default function AIWorkspace({
     reloadHistory();
     providers.reload();
     if (sessionId) publishAIChange({ scope: "session", id: sessionId });
-    if (["failed", "interrupted_manual_retry", "stale"].includes(terminal))
-      setError(
-        task.data?.reason_code === "budget_exceeded"
-          ? aiReason("budget_exceeded")
-          : typeof task.data?.message === "string" && task.data.message
-            ? task.data.message
-            : aiReason(task.data?.reason_code || terminal),
-      );
   }, [taskId, sessionId, terminal, detail.reload, providers.reload]);
   useEffect(() => {
     if (
@@ -599,6 +592,14 @@ export default function AIWorkspace({
   const finalReply = stored.some(
     (message) => message.role === "assistant" && message.task_id === taskId,
   );
+  const terminalReason =
+    (task.data?.task_id === taskId && task.data.reason_code) ||
+    live.terminalReason ||
+    (terminal === "interrupted_manual_retry" ? terminal : "");
+  const taskError =
+    !finalReply && !live.text && failedTask(terminal)
+      ? (terminalReason && aiReason(terminalReason)) || "回答未完成。"
+      : "";
   if (!sessionMissing && live.text && !finalReply)
     displayed.push({
       message_id: `live-${taskId}`,
@@ -606,11 +607,11 @@ export default function AIWorkspace({
       role: "assistant",
       text: live.text,
       response_type: "agent_answer",
-      state: ["cancelled", "failed", "interrupted_manual_retry"].includes(
-        terminal,
-      )
-        ? terminal
-        : "streaming",
+      state:
+        terminal === "cancelled" || failedTask(terminal)
+          ? terminal
+          : "streaming",
+      reason_code: terminalReason || undefined,
       created_at_ms: partialClock.current.at,
     });
   const latest = displayed.at(-1);
@@ -1208,9 +1209,9 @@ export default function AIWorkspace({
                 : "草稿已保留，可以继续发送。"}
             </p>
           )}
-          {error && (
+          {(error || taskError) && (
             <p className="ai-chat-unavailable" role="alert">
-              {error}
+              {error || taskError}
             </p>
           )}
         </form>

@@ -92,6 +92,16 @@ const cancelled = applyStreamPacket(
 );
 assert.equal(cancelled.text, "未完成段落");
 assert.equal(cancelled.status, "已停止");
+const timedOut = [
+  frame(1, "delta", { text: "中断前保留的片段" }),
+  frame(2, "error", { reason_code: "timeout", message: "DO_NOT_SHOW_RAW" }),
+  frame(3, "done", { state: "failed" }),
+].reduce(applyStreamPacket, emptyStream("t1", "s1"));
+assert.equal(timedOut.finished, true);
+assert.equal(timedOut.terminalState, "failed");
+assert.equal(timedOut.terminalReason, "timeout");
+assert.equal(timedOut.text, "中断前保留的片段");
+assert.doesNotMatch(JSON.stringify(timedOut), /DO_NOT_SHOW_RAW/);
 const savedFetch = globalThis.fetch,
   requests = [];
 const bytes = new TextEncoder().encode(

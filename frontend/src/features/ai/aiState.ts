@@ -22,12 +22,12 @@ const reasons: Record<string, string> = {
   quota_exhausted: "供应商额度或余额不足，请到官方账户核对。",
   rate_limited: "供应商请求受限（429），请稍后手动重试。",
   rate_limit_exceeded: "供应商请求受限（429），请稍后手动重试。",
-  timeout: "模型等待超时；请求可能已产生费用，请手动核对后重试。",
+  timeout: "本次回答超时，可能已计费。请核对用量后手动重试。",
   request_timeout: "模型等待超时；请求可能已产生费用，请手动核对后重试。",
   invalid_response: "模型响应未满足格式要求，本次未发布结果。",
   schema_validation_failed: "模型响应未满足结构化格式要求，本次未发布结果。",
   reference_validation_failed: "模型引用未通过核验，本次未发布结果。",
-  output_truncated: "模型输出被截断，本次未发布结果。",
+  output_truncated: "本次回答达到模型输出上限，尚未写完。",
   refusal: "供应商拒绝了本次请求。",
   unknown_price: "该模型的单价尚未核验，付费验证与生成暂不可用。",
   unsupported_model: "请选择受支持的常用GPT模型，并验证后启用。",
@@ -41,6 +41,7 @@ const reasons: Record<string, string> = {
   response_too_large: "模型响应超过大小限制，本次未发布结果。",
   provider_unavailable: "供应商暂时不可用，请稍后手动重试。",
   provider_error: "供应商未完成请求，请核对用量后手动重试。",
+  internal_error: "本次结果未能通过本地核验。",
   credential_unavailable: "凭据或外置主密钥不可用，请重新配置。",
   verification_required: "须先验证并启用当前模型与 Key。",
   configuration_changed: "模型或凭据配置已变化，请新建会话。",
@@ -55,6 +56,14 @@ const reasons: Record<string, string> = {
   consent_required: "请重新发送这条问题。",
   request_key_conflict: "请求标识对应的参数已变化，请新建一次操作。",
   web_search_unavailable: "这次暂时无法查询网络资料，请稍后再试。",
+  invalid_web_source: "网络来源未通过核验，本次未发布结果。",
+  invalid_web_citation: "网络引用位置未通过核验，本次未发布结果。",
+  web_citations_missing: "网络回答缺少可核验的来源引用。",
+  web_limits_exceeded: "网络来源或工具响应超出本次上限。",
+  agent_tool_limit: "本轮查询已达上限，请针对需要的部分继续提问。",
+  invalid_tool_arguments: "查询参数未通过校验，本次未继续取数。",
+  stock_scope_required: "本次问题超出股票研究范围。",
+  stream_limit: "本轮输出超出保存上限，已停止生成。",
   budget_exceeded:
     "本次请求超过今日应用额度（含费用预留）。请到“模型设置”查看或调整；调用次数按模型请求计算。",
   request_limit_exceeded: "本实例当日请求次数已用尽。",
@@ -63,7 +72,7 @@ const reasons: Record<string, string> = {
   network_error: "网络请求未完成；不会自动重发模型请求。",
 };
 export function aiReason(code?: string, status?: number) {
-  if (code && reasons[code]) return reasons[code];
+  if (code && Object.hasOwn(reasons, code)) return reasons[code];
   if (status === 401) return reasons.authentication_failed;
   if (status === 402) return reasons.insufficient_quota;
   if (status === 409) return "暂时无法完成这次操作，请刷新后重试。";
@@ -82,6 +91,8 @@ export const terminalTask = (state?: string) =>
     "interrupted_manual_retry",
     "stale",
   ].includes(state);
+export const failedTask = (state?: string) =>
+  !!state && ["failed", "interrupted_manual_retry", "stale"].includes(state);
 export const taskLabel = (state?: string) =>
   ({
     queued: "排队等待",

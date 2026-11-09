@@ -8,7 +8,9 @@ import uuid
 from fastapi import HTTPException
 from app.core import connect, now_ms, new_id, digest, dumps
 from app.infrastructure.credentials import CredentialStore
-from app.services.ai_catalog import MODELS, OPENAI_MODEL_IDS, MAX_INPUT_BYTES, LEGACY_INPUT_BYTES, PRICE_VERSION, price, usd, estimated_nusd, max_output
+from app.services.ai_catalog import (MODELS, OPENAI_MODEL_IDS, MAX_INPUT_BYTES, LEGACY_INPUT_BYTES,
+                                     PRICE_VERSION, DETAILED_MARKET_REVIEW, price, usd,
+                                     estimated_nusd, request_max_output)
 from app.services.ai_validation import PROBE_SCHEMA, output_schema
 from app.services import ai_web
 from app.services import ai_attachments as files
@@ -45,6 +47,7 @@ MESSAGES = {
  'provider_error': '供应商未完成请求', 'network_error': '网络请求未完成', 'timeout': '请求已超时，可能已计费',
  'cancelled': '本次请求已取消，发送后可能已计费', 'invalid_response': '供应商响应不符合协议',
  'invalid_output': '模型输出不符合结构要求', 'incomplete_response': '模型未完整完成本次响应',
+ 'output_truncated': '模型达到本轮输出上限，回答未完成',
  'refusal': '模型拒绝本次请求', 'response_too_large': '供应商响应超过大小限制',
  'invalid_reference': '模型引用超出本次证据范围', 'ungrounded_number': '模型文字含未核验数值或日期',
  'configuration_changed': '模型配置已变化，本次结果未发布', 'credential_unavailable': '凭据或外置主密钥不可用，请重新配置',
@@ -249,7 +252,7 @@ def _enqueue(db, row, limits, operation, key, fingerprint, request, session_id=N
     input_bytes = _input_size(row, request, operation)
     if input_bytes > input_limit(request): fail(422, 'input_too_large', '完整请求与结构化输出约束超过本会话输入上限，请新建会话')
     rates = price(row['provider_id'],row['model'])
-    reservation = files.estimated_reservation(row['provider_id'], row['model'], input_bytes, max_output(row['provider_id'], operation=='verify'), request.get('attachment_input_tokens', 0), rates=rates)
+    reservation = files.estimated_reservation(row['provider_id'], row['model'], input_bytes, request_max_output(row['provider_id'], request, probe=operation=='verify'), request.get('attachment_input_tokens', 0), rates=rates)
     if request.get('allow_web'):
         if not ai_web.supported(row['provider_id'],row['model']): fail(422, 'web_search_unavailable')
         reservation += ai_web.extra_reservation_nusd(rates, request['web_policy'])
@@ -419,11 +422,13 @@ def get_session(identifier):
             "SELECT task_id FROM ai_task WHERE session_id=? AND state IN ('queued','running')",
             (identifier,),
         ).fetchone()
-        rows = db.execute('SELECT m.*,t.usage_json,t.cost_nusd,t.cost_state,t.reservation_nusd,t.price_version FROM ai_message m LEFT JOIN ai_task t USING(task_id) WHERE m.session_id=? ORDER BY m.created_at_ms,m.rowid', (identifier,)).fetchall()
+        rows = db.execute('SELECT m.*,t.usage_json,t.cost_nusd,t.cost_state,t.reservation_nusd,t.price_version,t.reason_code FROM ai_message m LEFT JOIN ai_task t USING(task_id) WHERE m.session_id=? ORDER BY m.created_at_ms,m.rowid', (identifier,)).fetchall()
     session['title']=next((row['text'][:60] for row in rows if row['role']=='user'),None)
     messages = []
     for row in rows:
         view = {key: row[key] for key in ('message_id','task_id','role','text','state','created_at_ms')}
+        if row['role']=='assistant' and row['reason_code']:
+            view['reason_code']=row['reason_code']
         interpretation = json.loads(row['interpretation_json']) if row['interpretation_json'] else None
         if row['role']=='user' and isinstance(interpretation,dict) and interpretation.get('response_type')=='user_attachments':
             view['attachments']=files.metadata(files.saved(interpretation),identifier,row['message_id'])
@@ -569,12 +574,13 @@ def _agent_request(row,session,context,text,history,*,opening=False):
     from app.services import ai_scope
     frozen=agent.protocol();clock=agent.request_time(now_ms());anchor=agent.page_anchor(session,context)
     has_news=context.get('news_context') is not None
-    full_review=opening and context.get('market_scope')=='full_review'
+    full_review=context.get('market_scope')=='full_review'
     if has_news:
         from app.services.ai_news_context import PROMPT
         frozen['system_prompt'] += '\n' + PROMPT
     if full_review:
         from app.services.ai_full_market_review import PROMPT
+        frozen['answer_profile']=DETAILED_MARKET_REVIEW
         frozen['system_prompt'] += '\n' + PROMPT
     schemas=(tool_schemas(include_full_review=True) if full_review
              else tool_schemas(include_news=True) if has_news else tool_schemas())
@@ -591,7 +597,7 @@ def _agent_request(row,session,context,text,history,*,opening=False):
             'fallback_context':context,'max_input_bytes':frozen['max_input_bytes']}
     if has_news and opening:
         request['initial_news_read']=True
-    if full_review:
+    if full_review and opening:
         request['initial_market_overview_read']=True
     from app.services.ai_scope_semantic import schema
     request['intent_plan_schema']=schema(request)
@@ -643,7 +649,7 @@ def create_session(payload):
         except (TypeError,ValueError):
             fail(422,'invalid_news_context','消息与事件解读需要明确的观察日和归档范围')
     if market_scope:
-        default_question='请用本地资料综合复盘所选交易日的 A 股盘面，说明主要变化、证据及覆盖缺口。'
+        default_question='请用本地资料详细复盘所选交易日的 A 股盘面，分章节分析情绪、炸板、涨停梯队和各时段轮动，给出具体证据及覆盖缺口。'
     elif news_selection is not None:
         default_question='请用本地资料解读所选消息与事件，说明和 A 股有关的事实及待核验点。'
     else:
