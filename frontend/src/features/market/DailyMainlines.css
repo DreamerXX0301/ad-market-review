@@ -178,6 +178,12 @@
 .daily-mainline-source-item > .board-tags {
   margin-top: 7px;
 }
+.daily-mainline-matched-tags {
+  margin: 5px 0 0;
+  color: var(--blue);
+  font-size: var(--workbench-type-caption, 11px);
+  overflow-wrap: anywhere;
+}
 .daily-mainline-reason {
   margin: 5px 0 0;
   font-size: var(--workbench-type-label, 12px);

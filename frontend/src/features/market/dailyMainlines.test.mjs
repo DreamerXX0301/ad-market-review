@@ -252,7 +252,8 @@ const focus = elementByClass(html, "daily-mainline-focus-groups");
 assert.match(focus, /机器人相关/);
 assert.match(focus, /4 只/);
 assert.match(focus, /本方向已核验最高 6板/);
-assert.doesNotMatch(focus, /合成海洋王|零售|业绩线索|核心|后排|999板/);
+assert.match(focus, /<strong>零售<\/strong>/);
+assert.doesNotMatch(focus, /合成海洋王|业绩线索|核心|后排|999板/);
 const representatives = elementByClass(focus, "daily-mainline-representatives");
 assert.match(representatives, /合成大业/);
 assert.match(representatives, /合成具身/);
@@ -264,8 +265,8 @@ assert.match(openingTag(moreMembers), /\bopen(?:=|\s|>)/);
 assert.match(moreMembers, /展开其余 2 只/);
 assert.match(moreMembers, /合成机器人甲/);
 const other = elementByClass(html, "daily-mainline-other");
-assert.match(other, /其他方向与事件线索/);
-assert.match(other, /<details open=""><summary><strong>零售/);
+assert.match(other, /<h3>事件线索<\/h3>/);
+assert.doesNotMatch(other, /零售/);
 assert.match(other, /业绩线索/);
 assert.match(other, /事件线索/);
 assert.doesNotMatch(other, /data-board-tag|核心|龙头/);
@@ -319,7 +320,7 @@ assert.doesNotMatch(
 assert.match(elementByClass(html, "daily-mainline-global-high"), /合成海洋王/);
 html = render({ query: "零售" });
 assert.match(
-  elementByClass(html, "daily-mainline-other"),
+  elementByClass(html, "daily-mainline-focus"),
   /合成零售甲|合成零售乙/,
 );
 assert.doesNotMatch(
@@ -339,6 +340,45 @@ assert.doesNotMatch(
 html = render({ query: "完全没有匹配" });
 assert.match(html, /没有匹配的来源线索/);
 assert.equal(elementByClass(html, "daily-mainline-summary"), summary);
+
+const relatedRows = structuredClone(rows);
+relatedRows[0].reason += "+人形机器人+“羊”字辈";
+relatedRows[1].reason += "+“羊”字辈";
+const relatedFocus = structuredClone(systemFocus);
+relatedFocus.algorithm_version = "source-reason-directions-v3";
+relatedFocus.groups[0].members[0].source_reason = relatedRows[1].reason;
+relatedFocus.individual_cues[0].source_reason = relatedRows[0].reason;
+const relatedMember = (index, tags) => ({
+  ...member(index, tags),
+  source_reason: relatedRows[index].reason,
+});
+relatedFocus.related_groups = [
+  group("robot", "机器人相关", "direction", [
+    ...relatedFocus.groups[0].members,
+    relatedMember(0, ["人形机器人"]),
+  ]),
+  group("sheep", "“羊”字辈", "direction", [
+    relatedMember(0, ["“羊”字辈"]),
+    relatedMember(1, ["“羊”字辈"]),
+  ]),
+];
+html = render({ rows: relatedRows, systemFocus: relatedFocus });
+const directionRows = elementByClass(html, "daily-mainline-direction-list");
+assert.equal(directionRows.match(/<strong>机器人相关<\/strong>/g).length, 1);
+assert.match(directionRows, /5 只 · 重点 · 来源关联/);
+assert.match(directionRows, /<strong>“羊”字辈<\/strong>/);
+assert.match(directionRows, /同一只股票可关联多个方向/);
+assert.equal(elementByClass(html, "daily-mainline-summary"), summary);
+html = render({
+  rows: relatedRows,
+  systemFocus: relatedFocus,
+  query: "羊字",
+});
+assert.match(
+  elementByClass(html, "daily-mainline-focus"),
+  /命中标签 · “羊”字辈/,
+);
+assert.match(elementByClass(html, "daily-mainline-focus"), /合成海洋王/);
 
 for (const mutation of [
   (value) => {
@@ -402,7 +442,10 @@ noFocus.coverage.other_count += noFocus.coverage.focus_count;
 noFocus.coverage.focus_count = 0;
 html = render({ systemFocus: noFocus });
 assert.match(html, /当日来源尚未形成集中的重点方向/);
-assert.match(elementByClass(html, "daily-mainline-other"), /机器人相关/);
+assert.match(
+  elementByClass(html, "daily-mainline-direction-list"),
+  /机器人相关/,
+);
 assert.doesNotMatch(html, /补录|待整理|未归因/);
 const emptyPayload = {
   ...systemFocus,

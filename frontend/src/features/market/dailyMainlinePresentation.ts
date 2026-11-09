@@ -39,6 +39,7 @@ export type SystemMainlines = {
   snapshot_id: string;
   groups: SystemMainlineGroup[];
   other_groups: SystemMainlineGroup[];
+  related_groups?: SystemMainlineGroup[];
   individual_cues: SystemMainlineMember[];
   missing_reason: SystemMainlineMember[];
   coverage: {
@@ -74,6 +75,7 @@ export type DailyMainlineDisplay = {
   classifiedCount: number;
   groups: MainlineDirection[];
   otherGroups: MainlineDirection[];
+  relatedGroups: MainlineDirection[];
   individualCues: MainlineSourceItem[];
   missingReasonCount: number;
   sourceGapCount: number;
@@ -203,6 +205,7 @@ export function buildDailyMainlineDisplay(
     classifiedCount: 0,
     groups: [],
     otherGroups: [],
+    relatedGroups: [],
     individualCues: [],
     missingReasonCount: 0,
     sourceGapCount: 0,
@@ -221,7 +224,9 @@ export function buildDailyMainlineDisplay(
     !bound ||
     conflicting.size ||
     !object(system) ||
-    system.algorithm_version !== "source-reason-directions-v2" ||
+    !["source-reason-directions-v2", "source-reason-directions-v3"].includes(
+      system.algorithm_version,
+    ) ||
     system.source_kind !== "local_source_synthesis" ||
     system.state !== "candidate" ||
     system.date !== date ||
@@ -240,11 +245,12 @@ export function buildDailyMainlineDisplay(
   const member = (
     value: unknown,
     category: "group" | "individual" | "missing",
+    seenIds = seen,
   ): MainlineSourceItem | null => {
     if (
       !object(value) ||
       !stockId(value.instrument_id) ||
-      seen.has(value.instrument_id)
+      seenIds.has(value.instrument_id)
     )
       return null;
     const stock = identities.get(value.instrument_id);
@@ -310,7 +316,7 @@ export function buildDailyMainlineDisplay(
             }))
         : [],
     };
-    seen.add(value.instrument_id);
+    seenIds.add(value.instrument_id);
     return {
       stock,
       sourceReason: text,
@@ -320,23 +326,24 @@ export function buildDailyMainlineDisplay(
   };
   const direction = (
     value: unknown,
-    focus: boolean,
+    scope: "focus" | "other" | "related",
+    keys = groupKeys,
   ): MainlineDirection | null => {
     if (
       !object(value) ||
       typeof value.key !== "string" ||
       !value.key ||
-      groupKeys.has(value.key) ||
+      keys.has(value.key) ||
       typeof value.name !== "string" ||
       !value.name.trim() ||
       !["direction", "catalyst"].includes(value.kind) ||
-      (focus && value.kind !== "direction") ||
+      (scope !== "other" && value.kind !== "direction") ||
       typeof value.grouping_rule !== "string" ||
       !value.grouping_rule ||
       !Array.isArray(value.members) ||
       !count(value.count) ||
       value.count !== value.members.length ||
-      value.count < (focus ? 3 : 2) ||
+      value.count < (scope === "focus" ? 3 : 2) ||
       !Array.isArray(value.labels) ||
       !value.labels.every(
         (label: unknown) => typeof label === "string" && !!label.trim(),
@@ -345,9 +352,11 @@ export function buildDailyMainlineDisplay(
     )
       return null;
     const items: MainlineSourceItem[] = [];
+    const groupMembers = scope === "related" ? new Set<string>() : seen;
     for (const entry of value.members) {
-      const item = member(entry, "group");
-      if (!item) return null;
+      const item = member(entry, "group", groupMembers);
+      if (!item || (scope === "related" && !seen.has(item.stock.instrument_id)))
+        return null;
       items.push(item);
     }
     const labels = new Set(items.flatMap((item) => item.evidence.matched_tags));
@@ -356,7 +365,7 @@ export function buildDailyMainlineDisplay(
       !value.labels.every((label: string) => labels.has(label))
     )
       return null;
-    groupKeys.add(value.key);
+    keys.add(value.key);
     return {
       key: value.key,
       name: value.name,
@@ -374,12 +383,12 @@ export function buildDailyMainlineDisplay(
     otherGroups: MainlineDirection[] = [],
     individuals: MainlineSourceItem[] = [];
   for (const value of system.groups) {
-    const item = direction(value, true);
+    const item = direction(value, "focus");
     if (!item) return empty;
     groups.push(item);
   }
   for (const value of system.other_groups) {
-    const item = direction(value, false);
+    const item = direction(value, "other");
     if (!item) return empty;
     otherGroups.push(item);
   }
@@ -407,6 +416,19 @@ export function buildDailyMainlineDisplay(
     seen.size > identities.size
   )
     return empty;
+  const relatedGroups: MainlineDirection[] = [];
+  if (
+    system.algorithm_version === "source-reason-directions-v3" &&
+    system.related_groups !== undefined
+  ) {
+    if (!Array.isArray(system.related_groups)) return empty;
+    const relatedKeys = new Set<string>();
+    for (const value of system.related_groups) {
+      const item = direction(value, "related", relatedKeys);
+      if (!item) return empty;
+      relatedGroups.push(item);
+    }
+  }
   const eligibleKnown = known.filter((item) =>
     seen.has(item.stock.instrument_id),
   );
@@ -422,6 +444,7 @@ export function buildDailyMainlineDisplay(
     classifiedCount: seen.size,
     groups,
     otherGroups,
+    relatedGroups,
     individualCues: individuals,
     missingReasonCount: system.missing_reason.length,
     sourceGapCount: Math.max(

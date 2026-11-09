@@ -84,6 +84,53 @@ def test_explicit_tags_produce_candidates_with_individual_verbatim_evidence():
     assert rows == before
 
 
+def test_related_directions_read_later_tags_without_counting_a_stock_twice_in_the_partition():
+    rows = [
+        row(1, '冰雪旅游保障+高速公路', 2),
+        row(2, '冰雪工程+液冷'),
+        row(3, '冰雪经济+商业航天'),
+        row(4, '航材国产化+AI航检眼镜'),
+        row(5, '商业航天+“羊”字辈'),
+        row(6, '“羊”字辈+百草枯', 2),
+        row(7, '机器人关节模组+商业航天+"羊"字辈'),
+        row(8, '煤炭+制氢'),
+        row(9, '煤炭涨价+煤炭主业'),
+        row(10, 'AI漫剧+游戏运营'),
+        row(11, '短剧+股权转让'),
+        row(12, '储能+合成二级题材'),
+        row(13, '液冷+合成二级题材'),
+        row(14, '冰雪产业+公司澄清不涉及冰雪业务'),
+        row(15, '焦炭+国企控股'),
+        row(16, '电力+合成二级题材+否认合成二级题材'),
+        row(17, '冰雪经济+无冰雪相关业务'),
+        row(18, '商业航天+无商业航天订单'),
+    ]
+    result = build(rows)
+    assert_partition(result, [item['instrument_id'] for item in rows])
+    primary = {group['name']: group for group in all_groups(result)}
+    related = {group['name']: group for group in result['related_groups']}
+
+    def matches(group):
+        return {member['instrument_id']: member['matched_tags'] for member in group['members']}
+
+    assert primary['冰雪经济']['max_known_height'] == 2
+    assert matches(primary['冰雪经济']) == {
+        '000001.SH': ['冰雪旅游保障'], '000002.SH': ['冰雪工程'], '000003.SH': ['冰雪经济'],
+    }
+    assert matches(primary['煤炭']) == {
+        '000008.SH': ['煤炭'], '000009.SH': ['煤炭涨价', '煤炭主业'],
+    }
+    assert primary['短剧与漫剧']['count'] == 2
+    assert matches(related['航空航天']) == {
+        '000003.SH': ['商业航天'], '000004.SH': ['航材国产化'], '000005.SH': ['商业航天'],
+        '000007.SH': ['商业航天'],
+    }
+    assert set(matches(related['商业航天'])) == {'000003.SH', '000005.SH', '000007.SH'}
+    assert set(matches(related['AI应用'])) == {'000004.SH', '000010.SH'}
+    assert matches(related['“羊”字辈'])['000007.SH'] == ['"羊"字辈']
+    assert set(matches(related['合成二级题材'])) == {'000012.SH', '000013.SH'}
+
+
 @pytest.mark.parametrize('changes', [
     {'date': '2026-01-02'}, {'snapshot_id': 'other-generation'},
     {'evidence_date': '2026-01-02'}, {'trade_date': '2026-01-02'}, {'limit_up_state': None}, {'limit_up_state': 1},
