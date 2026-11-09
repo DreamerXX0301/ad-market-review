@@ -199,23 +199,15 @@
 .market-overview-plot .data-note + .data-note {
   padding-bottom: 14px;
 }
-.market-overview-ai {
-  padding: 6px 12px;
-  border-top: 1px solid var(--border-soft);
+.market-overview-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 12px;
 }
-.market-overview-ai .ai-context-entry {
-  justify-content: flex-start;
-}
-.market-overview-ai .ai-entry-shortcut {
-  padding: 6px;
-  border: 0;
-  background: transparent;
-  color: var(--subtle);
-  font-size: var(--workbench-type-label, 12px);
-}
-.market-overview-ai .ai-entry-shortcut:hover {
-  background: var(--surface2);
-  color: var(--blue);
+.market-overview-sources > .market-data-coverage {
+  flex: 1 1 22rem;
+  min-width: 0;
 }
 
 @media (max-width: 850px) {

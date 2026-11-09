@@ -304,12 +304,16 @@ export function MarketOverview({
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
-      <div {...intradayReadingProps("sources")}>
+      <div
+        {...intradayReadingProps("sources")}
+        className={indicesOnly ? undefined : "market-overview-sources"}
+      >
         <MarketDataCoverage
           coverage={data?.data_coverage}
           loading={result.loading}
           compact
         />
+        {!indicesOnly && <AIEntry key={date} kind="market" asOf={date} />}
       </div>
       <div {...intradayReadingProps("indexQuotes")}>
         <IndexCards
@@ -415,9 +419,6 @@ export function MarketOverview({
                 </div>
               </div>
               <Warnings items={data?.warnings} />
-              <div className="market-overview-ai">
-                <AIEntry key={date} kind="market" asOf={date} />
-              </div>
             </Panel>
           </div>
         )}
