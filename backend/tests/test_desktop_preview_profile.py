@@ -21,7 +21,7 @@ from desktop_preview.profile import (
 )
 
 _OLD = {"format": 1, "app_version": "0.1.24"}
-_NEW = {"format": 1, "source_commit": "a" * 40, "app_version": "0.1.26"}
+_NEW = {"format": 1, "source_commit": "a" * 40, "app_version": "0.1.27"}
 _PURGE = ("auction-purged", "2026-10-01", "auction-source", "cleanup", "2026-11-06",
           "2026-10-10", "c" * 64, 5, 2, "purged", None, 1, 4, 5)
 
