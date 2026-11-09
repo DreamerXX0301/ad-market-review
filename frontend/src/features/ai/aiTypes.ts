@@ -1,4 +1,5 @@
 export type AIKind = "stock" | "market";
+export type AIMarketScope = "full_review";
 export type AINewsContext =
   | { kind: "day" }
   | { kind: "news"; source: string; id: string }

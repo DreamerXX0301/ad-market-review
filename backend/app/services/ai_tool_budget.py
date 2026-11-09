@@ -45,6 +45,10 @@ def classify_tool(name, args):
         if args != {'scope': 'selection'}:
             raise ValueError('invalid_tool_arguments')
         return 'data'
+    if name == 'read_market_overview':
+        if args != {'scope': 'selected_day'}:
+            raise ValueError('invalid_tool_arguments')
+        return 'data'
     if name == 'read_market_data':
         if set(args) != {'date', 'section'} or args['section'] not in _SECTIONS:
             raise ValueError('invalid_tool_arguments')

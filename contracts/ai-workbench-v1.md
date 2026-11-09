@@ -60,6 +60,8 @@ Provider含`provider_id,name,configured,enabled,model,config_revision,verificati
 
 从「消息与事件」进入时使用 `kind:'market'` 和明确的 `as_of`。可选锚点 `news_context` 为 `{kind:'day'}`、`{kind:'news',source,id}` 或 `{kind:'event',source,id,days:7|30}`。日期按页面观察日解释，隔夜消息的发布时间仍按来源时间记录。消息和事件在服务端按锚点查找。打开对话后须主动发送才能开始解读。
 
+盘面总览的「AI 完整复盘」新草稿使用 `kind:'market'`、明确的 `as_of` 和 `market_scope:'full_review'`。该范围与个股、研究报告及 `news_context` 互斥。首问通过盘面复盘领域校验后，由服务端先执行一次 `read_market_overview(scope=selected_day)`，再将各盘面研究栏目的同日摘要、样本、来源及缺口交给模型。该读取按现有单次工具和轮次预算约束，只读本地归档，不回退其他日期。已有会话及其他入口沿用原查询流程。
+
 发送旁显示服务、资料查询与费用说明，点击发送对应本次`consent:true`；浏览、填建议问题或GET不产生授权调用。新前端提交看到的配置代际和模型，服务端短事务再次核对。
 
 会话仍固定服务、模型和凭据代际。更换这些身份需显式新对话，不静默将旧消息交给其他服务。调整超时不把现有会话永久作废，但当前配置仍须有效验证；在途请求继续按配置失效规则处理。会话不固定查询日期、资料版本、联网模式或后续回答协议。
@@ -96,6 +98,7 @@ PDF最多20页，PDF/DOCX只在本地有界提取正文，不执行宏、脚本�
 | --- | --- | --- |
 | `read_market_data` | `date:'today'|ISO,section` | section为availability/auction/noon/close/overview/fund_flow |
 | `read_news_events` | `scope:'selection'` | 在消息与事件会话内读取所选日、消息或日程的本地归档 |
+| `read_market_overview` | `scope:'selected_day'` | 在完整复盘首轮读取所选日的盘面研究摘要，包括历史监管名单和同日龙虎榜 |
 | `check_data_availability` | `date:'today'|ISO` | 检查资料与阶段，不采集 |
 | `read_stock_research` | `instrument_id`：完整代码、六位代码或准确证券名，最多80字符；空串沿用页面证券 | 名称与六位代码仅通过本地证券名录精确消歧，未命中或重名保持身份缺口，不借用页面其他证券、不联网；读取当前实例已存未过期v2报告，不延长TTL，不存在时仅可回退同股会话旧材料并说明旧日期 |
 

@@ -313,7 +313,14 @@ export function MarketOverview({
           loading={result.loading}
           compact
         />
-        {!indicesOnly && <AIEntry key={date} kind="market" asOf={date} />}
+        {!indicesOnly && (
+          <AIEntry
+            key={date}
+            kind="market"
+            asOf={date}
+            marketScope="full_review"
+          />
+        )}
       </div>
       <div {...intradayReadingProps("indexQuotes")}>
         <IndexCards

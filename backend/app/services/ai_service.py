@@ -1,6 +1,6 @@
 """Local AI API operations; only the unique worker sends paid requests."""
 from __future__ import annotations
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 import json
 import re
@@ -569,9 +569,15 @@ def _agent_request(row,session,context,text,history,*,opening=False):
     from app.services import ai_scope
     frozen=agent.protocol();clock=agent.request_time(now_ms());anchor=agent.page_anchor(session,context)
     has_news=context.get('news_context') is not None
+    full_review=opening and context.get('market_scope')=='full_review'
     if has_news:
         from app.services.ai_news_context import PROMPT
         frozen['system_prompt'] += '\n' + PROMPT
+    if full_review:
+        from app.services.ai_full_market_review import PROMPT
+        frozen['system_prompt'] += '\n' + PROMPT
+    schemas=(tool_schemas(include_full_review=True) if full_review
+             else tool_schemas(include_news=True) if has_news else tool_schemas())
     focus={}
     if context.get('instrument_id') and (context.get('stock_focus_verified') is True or (context.get('kind')=='stock_research' and context.get('evidence'))):
         focus={'instrument_id':context['instrument_id'],'name':context.get('subject') or (context.get('instrument') or {}).get('name') or context['instrument_id']}
@@ -580,11 +586,13 @@ def _agent_request(row,session,context,text,history,*,opening=False):
     messages=agent.seed_messages(anchor,clock,history,text,frozen)
     request={'agent':True,'round_protocol':frozen,'page_anchor':anchor,'request_time':clock,
             'seed_messages':messages,'scope_input':scope_input,
-            'tool_schemas':tool_schemas(include_news=True) if has_news else tool_schemas(),
+            'tool_schemas':schemas,
             'web_plan_schema':agent.web_plan_schema(),
             'fallback_context':context,'max_input_bytes':frozen['max_input_bytes']}
     if has_news and opening:
         request['initial_news_read']=True
+    if full_review:
+        request['initial_market_overview_read']=True
     from app.services.ai_scope_semantic import schema
     request['intent_plan_schema']=schema(request)
     ai_scope.apply_to_request(request)
@@ -616,6 +624,16 @@ def create_session(payload):
     _request_key(payload['request_key']);fingerprint=_attachment_fingerprint(payload,prepared)
     kind=payload['kind']
     news_selection=payload.get('news_context')
+    market_scope=payload.get('market_scope')
+    if market_scope is not None:
+        observed=payload.get('as_of')
+        try:
+            valid_day=isinstance(observed,str) and date.fromisoformat(observed).isoformat()==observed
+        except ValueError:
+            valid_day=False
+        if (market_scope!='full_review' or kind!='market' or not valid_day or news_selection is not None
+                or payload.get('report_id') or payload.get('instrument_id')):
+            fail(422,'invalid_market_scope','盘面完整复盘需要明确的观察日及独立的盘面范围')
     if news_selection is not None:
         from app.services.ai_news_context import validate_selection
         if kind!='market' or payload.get('report_id') or payload.get('instrument_id'):
@@ -624,8 +642,12 @@ def create_session(payload):
             validate_selection(payload.get('as_of'),news_selection)
         except (TypeError,ValueError):
             fail(422,'invalid_news_context','消息与事件解读需要明确的观察日和归档范围')
-    default_question=('请用本地资料解读所选消息与事件，说明和 A 股有关的事实及待核验点。'
-                      if news_selection is not None else '请复盘当前所选交易日。' if kind=='market' else '请分析当前所选股票。')
+    if market_scope:
+        default_question='请用本地资料综合复盘所选交易日的 A 股盘面，说明主要变化、证据及覆盖缺口。'
+    elif news_selection is not None:
+        default_question='请用本地资料解读所选消息与事件，说明和 A 股有关的事实及待核验点。'
+    else:
+        default_question='请复盘当前所选交易日。' if kind=='market' else '请分析当前所选股票。'
     text=(payload.get('text') or '').strip() or ('请查看我上传的附件。' if prepared else default_question)
     if not 1<=len(text)<=2000:fail(422,'invalid_message','问题须为1至2000字')
     with connect() as db:
@@ -645,6 +667,8 @@ def create_session(payload):
         context={'kind':'page_anchor','subject':instrument or 'A股市场复盘','instrument_id':instrument,'as_of':as_of,'report_id':payload.get('report_id')}
         if news_selection is not None:
             context.update(subject='消息与事件',news_context=news_selection)
+        if market_scope:
+            context.update(subject='A股盘面完整复盘',market_scope=market_scope)
         identifier=new_id('ai-session');stamp=now_ms();message_id=new_id('ai-message')
         session={'session_id':identifier,'kind':kind,'provider_id':row['provider_id'],'model':row['model'],'instrument_id':instrument,'as_of':as_of,'report_id':payload.get('report_id')}
         binding={'version':'ai-session-binding-v1','binding':{'credential_revision':row['credential_revision'],'credential_ref':row['credential_ref']}}

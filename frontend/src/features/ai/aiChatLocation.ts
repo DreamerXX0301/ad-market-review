@@ -6,6 +6,7 @@ export interface ChatPage {
   pageLaunchId?: string;
   resolvedSession?: boolean;
   hasNewsDraft?: boolean;
+  hasMarketScopeDraft?: boolean;
   instrumentId?: string;
   reportId?: string;
   asOf?: string;
@@ -59,6 +60,7 @@ export function chatLocation(hash: string, page: ChatPage, id: string) {
   if (id || !page.hasNewsDraft)
     for (const key of ["ai_news", "ai_source", "ai_item", "ai_days"])
       params.delete(key);
+  if (id || !page.hasMarketScopeDraft) params.delete("ai_scope");
   if (page.pageRoute === "ai") params.set("ai_kind", page.kind);
   if (id || page.kind !== "stock" || !safeInstrumentId(page.instrumentId))
     params.delete("ai_name");

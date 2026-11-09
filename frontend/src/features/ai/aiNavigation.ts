@@ -1,4 +1,4 @@
-import type { AIKind, AINewsContext } from "./aiTypes";
+import type { AIKind, AIMarketScope, AINewsContext } from "./aiTypes";
 
 const marketStages = {
   auction: "09:25",
@@ -29,6 +29,7 @@ export interface AILaunchContext {
   reportId?: string;
   asOf?: string;
   marketStage?: AIMarketStage;
+  marketScope?: AIMarketScope;
   newsContext?: AINewsContext;
 }
 export interface AILaunch extends AILaunchContext {
@@ -79,6 +80,7 @@ export function aiLaunchQuestion({
   kind,
   asOf,
   marketStage,
+  marketScope,
   newsContext,
   instrumentId,
   instrumentName,
@@ -105,6 +107,8 @@ export function aiLaunchQuestion({
   if (newsContext?.kind === "event")
     return `请解读我在 ${day} 选中的这项日历事件。说明事件时间、确认状态、值得关注的细节和来源，区分已知日程与尚未公布的结果。`;
   const stage = aiMarketStage(marketStage);
+  if (!stage && marketScope === "full_review")
+    return `请完整复盘 ${day} 的 A 股盘面。按盘面总览（指数行情和成交额）、盘前竞价、盘中观察、午评快照、消息与事件、市场情绪、行业与概念、涨停梯队、龙虎榜、30 日涨幅榜、异动与监管逐项核对。串联盘前、盘中到收盘的变化，标明数据日期、留存时点和来源。收盘尚未发布时，以最新已留存时点为准，逐项说明缺档或覆盖不足。`;
   if (!stage)
     return `请复盘 ${day} 的 A 股盘面。梳理指数、成交额、市场情绪、行业与题材轮动和涨停梯队，说明当天的主要变化。若收盘数据还未发布，请分析截至最新已留存的时点。`;
   const at = `${day} ${marketStages[stage]}`;
@@ -167,6 +171,12 @@ export function aiLaunchLocation(context: AILaunchContext, launchId?: string) {
     }
   } else if (stage) {
     params.set("ai_stage", stage);
+  } else if (
+    context.kind === "market" &&
+    day &&
+    context.marketScope === "full_review"
+  ) {
+    params.set("ai_scope", context.marketScope);
   }
   if (launchId) params.set("ai_launch", launchId);
   return `#ai?${params}`;
@@ -197,6 +207,15 @@ export function readAILaunch(hash: string): AILaunch {
     kind === "market" && asOf && !newsContext
       ? aiMarketStage(params.get("ai_stage"))
       : undefined;
+  const marketScope =
+    kind === "market" &&
+    asOf &&
+    !sessionId &&
+    !marketStage &&
+    !newsContext &&
+    params.get("ai_scope") === "full_review"
+      ? "full_review"
+      : undefined;
   const explicit =
     route === "ai" &&
     !!(
@@ -214,6 +233,7 @@ export function readAILaunch(hash: string): AILaunch {
     reportId,
     asOf,
     marketStage,
+    marketScope,
     newsContext,
     explicit,
     launchId,
@@ -227,6 +247,7 @@ export function readAILaunch(hash: string): AILaunch {
         asOf,
         sessionId,
         marketStage,
+        marketScope,
         newsContext,
       ]),
   };

@@ -33,7 +33,7 @@ _BRIEF_KIND = {'auction': 'auction', 'noon': 'noon', 'close': 'noon_close'}
 MAX_DETAIL_ROWS = 30
 
 
-def tool_schemas(*, include_news=False):
+def tool_schemas(*, include_news=False, include_full_review=False):
     """Responses function tools; names/arguments never accept filesystem/SQL."""
     specs = [
         ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。noon自动串同日竞价、截至午评实际结束已完成的上午观察与午评本体；close串联截至原正式收盘的竞价、盘中各档、午评及正式封板/炸板池，缺档保持未知。密集累计按phase_fact_columns解析values/rows和省略计数数组，null未知。auction包含已核验竞价发现和10:00同股开盘对照（如已保存），覆盖只限异动样本。未到时点与已到但未采集分开；成交额不是净流入。',
@@ -68,6 +68,10 @@ def tool_schemas(*, include_news=False):
         from app.services.ai_news_context import TOOL_DESCRIPTION, TOOL_NAME
         specs.append((TOOL_NAME, TOOL_DESCRIPTION,
                       {'scope': {'type': 'string', 'enum': ['selection']}}, ['scope']))
+    if include_full_review:
+        from app.services.ai_full_market_review import TOOL_DESCRIPTION, TOOL_NAME
+        specs.append((TOOL_NAME, TOOL_DESCRIPTION,
+                      {'scope': {'type': 'string', 'enum': ['selected_day']}}, ['scope']))
     return [{'type': 'function', 'name': name, 'description': description, 'strict': True,
              'parameters': {'type': 'object', 'properties': properties, 'required': required,
                             'additionalProperties': False}}
@@ -175,6 +179,15 @@ def _market(heads=None):
     return MarketData(data_dir(), snapshot_id=snapshot or '')
 
 
+def _pinned_market(heads, market=None):
+    if market is None:
+        return _market(heads)
+    expected = heads.get('daily_raw', {}).get('market_snapshot_id')
+    if expected and market.status().get('snapshot_id') != expected:
+        raise HTTPException(409, '读取期间发布代际变化，请重试')
+    return market
+
+
 def _availability(day, now, *, allow_market_calendar=True):
     selected, settings, all_heads = {}, [], {}
     for label, path in _paths():
@@ -259,10 +272,10 @@ def _add_blocks(result, day, selected, kinds, *, cutoff=None, include_auction_op
                 result['gaps'].append(gap)
 
 
-def _published_overview(result, day):
+def _published_overview(result, day, *, market=None):
     before = _heads()
     supplement_before = _supplement_head()
-    market = _market(before)
+    market = _pinned_market(before, market)
     status = market.status()
     if not status.get('ready') or day not in market.calendar():
         _gap(result, 'completed_market', '当前实例没有所选日完成日行情；不以旧日行情代称今天')
@@ -276,6 +289,9 @@ def _published_overview(result, day):
     pools, fingerprint = _load_supplement_with_fingerprint(status['snapshot_id'], dates=dates,
         fields=('public_pools', 'annual_pools', 'annual_down_pools'))
     reference = {**market.reference(), '_supplement': pools}
+    if _denied(status) or _denied(reference) or _source_denied(pools):
+        _gap(result, 'source_permission', '所选盘面来源限制AI处理')
+        return False
     description = describe_sentiment(market, reference, market.panel(day), day)
     context = contexts._base('market_review', '所选日已发布盘面', day)
     contexts._dimension(context, 'market_distribution', '当日严格可比A股分布', description['market'], day)
@@ -291,7 +307,10 @@ def _published_overview(result, day):
             contexts._dimension(context, 'cohort:' + group['id'], group['label'] + '价格反馈',
                 group['cohort_price_feedback'], day, dates={'trade_date': day, 'cohort_date': previous})
     sectors, sector_fp = _load_supplement_with_fingerprint(status['snapshot_id'], dates=(day,), fields=('sector_index_history',))
-    contexts._sectors(context, sectors, day)
+    if _source_denied(sectors):
+        _gap(result, 'source_permission', '所选板块来源限制AI处理')
+    else:
+        contexts._sectors(context, sectors, day)
     result['evidence'].extend(context['evidence'])
     result['metrics'].extend(context['metrics'])
     result['gaps'].extend(context['gaps'])
@@ -471,9 +490,9 @@ def _completion_gap_state(day, now, calendar):
             and now < datetime.combine(date.fromisoformat(day), time(15), CHINA) else 'unknown')
 
 
-def _completed_market(result, day, now):
+def _completed_market(result, day, now, *, market=None):
     heads, supplement = _heads(), _supplement_head()
-    market = _market(heads); status = market.status()
+    market = _pinned_market(heads, market); status = market.status()
     calendar = market.calendar()
     requested_day = day
     if requested_day == 'latest':
@@ -589,8 +608,8 @@ def _stock_quote(result, identifier, day, page, now):
     _bind_detail(result, day, {'date': day, 'snapshot_id': status.get('snapshot_id'), 'instrument': identity, 'quote': quote}, heads, supplement)
 
 
-def _limit_up(result, day, now):
-    available = _completed_market(result, day, now)
+def _limit_up(result, day, now, *, market=None):
+    available = _completed_market(result, day, now, market=market)
     if available is None: return
     market, status, heads, supplement = available
     from app.services.market_supplement import _load_supplement_with_fingerprint
@@ -642,12 +661,12 @@ def _limit_up(result, day, now):
     result['source_bindings']['published_detail']['pool_projection_sha256'] = digest(fp) if fp else None
 
 
-def _market_detail(result, day, section, query, now):
+def _market_detail(result, day, section, query, now, *, market=None):
     if section in ('auction', 'noon'):
         from app.services.ai_review_detail import fill_review_detail
         fill_review_detail(result, day, section, query, now)
         return
-    available = _completed_market(result, day, now)
+    available = _completed_market(result, day, now, market=market)
     if available is None: return
     market, status, heads, supplement = available
     if day == 'latest':
@@ -1026,7 +1045,8 @@ def _bounded(result):
 
 def execute_read_tool(name, args, *, page_context=None, fallback_context=None, include_auction_opening=True):
     """Execute declared local reads; always return bounded JSON, never collect."""
-    result = _result(name if name == 'read_news_events' or name in {r['name'] for r in tool_schemas()} else 'unknown')
+    contextual = ('read_news_events', 'read_market_overview')
+    result = _result(name if name in contextual or name in {r['name'] for r in tool_schemas()} else 'unknown')
     try:
         if not isinstance(args, dict):
             raise ValueError('工具参数须为对象')
@@ -1037,6 +1057,10 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None, i
             from app.services.ai_news_context import fill_news_context
             classify_tool(name, args)
             fill_news_context(result, page_context or {})
+        elif name == 'read_market_overview':
+            from app.services.ai_full_market_review import fill_full_review
+            classify_tool(name, args)
+            fill_full_review(result, page_context or {})
         elif name == 'read_stock_research':
             classify_tool(name, args)
             _research(result, args['instrument_id'], page_context or {}, fallback_context or {}, now)

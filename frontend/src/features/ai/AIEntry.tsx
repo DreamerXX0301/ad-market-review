@@ -17,7 +17,9 @@ export default function AIEntry(props: AILaunchContext) {
       ? "与 AI 研究这只股票"
       : props.marketStage
         ? "AI 解读当前时点"
-        : "与 AI 聊聊这天行情";
+        : props.marketScope === "full_review"
+          ? "AI 完整复盘"
+          : "与 AI 聊聊这天行情";
   return (
     <div className="ai-context-entry">
       <a

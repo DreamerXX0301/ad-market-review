@@ -203,6 +203,75 @@ assert.match(
   aiLaunchQuestion(overview),
   /2026-10-30.*市场情绪.*题材轮动.*涨停梯队/,
 );
+const fullReview = {
+  kind: "market",
+  asOf: "2026-10-30",
+  marketScope: "full_review",
+};
+const fullReviewLink = aiLaunchLocation(fullReview);
+const fullReviewDraft = readAILaunch(fullReviewLink);
+assert.match(fullReviewLink, /ai_scope=full_review/);
+assert.doesNotMatch(fullReviewLink, /ai_chat=/);
+assert.equal(fullReviewDraft.marketScope, "full_review");
+assert.notEqual(fullReviewDraft.key, overview.key);
+const fullQuestion = aiLaunchQuestion(fullReviewDraft);
+assert.match(fullQuestion, /^请完整复盘 2026-10-30/);
+for (const section of [
+  "盘面总览",
+  "指数行情",
+  "成交额",
+  "盘前竞价",
+  "盘中观察",
+  "午评快照",
+  "消息与事件",
+  "市场情绪",
+  "行业与概念",
+  "涨停梯队",
+  "龙虎榜",
+  "30 日涨幅榜",
+  "异动与监管",
+  "留存时点",
+  "缺档或覆盖不足",
+])
+  assert.ok(fullQuestion.includes(section), section);
+const reviewPage = {
+  ...fullReview,
+  pageRoute: "ai",
+  hasMarketScopeDraft: true,
+};
+assert.match(
+  chatLocation(fullReviewLink, reviewPage, ""),
+  /ai_scope=full_review/,
+);
+assert.doesNotMatch(
+  chatLocation(fullReviewLink, reviewPage, "saved_session"),
+  /ai_scope=/,
+);
+assert.doesNotMatch(
+  chatLocation(
+    fullReviewLink,
+    { ...reviewPage, hasMarketScopeDraft: false },
+    "",
+  ),
+  /ai_scope=/,
+);
+for (const link of [
+  fullReviewLink + "&ai_chat=saved_session",
+  fullReviewLink + "&ai_news=day",
+  fullReviewLink + "&ai_stage=0945",
+  fullReviewLink.replace("full_review", "unknown_scope"),
+  fullReviewLink.replace("2026-10-30", "2026-02-30"),
+  fullReviewLink.replace("ai_kind=market", "ai_kind=stock"),
+])
+  assert.equal(readAILaunch(link).marketScope, undefined, link);
+for (const context of [
+  { marketStage: "0945" },
+  { newsContext: { kind: "day" } },
+]) {
+  const specialized = { ...fullReview, ...context };
+  assert.doesNotMatch(aiLaunchLocation(specialized), /ai_scope=/);
+  assert.doesNotMatch(aiLaunchQuestion(specialized), /完整复盘/);
+}
 assert.equal(aiLaunchQuestion(readAILaunch("#ai")), "");
 for (const [newsContext, prompt] of [
   [{ kind: "day" }, /2026-11-10 的已收录消息.*覆盖不完整/],

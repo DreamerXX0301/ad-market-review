@@ -55,6 +55,7 @@ class SessionCreate(Request):
     kind: Literal['stock','market']
     report_id: Annotated[str | None, Field(max_length=200)] = None
     as_of: Annotated[str | None, Field(max_length=10)] = None
+    market_scope: Literal['full_review'] | None = None
     news_context: Annotated[NewsDayContext | NewsItemContext | NewsEventContext, Field(discriminator='kind')] | None = None
     provider_id: Literal['deepseek','openai']
     instrument_id: Annotated[str | None, Field(max_length=30)] = None

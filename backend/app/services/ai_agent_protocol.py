@@ -39,7 +39,8 @@ def page_anchor(session, context):
         'instrument_id':session.get('instrument_id') or context.get('instrument_id'),
         'as_of':session.get('as_of') or context.get('as_of'),
         'report_id':session.get('report_id') or context.get('report_id') or context.get('source_report_id'),
-        'news_context':context.get('news_context')}.items() if value not in (None,'')}
+        'news_context':context.get('news_context'),
+        'market_scope':context.get('market_scope')}.items() if value not in (None,'')}
 
 
 def model_page_anchor(anchor):

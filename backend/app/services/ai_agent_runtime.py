@@ -85,7 +85,8 @@ def _bind_stock_anchor(db,session_id,result):
     if row is None or row['instrument_id']:return
     context=json.loads(row['context_json']);protocol=json.loads(row['protocol_json'])
     if (protocol.get('version')!='ai-session-binding-v1' or not protocol.get('binding')
-            or context.get('kind')!='page_anchor' or context.get('instrument_id') or context.get('news_context')):return
+            or context.get('kind')!='page_anchor' or context.get('instrument_id')
+            or context.get('news_context') or context.get('market_scope')):return
     subject=instrument.get('name')
     context={**context,'instrument_id':identifier,'subject':subject[:100] if isinstance(subject,str) and subject.strip() else identifier,'stock_focus_verified':True}
     db.execute("UPDATE ai_session SET kind='stock',instrument_id=?,context_json=?,context_digest=? WHERE session_id=? AND instrument_id IS NULL",
@@ -289,6 +290,10 @@ class AgentRuntimeMixin:
         reads=accepted['reads']
         if request.get('initial_news_read') is True and accepted['scope']['resources_allowed']:
             from app.services.ai_news_context import TOOL_ARGS, TOOL_NAME
+            reads=[{'name':TOOL_NAME,'arguments':TOOL_ARGS},*[read for read in reads if read['name']!=TOOL_NAME]]
+        elif (request.get('initial_market_overview_read') is True
+              and accepted['scope'].get('semantic_purpose')=='market_review'):
+            from app.services.ai_full_market_review import TOOL_ARGS, TOOL_NAME
             reads=[{'name':TOOL_NAME,'arguments':TOOL_ARGS},*[read for read in reads if read['name']!=TOOL_NAME]]
         for index,read in enumerate(reads):
             nested_id=call_id[:160]+':read:'+str(index+1)
