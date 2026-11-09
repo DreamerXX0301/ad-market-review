@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { CalendarDays, ExternalLink, RefreshCw } from "lucide-react";
 import { Badge, Empty, ErrorBox, Loading, Panel } from "../../components/UI";
 import { useApi } from "../../lib/api";
+import { classifyNews } from "./newsPresentation";
 import "./NewsEvents.css";
 
 const eventStatuses = {
@@ -28,6 +29,13 @@ type Stage = {
   items: Message[];
 };
 type NewsView = { date: string; retention_days: number; stages: Stage[] };
+type TimelineEntry = {
+  key: string;
+  item: Message;
+  category: ReturnType<typeof classifyNews>;
+  timestamp: number;
+  time: string;
+};
 type CalendarEvent = Source & {
   id: string;
   title: string;
@@ -103,6 +111,7 @@ export default function NewsEvents({
   onStock?: (id: string) => void;
 }) {
   const [tab, setTab] = useState<"news" | "calendar">("news");
+  const [filter, setFilter] = useState<"featured" | "all">("featured");
   const [selectedMessageKey, setSelectedMessageKey] = useState<string>();
   const [days, setDays] = useState<7 | 30>(7);
   const [eventId, setEventId] = useState<string>();
@@ -112,22 +121,41 @@ export default function NewsEvents({
       ? `/market/news-events/calendar?date=${date}&days=${days}`
       : null,
   );
-  const timeline = useMemo(() => {
-    const entries = new Map<string, { key: string; item: Message }>();
+  const { timeline, featured } = useMemo(() => {
+    const entries = new Map<string, TimelineEntry>();
     for (const { items } of news.data?.stages ?? []) {
       for (const item of items) {
         const key = JSON.stringify([item.source, item.id]);
-        if (!entries.has(key)) entries.set(key, { key, item });
+        if (!entries.has(key)) {
+          entries.set(key, {
+            key,
+            item,
+            category: classifyNews(item),
+            timestamp: Date.parse(item.published_at),
+            time: timeLabel(item.published_at, date),
+          });
+        }
       }
     }
-    return [...entries.values()].sort(
-      (left, right) =>
-        Date.parse(right.item.published_at) -
-        Date.parse(left.item.published_at),
+    const timeline = [...entries.values()].sort(
+      (left, right) => right.timestamp - left.timestamp,
     );
-  }, [news.data]);
+    const seenQuotes = new Set<string>();
+    return {
+      timeline,
+      featured: timeline.filter(({ category }) => {
+        if (!category.featured) return false;
+        if (!category.quoteKey) return true;
+        if (seenQuotes.has(category.quoteKey)) return false;
+        seenQuotes.add(category.quoteKey);
+        return true;
+      }),
+    };
+  }, [news.data, date]);
+  const visibleMessages = filter === "featured" ? featured : timeline;
   const selection =
-    timeline.find(({ key }) => key === selectedMessageKey) || timeline[0];
+    visibleMessages.find(({ key }) => key === selectedMessageKey) ||
+    visibleMessages[0];
   const message = selection?.item;
   const partial = news.data?.stages.some(
     ({ status }) => status === "partial" || status === "unavailable",
@@ -189,43 +217,90 @@ export default function NewsEvents({
                 title="已收录消息"
                 subtitle="按原文发布时间倒序"
                 actions={
-                  timeline.length ? (
-                    <Badge>{timeline.length} 条</Badge>
+                  timeline.length > 0 ? (
+                    <div
+                      className="segmented news-events-filter"
+                      role="group"
+                      aria-label="消息筛选"
+                    >
+                      {(
+                        [
+                          ["featured", "精选", featured.length],
+                          ["all", "全部", timeline.length],
+                        ] as const
+                      ).map(([mode, label, count]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={filter === mode ? "active" : ""}
+                          aria-pressed={filter === mode}
+                          onClick={() => setFilter(mode)}
+                        >
+                          {label} <span>{count}</span>
+                        </button>
+                      ))}
+                    </div>
                   ) : undefined
                 }
               >
-                {timeline.length > 0 ? (
+                {timeline.length > 0 && (
                   <>
+                    {filter === "featured" &&
+                      featured.length < timeline.length && (
+                        <p className="news-events-filter-note">
+                          精选收起重复报价、例行播报和部分栏目导读。
+                        </p>
+                      )}
                     {partial && (
                       <p className="news-events-reason">
                         部分来源或时段待核验。
                       </p>
                     )}
-                    <ul className="news-events-list news-events-timeline">
-                      {timeline.map(({ key, item }) => (
-                        <li key={key}>
-                          <button
-                            type="button"
-                            aria-pressed={key === selection?.key}
-                            onClick={() => setSelectedMessageKey(key)}
-                          >
-                            <span className="news-events-secondary">
-                              <time dateTime={item.published_at}>
-                                {timeLabel(item.published_at, date)}
-                              </time>{" "}
-                              · {item.source}
-                            </span>
-                            <strong>{item.title}</strong>
-                            {item.topics?.[0] && (
-                              <span className="news-events-row">
-                                <Badge>{item.topics[0].name}</Badge>
-                              </span>
-                            )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
                   </>
+                )}
+                {visibleMessages.length > 0 ? (
+                  <ul className="news-events-list news-events-timeline">
+                    {visibleMessages.map(({ key, item, category, time }) => (
+                      <li key={key} data-news-tone={category.tone}>
+                        <button
+                          type="button"
+                          aria-pressed={key === selection?.key}
+                          onClick={() => setSelectedMessageKey(key)}
+                        >
+                          <span className="news-events-row news-events-meta">
+                            <span className="news-events-secondary">
+                              <time dateTime={item.published_at}>{time}</time>
+                              {" · "}
+                              {item.source}
+                            </span>
+                            <span className="news-events-category">
+                              {category.label}
+                            </span>
+                          </span>
+                          <strong>{item.title}</strong>
+                          {item.topics?.[0] && (
+                            <span className="news-events-row">
+                              <Badge>{item.topics[0].name}</Badge>
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : timeline.length > 0 ? (
+                  <Empty
+                    title="暂无精选消息"
+                    description={`该日已收录 ${timeline.length} 条消息。`}
+                    action={
+                      <button
+                        className="btn small"
+                        type="button"
+                        onClick={() => setFilter("all")}
+                      >
+                        查看全部消息
+                      </button>
+                    }
+                  />
                 ) : (
                   <Empty
                     title={expired ? "已过留存期" : "暂无已收录消息"}
@@ -241,15 +316,26 @@ export default function NewsEvents({
                   />
                 )}
               </Panel>
-              {message && (
+              {selection && message && (
                 <Panel
                   className="news-events-timeline-detail"
                   title="消息详情"
-                  subtitle={`${message.source} · 原文发布 ${timeLabel(message.published_at, date)}`}
+                  subtitle={`${message.source} · 原文发布 ${selection.time}`}
                   actions={<SourceLink source={message} />}
                 >
                   <div className="news-events-detail" aria-live="polite">
                     <div>
+                      <div
+                        className="news-events-row news-events-detail-category"
+                        data-news-tone={selection.category.tone}
+                      >
+                        <span className="news-events-category">
+                          {selection.category.label}
+                        </span>
+                        <span className="news-events-secondary">
+                          分类仅用于浏览
+                        </span>
+                      </div>
                       <h3>{message.title}</h3>
                       {message.summary && <p>{message.summary}</p>}
                       {message.first_seen_at && (
@@ -425,6 +511,9 @@ export default function NewsEvents({
                             className="btn small"
                             type="button"
                             onClick={() => {
+                              if (!featured.includes(relatedMessage)) {
+                                setFilter("all");
+                              }
                               setSelectedMessageKey(relatedMessage.key);
                               setTab("news");
                             }}

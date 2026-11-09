@@ -25,6 +25,21 @@
 .news-events-context svg {
   color: var(--blue);
 }
+.news-events-filter button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.news-events-filter button span {
+  font-size: var(--workbench-type-label, 12px);
+  font-variant-numeric: tabular-nums;
+}
+.news-events-filter-note {
+  padding: 8px 16px 0;
+  color: var(--muted);
+  font-size: var(--workbench-type-label, 12px);
+}
 .news-events-workspace {
   display: grid;
   align-items: start;
@@ -92,15 +107,55 @@
   height: 20px;
 }
 .news-events-timeline li::after {
-  inset-block-start: 16px;
+  inset-block-start: 18px;
   inset-inline-start: -11px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--news-category-color, var(--muted));
 }
-.news-events-timeline li:has(button[aria-pressed="true"])::after {
-  background: var(--blue);
+.news-events-timeline li:has(> button[aria-pressed="true"])::after {
+  box-shadow: 0 0 0 3px
+    color-mix(
+      in srgb,
+      var(--news-category-color, var(--muted)) 20%,
+      transparent
+    );
+}
+.news-events [data-news-tone="blue"] {
+  --news-category-color: var(--blue);
+}
+.news-events [data-news-tone="violet"] {
+  --news-category-color: var(--accent-secondary);
+}
+.news-events [data-news-tone="teal"] {
+  --news-category-color: var(--cyan);
+}
+.news-events [data-news-tone="amber"] {
+  --news-category-color: var(--amber);
+}
+.news-events [data-news-tone="neutral"] {
+  --news-category-color: var(--subtle);
+}
+.news-events-meta {
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+.news-events-category {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid
+    color-mix(in srgb, var(--news-category-color) 25%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--news-category-color) 8%, transparent);
+  color: color-mix(in srgb, var(--news-category-color) 75%, var(--text));
+  font-size: var(--workbench-type-label, 12px);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.news-events-detail-category {
+  margin-block-end: 8px;
 }
 .news-events-reason {
   padding: 8px 16px 0;
