@@ -27,6 +27,8 @@
 
 > **v0.1.26／schema40**。盘面自动加载完整内容，复用近 7 个交易日及按日访问的历史缓存。新建任务采用 30 个自然日的竞价、盘中观察和午评快照留存。安装前核对配套源码、`release-image.json` 与镜像摘要。[版本记录](CHANGELOG.md) · [升级与回滚](docs/版本升级与回滚.md) · [源码标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.26) · [发行附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.26)
 
+**`master` 源码更新**。新增消息与事件归档，补全按所选日期的 AI 盘面复盘材料，支持长回答流式传输。源码安装通过迁移 041 使用 schema41，已发行的 v0.1.26 Docker 镜像对应 schema40。[版本记录](CHANGELOG.md#master-源码更新)
+
 线上公开版提供已发布行情与快照的浏览，关闭数据源模块及相关管理接口。需要接入自己的数据源、初始化行情或安排采集计划时，可安装完整 Docker 版或运行完整源码。[Docker 安装](#docker-安装)
 
 本版包含原生服务辅助脚本`scripts/native_service.py`，支持启动、状态查询和安全停止，桌面可配置配套的启动与停止入口。它从私有部署控制文件读取已验收的独立版本，不将`master`应用源码直接作为现用服务，不安装依赖、迁移或重建数据。首次安装与升级仍需分别完成验收。详见[原生服务管理说明](docs/部署与运维.md#已有原生安装电脑重启后启动)。
