@@ -1,8 +1,18 @@
 import { useMemo, useState } from "react";
-import { CalendarDays, ExternalLink, RefreshCw } from "lucide-react";
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  CalendarDays,
+  ExternalLink,
+  RefreshCw,
+} from "lucide-react";
 import { Badge, Empty, ErrorBox, Loading, Panel } from "../../components/UI";
 import { useApi } from "../../lib/api";
-import { classifyNews } from "./newsPresentation";
+import {
+  classifyNews,
+  newsFilters,
+  selectFeaturedNews,
+} from "./newsPresentation";
 import "./NewsEvents.css";
 
 const eventStatuses = {
@@ -36,6 +46,7 @@ type TimelineEntry = {
   timestamp: number;
   time: string;
 };
+type NewsFilterKey = (typeof newsFilters)[number]["key"];
 type CalendarEvent = Source & {
   id: string;
   title: string;
@@ -90,16 +101,46 @@ function SourceLink({ source }: { source: Source }) {
   );
 }
 
-function TopicEvidence({ topics }: { topics?: Topic[] }) {
+function TopicEvidence({
+  topics,
+  sourceTags = false,
+}: {
+  topics?: Topic[];
+  sourceTags?: boolean;
+}) {
   if (!topics?.length) return <p>暂无已核验的题材关联。</p>;
   return (
-    <ul className="news-events-evidence">
+    <ul
+      className={
+        sourceTags
+          ? "news-events-evidence news-events-source-tags"
+          : "news-events-evidence"
+      }
+    >
       {topics.map(({ name, basis }) => (
         <li key={`${name}:${basis}`}>
-          <Badge>{name}</Badge> <span>{basis}</span>
+          <Badge>{name}</Badge>
+          {(!sourceTags || basis !== "财联社来源标签") && <span>{basis}</span>}
         </li>
       ))}
     </ul>
+  );
+}
+
+function NewsLabels({ category }: { category: TimelineEntry["category"] }) {
+  const { move } = category;
+  const DirectionIcon =
+    move?.direction === "up" ? ArrowUpRight : ArrowDownRight;
+  return (
+    <span className="news-events-labels">
+      <span className="news-events-category">{category.label}</span>
+      {move && (
+        <span className="news-events-move" data-news-move={move.direction}>
+          <DirectionIcon size={13} aria-hidden="true" />
+          {move.label}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -112,6 +153,7 @@ export default function NewsEvents({
 }) {
   const [tab, setTab] = useState<"news" | "calendar">("news");
   const [filter, setFilter] = useState<"featured" | "all">("featured");
+  const [newsFilter, setNewsFilter] = useState<NewsFilterKey | "all">("all");
   const [selectedMessageKey, setSelectedMessageKey] = useState<string>();
   const [days, setDays] = useState<7 | 30>(7);
   const [eventId, setEventId] = useState<string>();
@@ -140,19 +182,23 @@ export default function NewsEvents({
     const timeline = [...entries.values()].sort(
       (left, right) => right.timestamp - left.timestamp,
     );
-    const seenQuotes = new Set<string>();
-    return {
-      timeline,
-      featured: timeline.filter(({ category }) => {
-        if (!category.featured) return false;
-        if (!category.quoteKey) return true;
-        if (seenQuotes.has(category.quoteKey)) return false;
-        seenQuotes.add(category.quoteKey);
-        return true;
-      }),
-    };
+    return { timeline, featured: selectFeaturedNews(timeline) };
   }, [news.data, date]);
-  const visibleMessages = filter === "featured" ? featured : timeline;
+  const { allInCategory, featuredInCategory } = useMemo(() => {
+    if (newsFilter === "all") {
+      return { allInCategory: timeline, featuredInCategory: featured };
+    }
+    const inCategory = ({ category }: TimelineEntry) =>
+      category.filters.includes(newsFilter);
+    return {
+      allInCategory: timeline.filter(inCategory),
+      featuredInCategory: featured.filter(inCategory),
+    };
+  }, [timeline, featured, newsFilter]);
+  const visibleMessages =
+    filter === "featured" ? featuredInCategory : allInCategory;
+  const canShowAllInCategory =
+    filter === "featured" && allInCategory.length > 0;
   const selection =
     visibleMessages.find(({ key }) => key === selectedMessageKey) ||
     visibleMessages[0];
@@ -245,10 +291,43 @@ export default function NewsEvents({
               >
                 {timeline.length > 0 && (
                   <>
+                    <div className="news-events-category-toolbar">
+                      <div
+                        className="news-events-category-filters"
+                        role="group"
+                        aria-label="消息分类"
+                      >
+                        {(
+                          [
+                            { key: "all", label: "所有分类" },
+                            ...newsFilters,
+                          ] as const
+                        ).map(({ key, label }) => (
+                          <button
+                            key={key}
+                            type="button"
+                            className="btn small"
+                            aria-pressed={newsFilter === key}
+                            onClick={() => setNewsFilter(key)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {newsFilter !== "all" && (
+                        <span className="news-events-secondary">
+                          本类 {visibleMessages.length}
+                          {filter === "featured" &&
+                            allInCategory.length > visibleMessages.length &&
+                            ` / ${allInCategory.length}`}{" "}
+                          条
+                        </span>
+                      )}
+                    </div>
                     {filter === "featured" &&
                       featured.length < timeline.length && (
                         <p className="news-events-filter-note">
-                          精选收起重复报价、例行播报和部分栏目导读。
+                          优先展示政策、公告和明显异动，完整时间轴见「全部」。
                         </p>
                       )}
                     {partial && (
@@ -261,7 +340,11 @@ export default function NewsEvents({
                 {visibleMessages.length > 0 ? (
                   <ul className="news-events-list news-events-timeline">
                     {visibleMessages.map(({ key, item, category, time }) => (
-                      <li key={key} data-news-tone={category.tone}>
+                      <li
+                        key={key}
+                        data-news-tone={category.tone}
+                        data-news-move={category.move?.direction}
+                      >
                         <button
                           type="button"
                           aria-pressed={key === selection?.key}
@@ -273,31 +356,34 @@ export default function NewsEvents({
                               {" · "}
                               {item.source}
                             </span>
-                            <span className="news-events-category">
-                              {category.label}
-                            </span>
+                            <NewsLabels category={category} />
                           </span>
                           <strong>{item.title}</strong>
-                          {item.topics?.[0] && (
-                            <span className="news-events-row">
-                              <Badge>{item.topics[0].name}</Badge>
-                            </span>
-                          )}
                         </button>
                       </li>
                     ))}
                   </ul>
                 ) : timeline.length > 0 ? (
                   <Empty
-                    title="暂无精选消息"
+                    title={
+                      filter === "featured" ? "暂无精选消息" : "此分类暂无消息"
+                    }
                     description={`该日已收录 ${timeline.length} 条消息。`}
                     action={
                       <button
                         className="btn small"
                         type="button"
-                        onClick={() => setFilter("all")}
+                        onClick={() =>
+                          canShowAllInCategory
+                            ? setFilter("all")
+                            : setNewsFilter("all")
+                        }
                       >
-                        查看全部消息
+                        {canShowAllInCategory
+                          ? newsFilter === "all"
+                            ? "查看全部消息"
+                            : "在全部中查看本类"
+                          : "查看所有分类"}
                       </button>
                     }
                   />
@@ -328,13 +414,14 @@ export default function NewsEvents({
                       <div
                         className="news-events-row news-events-detail-category"
                         data-news-tone={selection.category.tone}
+                        data-news-move={selection.category.move?.direction}
                       >
-                        <span className="news-events-category">
-                          {selection.category.label}
-                        </span>
-                        <span className="news-events-secondary">
-                          分类仅用于浏览
-                        </span>
+                        <NewsLabels category={selection.category} />
+                        {selection.category.move && (
+                          <span className="news-events-secondary">
+                            原文行情
+                          </span>
+                        )}
                       </div>
                       <h3>{message.title}</h3>
                       {message.summary && <p>{message.summary}</p>}
@@ -344,10 +431,15 @@ export default function NewsEvents({
                         </p>
                       )}
                     </div>
-                    <section>
-                      <h3>关联题材与个股</h3>
-                      <TopicEvidence topics={message.topics} />
-                      {!!message.symbols?.length && (
+                    {!!message.topics?.length && (
+                      <section>
+                        <h3>来源标签</h3>
+                        <TopicEvidence topics={message.topics} sourceTags />
+                      </section>
+                    )}
+                    {!!message.symbols?.length && (
+                      <section>
+                        <h3>关联个股</h3>
                         <ul className="news-events-evidence">
                           {message.symbols.map(({ symbol, name, basis }) => (
                             <li key={`${symbol}:${basis}`}>
@@ -368,12 +460,8 @@ export default function NewsEvents({
                             </li>
                           ))}
                         </ul>
-                      )}
-                    </section>
-                    <section>
-                      <h3>盘面表现</h3>
-                      <p>暂无已核验的同期行情对照。</p>
-                    </section>
+                      </section>
+                    )}
                     {message.event_id && (
                       <section>
                         <button
@@ -513,6 +601,14 @@ export default function NewsEvents({
                             onClick={() => {
                               if (!featured.includes(relatedMessage)) {
                                 setFilter("all");
+                              }
+                              if (
+                                newsFilter !== "all" &&
+                                !relatedMessage.category.filters.includes(
+                                  newsFilter,
+                                )
+                              ) {
+                                setNewsFilter("all");
                               }
                               setSelectedMessageKey(relatedMessage.key);
                               setTab("news");
