@@ -92,6 +92,69 @@ def test_summary_running_unknown_progress_and_parameter_instrument_allowlist(iso
     assert tasks.list_tasks(summary=True)['items'][0]['progress']==0
 
 
+@pytest.mark.parametrize(('operation', 'label', 'gap'), [
+    ('intraday_snapshot', '盘中快照', '本轮炸板池未完整核验'),
+    ('auction_snapshot', '盘前竞价', '个别候选未取得有效竞价报价'),
+    ('noon_snapshot', '午评快照', '部分证券最新价缺失或无效'),
+])
+def test_partial_capture_displays_completion_only_for_its_own_archive(isolated, operation, label, gap):
+    day = '2026-10-20'
+    timestamp = day + 'T12:00:00+08:00'
+    archived_job = 'fixture-archived'
+    missing_job = 'fixture-without-snapshot'
+    version = operation.replace('_', '-') + '-v1'
+    parameters = {'operation': operation, 'version': version, 'date': day}
+    gap_entries = [{'domain': 'quotes', 'reason': gap}]
+    payload = {'date': day, 'version': version}
+    if operation == 'intraday_snapshot':
+        payload['summary'] = {'gaps': gap_entries}
+    else:
+        payload['gaps'] = gap_entries
+
+    now = core.now_ms()
+    with core.connect() as connection:
+        for job_id in (archived_job, missing_job):
+            connection.execute('''INSERT INTO job(job_id,request_key,logical_key,kind,target_date,
+                parameters_json,parameters_hash,status,created_at_ms) VALUES(?,?,?,'source_check',?,?,?,'queued',?)''',
+                (job_id, job_id, job_id, day, core.dumps(parameters), core.digest(parameters), now))
+        if operation == 'intraday_snapshot':
+            connection.execute('''INSERT INTO market_intraday_capture
+                (trade_date,slot,job_id,snapshot_id,payload_json,content_sha256) VALUES(?,?,?,?,?,?)''',
+                (day, '0935', archived_job, 'fixture-snapshot', core.dumps(payload), core.digest(payload)))
+            connection.execute('INSERT INTO market_intraday_capture(trade_date,slot,job_id) VALUES(?,?,?)',
+                               (day, '0945', missing_job))
+        elif operation == 'auction_snapshot':
+            connection.execute('INSERT INTO market_auction_capture VALUES(?,?,?,?)',
+                               (day, archived_job, archived_job, now))
+            connection.execute('INSERT INTO market_auction_snapshot VALUES(?,?,?,?,?,?,?,?,?)',
+                               ('fixture-snapshot', day, archived_job, timestamp, timestamp, now,
+                                'partial', core.digest(payload), core.dumps(payload)))
+        else:
+            connection.execute('INSERT INTO market_noon_capture VALUES(?,?,?,?)',
+                               (day, archived_job, archived_job, now))
+            connection.execute('INSERT INTO market_noon_snapshot VALUES(?,?,?,?,?,?,?,?,?,?)',
+                               ('fixture-snapshot', day, archived_job, timestamp, timestamp, now,
+                                'partial', core.digest(payload), core.dumps(payload), '[]'))
+
+    # A terminal message and 100% progress alone cannot prove archival.
+    for job_id in (archived_job, missing_job):
+        tasks.finish(job_id, 'partial', f'{label}已留存')
+    http = client()
+    listed = {item['job_id']: item for item in http.get('/api/v1/tasks?summary=true').json()['items']}
+    archived_detail = http.get('/api/v1/tasks/' + archived_job).json()
+    missing_detail = http.get('/api/v1/tasks/' + missing_job).json()
+
+    for item in (listed[archived_job], archived_detail):
+        assert item['status'] == 'partial' and item['progress'] == 100
+        assert item['display_status'] == 'succeeded'
+        assert item['coverage_summary'].startswith(f'{label}已留存')
+    assert gap not in listed[archived_job]['coverage_summary']
+    assert gap in archived_detail['coverage_summary']
+    for item in (listed[missing_job], missing_detail):
+        assert item['status'] == 'partial' and item['progress'] == 100
+        assert 'display_status' not in item and 'coverage_summary' not in item
+
+
 def test_offline_storage_maintenance_cannot_be_requeued(isolated):
     task=tasks.create_task('source_check',{'operation':'local_storage_conversion'})
     tasks.finish(task['job_id'])
