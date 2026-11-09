@@ -25,9 +25,7 @@
 | -------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | 在同一观察日查看指数、市场广度、行业题材和涨停梯队 | 个股与板块分别配置日 / 周 / 月规则，组合历史事件与今日条件 | 把候选加入跟踪或自选，复查触发事件、加入基准和后续涨幅 |
 
-> **v0.1.26／schema40**。盘面自动加载完整内容，复用近 7 个交易日及按日访问的历史缓存。新建任务采用 30 个自然日的竞价、盘中观察和午评快照留存。安装前核对配套源码、`release-image.json` 与镜像摘要。[版本记录](CHANGELOG.md) · [升级与回滚](docs/版本升级与回滚.md) · [源码标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.26) · [发行附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.26)
-
-**`master` 源码更新**。新增消息与事件归档，补全按所选日期的 AI 盘面复盘材料，支持长回答流式传输。源码安装通过迁移 041 使用 schema41，已发行的 v0.1.26 Docker 镜像对应 schema40。[版本记录](CHANGELOG.md#master-源码更新)
+> **v0.1.27／schema41**。新增消息与事件归档，补全按所选日期的 AI 盘面复盘材料，改进长回答流式传输与盘面缓存。安装前核对配套源码、`release-image.json` 与镜像摘要。[版本记录](CHANGELOG.md) · [升级与回滚](docs/版本升级与回滚.md) · [源码标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.27) · [发行附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.27)
 
 线上公开版提供已发布行情与快照的浏览，关闭数据源模块及相关管理接口。需要接入自己的数据源、初始化行情或安排采集计划时，可安装完整 Docker 版或运行完整源码。[Docker 安装](#docker-安装)
 
@@ -238,9 +236,9 @@ flowchart LR
 
 ## Docker 安装
 
-完整 Docker 版包含数据源配置、行情初始化与增量、自动采集计划和研究工作台。安装需要 Docker Engine 或 Docker Desktop，以及 Docker Compose。以下流程下载 v0.1.26 配套部署文件并拉取 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.26`。安装前核对对应发行附件、镜像摘要及源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+完整 Docker 版包含数据源配置、行情初始化与增量、自动采集计划和研究工作台。安装需要 Docker Engine 或 Docker Desktop，以及 Docker Compose。以下流程下载 v0.1.27 配套部署文件并拉取 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.27`。安装前核对对应发行附件、镜像摘要及源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
 
-源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.26 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.26)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.26 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
+源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.27 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.27)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.27 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
 
 ```bash
 mkdir ad-market-review
@@ -248,18 +246,18 @@ cd ad-market-review
 
 test ! -e docker-compose.yml && test ! -L docker-compose.yml && \
   curl --fail --location --output docker-compose.yml \
-  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.26/docker-compose.yml'
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.26
+  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.27/docker-compose.yml'
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.27
 
 umask 077
 key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.26 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.27 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
-export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.26
+export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.27
 export SHIXU_HTTP_PORT=8788
 
 docker compose -p ad-market-review -f docker-compose.yml pull
