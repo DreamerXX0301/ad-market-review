@@ -18,3 +18,32 @@
 .nav-item.active .nav-item-copy > small {
   color: color-mix(in srgb, var(--blue) 70%, var(--muted));
 }
+
+.sidebar nav {
+  overscroll-behavior-y: contain;
+}
+
+@media (max-width: 760px) {
+  .app-layout > .sidebar {
+    width: min(272px, 85vw);
+    visibility: hidden;
+  }
+
+  .sidebar.mobile-open {
+    visibility: visible;
+  }
+
+  .sidebar .nav-item {
+    min-height: 40px;
+  }
+
+  .mobile-overlay.visible {
+    touch-action: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+}

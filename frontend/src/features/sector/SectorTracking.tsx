@@ -85,6 +85,9 @@ export default function SectorTracking({
           .toLowerCase()
           .includes(query.toLowerCase())),
   );
+  const hasFilters = Boolean(
+    strategyId || kind !== "all" || query || (tab === "tracking" && triggered),
+  );
   const toast = useToast();
   function refresh() {
     result.reload();
@@ -124,7 +127,7 @@ export default function SectorTracking({
     }
   }
   return (
-    <div className="page-stack sector-workspace">
+    <div className="page-stack sector-workspace sector-tracking-workspace">
       <div className="section-intro">
         <p>
           跟踪板块指数自身 · 行情观察日 {date || "待核验"} · 成分股仅展开查看
@@ -155,7 +158,7 @@ export default function SectorTracking({
               history: result.data?.counts?.history,
             }}
           />
-          <div className="button-group">
+          <div className="sector-tracking-filters">
             <select
               aria-label="板块跟踪策略"
               value={strategyId}
@@ -366,16 +369,26 @@ export default function SectorTracking({
               },
             ]}
           />
-        ) : (
+        ) : result.error || (tab === "alerts" && events.error) ? null : (
           <Empty
             title={
-              tab === "alerts"
-                ? "暂无板块触发提醒"
-                : tab === "ended"
-                  ? "暂无已结束板块"
-                  : "暂无跟踪板块"
+              hasFilters
+                ? "没有匹配的板块记录"
+                : tab === "alerts"
+                  ? "暂无板块触发提醒"
+                  : tab === "ended"
+                    ? "暂无已结束板块"
+                    : "暂无跟踪板块"
             }
-            description="在板块策略运行结果中勾选满足条件的板块加入跟踪。"
+            description={
+              hasFilters
+                ? "可切换策略或调整分类、搜索及提醒筛选。"
+                : tab === "alerts"
+                  ? "符合提醒条件的板块会在核对后显示在这里。"
+                  : tab === "ended"
+                    ? "已结束的板块跟踪轮次会显示在这里。"
+                    : "在板块策略运行结果中勾选满足条件的板块加入跟踪。"
+            }
           />
         )}
         <div className="panel-footnote">

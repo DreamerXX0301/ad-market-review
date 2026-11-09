@@ -206,3 +206,40 @@
   font-size: var(--workbench-type-body, 13px);
   color: var(--workbench-type-muted, var(--muted));
 }
+
+.sector-tracking-filters {
+  display: flex;
+  flex: 1 1 440px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+}
+.sector-tracking-filters select,
+.sector-tracking-filters > input {
+  flex: 1 1 120px;
+  min-width: 0;
+  max-width: 100%;
+  height: 34px;
+  font-size: var(--workbench-type-label, 12px);
+}
+.sector-tracking-filters > .check-label {
+  flex: 0 0 auto;
+}
+.sector-tracking-workspace .table-wrap td {
+  vertical-align: top;
+}
+@media (max-width: 800px) {
+  .sector-rule-leaf label,
+  .sector-rule-leaf label:nth-child(2) {
+    min-width: min(100%, 125px);
+  }
+  .sector-rule-group header select {
+    min-width: min(100%, 120px);
+    max-width: 100%;
+  }
+  .sector-tracking-filters {
+    justify-content: flex-start;
+  }
+}

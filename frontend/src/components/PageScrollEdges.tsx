@@ -82,9 +82,13 @@ export default function PageScrollEdges({
     if (id && node && !pageHasModal(node.ownerDocument)) onNavigate(id);
   }
 
-  const controls = visible && navigation.entries.length > 1 && (
+  const controls = (visible || inline) && navigation.entries.length > 1 && (
     <FloatingScrollControls
-      className="page-scroll-edges"
+      className={
+        inline
+          ? "page-scroll-edges is-inline" + (visible ? "" : " is-concealed")
+          : "page-scroll-edges"
+      }
       label={`${label}上下节快捷导航`}
       previous={{
         label: `${label}上一节`,

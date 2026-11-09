@@ -687,6 +687,7 @@ export default function DataCenter({
       scopeKey="data-center"
       pageTitle="数据中心"
       pageActive={active}
+      inlineSectionNavigation
     >
       <div className="data-center-heading">
         <div>
@@ -694,6 +695,9 @@ export default function DataCenter({
           <p>同步与任务设置，按阶段核验，保留每次运行记录。</p>
         </div>
       </div>
+      {result.error && (
+        <ErrorBox message={result.error} retry={result.reload} />
+      )}
       <div {...intradayReadingProps("dataSummary")} className="stats-grid">
         <Stat
           label="行情标的"
@@ -726,9 +730,6 @@ export default function DataCenter({
           }}
         />
       </div>
-      {result.error && (
-        <ErrorBox message={result.error} retry={result.reload} />
-      )}
       <DataWarnings items={data?.warnings} />
       {error && <ErrorBox message={error} />}
       {syncConfiguration && (

@@ -452,3 +452,47 @@
     padding: 0 16px 14px;
   }
 }
+.abnormal-monitor {
+  min-width: 0;
+}
+.abnormal-monitor-controls,
+.abnormal-monitor-evidence {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 9px 16px;
+}
+.abnormal-monitor-controls > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: var(--workbench-type-label, 12px);
+}
+.abnormal-monitor-controls > input {
+  flex: 1;
+  min-width: min(180px, 100%);
+  max-width: 320px;
+}
+.abnormal-monitor-evidence {
+  padding-block: 8px;
+  border-block: 1px solid var(--border-soft);
+  background: var(--surface2);
+  font-size: var(--workbench-type-caption, 11px);
+  font-variant-numeric: tabular-nums;
+}
+.abnormal-monitor .detail-list > summary {
+  color: var(--blue);
+  cursor: pointer;
+}
+@media (max-width: 600px) {
+  .abnormal-monitor-controls,
+  .abnormal-monitor-evidence {
+    padding-inline: 12px;
+  }
+  .abnormal-monitor-controls > input {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}

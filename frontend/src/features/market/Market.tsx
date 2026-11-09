@@ -286,7 +286,7 @@ export function MarketOverview({
           indices={indices}
           selected={selected}
           onSelect={setSelected}
-          compact={!indicesOnly}
+          compact
         />
         <Panel title="正在读取所选日行情">
           <Loading />
@@ -299,7 +299,7 @@ export function MarketOverview({
       scopeKey={pageTitle + date}
       pageTitle={pageTitle}
       pageActive={pageActive}
-      inlineSectionNavigation={!indicesOnly}
+      inlineSectionNavigation
     >
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
@@ -308,7 +308,7 @@ export function MarketOverview({
         <MarketDataCoverage
           coverage={data?.data_coverage}
           loading={result.loading}
-          compact={!indicesOnly}
+          compact
         />
       </div>
       <div {...intradayReadingProps("indexQuotes")}>
@@ -316,7 +316,7 @@ export function MarketOverview({
           indices={indices}
           selected={selected}
           onSelect={setSelected}
-          compact={!indicesOnly}
+          compact
         />
       </div>
       {!indicesOnly && (
@@ -379,16 +379,15 @@ export function MarketOverview({
       )}
       <div
         {...intradayReadingProps("indexChart")}
-        className={indicesOnly ? "" : "market-layout market-overview-plot"}
+        className={
+          indicesOnly
+            ? "market-overview-plot"
+            : "market-layout market-overview-plot"
+        }
       >
         <Panel
-          title={
-            <>
-              {indicesOnly && <span className="live-dot" />}
-              {selectedName}
-            </>
-          }
-          subtitle={date + " · 独立盘面观察日期"}
+          title={selectedName}
+          subtitle={date + " · 盘面观察日"}
           actions={<Badge>真实历史行情</Badge>}
         >
           <CandleChart

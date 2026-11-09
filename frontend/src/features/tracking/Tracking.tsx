@@ -505,6 +505,13 @@ function StockTracking({
     result.data?.hot_filter_scope,
   );
   const rows = hotFilter.rows;
+  const hasFilters = Boolean(
+    strategyId ||
+    stockQuery.trim() ||
+    topicIds.length ||
+    hotFilter.enabled ||
+    (tab === "active" && triggered),
+  );
   const toast = useToast();
   async function review() {
     setBusy("review");
@@ -834,8 +841,12 @@ function StockTracking({
                 ),
               },
             ]}
-            emptyTitle="还没有提醒触发"
-            emptyDescription="先在跟踪轮次中设置提醒条件，再核对至最新行情日。"
+            emptyTitle={hasFilters ? "没有匹配的触发提醒" : "还没有提醒触发"}
+            emptyDescription={
+              hasFilters
+                ? "可切换策略或调整搜索及筛选条件。"
+                : "先在跟踪轮次中设置提醒条件，再核对至最新行情日。"
+            }
             onStockNavigate={openStockFromList}
           />
         ) : (
@@ -1003,9 +1014,19 @@ function StockTracking({
             pageSize={20}
             onStockNavigate={openStockFromList}
             emptyTitle={
-              tab === "history" ? "暂无结束轮次" : "还没有跟踪中的股票"
+              hasFilters
+                ? "没有匹配的跟踪轮次"
+                : tab === "history"
+                  ? "暂无结束轮次"
+                  : "还没有跟踪中的股票"
             }
-            emptyDescription="先在策略管理运行选股，再将命中结果加入对应跟踪池。"
+            emptyDescription={
+              hasFilters
+                ? "可切换策略或调整搜索及筛选条件。"
+                : tab === "history"
+                  ? "到期、提前结束或手动移除的轮次会显示在这里。"
+                  : "先在策略管理运行选股，再将命中结果加入对应跟踪池。"
+            }
           />
         )}
       </Panel>

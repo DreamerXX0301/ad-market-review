@@ -26,7 +26,7 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Row } from "../lib/api";
 import InstrumentSearch from "./InstrumentSearch";
@@ -123,6 +123,10 @@ export default function AppShell({
   children: ReactNode;
 }) {
   const mainRef = useRef<HTMLElement>(null);
+  const sidebar = useRef<HTMLElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const navigationWasOpen = useRef(false);
   useLayoutEffect(() => {
     // Routes keep their business state; the document viewport starts at the page header.
     window.scrollTo(0, 0);
@@ -130,6 +134,35 @@ export default function AppShell({
   }, [route]);
   const [mobileOpen, setMobileOpen] = useState(false),
     [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  useLayoutEffect(() => {
+    if (mobileOpen) {
+      (
+        sidebar.current?.querySelector<HTMLElement>("[aria-current=page]") ||
+        sidebar.current?.querySelector<HTMLElement>(".brand")
+      )?.focus();
+    } else if (
+      navigationWasOpen.current &&
+      window.matchMedia("(max-width: 760px)").matches
+    ) {
+      menuButton.current?.focus({ preventScroll: true });
+    }
+    navigationWasOpen.current = mobileOpen;
+  }, [mobileOpen]);
+  useEffect(() => {
+    const onResize = () => {
+      if (!window.matchMedia("(max-width: 760px)").matches)
+        setMobileOpen(false);
+      if (!window.matchMedia("(max-width: 600px)").matches)
+        setMobileSearchOpen(false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  function closeMobileSearch() {
+    setMobileSearchOpen(false);
+    searchButton.current?.focus({ preventScroll: true });
+  }
   const isMarket = marketRoutes.has(route);
   const workspace = isMarket
     ? "market"
@@ -147,14 +180,51 @@ export default function AppShell({
       <button
         className={"mobile-overlay " + (mobileOpen ? "visible" : "")}
         aria-label="关闭导航"
+        tabIndex={-1}
         onClick={() => setMobileOpen(false)}
       />
-      <aside className={"sidebar " + (mobileOpen ? "mobile-open" : "")}>
+      <aside
+        id="workspace-navigation"
+        className={"sidebar " + (mobileOpen ? "mobile-open" : "")}
+        ref={sidebar}
+        role={mobileOpen ? "dialog" : undefined}
+        aria-modal={mobileOpen ? true : undefined}
+        aria-label={mobileOpen ? "页面导航" : undefined}
+        onKeyDown={(event) => {
+          if (
+            !mobileOpen ||
+            !event.currentTarget.contains(event.target as Node)
+          )
+            return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setMobileOpen(false);
+          }
+          if (event.key !== "Tab") return;
+          const controls = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              "a[href], button:not([disabled])",
+            ),
+          ).filter((item) => item.getClientRects().length > 0);
+          const first = controls[0];
+          const last = controls.at(-1);
+          if (event.shiftKey && event.target === first) {
+            event.preventDefault();
+            last?.focus();
+          } else if (!event.shiftKey && event.target === last) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }}
+      >
         <a
           className="brand brand--dreamer"
           href="#market"
           aria-label="冒险的梦想家 · 返回盘面总览"
-          onClick={() => onNavigate("market")}
+          onClick={() => {
+            onNavigate("market");
+            setMobileOpen(false);
+          }}
         >
           <div className="brand-mark">
             <svg width="25" height="25" viewBox="0 0 25 25" aria-hidden="true">
@@ -175,7 +245,7 @@ export default function AppShell({
           <span className="status-dot good" />
           本地研究工作台<span className="local-tag">本地</span>
         </div>
-        <nav>
+        <nav aria-label="工作台页面">
           {navigation.map((group) => (
             <div
               className="nav-group"
@@ -223,13 +293,19 @@ export default function AppShell({
           </button>
         </div>
       </aside>
-      <main className="app-main" ref={mainRef}>
+      <main className="app-main" ref={mainRef} inert={mobileOpen}>
         <header className="topbar">
           <div className="topbar-title">
             <button
               className="icon-btn mobile-menu"
               aria-label="打开导航"
-              onClick={() => setMobileOpen(true)}
+              aria-controls="workspace-navigation"
+              aria-expanded={mobileOpen}
+              ref={menuButton}
+              onClick={() => {
+                setMobileSearchOpen(false);
+                setMobileOpen(true);
+              }}
             >
               <Menu size={20} />
             </button>
@@ -253,7 +329,13 @@ export default function AppShell({
             <button
               className="icon-btn mobile-search-toggle"
               aria-label="搜索股票、指数、行业和概念"
-              onClick={() => setMobileSearchOpen((v) => !v)}
+              aria-controls="workspace-search"
+              aria-expanded={mobileSearchOpen}
+              ref={searchButton}
+              onClick={() => {
+                if (mobileSearchOpen) closeMobileSearch();
+                else setMobileSearchOpen(true);
+              }}
             >
               <Search size={17} />
             </button>
@@ -293,8 +375,24 @@ export default function AppShell({
           </div>
         </header>
         {mobileSearchOpen && (
-          <div className="mobile-global-search">
+          <div
+            id="workspace-search"
+            className="mobile-global-search"
+            role="search"
+            aria-label="全局搜索"
+            onKeyDownCapture={(event) => {
+              if (
+                event.key === "Escape" &&
+                !event.nativeEvent.isComposing &&
+                event.nativeEvent.keyCode !== 229
+              ) {
+                event.preventDefault();
+                closeMobileSearch();
+              }
+            }}
+          >
             <InstrumentSearch
+              autoFocus
               includeSectors
               placeholder="名称 / 代码 / 拼音 / 首字母"
               onSector={(row) => {
@@ -309,7 +407,7 @@ export default function AppShell({
             <button
               className="icon-btn"
               aria-label="关闭搜索"
-              onClick={() => setMobileSearchOpen(false)}
+              onClick={closeMobileSearch}
             >
               <X size={18} />
             </button>

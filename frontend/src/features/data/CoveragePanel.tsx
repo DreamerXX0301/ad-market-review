@@ -236,7 +236,7 @@ export default function CoveragePanel({
             </button>
           )}
         </div>
-        {loading ? (
+        {loading && !datasets.length ? (
           <Loading />
         ) : !datasets.length ? (
           <Empty
@@ -245,32 +245,58 @@ export default function CoveragePanel({
           />
         ) : (
           <div className="coverage-table-wrap">
-            <table className="coverage-table">
-              <thead>
-                <tr>
-                  <th>数据模块</th>
-                  <th>当前留存</th>
-                  <th>可核验范围</th>
-                  <th>说明与操作</th>
+            <table
+              className="coverage-table coverage-datasets"
+              aria-label="数据集覆盖"
+              role="table"
+            >
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th scope="col" role="columnheader">
+                    数据模块
+                  </th>
+                  <th scope="col" role="columnheader">
+                    当前留存
+                  </th>
+                  <th scope="col" role="columnheader">
+                    可核验范围
+                  </th>
+                  <th scope="col" role="columnheader">
+                    说明与操作
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {datasets.map((dataset) => {
                   const coverage = datasetCoverageView(dataset);
                   const daily = ["daily_raw", "analysis_bars"].includes(
                     dataset.module,
                   );
                   return (
-                    <tr key={dataset.module}>
-                      <td>
+                    <tr key={dataset.module} role="row">
+                      <th
+                        scope="row"
+                        role="rowheader"
+                        className="coverage-dataset-name"
+                      >
                         <strong>{dataset.name}</strong>
                         <small>
-                          {dataset.first_date === dataset.last_date
-                            ? dataset.last_date
-                            : `${dataset.first_date} → ${dataset.last_date}`}
+                          {dataset.first_date &&
+                          dataset.last_date &&
+                          dataset.first_date !== dataset.last_date
+                            ? `${dataset.first_date} → ${dataset.last_date}`
+                            : dataset.last_date ||
+                              dataset.first_date ||
+                              "日期未知"}
                         </small>
-                      </td>
-                      <td className="coverage-retained">
+                      </th>
+                      <td className="coverage-retained" role="cell">
+                        <span
+                          className="coverage-mobile-label"
+                          aria-hidden="true"
+                        >
+                          当前留存
+                        </span>
                         {dataset.module === "indicators" ? (
                           <>
                             <b>日 / 周 / 月</b>
@@ -303,12 +329,19 @@ export default function CoveragePanel({
                         )}
                       </td>
                       <td
+                        role="cell"
                         className={
                           coverage.displayState === "covered"
                             ? "coverage-measure-covered"
                             : undefined
                         }
                       >
+                        <span
+                          className="coverage-mobile-label"
+                          aria-hidden="true"
+                        >
+                          可核验范围
+                        </span>
                         <div className="coverage-measure-line">
                           <span>{coverage.label}</span>
                           {coverage.percentText && (
@@ -346,7 +379,7 @@ export default function CoveragePanel({
                           </small>
                         )}
                       </td>
-                      <td>
+                      <td role="cell" className="coverage-dataset-notes">
                         {dataset.module === "security_identity" &&
                           coverage.pendingListingCount !== null && (
                             <small className="coverage-identity-counts">

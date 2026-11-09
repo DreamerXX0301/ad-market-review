@@ -54,20 +54,16 @@ export default function StrategyPicker({
       if (!rect) return;
       const width = Math.min(360, window.innerWidth - 24);
       const below = window.innerHeight - rect.bottom - 20;
-      const maxHeight = Math.min(
-        420,
-        Math.max(200, Math.max(below, rect.top - 20)),
-      );
+      const above = rect.top - 20;
+      const openBelow = below >= 340 || below >= above;
+      const maxHeight = Math.min(420, Math.max(0, openBelow ? below : above));
       setPosition({
         width,
         left: Math.max(
           12,
           Math.min(rect.right - width, window.innerWidth - width - 12),
         ),
-        top:
-          below >= Math.min(340, maxHeight)
-            ? rect.bottom + 8
-            : Math.max(12, rect.top - maxHeight - 8),
+        top: openBelow ? rect.bottom + 8 : rect.top - maxHeight - 8,
         maxHeight,
       });
     };
@@ -145,15 +141,17 @@ export default function StrategyPicker({
                   }
                   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                     event.preventDefault();
-                    setActive((index) =>
-                      Math.max(
-                        0,
-                        Math.min(
-                          choices.length - 1,
-                          index + (event.key === "ArrowDown" ? 1 : -1),
-                        ),
+                    const next = Math.max(
+                      0,
+                      Math.min(
+                        choices.length - 1,
+                        active + (event.key === "ArrowDown" ? 1 : -1),
                       ),
                     );
+                    setActive(next);
+                    popup.current
+                      ?.querySelectorAll('[role="option"]')
+                      [next]?.scrollIntoView({ block: "nearest" });
                   }
                   if (event.key === "Enter" && choices[active]) {
                     event.preventDefault();

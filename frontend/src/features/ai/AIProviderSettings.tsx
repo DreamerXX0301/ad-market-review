@@ -32,6 +32,7 @@ import type { AIProvider } from "./aiTypes";
 import AIModelPicker from "./AIModelPicker";
 import "../../components/SettingsDialog.css";
 import "./AI.css";
+import "./AIProviderSettings.css";
 
 const capabilityLabels: Record<string, string> = {
   authentication: "账号与模型目录",
@@ -137,6 +138,12 @@ function ProviderEditor({
       }}
     >
       <form
+        onInvalidCapture={(event) => {
+          if (!(event.target instanceof HTMLElement)) return;
+          const limits =
+            event.target.closest<HTMLDetailsElement>(".ai-editor-limits");
+          if (limits) limits.open = true;
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           void save(false);
@@ -392,20 +399,31 @@ export default function AIProviderSettings() {
           凭据只写入本机后端
         </Badge>
       </div>
-      <div className="ai-meta ai-instance-usage">
-        <span>
-          本实例今日
-          {providers.data?.usage?.day ? `（${providers.data.usage.day}）` : ""}
-          已发请求：{providers.data?.usage?.requests ?? "未知"}
-        </span>
-        <span>
-          预估及预留合计：
-          {providers.data?.usage?.amount_usd != null
-            ? `${plainText(providers.data.usage.amount_usd)} USD`
-            : "未知"}
-        </span>
-        <span>两家服务合计，实际账单以供应商为准</span>
-      </div>
+      <section className="ai-provider-usage" aria-label="本实例今日用量">
+        <header>
+          <strong>本实例今日用量</strong>
+          {providers.data?.usage?.day && (
+            <time dateTime={providers.data.usage.day}>
+              {providers.data.usage.day}
+            </time>
+          )}
+        </header>
+        <dl>
+          <div>
+            <dt>已发请求</dt>
+            <dd>{providers.data?.usage?.requests ?? "未知"}</dd>
+          </div>
+          <div>
+            <dt>预估及预留合计</dt>
+            <dd>
+              {providers.data?.usage?.amount_usd != null
+                ? `${plainText(providers.data.usage.amount_usd)} USD`
+                : "未知"}
+            </dd>
+          </div>
+        </dl>
+        <p>两家服务合计，实际账单以供应商为准。</p>
+      </section>
       {providers.error && (
         <ErrorBox message={providers.error} retry={providers.reload} />
       )}
@@ -437,7 +455,7 @@ export default function AIProviderSettings() {
       )}
       {providers.loading && !providers.data ? (
         <Loading />
-      ) : (
+      ) : providers.data?.items.length ? (
         <div className="ai-provider-grid">
           {(providers.data?.items || []).map((provider) => (
             <section
@@ -559,15 +577,12 @@ export default function AIProviderSettings() {
             </section>
           ))}
         </div>
+      ) : providers.error ? null : (
+        <Empty
+          title="暂无 AI 服务配置"
+          description="请确认后端 AI 模块已初始化。"
+        />
       )}
-      {!providers.loading &&
-        !providers.error &&
-        !providers.data?.items.length && (
-          <Empty
-            title="暂无 AI 服务配置"
-            description="请确认后端 AI 模块已初始化。"
-          />
-        )}
       <Warning>
         验证只证明本次认证、调用与格式兼容，不证明内容正确。关闭或清除 Key
         后仍可阅读本地历史会话；历史默认保留 30 天，可手动保留或删除。
@@ -587,10 +602,10 @@ export default function AIProviderSettings() {
           title={`清除 ${clearing.name} Key`}
           onClose={() => setClearing(null)}
         >
-          <div className="modal-body">
+          <div className="modal-body settings-dialog-body">
             <p>清除凭据将关闭该服务并使当前验证失效。已保存会话继续保留。</p>
           </div>
-          <div className="modal-footer">
+          <div className="modal-footer settings-dialog-footer">
             <button
               className="btn"
               disabled={!!busy}

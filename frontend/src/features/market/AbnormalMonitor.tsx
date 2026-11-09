@@ -55,7 +55,7 @@ export default function AbnormalMonitor({
   const quoteDate = monitorQuoteDate(data?.quote_as_of);
   const observedDate = monitorQuoteDate(data?.monitor_observed_date);
   return (
-    <div className="page-stack">
+    <div className="page-stack abnormal-monitor">
       {result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
@@ -71,24 +71,17 @@ export default function AbnormalMonitor({
         }
         subtitle="供应商严重异动与重点监控标签；官方监管原文尚未接入。"
         actions={
-          <>
-            <input
-              className="search-input compact"
-              placeholder="筛选名称、代码、监控标签…"
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-            />
-            <button
-              className="icon-btn"
-              aria-label="重读监控名单存档"
-              onClick={result.reload}
-            >
-              <RefreshCw size={15} />
-            </button>
-          </>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="重读监控名单存档"
+            onClick={result.reload}
+          >
+            <RefreshCw size={15} />
+          </button>
         }
       >
-        <div className="result-toolbar">
+        <div className="abnormal-monitor-controls">
           <label>
             查看范围{" "}
             <select
@@ -103,6 +96,20 @@ export default function AbnormalMonitor({
               <option value="historical">指定盘面日历史名单</option>
             </select>
           </label>
+          <input
+            className="search-input"
+            type="search"
+            aria-label="筛选监控名单"
+            placeholder="股票、代码或监控标签…"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </div>
+        <div
+          className="abnormal-monitor-evidence"
+          role="group"
+          aria-label="名单来源日期"
+        >
           <span className="muted">名单日期 {observedDate || "未知"}</span>
           <span className="muted">行情日期 {quoteDate || "未知"}</span>
           <Badge>

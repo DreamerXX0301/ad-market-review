@@ -1,23 +1,56 @@
+.modal-backdrop:has(.settings-dialog-body) {
+  --settings-dialog-inset: clamp(8px, 4dvh, 24px);
+  --settings-dialog-top: max(
+    var(--settings-dialog-inset),
+    env(safe-area-inset-top)
+  );
+  --settings-dialog-bottom: max(
+    var(--settings-dialog-inset),
+    env(safe-area-inset-bottom)
+  );
+  padding: var(--settings-dialog-top) clamp(10px, 4vw, 24px)
+    var(--settings-dialog-bottom);
+}
 .modal:has(.settings-dialog-body) {
   width: var(--settings-dialog-width, 510px);
-  max-height: min(90dvh, 740px);
+  max-height: min(
+    740px,
+    calc(100dvh - var(--settings-dialog-top) - var(--settings-dialog-bottom))
+  );
   border-radius: 14px;
 }
 .modal:has(.settings-dialog-body) > .modal-title {
   flex-shrink: 0;
+  gap: 8px;
   padding: 12px 20px;
   border-bottom-color: var(--border-soft);
-  background: var(--surface2);
+  background: var(--surface);
+}
+.modal:has(.settings-dialog-body) > .modal-title h2 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.modal:has(.settings-dialog-body) > .modal-title .icon-btn {
+  flex: none;
 }
 .modal > form:has(> .settings-dialog-body) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 .modal .settings-dialog-body {
+  flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   gap: 14px;
   padding: 16px 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.settings-dialog-body > * {
+  flex-shrink: 0;
+  min-width: 0;
 }
 .settings-dialog-intro,
 .settings-dialog-field-title {
@@ -43,9 +76,9 @@
   padding: 9px 10px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
-  color: var(--muted);
-  font-size: var(--workbench-type-caption, 10px);
+  background: var(--surface2);
+  color: var(--subtle);
+  font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
 }
 .settings-dialog-note > svg {
@@ -62,12 +95,18 @@
   background: var(--surface2);
 }
 .settings-dialog-footer > .btn {
-  min-height: 34px;
+  min-height: 36px;
+  max-width: 100%;
+  white-space: normal;
 }
 @media (max-width: 480px) {
   .modal:has(.settings-dialog-body) > .modal-title,
   .modal .settings-dialog-body,
   .modal .settings-dialog-footer {
     padding-inline: 14px;
+  }
+  .settings-dialog-footer > .btn {
+    min-height: 40px;
+    padding-inline: 10px;
   }
 }

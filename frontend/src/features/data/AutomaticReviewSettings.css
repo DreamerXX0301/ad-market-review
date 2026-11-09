@@ -12,6 +12,7 @@
 }
 .intraday-automatic-setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -35,7 +36,7 @@
   padding: 9px 10px;
   margin-top: 12px;
   border-radius: 6px;
-  background: var(--surface-2, var(--surface));
+  background: var(--surface2);
 }
 .automatic-review-discovery strong {
   font-size: var(--workbench-type-body, 12px);
@@ -96,17 +97,20 @@
 .automatic-review-time {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   margin-top: 12px;
   color: var(--workbench-type-muted, var(--muted));
 }
 .automatic-review-time input {
   width: 135px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 34px;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 5px 9px;
-  background: var(--surface-2, var(--surface));
+  background: var(--surface2);
   color: var(--text);
   font: inherit;
   font-variant-numeric: tabular-nums;

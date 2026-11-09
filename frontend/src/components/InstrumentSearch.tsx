@@ -27,6 +27,7 @@ export default function InstrumentSearch({
   stocksOnly = false,
   multiple,
   disabled = false,
+  autoFocus = false,
 }: {
   onSelect: (id: string, row: Row) => void;
   placeholder?: string;
@@ -36,6 +37,7 @@ export default function InstrumentSearch({
   stocksOnly?: boolean;
   multiple?: { selectedIds: readonly string[]; limit: number };
   disabled?: boolean;
+  autoFocus?: boolean;
 }) {
   const [query, setQuery] = useState(""),
     [debounced, setDebounced] = useState(""),
@@ -103,6 +105,9 @@ export default function InstrumentSearch({
     const escape = (event: KeyboardEvent) => {
       if (
         event.key === "Escape" &&
+        !event.isComposing &&
+        event.keyCode !== 229 &&
+        !composingRef.current &&
         (container.current?.contains(event.target as Node) ||
           popup.current?.contains(event.target as Node))
       ) {
@@ -158,6 +163,7 @@ export default function InstrumentSearch({
       <Search size={15} />
       <input
         ref={input}
+        autoFocus={autoFocus}
         disabled={disabled}
         role="combobox"
         aria-label={placeholder}
