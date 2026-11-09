@@ -169,7 +169,7 @@ export default function NewsEvents({
   const [newsFilter, setNewsFilter] = useState<NewsFilterKey | "all">("all");
   const [importantOnly, setImportantOnly] = useState(false);
   const [selectedMessageKey, setSelectedMessageKey] = useState<string>();
-  const [days, setDays] = useState<7 | 30>(7);
+  const [days, setDays] = useState<7 | 30>(30);
   const [eventId, setEventId] = useState<string>();
   const news = useApi<NewsView>(`/market/news-events?date=${date}`);
   const calendar = useApi<CalendarView>(
@@ -534,10 +534,10 @@ export default function NewsEvents({
         <>
           <div className="news-events-toolbar">
             <span className="news-events-secondary">
-              按预计发生日期排序，范围从所选观察日开始。
+              从所选日期起往后看（含当天），按事件日期排序。
             </span>
             <div className="segmented" role="group" aria-label="事件日历范围">
-              {([7, 30] as const).map((count) => (
+              {([30, 7] as const).map((count) => (
                 <button
                   key={count}
                   type="button"
