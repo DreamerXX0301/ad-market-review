@@ -172,6 +172,13 @@ const relatedPayload = {
 };
 const related = build(relatedPayload);
 assert.equal(related.available, true);
+assert.deepEqual(
+  build({
+    ...relatedPayload,
+    algorithm_version: "source-reason-directions-v4",
+  }),
+  related,
+);
 assert.equal(related.total, plan.total);
 assert.deepEqual(related.groups, plan.groups);
 assert.deepEqual(related.globalHigh, plan.globalHigh);

@@ -224,9 +224,11 @@ export function buildDailyMainlineDisplay(
     !bound ||
     conflicting.size ||
     !object(system) ||
-    !["source-reason-directions-v2", "source-reason-directions-v3"].includes(
-      system.algorithm_version,
-    ) ||
+    ![
+      "source-reason-directions-v2",
+      "source-reason-directions-v3",
+      "source-reason-directions-v4",
+    ].includes(system.algorithm_version) ||
     system.source_kind !== "local_source_synthesis" ||
     system.state !== "candidate" ||
     system.date !== date ||
@@ -418,7 +420,7 @@ export function buildDailyMainlineDisplay(
     return empty;
   const relatedGroups: MainlineDirection[] = [];
   if (
-    system.algorithm_version === "source-reason-directions-v3" &&
+    system.algorithm_version !== "source-reason-directions-v2" &&
     system.related_groups !== undefined
   ) {
     if (!Array.isArray(system.related_groups)) return empty;

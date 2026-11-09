@@ -131,6 +131,32 @@ def test_related_directions_read_later_tags_without_counting_a_stock_twice_in_th
     assert set(matches(related['合成二级题材'])) == {'000012.SH', '000013.SH'}
 
 
+def test_pcb_and_photovoltaic_aliases_preserve_actual_tags_and_leave_single_stock_themes():
+    rows = [
+        row(1, '印制电路板+覆铜板+商业航天'),
+        row(2, 'PCB+AI服务器'),
+        row(3, '机器人+人形机器人PCB+AI服务器PCB'),
+        row(4, '“东方”+光伏', 2),
+        row(5, '光伏BIPV+储能'),
+        row(6, '光伏边框+机器人布局', 3),
+        row(7, '生猪养殖+猪肉食品+预重整'),
+        row(8, '民爆一体化+央企'),
+        row(9, '覆铜板+高端材料'),
+        row(10, 'PCB+无PCB订单'),
+    ]
+    result = build(rows)
+    assert_partition(result, [item['instrument_id'] for item in rows])
+    associations = {group['name']: group for group in result['related_groups']}
+    pcb = {entry['instrument_id']: entry['matched_tags'] for entry in associations['PCB']['members']}
+    assert pcb == {'000001.SH': ['印制电路板'], '000002.SH': ['PCB'],
+                   '000003.SH': ['人形机器人PCB', 'AI服务器PCB']}
+    assert associations['光伏']['max_known_height'] == 3
+    assert associations['光伏']['labels'] == ['光伏边框', '光伏', '光伏BIPV']
+    singles = {member['instrument_id']: member['matched_tag'] for member in result['individual_cues']}
+    assert singles['000007.SH'] == '生猪养殖'
+    assert singles['000008.SH'] == '民爆一体化'
+
+
 @pytest.mark.parametrize('changes', [
     {'date': '2026-01-02'}, {'snapshot_id': 'other-generation'},
     {'evidence_date': '2026-01-02'}, {'trade_date': '2026-01-02'}, {'limit_up_state': None}, {'limit_up_state': 1},

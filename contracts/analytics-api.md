@@ -92,11 +92,11 @@
 
 `GET /market/mainlines?date=&known_at_ms?` 与 `GET /market/mainlines/history?date=&instrument_id=&limit=&offset=` 读取独立的逐日手工主线审计；不改变 `ladder` 的行业、概念和原始来源原因。它们只读SQLite，date是合法ISO审计日期，即使当前行情目录已滚动也可读旧记录；无记录为空，不由当前概念补全。列表total是有修订的证券数，含撤销，不是涨停家数；这些接口仅保留既有手工数据的兼容读取，当前自动主线页面不消费该结果。写入、更正、撤销、来源转述/用户判断/待核验/冲突以及真实记录时间契约见[Workspace API：当日主线](workspace-api.md#当日主线归因手工证据-v01)。
 
-`GET /market/ladder?date=` 返回只读 `system_mainlines`，自动页面不读取手工审计。版本 `algorithm_version=source-reason-directions-v3`、`source_kind=local_source_synthesis`，包含 `state=candidate|unavailable/date/snapshot_id/groups/other_groups/related_groups/individual_cues/missing_reason/coverage/reason/notice`。只复用本次已读同日确认收盘涨停行、唯一有效原始收盘与正成交量、绑定收盘事件证据；日期、行情代际、证券身份、原价、冲突或重复不一致时拒绝纳入，不以池价代替缺失报价。收盘梯队缓存键包含算法版本。
+`GET /market/ladder?date=` 返回只读 `system_mainlines`，自动页面不读取手工审计。版本 `algorithm_version=source-reason-directions-v4`、`source_kind=local_source_synthesis`，包含 `state=candidate|unavailable/date/snapshot_id/groups/other_groups/related_groups/individual_cues/missing_reason/coverage/reason/notice`。只复用本次已读同日确认收盘涨停行、唯一有效原始收盘与正成交量、绑定收盘事件证据；日期、行情代际、证券身份、原价、冲突或重复不一致时拒绝纳入，不以池价代替缺失报价。收盘梯队缓存键包含算法版本。
 
 四个自动分区分别为重点方向`groups`、其他共同方向/事件组`other_groups`、未成组但有原文的`individual_cues`、真正空或占位原因的`missing_reason`。每只证券仅占一个分类位置，四个分区去重家数之和等于`coverage.confirmed_sample_count`。`coverage`保留`examined_row_count/eligible_reason_count/rejected_row_count/source_pool_complete/market_complete=false`，并分别给出`focus_count/other_count/individual_count/missing_reason_count`；拒绝行不伪造为缺原因证券，也不声称样本等于全市场。
 
-来源原因按半角/全角加号拆分、trim并按原文顺序去重。明确含机器人、具身智能的正向标签可归“机器人相关”；只有物理AI或否认、不涉及等反向描述不强归。剩余股票的主归类用首个明确来源标签：有限的冰雪、煤炭、短剧漫剧、航空航天、AI 应用、零售和业绩标签归入对应家族，明确写出的“字辈”归入各自字辈，其余保留原标签。
+来源原因按半角/全角加号拆分、trim并按原文顺序去重。明确含机器人、具身智能的正向标签可归“机器人相关”；只有物理AI或否认、不涉及等反向描述不强归。剩余股票的主归类用首个明确来源标签。有限的冰雪、煤炭、短剧漫剧、航空航天、AI 应用、PCB、光伏、零售和业绩标签归入对应家族，明确写出的“字辈”归入各自字辈，其余保留原标签。例如印制电路板归 PCB，光伏 BIPV 归光伏，覆铜板原文独立保留。
 
 `related_groups` 是独立的来源关联，读取原文中各位置的明确标签。至少两只确认样本共享明确家族或同一原标签才展示，最多 24 组，优先保留明确家族、字辈及原文明确写出的“商业航天”。航材、卫星等已列标签可归“航空航天”，只有原文写明“商业航天”才能计入单独的商业航天关联。业绩、股权及通用所有制等背景词不生成重复标签关联。每组按证券去重，同一证券可跨组，同键关联须覆盖原组全部成员且增加至少一只。关联不计入四个主分区的统计。匹配标签、原始原因和日期照原值返回，归类不从公司名、当前目录或后续行情推断历史。
 
@@ -104,7 +104,7 @@
 
 组结构为`key/name/kind=direction|catalyst/grouping_rule/labels/count/max_known_height/high_stock_ids/members`。`labels`是组内实际命中的原文标签去重汇总，高度未知为null，高标不认证龙头。所有成员统一包含`instrument_id/source_reason/matched_tag/matched_tags/source/source_ref/closing_pool_refs`；`matched_tags`为此次规则实际命中的原文标签、按原文顺序去重，`matched_tag`为第一项或无命中时空值，不将族名冒充原文。`source_ref`绑定`date/snapshot_id/endpoint=/api/v1/market/ladder/field_path=items[instrument_id="…"].reason`；原因提供方缺据则`source=null`，不拿报价/封板详情来源代填。`closing_pool_refs`只保留收盘事件来源、路径及有据原始SHA，固定`purpose=closing_event_only`，不独立证明原因。
 
-前端验证同日同代、完整ID、原文/标签绑定、四个主分区去重及家数，再单独验证来源关联。方向表可点选较小共同组和来源关联，同键使用较完整的名单并明确标为来源关联。全局高标独立从全部同日确认样本的`board_presentation.height`核验。正文展示方向、样本和原始原因，技术定位和SHA保留在API。既有SQLite手工记录及兼容API独立保留，旧修订不参与自动页面分类。系统仅使用本地已留存材料，不创建任务或迁移。
+前端验证同日同代、完整ID、原文/标签绑定、四个主分区去重及家数，再单独验证来源关联。方向表同键使用较完整的名单并明确标为来源关联，按实际展示家数降序，家数相同再按已核验最高板高排序。下方仅展示未出现在任何可见方向名单的独立来源线索。全局高标独立从全部同日确认样本的`board_presentation.height`核验。正文展示方向、样本和原始原因，技术定位和SHA保留在API。既有SQLite手工记录及兼容API独立保留，旧修订不参与自动页面分类。系统仅使用本地已留存材料，不创建任务或迁移。
 
 `gainers` 的检索/排序对完整候选集合执行后再分页，null 升降序都最后；年内次数下界不参与精确次数排序。`flow` 的近若干日是跨日趋势，不是全天盘中资金时序，也不推断机构真实决策。
 

@@ -11,7 +11,7 @@ from datetime import date as calendar_date
 import math
 import re
 
-ALGORITHM_VERSION = 'source-reason-directions-v3'
+ALGORITHM_VERSION = 'source-reason-directions-v4'
 MAX_GROUPS = 3
 MAX_RELATED_GROUPS = 24
 MIN_MEMBERS = 2
@@ -35,6 +35,10 @@ _DIRECTION_FAMILIES = (
                                 '星载算力一体机', '星载算力'}, '航天|航材|卫星|太空|星载'),
     ('family:ai-app', 'AI应用', {'AI应用', 'AI设计', 'AI营销', 'AI航检眼镜', 'AI漫剧', 'AI短剧',
                              'AI动画短剧'}, 'AI应用|AI设计|AI营销|AI航检|AI漫剧|AI短剧|AI动画短剧'),
+    ('family:pcb', 'PCB', {'PCB', 'PCB制造', '印制电路板', '印刷电路板', '印制线路板',
+                          '人形机器人PCB', 'AI服务器PCB'}, 'PCB|印制电路板|印刷电路板|印制线路板'),
+    ('family:photovoltaic', '光伏', {'光伏', '光伏BIPV', '光伏边框', '光伏组件', '光伏电池',
+                                  '光伏电站', '光伏银粉', '光伏玻璃', '风电光伏'}, '光伏'),
 )
 _FAMILY_TAGS = {tag for _, _, tags, _ in _DIRECTION_FAMILIES for tag in tags}
 _WORD_FAMILY = re.compile(r'[“"「『]?([\u3400-\u9fff])[”"」』]?字辈')
@@ -52,6 +56,7 @@ _NONPOSITIVE = re.compile(r'不涉及|未涉及|尚未|尚不|未曾|从未|不�
                           r'(?:业务|收入|产品|订单)(?:为零|为0|已终止|终止|已停止|已暂停|已剥离|已退出|停止|暂停|不存在)|'
                           r'非(?=人形机器人|机器人|具身智能)|'
                           r'(?:非|无(?:任何|直接)?)(?=冰雪|煤炭|煤矿|短剧|漫剧|(?:商业)?航天|卫星|航材|太空|星载|'
+                          r'PCB|印制电路板|印刷电路板|印制线路板|光伏|'
                           r'AI(?:应用|设计|营销|航检|漫剧|短剧|动画短剧))', re.IGNORECASE)
 _NARRATIVE = re.compile(r'[，,、。；;：:！？!?]|公司|表示|回应|声称|收入|占比|主要从事|但尚|并未')
 NOTICE = ('仅按本地同日已确认收盘涨停样本的来源原因自动归类；机器人相关采用有限正向标签家族，'
