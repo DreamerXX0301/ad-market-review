@@ -298,7 +298,7 @@ export default function Watchlist({
             }
           />
         )}
-        <div hidden={view !== "stocks"}>
+        <div className="watchlist-stock-view" hidden={view !== "stocks"}>
           {alerts.result.error && (
             <ErrorBox
               message={`划线提醒摘要暂未更新：${alerts.result.error}`}
@@ -537,7 +537,7 @@ export default function Watchlist({
                 },
               ]}
               emptyTitle="没有匹配的自选"
-              emptyDescription="可调整搜索词或来源筛选；搜索同时匹配全部已知行业和题材名称。"
+              emptyDescription="可调整搜索词、来源或热点筛选。搜索同时匹配已知行业和题材名称。"
             />
           ) : null}
           {allRows.length > 0 && (

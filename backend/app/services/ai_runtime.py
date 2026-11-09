@@ -13,7 +13,7 @@ from app.infrastructure.credentials import CredentialStore
 from app.adapters.ai_responses import perform, ProviderError
 from app.services import ai_service as service
 from app.services import ai_web
-from app.services.ai_catalog import estimated_nusd, max_output
+from app.services.ai_catalog import estimated_nusd, request_max_output
 from app.services.ai_validation import validate_response
 from app.services.ai_agent_runtime import AgentRuntimeMixin
 from app.adapters.ai_agent import perform_agent
@@ -120,7 +120,7 @@ class AIRuntime(AgentRuntimeMixin):
             # prompts. Tokenizer differences cannot bypass the preflight reserve.
             try:
                 receipt=json.loads(task['result_json'] or '{}')
-                reservation = estimated_nusd(task['provider_id'], task['model'], input_bytes, max_output(task['provider_id'], task['operation']=='verify'), rates=receipt.get('price_rates'))
+                reservation = estimated_nusd(task['provider_id'], task['model'], input_bytes, request_max_output(task['provider_id'],request,probe=task['operation']=='verify'), rates=receipt.get('price_rates'))
                 if request.get('allow_web'):
                     if not ai_web.supported(task['provider_id'],task['model']): raise ValueError('web_search_unavailable')
                     reservation += ai_web.extra_reservation_nusd(receipt['price_rates'],receipt['web_policy'])

@@ -527,14 +527,14 @@ export default function SectorExplorer({
             >
               <X size={14} />
             </button>
+            <button
+              className="icon-btn"
+              onClick={onReload}
+              aria-label="刷新行业与概念"
+            >
+              <RefreshCw size={15} />
+            </button>
           </div>
-          <button
-            className="icon-btn"
-            onClick={onReload}
-            aria-label="刷新行业与概念"
-          >
-            <RefreshCw size={15} />
-          </button>
         </div>
         <div className="sector-explorer-control-row">
           <div

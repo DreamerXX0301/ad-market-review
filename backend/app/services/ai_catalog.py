@@ -33,6 +33,9 @@ OPENAI_PRICE_SOURCES = {
 LEGACY_INPUT_BYTES = 48 * 1024
 MAX_INPUT_BYTES = 96 * 1024
 MAX_RESPONSE_BYTES = 192 * 1024
+DETAILED_MARKET_REVIEW = 'detailed-market-review-v1'
+DETAILED_MARKET_REVIEW_SECONDS = 240
+MAX_AGENT_OUTPUT_TOKENS = 12288
 
 
 def price(provider, model):
@@ -41,6 +44,17 @@ def price(provider, model):
 
 def max_output(provider, probe=False):
     return (128 if probe else 3072) if provider == 'deepseek' else (1024 if probe else 6144)
+
+
+def detailed_market_review(request):
+    return (request.get('agent') is True
+            and (request.get('round_protocol') or {}).get('answer_profile') == DETAILED_MARKET_REVIEW)
+
+
+def request_max_output(provider, request, *, probe=False, planning=False):
+    if provider == 'openai' and not probe and not planning and detailed_market_review(request):
+        return MAX_AGENT_OUTPUT_TOKENS
+    return max_output(provider, probe)
 
 
 def estimated_nusd(provider, model, input_tokens, output_tokens, cached_tokens=0, cache_write_tokens=0, *, rates=None):

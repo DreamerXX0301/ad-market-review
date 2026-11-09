@@ -356,7 +356,27 @@ const cancelled = renderToStaticMarkup(
     context,
   }),
 );
-assert.ok(cancelled.includes("回答已停止") && cancelled.includes("尚未完成"));
+assert.ok(
+  cancelled.includes("回答已停止") && cancelled.includes("已生成的片段"),
+);
+const timedOut = renderToStaticMarkup(
+  createElement(AIMessageView, {
+    message: {
+      ...agent,
+      state: "failed",
+      reason_code: "timeout",
+      partial: true,
+      text: "中断前的市场情绪片段",
+      citations: [],
+    },
+    context,
+  }),
+);
+assert.match(timedOut, /回答未完成/);
+assert.match(timedOut, /本次回答超时/);
+assert.match(timedOut, /已生成的片段仅供核对/);
+assert.match(timedOut, /中断前的市场情绪片段/);
+assert.doesNotMatch(timedOut, /请查看本地任务状态/);
 assert.equal(safeHttpUrl("javascript:alert(1)"), null);
 assert.equal(safeHttpUrl("data:text/html,test"), null);
 const md = {
@@ -407,6 +427,42 @@ globalThis.fetch = () => {
   throw Error("render must not fetch");
 };
 renderToStaticMarkup(createElement(AIMessageView, { message: agent, context }));
+const archiveAnswer = renderToStaticMarkup(
+  createElement(AIMessageView, {
+    context,
+    message: {
+      ...agent,
+      sources: [],
+      citations: [],
+      source_context: {
+        tool_results: [
+          {
+            tool_name: "read_news_events",
+            evidence: [
+              {
+                title: "一条已留存消息",
+                source: "财联社电报",
+                data: { url: "https://www.cls.cn/detail/123" },
+              },
+              {
+                title: "无效消息",
+                data: { url: "javascript:alert(1)" },
+              },
+            ],
+          },
+          {
+            tool_name: "read_market_context",
+            evidence: [{ data: { url: "https://example.org/ignored" } }],
+          },
+        ],
+      },
+    },
+  }),
+);
+assert.match(archiveAnswer, /本机归档原文/);
+assert.match(archiveAnswer, /href="https:\/\/www\.cls\.cn\/detail\/123"/);
+assert.match(archiveAnswer, /一条已留存消息/);
+assert.doesNotMatch(archiveAnswer, /无效消息|example.org\/ignored/);
 let entry = await compile("./AIEntry.tsx");
 for (const [name, url] of Object.entries({
   react: import.meta.resolve("react"),
@@ -439,6 +495,15 @@ assert.match(
   stageShortcut,
   /href="#ai\?ai_kind=market&amp;ai_day=2026-10-30&amp;ai_stage=1430"/,
 );
+const newsShortcut = renderToStaticMarkup(
+  createElement(AIEntry, {
+    kind: "market",
+    asOf: "2026-11-10",
+    newsContext: { kind: "news", source: "财联社电报", id: "123" },
+  }),
+);
+assert.match(newsShortcut, /AI 解读这条消息/);
+assert.match(newsShortcut, /ai_day=2026-11-10&amp;ai_news=news.*ai_item=123/);
 const noApi = encode(
   'export function useApi(){throw Error("hook not expected")} export function usePageActive(){return false}',
 );

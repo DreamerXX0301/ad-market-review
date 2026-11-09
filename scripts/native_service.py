@@ -29,6 +29,12 @@ from urllib.parse import urlparse
 from urllib.request import ProxyHandler, build_opener
 
 
+WORKER_FEATURE_FLAGS = {
+    'news_cls_local_authorized': 'SHIXU_NEWS_CLS_LOCAL_AUTHORIZED',
+    'event_calendar_enabled': 'SHIXU_EVENT_CALENDAR_ENABLED',
+}
+
+
 class ServiceError(RuntimeError):
     """A service prerequisite failed; unrelated processes must stay untouched."""
 
@@ -221,7 +227,7 @@ class Inspector:
             allowed = {'PYTHONPATH', 'SHIXU_DATA_DIR', 'SHIXU_SQLITE_PATH', 'SHIXU_PUBLISHED_DIR',
                        'SHIXU_RAW_DIR', 'SHIXU_WORK_DIR', 'SHIXU_CREDENTIAL_DIR',
                        'SHIXU_CREDENTIAL_MASTER_KEY_FILE', 'SHIXU_SELECTION_CPU_WORKERS',
-                       'SHIXU_AI_SYSTEM_PROXY_ENABLED'}
+                       'SHIXU_AI_SYSTEM_PROXY_ENABLED', *WORKER_FEATURE_FLAGS.values()}
             environment = {}
             for item in pairs:
                 key, separator, value = item.partition(b'=')
@@ -322,6 +328,12 @@ class NativeService:
         require(type(budget) is int and 0 <= budget <= 4, '选股 CPU 预算不合法')
         ai_system_proxy_enabled = value.get('ai_system_proxy_enabled', False)
         require(type(ai_system_proxy_enabled) is bool, 'AI 系统代理开关必须为布尔值')
+        self.worker_flags = {}
+        for field, variable in WORKER_FEATURE_FLAGS.items():
+            enabled = value.get(field, False)
+            require(type(enabled) is bool, f'{field} 必须为布尔值')
+            if enabled:
+                self.worker_flags[variable] = '1'
         self.environment = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'SSL_CERT_FILE')
                             if key in os.environ}
         self.environment.update(PYTHONPATH=str(self.backend), PYTHONDONTWRITEBYTECODE='1', PYTHONNOUSERSITE='1',
@@ -352,14 +364,18 @@ class NativeService:
         return ['-B', '-m', 'app.worker'] if role == 'worker' else [
             '-B', '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', str(self.port), '--workers', '1']
 
+    def process_environment(self, role):
+        return {**self.environment, **self.worker_flags} if role == 'worker' else self.environment
+
     def matches(self, process, role):
-        expected = {key: value for key, value in self.environment.items() if key.startswith('SHIXU_') or key == 'PYTHONPATH'}
+        environment = self.process_environment(role)
+        expected = {key: value for key, value in environment.items() if key.startswith('SHIXU_') or key == 'PYTHONPATH'}
         executable = self.python.resolve()
         executables = {executable, executable.parent.parent / 'Resources/Python.app/Contents/MacOS/Python'}
         return (bool(process.argv) and process.cwd == self.backend and process.argv[1:] == self.arguments(role)
                 and Path(process.argv[0]).resolve() in executables
-                and process.environment.get('SHIXU_AI_SYSTEM_PROXY_ENABLED', '0')
-                    == self.environment.get('SHIXU_AI_SYSTEM_PROXY_ENABLED', '0')
+                and all(process.environment.get(key, '0') == environment.get(key, '0')
+                        for key in ('SHIXU_AI_SYSTEM_PROXY_ENABLED', *WORKER_FEATURE_FLAGS.values()))
                 and all(process.environment.get(key) == value for key, value in expected.items()))
 
     def inspect(self, *, stopping=False):
@@ -424,7 +440,7 @@ class NativeService:
         with os.fdopen(descriptor, 'ab') as stream:
             os.fchmod(stream.fileno(), 0o600)
             child = subprocess.Popen([str(self.python), *self.arguments(role)], cwd=self.backend,
-                                     env=self.environment, stdin=subprocess.DEVNULL, stdout=stream,
+                                     env=self.process_environment(role), stdin=subprocess.DEVNULL, stdout=stream,
                                      stderr=subprocess.STDOUT, start_new_session=True)
         self.children[role] = child
         return child

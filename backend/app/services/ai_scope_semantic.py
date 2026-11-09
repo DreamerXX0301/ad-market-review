@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 
+from app.services.ai_catalog import detailed_market_review
 from app.services.ai_read_tools import tool_schemas
 from app.services.ai_tool_budget import classify_tool
 
@@ -121,7 +122,8 @@ def pending_scope(request):
 def schema(request=None):
     """One semantic plan can propose the ordinary strict read-tool arguments."""
     read_branches = []
-    for tool in tool_schemas():
+    schemas = request['tool_schemas'] if request and detailed_market_review(request) else tool_schemas()
+    for tool in schemas:
         read_branches.append({
             'type': 'object', 'additionalProperties': False,
             'description': tool.get('description', ''),

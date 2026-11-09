@@ -666,7 +666,7 @@ function StockStrategies({
     (r: Row) => r.decision === decision,
   );
   return (
-    <div className="page-stack">
+    <div className="page-stack strategy-workspace">
       <div className="section-intro">
         <p>定义选股条件 → 运行真实行情 → 选择命中 → 加入对应策略跟踪池</p>
         <div className="button-group">
@@ -721,6 +721,7 @@ function StockStrategies({
           actions={
             <button
               className="icon-btn"
+              aria-label="刷新策略"
               title="刷新策略"
               onClick={result.reload}
             >
@@ -732,7 +733,12 @@ function StockStrategies({
           {result.loading ? (
             <Loading />
           ) : strategies.length ? (
-            <div className="strategy-list">
+            <div
+              className="strategy-list"
+              role="region"
+              aria-label="选股策略列表"
+              tabIndex={0}
+            >
               {strategies.map((s) => (
                 <div
                   className={`strategy-select-card ${batchSelection.selected.has(s.strategy_id) ? "checked" : ""}`}
@@ -753,6 +759,7 @@ function StockStrategies({
                       "strategy-card " +
                       (chosen?.strategy_id === s.strategy_id ? "active" : "")
                     }
+                    aria-pressed={chosen?.strategy_id === s.strategy_id}
                     disabled={!!busy}
                     onClick={() => setSelectedId(s.strategy_id)}
                   >

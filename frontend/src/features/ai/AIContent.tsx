@@ -1,6 +1,9 @@
 import { dateTime } from "../../lib/format";
 import {
+  aiReason,
   aiSourceLabel,
+  archivedNewsSources,
+  failedTask,
   itemText,
   metricSummary,
   plainText,
@@ -76,9 +79,8 @@ export function AIMessageView({
     assistant &&
     !streaming &&
     (message.partial === true ||
-      ["cancelled", "failed", "interrupted_manual_retry"].includes(
-        message.state,
-      ));
+      message.state === "cancelled" ||
+      failedTask(message.state));
   const modern = Array.isArray(result?.answer);
   const blocks: AIItem[] = modern ? result!.answer : [];
   const claims = (result?.selected_claim_ids || [])
@@ -110,8 +112,12 @@ export function AIMessageView({
     ),
   ];
   const sources = nativeWebSources(message);
+  const newsSources = assistant ? archivedNewsSources(message) : [];
   const hasSources =
-    sources.length > 0 || evidenceIds.length > 0 || metricIds.length > 0;
+    sources.length > 0 ||
+    newsSources.length > 0 ||
+    evidenceIds.length > 0 ||
+    metricIds.length > 0;
   return (
     <article
       className={`ai-message ${assistant ? "is-assistant" : "is-user"}`}
@@ -160,11 +166,15 @@ export function AIMessageView({
         </div>
       )}
       {incomplete && (
-        <p className="ai-incomplete-note">
-          {message.state === "cancelled"
-            ? "回答已停止，以下内容尚未完成。"
-            : "这次回答未完成，以下内容仅供核对。"}
-        </p>
+        <div className="ai-incomplete-note" role="status">
+          <strong>
+            {message.state === "cancelled" ? "回答已停止" : "回答未完成"}
+          </strong>
+          {message.state !== "cancelled" && message.reason_code && (
+            <p>{aiReason(message.reason_code)}</p>
+          )}
+          <p>已生成的片段仅供核对。</p>
+        </div>
       )}
       {streaming ? (
         <div className="ai-stream-text" aria-busy="true">
@@ -227,6 +237,18 @@ export function AIMessageView({
             metricIds={metricIds}
             context={context}
           />
+          {newsSources.length > 0 && (
+            <ol className="ai-native-sources" aria-label="本机归档原文">
+              {newsSources.map(({ url, title, source }) => (
+                <li key={JSON.stringify([url, title])}>
+                  <a href={url} target="_blank" rel="noopener noreferrer">
+                    {title}
+                  </a>
+                  {source && <span>{source} · 本机归档</span>}
+                </li>
+              ))}
+            </ol>
+          )}
           {sources.length > 0 && (
             <ol className="ai-native-sources">
               {sources.map((source) => (

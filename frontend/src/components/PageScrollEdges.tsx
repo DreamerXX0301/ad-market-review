@@ -19,11 +19,13 @@ export default function PageScrollEdges({
   sections,
   activeId,
   onNavigate,
+  inline = false,
 }: {
   label?: string;
   sections: ReadingSection[];
   activeId: string;
   onNavigate: (id: string) => void;
+  inline?: boolean;
 }) {
   const marker = useRef<HTMLSpanElement>(null);
   const [document, setDocument] = useState<Document | null>(null);
@@ -80,43 +82,46 @@ export default function PageScrollEdges({
     if (id && node && !pageHasModal(node.ownerDocument)) onNavigate(id);
   }
 
+  const controls = (visible || inline) && navigation.entries.length > 1 && (
+    <FloatingScrollControls
+      className={
+        inline
+          ? "page-scroll-edges is-inline" + (visible ? "" : " is-concealed")
+          : "page-scroll-edges"
+      }
+      label={`${label}上下节快捷导航`}
+      previous={{
+        label: `${label}上一节`,
+        caption: "上节",
+        title: navigation.previous
+          ? `上一节：${navigation.previous.label}`
+          : "已到第一节",
+        disabled: !navigation.previous,
+        icon: <ChevronUp size={18} />,
+        onClick: () => jump(navigation.previous?.id),
+      }}
+      next={{
+        label: `${label}下一节`,
+        caption: "下节",
+        title: navigation.next
+          ? `下一节：${navigation.next.label}`
+          : "已到最后一节",
+        disabled: !navigation.next,
+        icon: <ChevronDown size={18} />,
+        onClick: () => jump(navigation.next?.id),
+      }}
+      position={{
+        text: `${navigation.index + 1}/${navigation.entries.length}`,
+        label: `当前第 ${navigation.index + 1} 节，共 ${navigation.entries.length} 节：${navigation.current?.label || ""}`,
+      }}
+    />
+  );
   return (
     <>
       <span ref={marker} hidden />
-      {document &&
-        visible &&
-        navigation.entries.length > 1 &&
-        createPortal(
-          <FloatingScrollControls
-            className="page-scroll-edges"
-            label={`${label}上下节快捷导航`}
-            previous={{
-              label: `${label}上一节`,
-              caption: "上节",
-              title: navigation.previous
-                ? `上一节：${navigation.previous.label}`
-                : "已到第一节",
-              disabled: !navigation.previous,
-              icon: <ChevronUp size={18} />,
-              onClick: () => jump(navigation.previous?.id),
-            }}
-            next={{
-              label: `${label}下一节`,
-              caption: "下节",
-              title: navigation.next
-                ? `下一节：${navigation.next.label}`
-                : "已到最后一节",
-              disabled: !navigation.next,
-              icon: <ChevronDown size={18} />,
-              onClick: () => jump(navigation.next?.id),
-            }}
-            position={{
-              text: `${navigation.index + 1}/${navigation.entries.length}`,
-              label: `当前第 ${navigation.index + 1} 节，共 ${navigation.entries.length} 节：${navigation.current?.label || ""}`,
-            }}
-          />,
-          document.body,
-        )}
+      {inline
+        ? controls
+        : document && controls && createPortal(controls, document.body)}
     </>
   );
 }

@@ -34,6 +34,7 @@ export default function EmotionPageNavigation({
     [outlook, statistics, history, feedback, brokenBoard],
   );
   const root = useRef<HTMLDivElement>(null);
+  const menuItems = useRef<HTMLDivElement>(null);
   const selected = useRef<{
     id: string;
     anchor: EmotionScrollPosition | null;
@@ -187,19 +188,25 @@ export default function EmotionPageNavigation({
       )
         interruptScroll();
     };
-    const pageScroll = (event: Event) => {
+    const isPageScroll = (event: Event) => {
       const owner = root.current && pageScrollOwner(root.current);
-      if (
-        [document, document.documentElement, document.body, owner].includes(
-          event.target as Document | HTMLElement | null,
-        )
-      )
-        schedule();
+      return [
+        document,
+        document.documentElement,
+        document.body,
+        owner,
+      ].includes(event.target as Document | HTMLElement | null);
+    };
+    const pageScroll = (event: Event) => {
+      if (isPageScroll(event)) schedule();
+    };
+    const pageScrollEnd = (event: Event) => {
+      if (isPageScroll(event)) finishScroll();
     };
     // Briefs and stock tables must not move the page directory selection.
     document.addEventListener("scroll", pageScroll, true);
     document.addEventListener("toggle", schedule, true);
-    document.addEventListener("scrollend", finishScroll, true);
+    document.addEventListener("scrollend", pageScrollEnd, true);
     document.addEventListener("wheel", interruptScroll, {
       capture: true,
       passive: true,
@@ -217,13 +224,25 @@ export default function EmotionPageNavigation({
       window.clearTimeout(gesture);
       document.removeEventListener("scroll", pageScroll, true);
       document.removeEventListener("toggle", schedule, true);
-      document.removeEventListener("scrollend", finishScroll, true);
+      document.removeEventListener("scrollend", pageScrollEnd, true);
       document.removeEventListener("wheel", interruptScroll, true);
       document.removeEventListener("touchmove", interruptScroll, true);
       document.removeEventListener("keydown", interruptKey, true);
       window.removeEventListener("resize", schedule);
     };
   }, [date, sections, children]);
+
+  useEffect(() => {
+    const list = menuItems.current;
+    const current = list?.querySelector('[aria-current="location"]');
+    if (!list || !current || list.scrollWidth <= list.clientWidth) return;
+    const bounds = list.getBoundingClientRect();
+    const button = current.getBoundingClientRect();
+    if (button.left < bounds.left)
+      list.scrollLeft += button.left - bounds.left - 4;
+    else if (button.right > bounds.right)
+      list.scrollLeft += button.right - bounds.right + 4;
+  }, [active, available]);
 
   function navigate(id: string) {
     const element = document.getElementById(id);
@@ -247,16 +266,10 @@ export default function EmotionPageNavigation({
 
   return (
     <div className="emotion-reader" ref={root}>
-      <PageScrollEdges
-        label="市场情绪"
-        sections={sections.filter(({ id }) => available.includes(id))}
-        activeId={active}
-        onNavigate={navigate}
-      />
       {sections.length > 0 && (
         <nav className="emotion-reader-nav" aria-label="市场情绪页内目录">
           <strong>本页目录</strong>
-          <div>
+          <div className="emotion-reader-nav-items" ref={menuItems}>
             {sections
               .filter(({ id }) => available.includes(id))
               .map(({ id, label }, index) => (
@@ -272,6 +285,13 @@ export default function EmotionPageNavigation({
                 </button>
               ))}
           </div>
+          <PageScrollEdges
+            label="市场情绪"
+            sections={sections.filter(({ id }) => available.includes(id))}
+            activeId={active}
+            onNavigate={navigate}
+            inline
+          />
           <p>{date || "选择盘面日期"}</p>
         </nav>
       )}

@@ -41,6 +41,7 @@
 -- 038_intraday_briefs.sql sha256=e84574f5190c92ea2716d829e057d1c0718e3550b430a4e870bcedb339177bd0
 -- 039_auction_discovery.sql sha256=01681f2b4b20912a050e37256bb792c2482c15a0f46cd3622f3373b97ddd17da
 -- 040_auction_retention_30_days.sql sha256=77316c0066d358afe552f1d52043451505f0800d11443c80b6631128f3f07727
+-- 041_news_events.sql sha256=122d3bae86199b8715c7558a0c7338a767694cb14928c477a50b85cccea3d146
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -429,6 +430,34 @@ CREATE TABLE market_mainline_revision (
  UNIQUE(trade_date,instrument_id,revision),
  CHECK((action='revoke' AND json_array_length(attributions_json)=0)
     OR (action='replace' AND json_array_length(attributions_json) BETWEEN 1 AND 12))
+) STRICT;
+
+CREATE TABLE market_news_calendar_archive (
+    source TEXT NOT NULL,
+    captured_at TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    coverage_start TEXT CHECK(coverage_start IS NULL OR date(coverage_start, '+0 days') IS coverage_start),
+    coverage_end TEXT CHECK(coverage_end IS NULL OR date(coverage_end, '+0 days') IS coverage_end),
+    payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='array'
+        AND length(CAST(payload_json AS BLOB))<=2097152),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+    PRIMARY KEY (source, captured_at),
+    CHECK((coverage_start IS NULL AND coverage_end IS NULL)
+        OR (coverage_start IS NOT NULL AND coverage_end IS NOT NULL AND coverage_start<=coverage_end))
+) STRICT;
+
+CREATE TABLE market_news_snapshot (
+    trade_date TEXT NOT NULL CHECK(date(trade_date, '+0 days') IS trade_date),
+    stage TEXT NOT NULL CHECK(stage IN ('auction','noon','after_close')),
+    status TEXT NOT NULL CHECK(status IN ('complete','partial','unavailable')),
+    cutoff_at TEXT NOT NULL,
+    window_start_at TEXT,
+    captured_at TEXT NOT NULL,
+    reason TEXT,
+    payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='array'
+        AND length(CAST(payload_json AS BLOB))<=2097152),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+    PRIMARY KEY (trade_date, stage)
 ) STRICT;
 
 CREATE TABLE market_noon_capture (
@@ -1107,6 +1136,8 @@ CREATE INDEX live_pins ON retention_pin(snapshot_id,expires_at_ms);
 
 CREATE INDEX mainline_by_date_known ON market_mainline_revision(trade_date,recorded_at_ms,instrument_id,revision);
 
+CREATE INDEX market_news_snapshot_cutoff ON market_news_snapshot(cutoff_at DESC);
+
 CREATE INDEX noon_close_by_date ON market_noon_close_review(trade_date DESC,revision DESC);
 
 CREATE INDEX noon_close_items_filter ON market_noon_close_item(review_id,board_key,transition,final_board_count DESC,instrument_id);
@@ -1433,6 +1464,12 @@ BEGIN SELECT RAISE(ABORT,'retain immutable market collection authorization'); EN
 
 CREATE TRIGGER market_collection_retained BEFORE DELETE ON market_storage_collection
 BEGIN SELECT RAISE(ABORT,'retain market collection history'); END;
+
+CREATE TRIGGER market_news_calendar_no_update BEFORE UPDATE ON market_news_calendar_archive
+BEGIN SELECT RAISE(ABORT, '事件日历来源版本不可修改'); END;
+
+CREATE TRIGGER market_news_snapshot_no_update BEFORE UPDATE ON market_news_snapshot
+BEGIN SELECT RAISE(ABORT, '新闻快照归档后不可修改'); END;
 
 CREATE TRIGGER no_snapshot_id_replace BEFORE INSERT ON dataset_snapshot WHEN EXISTS(SELECT 1 FROM dataset_snapshot WHERE snapshot_id=NEW.snapshot_id) BEGIN SELECT RAISE(ABORT,'snapshot ID already exists; no replace'); END;
 

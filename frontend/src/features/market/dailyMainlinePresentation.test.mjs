@@ -140,6 +140,7 @@ assert.equal(
 );
 assert.equal(plan.groups[0].maxKnownHeight, 6);
 assert.equal(plan.otherGroups[1].kind, "catalyst");
+assert.deepEqual(plan.relatedGroups, []);
 assert.equal(plan.individualCues[1].sourceReason, rows[8].reason);
 assert.equal(
   plan.individualCues[1].evidence.matched_tag,
@@ -155,6 +156,58 @@ assert.deepEqual(
 );
 assert.equal(plan.globalHigh.height, 6);
 assert.equal(plan.globalHigh.unknownCount, 2);
+const relatedPayload = {
+  ...payload,
+  algorithm_version: "source-reason-directions-v3",
+  related_groups: [
+    group("robot", "机器人相关", "direction", [
+      ...payload.groups[0].members,
+      member(0, ["AI照明"]),
+    ]),
+    group("synthetic-crossover", "交叉方向", "direction", [
+      member(1, ["机器人电池"]),
+      member(4, ["消费"]),
+    ]),
+  ],
+};
+const related = build(relatedPayload);
+assert.equal(related.available, true);
+assert.deepEqual(
+  build({
+    ...relatedPayload,
+    algorithm_version: "source-reason-directions-v4",
+  }),
+  related,
+);
+assert.equal(related.total, plan.total);
+assert.deepEqual(related.groups, plan.groups);
+assert.deepEqual(related.globalHigh, plan.globalHigh);
+assert.deepEqual(
+  related.relatedGroups.map(({ key, count }) => [key, count]),
+  [
+    ["robot", 4],
+    ["synthetic-crossover", 2],
+  ],
+);
+for (const mutate of [
+  (group) => {
+    group.members[1] = group.members[0];
+  },
+  (group) => {
+    group.members[0].source_ref.snapshot_id = "old-snapshot";
+  },
+  (group) => {
+    group.members[0].matched_tag = "伪造命中词";
+    group.members[0].matched_tags = ["伪造命中词"];
+  },
+  (group) => {
+    group.kind = "catalyst";
+  },
+]) {
+  const invalid = structuredClone(relatedPayload);
+  mutate(invalid.related_groups[0]);
+  assert.equal(build(invalid).available, false);
+}
 assert.deepEqual(
   { rows, payload },
   before,

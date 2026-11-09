@@ -3,7 +3,7 @@
   --outlook-conditional: var(--green);
   --outlook-wait: var(--amber);
   display: grid;
-  gap: 18px;
+  gap: 14px;
   min-width: 0;
 }
 .market-outlook section[id] {
@@ -17,36 +17,38 @@
 .outlook-watchlist,
 .outlook-insights,
 .outlook-routes {
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
   background: var(--surface);
   overflow: hidden;
   min-width: 0;
 }
 .outlook-hero {
   --outlook-color: var(--blue);
+  --outlook-reading-pad: 22px;
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(250px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   background: linear-gradient(
     120deg,
-    color-mix(in srgb, var(--outlook-color) 9%, var(--surface)),
-    var(--surface) 75%
+    color-mix(in srgb, var(--outlook-color) 7%, var(--surface)),
+    var(--surface) 62%
   );
 }
 .outlook-stage-ice,
 .outlook-stage-ebb {
-  --outlook-color: #45b9bf;
+  --outlook-color: var(--cyan);
 }
 .outlook-stage-repair,
 .outlook-stage-broad_rise,
 .outlook-stage-climax {
-  --outlook-color: #efbd5c;
+  --outlook-color: var(--amber);
 }
 .outlook-stage-mixed {
-  --outlook-color: #af99ed;
+  --outlook-color: var(--accent-secondary);
 }
 .outlook-hero-main {
-  padding: 25px 28px 20px;
+  min-width: 0;
+  padding: 0 12px 10px var(--outlook-reading-pad);
 }
 .outlook-eyebrow {
   display: flex;
@@ -59,20 +61,34 @@
   margin-left: auto;
   font-size: var(--workbench-type-caption, 11px);
 }
+.outlook-reading-header {
+  grid-column: 1/-1;
+  padding: 14px var(--outlook-reading-pad) 11px;
+}
+.outlook-reading-header svg {
+  color: var(--outlook-color);
+}
+.outlook-reading-label {
+  color: var(--subtle);
+  font-size: var(--workbench-type-label, 12px);
+}
 .outlook-stage-title {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-top: 14px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-top: 4px;
 }
 .outlook-stage-title h2 {
   color: var(--outlook-color);
-  font-size: 36px;
+  font-size: clamp(25px, 3vw, 40px);
   line-height: 1.2;
   margin: 0;
-  letter-spacing: 1px;
 }
-.outlook-stage-title > span,
+.outlook-stage-title > span {
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+}
 .outlook-observation-tag {
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -80,11 +96,31 @@
   color: var(--muted);
   font-size: var(--workbench-type-caption, 11px);
 }
+.outlook-reading-context {
+  grid-column: 1/-1;
+  padding: 2px var(--outlook-reading-pad) 12px;
+}
+.outlook-reading-basis {
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  line-height: 1.7;
+}
 .outlook-summary {
-  font-size: 14px;
-  line-height: 1.8;
+  font-size: var(--workbench-type-body, 13px);
+  line-height: 1.7;
   color: var(--text);
-  margin: 12px 0 7px;
+  margin: 5px 0;
+}
+.outlook-stage-evidence {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  line-height: 1.7;
+}
+.outlook-stage-evidence > summary {
+  width: fit-content;
+  color: var(--blue);
+  cursor: pointer;
 }
 .outlook-reasons {
   padding-left: 17px;
@@ -98,7 +134,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px 10px;
-  margin: 14px 0;
+  margin: 4px 0;
   font-size: var(--workbench-type-label, 12px);
   line-height: 1.7;
 }
@@ -309,22 +345,19 @@
   white-space: nowrap;
 }
 .outlook-thermometer {
-  padding: 25px 28px 20px;
+  min-width: 0;
+  padding: 0 var(--outlook-reading-pad) 8px 16px;
   border-left: 1px solid var(--border-soft);
-}
-.outlook-thermometer > span {
-  font-size: var(--workbench-type-label, 12px);
-  color: var(--subtle);
 }
 .outlook-temperature-number {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  margin: 9px 0 15px;
+  gap: 5px;
+  margin: 4px 0 9px;
 }
 .outlook-temperature-number strong {
-  font-size: 48px;
-  line-height: 1.1;
+  font-size: clamp(29px, 3.5vw, 44px);
+  line-height: 1.05;
   color: var(--text);
   font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -332,10 +365,11 @@
 .outlook-temperature-number > span {
   font-size: var(--workbench-type-body, 13px);
   color: var(--muted);
+  white-space: nowrap;
 }
 .outlook-temperature-scale {
   position: relative;
-  height: 8px;
+  height: 6px;
   border-radius: 9px;
   background: linear-gradient(
     90deg,
@@ -350,11 +384,11 @@
 .outlook-temperature-scale i {
   display: block;
   width: 5px;
-  height: 16px;
+  height: 12px;
   background: var(--text);
   border: 1px solid var(--surface);
   position: absolute;
-  top: -4px;
+  top: -3px;
   transform: translateX(-50%);
   border-radius: 3px;
 }
@@ -366,26 +400,23 @@
   margin-top: 6px;
 }
 .outlook-thermometer p {
-  margin: 13px 0 5px;
-  font-size: var(--workbench-type-label, 12px);
+  margin: 6px 0 0;
+  font-size: var(--workbench-type-caption, 11px);
+  line-height: 1.6;
   color: var(--subtle);
-}
-.outlook-thermometer > small {
-  color: var(--muted);
-  font-size: var(--workbench-type-caption, 10px);
 }
 .outlook-axis-strip {
   grid-column: 1/-1;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   border-top: 1px solid var(--border-soft);
-  padding: 16px 28px;
-  gap: 22px;
-  background: color-mix(in srgb, var(--surface2) 45%, transparent);
+  padding: 10px var(--outlook-reading-pad);
+  gap: 12px;
 }
 .outlook-axis-strip > div {
   display: grid;
-  gap: 5px;
+  align-content: start;
+  gap: 2px;
   min-width: 0;
 }
 .outlook-axis-strip span {
@@ -404,7 +435,7 @@
 }
 .outlook-conflicts {
   grid-column: 1/-1;
-  padding: 11px 28px;
+  padding: 8px var(--outlook-reading-pad);
   border-top: 1px solid var(--border-soft);
   display: flex;
   gap: 12px;
@@ -832,18 +863,13 @@
   .outlook-action {
     padding: 12px;
   }
-  .outlook-hero-main,
-  .outlook-thermometer {
-    padding: 22px;
-  }
 }
 @media (max-width: 800px) {
   .outlook-hero {
-    grid-template-columns: 1fr;
+    --outlook-reading-pad: 13px;
   }
   .outlook-thermometer {
-    border-left: 0;
-    border-top: 1px solid var(--border-soft);
+    padding-left: 10px;
   }
   .outlook-actions,
   .outlook-context-grid,
@@ -856,9 +882,7 @@
     grid-template-columns: 1fr;
   }
   .outlook-axis-strip {
-    grid-template-columns: 1fr;
-    gap: 15px;
-    padding: 18px 22px;
+    gap: 8px;
   }
   .outlook-conflicts {
     flex-wrap: wrap;

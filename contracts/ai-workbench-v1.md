@@ -53,10 +53,14 @@ Provider含`provider_id,name,configured,enabled,model,config_revision,verificati
 ```text
 {kind:'stock'|'market',provider_id,consent:true,request_key,
  text?,instrument_id?,report_id?,as_of?,context_digest?,
- expected_config_revision?,expected_model?,allow_web?,attachments?}
+ expected_config_revision?,expected_model?,allow_web?,attachments?,news_context?}
 ```
 
 首问最多2000字符；空白兼容使用入口默认问题。instrument/report/as_of只是页面对象锚点；无有效研究、未发布当天日线或没有可发送预览，不妨碍创建对话和查询可用性。报告存在时可以取得其证券与行情截止；这不表示先前完整报告已经发给模型。context_digest保留兼容字段，新链路不要求匹配预览哈希。`allow_web`为旧客户端兼容字段，不控制本轮工具或构成用户模式选项。
+
+从「消息与事件」进入时使用 `kind:'market'` 和明确的 `as_of`。可选锚点 `news_context` 为 `{kind:'day'}`、`{kind:'news',source,id}` 或 `{kind:'event',source,id,days:7|30}`。日期按页面观察日解释，隔夜消息的发布时间仍按来源时间记录。消息和事件在服务端按锚点查找。打开对话后须主动发送才能开始解读。
+
+盘面总览的「AI 完整复盘」新草稿使用 `kind:'market'`、明确的 `as_of` 和 `market_scope:'full_review'`。该范围与个股、研究报告及 `news_context` 互斥。首问通过盘面复盘领域校验后，由服务端先执行一次 `read_market_overview(scope=selected_day)`，再将各盘面研究栏目的同日摘要、样本、来源及缺口交给模型。该读取按现有单次工具和轮次预算约束，只读本地归档，不回退其他日期。已取得证据时，跳过首轮计划中同日、无查询条件的重复总览或全档盘中摘要，保留具体追问和其他日期的读取。完整复盘会话的后续轮次可再次规划全量同日读取；普通会话沿用原流程。
 
 发送旁显示服务、资料查询与费用说明，点击发送对应本次`consent:true`；浏览、填建议问题或GET不产生授权调用。新前端提交看到的配置代际和模型，服务端短事务再次核对。
 
@@ -88,11 +92,13 @@ PDF最多20页，PDF/DOCX只在本地有界提取正文，不执行宏、脚本�
 
 用户说“今天/现在/最新”时，数据工具使用`today`并由服务器实际`Asia/Shanghai`时钟解析。页面as_of不是今天的替代值。工具结果的日期、实际采集窗口、报告期、获取/披露时间分别保存；现在取得的资料不倒填为历史当时可知。
 
-本地工具只由唯一worker内AI控制线程执行。工具种类和完整参数以[逐轮执行流程](../docs/AI对话执行流程.md)列出的八项能力及冻结协议为准：
+本地工具只由唯一worker内AI控制线程执行。工具种类和完整参数以[逐轮执行流程](../docs/AI对话执行流程.md)和每轮冻结协议为准：
 
 | 工具 | 参数 | 范围 |
 | --- | --- | --- |
 | `read_market_data` | `date:'today'|ISO,section` | section为availability/auction/noon/close/overview/fund_flow |
+| `read_news_events` | `scope:'selection'` | 在消息与事件会话内读取所选日、消息或日程的本地归档 |
+| `read_market_overview` | `scope:'selected_day'` | 在完整复盘首轮读取所选日的盘面研究摘要，包括历史监管名单和同日龙虎榜 |
 | `check_data_availability` | `date:'today'|ISO` | 检查资料与阶段，不采集 |
 | `read_stock_research` | `instrument_id`：完整代码、六位代码或准确证券名，最多80字符；空串沿用页面证券 | 名称与六位代码仅通过本地证券名录精确消歧，未命中或重名保持身份缺口，不借用页面其他证券、不联网；读取当前实例已存未过期v2报告，不延长TTL，不存在时仅可回退同股会话旧材料并说明旧日期 |
 
@@ -135,7 +141,11 @@ overview优先已发布日盘广度、四指数、成交额及前日队列反馈
 
 SSE为`text/event-stream`，类型`status/tool/delta/done/error`，事件data含task_id、session_id、seq、type及类型载荷；delta含text，tool含name/call_id/state/date/label等。事件ID为递增seq，after与Last-Event-ID取较大值续读；断开重连只读取已有事件，不重新付费生成。连接前先返回真实404；终态或临时事件已清理时done提示客户端GET最终消息。发送后离开页面不取消任务。
 
-每任务事件最多2048条、每事件最多8KiB，累计文本最多64KiB，最终消息封套最多256KiB。完成事件保留15分钟后由worker有界清理，最终历史不依赖delta长期保存。流中错误、取消、超时或进程重启可保存partial正文及已取得来源，不能展示成完整成功；重启后已发送未完成的请求不自动重发。
+任务终止前的 `error` 事件携带 `reason_code`。客户端在后续 `done` 确认终态时保留该原因，并优先读取已保存的助手消息。
+
+每任务事件最多2048条、每事件最多8KiB，累计文本最多64KiB，最终消息封套最多256KiB。完成事件保留15分钟后由worker有界清理，最终历史不依赖delta长期保存。流中错误、取消、超时或进程重启可保存partial正文及已取得来源，不能展示成完整成功；已发送未完成的请求不自动重发。错误事件与保存的助手消息携带可用的 `reason_code`，模型明确返回达到输出上限时记为 `output_truncated`。
+
+供应商流的 SSE 单事件和最终响应对象分别限制为192KiB，按实际事件边界计量，单个 HTTP 数据块可以包含多个事件。每次请求的累计传输预算为768KiB加冻结输出上限每token 1024字节的协议开销（输出上限最多12288 tokens）。此预算独立于64KiB正文、任务事件与最终消息的保存限制，不能用大量小事件或超大单事件绕过保护。
 
 ## 容量、历史与计费
 
@@ -145,7 +155,7 @@ SSE为`text/event-stream`，类型`status/tool/delta/done/error`，事件data含
 
 旧证据预览builder仍可构建最多64KiB的context（内容48KiB、单条6KiB、最多64条），用于原历史核对和兼容预览；该大小不代表新会话必须先取得整包材料。更早32KiB/48KiB及JSON指标验证的数字仅描述对应历史版本，不是当前新轮次的固定资料范围。
 
-共享默认限制为北京时间自然日0.50美元、20次；预算USD为0.01—100、次数1—200，配置超时30/45/60秒。新agent每个实际模型请求分别预留、再次核对并登记`ai_request_receipt`；一次用户问题可能有多次模型请求，不能把“一次发送”当一次供应商计费。父任务汇总子回执，不能重复计数；排队尚未发送的父任务也参与准入预留。验证按其独立任务计入预算。受控部署可显式配置`SHIXU_AI_AGENT_TIMEOUT_SECONDS=60|120`延长agent总截止，不能据此保证所有请求都完成。
+共享默认限制为北京时间自然日0.50美元、20次；预算USD为0.01—100、次数1—200，配置超时30/45/60秒。新agent每个实际模型请求分别预留、再次核对并登记`ai_request_receipt`；一次用户问题可能有多次模型请求，不能把“一次发送”当一次供应商计费。父任务汇总子回执，不能重复计数；排队尚未发送的父任务也参与准入预留。验证按其独立任务计入预算。受控部署可显式配置`SHIXU_AI_AGENT_TIMEOUT_SECONDS=60|120`延长普通agent总截止。新提交的完整复盘会话轮次冻结 `detailed-market-review-v1`，总时限为240秒，连接和无数据等待仍受普通超时约束。OpenAI 的正文子请求最多12288输出tokens，规划子请求和普通问答沿用原限制。队列与实际子请求均按对应上限预留，旧冻结轮次不改变。
 
 每次请求冻结当时价格与版本，按完整请求UTF-8字节保守估输入及最大输出预留。有效usage才估算结算，未知、超时、取消或断线保留pending和预留，不能当零费用。缓存写入和命中分别计价，reasoning是output内部明细。联网另加保守搜索预留；估算不是供应商发票、账户余额或硬消费上限。
 
@@ -190,5 +200,7 @@ schema35保存配置、会话和任务；schema36新增`ai_task_event/ai_request
 ### 同一实例的会话共享
 
 会话详情的 `active_task_id` 为 queued/running 任务 ID 或 null。`config_matches` 表示当前模型和凭据代际是否与会话绑定相容。两者均为只读状态。同会话提交在短事务中串行检查，重用相同请求键时返回原任务，另一项独立提交返回 `session_busy`。客户端保留未受理的草稿。SSE 按任务 ID 和序号续读。
+
+已终止的助手消息在有任务原因时返回 `reason_code`，用于重开历史后说明超时、取消或中断等状态。已收到的部分正文单独标明未完成，任务原因与是否结清费用分别展示。
 
 供应商更新中的 `limits` 支持部分字段。未提交的实例限制保留事务内当前值，保存响应绑定本次提交的配置修订。实例会话、配置和预算由访问该实例的人员共享。账户和租户归属属于独立设计范围。

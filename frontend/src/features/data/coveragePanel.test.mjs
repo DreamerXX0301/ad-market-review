@@ -126,7 +126,7 @@ const props = {
 };
 const markup = renderToStaticMarkup(createElement(CoveragePanel, props));
 assert.equal(
-  (markup.match(/<tr>/g) || []).length,
+  (markup.match(/<tr(?:\s[^>]*)?>/g) || []).length,
   9,
   "eight compact module rows plus one header",
 );
@@ -213,11 +213,7 @@ const scopedCoverage = renderToStaticMarkup(
   }),
 );
 assert.equal(
-  (
-    scopedCoverage.match(
-      /<td class="coverage-measure-covered"><div class="coverage-measure-line">/g,
-    ) || []
-  ).length,
+  (scopedCoverage.match(/class="coverage-measure-covered"/g) || []).length,
   3,
   "only exact counts with known coverage receive the completed style",
 );

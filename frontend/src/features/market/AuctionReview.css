@@ -1,5 +1,5 @@
 .auction-review {
-  gap: 16px;
+  gap: 12px;
 }
 .auction-page-head,
 .auction-head-actions,
@@ -15,9 +15,9 @@
   justify-content: space-between;
   margin-bottom: 2px;
 }
-.auction-page-head h1 {
-  margin: 7px 0 8px;
-  font-size: 25px;
+.auction-page-head h2 {
+  margin: 4px 0;
+  font-size: clamp(17px, 2vw, 21px);
   font-weight: 650;
 }
 .auction-page-head p,
@@ -64,16 +64,22 @@
   font-size: var(--workbench-type-caption, 11px);
   line-height: 1.6;
 }
+.auction-method {
+  color: var(--subtle);
+  font-size: var(--workbench-type-label, 12px);
+}
+.auction-method > summary {
+  width: fit-content;
+  padding: 5px 4px;
+  cursor: pointer;
+  color: var(--blue);
+}
 .auction-method-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 20px;
   padding: 17px 19px;
-  background: linear-gradient(
-    110deg,
-    color-mix(in srgb, var(--amber) 6%, var(--surface)),
-    var(--surface)
-  );
+  background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
 }
@@ -135,13 +141,16 @@
 .auction-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-.auction-metrics > div {
-  padding: 15px 17px;
   background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
+}
+.auction-metrics > div {
+  min-width: 0;
+  padding: 9px 13px;
+}
+.auction-metrics > div + div {
+  border-inline-start: 1px solid var(--border-soft);
 }
 .auction-metrics > div > span {
   color: var(--workbench-type-muted, var(--muted));
@@ -149,8 +158,8 @@
 }
 .auction-metrics strong {
   display: block;
-  margin: 9px 0 8px;
-  font-size: 23px;
+  margin: 4px 0;
+  font-size: 21px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -540,6 +549,12 @@
   .auction-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .auction-metrics > div:nth-child(3) {
+    border-inline-start: 0;
+  }
+  .auction-metrics > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border-soft);
+  }
   .auction-reading-grid {
     grid-template-columns: 1fr;
   }
@@ -558,9 +573,6 @@
   }
   .auction-panel-body {
     padding: 13px;
-  }
-  .auction-metrics {
-    gap: 8px;
   }
   .auction-metrics > div {
     padding: 12px;

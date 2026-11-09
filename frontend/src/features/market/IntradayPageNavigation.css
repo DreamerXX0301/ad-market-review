@@ -118,4 +118,18 @@
     padding: 8px 10px;
     white-space: nowrap;
   }
+  .intraday-page-directory.has-inline-section-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+    overflow: visible;
+  }
+  .has-inline-section-controls > .intraday-directory-items {
+    width: auto;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
 }

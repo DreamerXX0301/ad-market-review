@@ -48,6 +48,7 @@ export default function IntradayPageNavigation({
   pageTitle,
   pageActive = true,
   className = "",
+  inlineSectionNavigation = false,
   children,
 }: {
   scopeKey: string;
@@ -55,11 +56,13 @@ export default function IntradayPageNavigation({
   pageTitle?: string;
   pageActive?: boolean;
   className?: string;
+  inlineSectionNavigation?: boolean;
   children: ReactNode;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLElement>(null);
+  const menuItems = useRef<HTMLDivElement>(null);
   const pinned = useRef<string | null>(null);
   const pinUntil = useRef(0);
   const [entries, setEntries] = useState<
@@ -214,7 +217,7 @@ export default function IntradayPageNavigation({
   }, [scopeKey, pageActive, pageTitle]);
 
   useEffect(() => {
-    const nav = menu.current;
+    const nav = inlineSectionNavigation ? menuItems.current : menu.current;
     const button = nav?.querySelector<HTMLElement>(
       `[aria-controls="${active}"]`,
     );
@@ -226,7 +229,7 @@ export default function IntradayPageNavigation({
       nav.scrollLeft -= bounds.left - selected.left + 6;
     else if (selected.right > bounds.right)
       nav.scrollLeft += selected.right - bounds.right + 6;
-  }, [active, entries]);
+  }, [active, entries, inlineSectionNavigation]);
 
   function navigate(id: string) {
     const boundary = root.current;
@@ -274,25 +277,31 @@ export default function IntradayPageNavigation({
     });
   }
 
+  const sectionControls = pageActive && (
+    <PageScrollEdges
+      label={pageTitle || "盘中观察"}
+      sections={entries.map(({ id, key }) => ({
+        id,
+        label: intradayReadingSections[key].label,
+      }))}
+      activeId={active}
+      onNavigate={navigate}
+      inline={inlineSectionNavigation}
+    />
+  );
+
   return (
     <div
       className={`intraday-page-reader${entries.length ? "" : " is-empty"}${className ? " " + className : ""}`}
       ref={root}
     >
-      {pageActive && (
-        <PageScrollEdges
-          label={pageTitle || "盘中观察"}
-          sections={entries.map(({ id, key }) => ({
-            id,
-            label: intradayReadingSections[key].label,
-          }))}
-          activeId={active}
-          onNavigate={navigate}
-        />
-      )}
+      {!inlineSectionNavigation && sectionControls}
       {entries.length > 0 && (
         <nav
-          className="intraday-page-directory"
+          className={
+            "intraday-page-directory" +
+            (inlineSectionNavigation ? " has-inline-section-controls" : "")
+          }
           aria-label={(pageTitle || "盘中观察") + "页内目录"}
           ref={menu}
         >
@@ -300,7 +309,7 @@ export default function IntradayPageNavigation({
             <strong>{pageTitle ? "本页目录" : "本档目录"}</strong>
             {label && <small>{label}</small>}
           </div>
-          <div className="intraday-directory-items">
+          <div className="intraday-directory-items" ref={menuItems}>
             {entries.map(({ id, key }, index) => (
               <button
                 type="button"
@@ -315,6 +324,7 @@ export default function IntradayPageNavigation({
               </button>
             ))}
           </div>
+          {inlineSectionNavigation && sectionControls}
         </nav>
       )}
       <div className="intraday-page-reader-main" ref={main}>

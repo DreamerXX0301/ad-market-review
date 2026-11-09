@@ -33,7 +33,7 @@ _BRIEF_KIND = {'auction': 'auction', 'noon': 'noon', 'close': 'noon_close'}
 MAX_DETAIL_ROWS = 30
 
 
-def tool_schemas():
+def tool_schemas(*, include_news=False, include_full_review=False):
     """Responses function tools; names/arguments never accept filesystem/SQL."""
     specs = [
         ('read_market_data', '读取本地已保存的指定日盘面；today按服务器北京时间解析。overview优先完成日广度/指数/成交额及各时点可用性；无完成日行情时附最新已存时点摘要。比较竞价/午间/收盘应分别读auction/noon/close。noon自动串同日竞价、截至午评实际结束已完成的上午观察与午评本体；close串联截至原正式收盘的竞价、盘中各档、午评及正式封板/炸板池，缺档保持未知。密集累计按phase_fact_columns解析values/rows和省略计数数组，null未知。auction包含已核验竞价发现和10:00同股开盘对照（如已保存），覆盖只限异动样本。未到时点与已到但未采集分开；成交额不是净流入。',
@@ -64,6 +64,14 @@ def tool_schemas():
           'section': {'type': 'string', 'enum': list(DETAIL_SECTIONS)},
           'query': {'type': 'string', 'description': '最多80字符。gainers_related传分类名称关键词，如电池；gainers_topic传真实topic_id。其他分区不筛选传空串。'}}, ['date', 'section', 'query']),
     ]
+    if include_news:
+        from app.services.ai_news_context import TOOL_DESCRIPTION, TOOL_NAME
+        specs.append((TOOL_NAME, TOOL_DESCRIPTION,
+                      {'scope': {'type': 'string', 'enum': ['selection']}}, ['scope']))
+    if include_full_review:
+        from app.services.ai_full_market_review import TOOL_DESCRIPTION, TOOL_NAME
+        specs.append((TOOL_NAME, TOOL_DESCRIPTION,
+                      {'scope': {'type': 'string', 'enum': ['selected_day']}}, ['scope']))
     return [{'type': 'function', 'name': name, 'description': description, 'strict': True,
              'parameters': {'type': 'object', 'properties': properties, 'required': required,
                             'additionalProperties': False}}
@@ -171,6 +179,15 @@ def _market(heads=None):
     return MarketData(data_dir(), snapshot_id=snapshot or '')
 
 
+def _pinned_market(heads, market=None):
+    if market is None:
+        return _market(heads)
+    expected = heads.get('daily_raw', {}).get('market_snapshot_id')
+    if expected and market.status().get('snapshot_id') != expected:
+        raise HTTPException(409, '读取期间发布代际变化，请重试')
+    return market
+
+
 def _availability(day, now, *, allow_market_calendar=True):
     selected, settings, all_heads = {}, [], {}
     for label, path in _paths():
@@ -255,10 +272,10 @@ def _add_blocks(result, day, selected, kinds, *, cutoff=None, include_auction_op
                 result['gaps'].append(gap)
 
 
-def _published_overview(result, day):
+def _published_overview(result, day, *, market=None, turnover_only=False):
     before = _heads()
     supplement_before = _supplement_head()
-    market = _market(before)
+    market = _pinned_market(before, market)
     status = market.status()
     if not status.get('ready') or day not in market.calendar():
         _gap(result, 'completed_market', '当前实例没有所选日完成日行情；不以旧日行情代称今天')
@@ -272,22 +289,30 @@ def _published_overview(result, day):
     pools, fingerprint = _load_supplement_with_fingerprint(status['snapshot_id'], dates=dates,
         fields=('public_pools', 'annual_pools', 'annual_down_pools'))
     reference = {**market.reference(), '_supplement': pools}
-    description = describe_sentiment(market, reference, market.panel(day), day)
+    if _denied(status) or _denied(reference) or _source_denied(pools):
+        _gap(result, 'source_permission', '所选盘面来源限制AI处理')
+        return False
     context = contexts._base('market_review', '所选日已发布盘面', day)
-    contexts._dimension(context, 'market_distribution', '当日严格可比A股分布', description['market'], day)
-    for item in description['index_environment']['indices']:
-        contexts._dimension(context, 'index:' + item['instrument_id'], item['name'], item, day)
+    if not turnover_only:
+        description = describe_sentiment(market, reference, market.panel(day), day)
+        contexts._dimension(context, 'market_distribution', '当日严格可比A股分布', description['market'], day)
+        for item in description['index_environment']['indices']:
+            contexts._dimension(context, 'index:' + item['instrument_id'], item['name'], item, day)
     contexts._turnover(context, market, day, calendar)
-    short = description['short_term']
-    contexts._dimension(context, 'previous_limit_up', '前日已确认涨停队列反馈',
-        {key: value for key, value in short.items() if key != 'groups'}, day,
-        dates={'trade_date': day, 'cohort_date': previous})
-    for group in short.get('groups', []):
-        if group.get('cohort_price_feedback', {}).get('observed_count'):
-            contexts._dimension(context, 'cohort:' + group['id'], group['label'] + '价格反馈',
-                group['cohort_price_feedback'], day, dates={'trade_date': day, 'cohort_date': previous})
+    if not turnover_only:
+        short = description['short_term']
+        contexts._dimension(context, 'previous_limit_up', '前日已确认涨停队列反馈',
+            {key: value for key, value in short.items() if key != 'groups'}, day,
+            dates={'trade_date': day, 'cohort_date': previous})
+        for group in short.get('groups', []):
+            if group.get('cohort_price_feedback', {}).get('observed_count'):
+                contexts._dimension(context, 'cohort:' + group['id'], group['label'] + '价格反馈',
+                    group['cohort_price_feedback'], day, dates={'trade_date': day, 'cohort_date': previous})
     sectors, sector_fp = _load_supplement_with_fingerprint(status['snapshot_id'], dates=(day,), fields=('sector_index_history',))
-    contexts._sectors(context, sectors, day)
+    if _source_denied(sectors):
+        _gap(result, 'source_permission', '所选板块来源限制AI处理')
+    elif not turnover_only:
+        contexts._sectors(context, sectors, day)
     result['evidence'].extend(context['evidence'])
     result['metrics'].extend(context['metrics'])
     result['gaps'].extend(context['gaps'])
@@ -467,9 +492,9 @@ def _completion_gap_state(day, now, calendar):
             and now < datetime.combine(date.fromisoformat(day), time(15), CHINA) else 'unknown')
 
 
-def _completed_market(result, day, now):
+def _completed_market(result, day, now, *, market=None):
     heads, supplement = _heads(), _supplement_head()
-    market = _market(heads); status = market.status()
+    market = _pinned_market(heads, market); status = market.status()
     calendar = market.calendar()
     requested_day = day
     if requested_day == 'latest':
@@ -585,8 +610,8 @@ def _stock_quote(result, identifier, day, page, now):
     _bind_detail(result, day, {'date': day, 'snapshot_id': status.get('snapshot_id'), 'instrument': identity, 'quote': quote}, heads, supplement)
 
 
-def _limit_up(result, day, now):
-    available = _completed_market(result, day, now)
+def _limit_up(result, day, now, *, market=None, full_review=False):
+    available = _completed_market(result, day, now, market=market)
     if available is None: return
     market, status, heads, supplement = available
     from app.services.market_supplement import _load_supplement_with_fingerprint
@@ -631,6 +656,9 @@ def _limit_up(result, day, now):
             'complete', 'member_count', 'unknown_member_count', 'membership_observed_date', 'reason')) for row in data.get('theme_counts', [])], maximum=12),
         'theme_coverage': _coverage(data.get('theme_coverage')), 'units': {'counts': '家', 'height': '板', 'amount': 'CNY'},
         'scope': '已保存并核验的收盘涨停样本；数量完整性与名单截取分别标注，题材归属重叠不可加总'}
+    if full_review:
+        from app.services.ai_full_market_review import project_ladder_review
+        projection['review_details'] = project_ladder_review(data, rows, groups)
     if not exact: _gap(result, 'limit_up_coverage', coverage.get('reason') or '来源池、报价或来源高度未完整，已确认家数和高度仅描述已观察样本')
     result['evidence'] = [{'evidence_id': 'limit_up', 'source': 'local_verified_closing_ladder', 'kind': 'limit_up_details',
         'title': '指定日涨停梯队和分类', 'dates': {'trade_date': day}, 'data': _fit_detail(projection)}]
@@ -638,18 +666,32 @@ def _limit_up(result, day, now):
     result['source_bindings']['published_detail']['pool_projection_sha256'] = digest(fp) if fp else None
 
 
-def _market_detail(result, day, section, query, now):
+def _market_detail(result, day, section, query, now, *, market=None, full_review=False):
     if section in ('auction', 'noon'):
         from app.services.ai_review_detail import fill_review_detail
         fill_review_detail(result, day, section, query, now)
         return
-    available = _completed_market(result, day, now)
+    available = _completed_market(result, day, now) if market is None else _completed_market(result, day, now, market=market)
     if available is None: return
     market, status, heads, supplement = available
     if day == 'latest':
         day = result['date']
     market.business_read_connection = _business_read_connection
     from app.services import market_service
+    if section == 'emotion' and full_review:
+        from app.services.market_broken_boards import MAX_DAYS
+        from app.services.market_supplement import _load_supplement_with_fingerprint
+
+        days = tuple(target for target in market.calendar() if target <= day)[-MAX_DAYS:]
+        pools, _ = _load_supplement_with_fingerprint(status['snapshot_id'], dates=days,
+                                                    fields=('public_pools', 'annual_pools', 'annual_down_pools'))
+        reference = market.reference()
+        relevant = [pools, *(reference.get('pool_history', {}).get(target, {}) for target in days)]
+        if reference.get('pool_trade_date') in days:
+            relevant.extend(reference.get(key) for key in ('limitup', 'limitdown', 'breakpool', 'pool_coverage'))
+        if any(_source_denied(value) for value in relevant):
+            _gap(result, 'source_permission', '所选情绪与炸板来源明确限制AI处理或外发')
+            return
     lookup_mode = GAINERS_LOOKUP_MODES.get(section)
     kind = 'gainers' if lookup_mode else 'broken-boards' if section == 'broken_boards' else section
     if section == 'dragon_tiger':
@@ -723,6 +765,12 @@ def _market_detail(result, day, section, query, now):
         projection = {'sectors': _table([_pick_fields(row, fields) for row in data.get('items', [])], total=data.get('total')),
             'quote_coverage': _coverage(data.get('quote_coverage')), 'membership_coverage': _coverage(data.get('membership_coverage')),
             'scope': '指定日已留存板块指数；缺历史成员不抹去指数行情，涨跌停及成员数缺档保持未知；成交额不是净流入'}
+        if full_review:
+            from app.services.ai_full_market_review import project_sector_review
+            projection['strong_weak'] = project_sector_review(data, day)
+    elif section == 'emotion' and full_review:
+        from app.services.ai_full_market_review import project_emotion_review
+        projection = project_emotion_review(data, day)
     elif section == 'emotion':
         outlook = data.get('market_outlook', {})
         watch = outlook.get('watchlist', {})
@@ -1022,14 +1070,23 @@ def _bounded(result):
 
 def execute_read_tool(name, args, *, page_context=None, fallback_context=None, include_auction_opening=True):
     """Execute declared local reads; always return bounded JSON, never collect."""
-    result = _result(name if name in {r['name'] for r in tool_schemas()} else 'unknown')
+    contextual = ('read_news_events', 'read_market_overview')
+    result = _result(name if name in contextual or name in {r['name'] for r in tool_schemas()} else 'unknown')
     try:
         if not isinstance(args, dict):
             raise ValueError('工具参数须为对象')
         if page_context is not None and not isinstance(page_context, dict) or fallback_context is not None and not isinstance(fallback_context, dict):
             raise ValueError('页面或回退资料格式无效')
         now = local_now()
-        if name == 'read_stock_research':
+        if name == 'read_news_events':
+            from app.services.ai_news_context import fill_news_context
+            classify_tool(name, args)
+            fill_news_context(result, page_context or {})
+        elif name == 'read_market_overview':
+            from app.services.ai_full_market_review import fill_full_review
+            classify_tool(name, args)
+            fill_full_review(result, page_context or {})
+        elif name == 'read_stock_research':
             classify_tool(name, args)
             _research(result, args['instrument_id'], page_context or {}, fallback_context or {}, now)
         elif name == 'read_stock_trend':

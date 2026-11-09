@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 40,
+  "migration_version": 41,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -158,15 +158,19 @@
     {
       "name": "040_auction_retention_30_days.sql",
       "sha256": "77316c0066d358afe552f1d52043451505f0800d11443c80b6631128f3f07727"
+    },
+    {
+      "name": "041_news_events.sql",
+      "sha256": "122d3bae86199b8715c7558a0c7338a767694cb14928c477a50b85cccea3d146"
     }
   ],
   "counts": {
-    "table": 80,
-    "index": 53,
+    "table": 82,
+    "index": 54,
     "view": 1,
-    "trigger": 149
+    "trigger": 151
   },
-  "schema_sha256": "0e1d002d91656a2ff319d9ea269df2574bdc273e68ee527199b15d65019d9924",
+  "schema_sha256": "afca9dfa6933d0d4a2db89517beda7530fdb8f01c67ec2fac6bbf0928d3a5ec3",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -3322,6 +3326,150 @@
         "chain_mainline_revision",
         "retain_mainline_revision_delete",
         "retain_mainline_revision_update"
+      ]
+    },
+    "market_news_calendar_archive": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "source",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "captured_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "source_url",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "coverage_start",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "coverage_end",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "payload_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "content_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [],
+      "triggers": [
+        "market_news_calendar_no_update"
+      ]
+    },
+    "market_news_snapshot": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "stage",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "cutoff_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "window_start_at",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "captured_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "reason",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "payload_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "content_sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [],
+      "triggers": [
+        "market_news_snapshot_no_update"
       ]
     },
     "market_noon_capture": {

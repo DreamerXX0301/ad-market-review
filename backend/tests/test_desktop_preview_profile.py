@@ -16,7 +16,8 @@ from app.infrastructure import database as app_db
 from app.infrastructure.file_operations import locked_file
 from desktop_preview import profile
 from desktop_preview.profile import (
-    LEGACY_COMMIT, LEGACY_NATIVE_COMMIT, LEGACY_TRAY_COMMIT, import_legacy, roots, select_import_source,
+    LEGACY_COMMIT, LEGACY_NATIVE_COMMIT, LEGACY_NATIVE_V2_COMMIT, LEGACY_TRAY_COMMIT,
+    import_legacy, roots, select_import_source,
 )
 
 _OLD = {"format": 1, "app_version": "0.1.24"}
@@ -31,19 +32,21 @@ def _old_lock(old):
     return old / "instance.lock"
 
 
-@pytest.fixture(params=("first_preview", "tray", "native_v1"))
+@pytest.fixture(params=("first_preview", "tray", "native_v1", "native_v2"))
 def profiles(tmp_path, monkeypatch, request):
     license_dir = tmp_path / "app" / "license-preview-v1" / ("b" * 20)
-    preview, tray, native_v1, new = roots(license_dir)
+    preview, tray, native_v1, native_v2, new = roots(license_dir)
     old, commit = {
         "first_preview": (preview, LEGACY_COMMIT),
         "tray": (tray, LEGACY_TRAY_COMMIT),
         "native_v1": (native_v1, LEGACY_NATIVE_COMMIT),
+        "native_v2": (native_v2, LEGACY_NATIVE_V2_COMMIT),
     }[request.param]
     old.mkdir(parents=True)
     new.parent.mkdir()
     _old_lock(old).touch()
-    core.atomic_json(old / "release.json", {**_OLD, "source_commit": commit})
+    old_version, old_schema = ("0.1.26", 40) if old == native_v2 else ("0.1.24", 39)
+    core.atomic_json(old / "release.json", {**_OLD, "source_commit": commit, "app_version": old_version})
 
     data = old / "data"
     for name in ("SHIXU_SQLITE_PATH", "SHIXU_PUBLISHED_DIR", "SHIXU_CREDENTIAL_DIR",
@@ -54,7 +57,7 @@ def profiles(tmp_path, monkeypatch, request):
     prior_migrations = tmp_path / "old-migrations"
     prior_migrations.mkdir()
     for migration in app_db.MIGRATIONS_DIR.glob("[0-9]*.sql"):
-        if int(migration.name.split("_", 1)[0]) <= 39:
+        if int(migration.name.split("_", 1)[0]) <= old_schema:
             shutil.copyfile(migration, prior_migrations / migration.name)
     with monkeypatch.context() as old_schema:
         old_schema.setattr(app_db, "MIGRATIONS_DIR", prior_migrations)
@@ -150,14 +153,18 @@ def test_import_preserves_legacy_bytes_and_restores_wal_evidence(profiles, tmp_p
     key = (new / "secrets/credential-master.key").read_bytes()
     assert Fernet(key).decrypt((new / "data/credentials/fuyao.enc").read_bytes()) == b"test-only-provider-key"
 
+    old_record = json.loads((old / "release.json").read_bytes())
+    old_schema = 40 if old_record["app_version"] == "0.1.26" else 39
     with closing(sqlite3.connect(new / "data/business/app.sqlite3")) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (40,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (41,)
+        assert connection.execute("SELECT COUNT(*) FROM market_news_snapshot").fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM market_news_calendar_archive").fetchone() == (0,)
         assert connection.execute("SELECT * FROM market_auction_purge").fetchone() == _PURGE
         assert connection.execute("SELECT business_date FROM business_clock").fetchone() == ("2026-11-06",)
         sha = connection.execute(
-            "SELECT sha256 FROM _schema_migration WHERE name='040_auction_retention_30_days.sql'"
+            "SELECT sha256 FROM _schema_migration WHERE name='041_news_events.sql'"
         ).fetchone()[0]
-        assert sha == core.hash_file(app_db.MIGRATIONS_DIR / "040_auction_retention_30_days.sql")
+        assert sha == core.hash_file(app_db.MIGRATIONS_DIR / "041_news_events.sql")
         assert sha == receipt["migration_sha256"]
         assert connection.execute("SELECT status FROM job WHERE job_id='active'").fetchone() == ("paused",)
         assert connection.execute("SELECT snapshot_id FROM published_head").fetchone() == ("old-calendar",)
@@ -169,9 +176,9 @@ def test_import_preserves_legacy_bytes_and_restores_wal_evidence(profiles, tmp_p
     archive = new / "migration/recovery.zip"
     assert core.hash_file(archive) == receipt["archive_sha256"]
     assert receipt["paused_jobs"] == 1
-    assert receipt["source_schema"] == 39 and receipt["schema"] == 40
+    assert receipt["source_schema"] == old_schema and receipt["schema"] == 41
     assert receipt["business_rows"]["market_auction_purge"] == 1
-    old_commit = json.loads((old / "release.json").read_bytes())["source_commit"]
+    old_commit = old_record["source_commit"]
     assert receipt["source_commit"] == old_commit
     assert receipt["source_profile"] == old.parent.name
     assert receipt["available_bytes_before"] > 0 and receipt["available_bytes_after"] > 0
@@ -186,7 +193,7 @@ def test_import_preserves_legacy_bytes_and_restores_wal_evidence(profiles, tmp_p
         old_copy = tmp_path / "rollback-check.sqlite3"
         old_copy.write_bytes(recovery.read("standard/business/app.sqlite3"))
     with closing(sqlite3.connect(old_copy)) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone() == (39,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (old_schema,)
         assert connection.execute("SELECT status FROM job WHERE job_id='active'").fetchone() == ("queued",)
         assert connection.execute("SELECT * FROM market_auction_purge").fetchone() == _PURGE
     assert not list(new.parent.glob(".tray-import-*"))
@@ -234,34 +241,37 @@ def test_import_refuses_master_key_copies_in_archived_data(profiles):
     assert not new.exists()
 
 
-def _fixture_database(root, commit):
+def _fixture_database(root, commit, *, version="0.1.24"):
     database = root / "data/business/app.sqlite3"
     database.parent.mkdir(parents=True, exist_ok=True)
     database.touch()
-    core.atomic_json(root / "release.json", {**_OLD, "source_commit": commit})
+    core.atomic_json(root / "release.json", {**_OLD, "source_commit": commit, "app_version": version})
     return database
 
 
 def test_source_selection_prefers_native_then_tray_then_first_preview(tmp_path):
-    preview, tray, native_v1, native_v2 = roots(tmp_path / "app/license-preview-v1" / ("b" * 20))
-    assert select_import_source(preview, tray, native_v1) is None
-    assert native_v2.parent.name == "workbench-tray-native-v2"
+    preview, tray, native_v1, native_v2, target = roots(tmp_path / "app/license-preview-v1" / ("b" * 20))
+    assert select_import_source(preview, tray, native_v1, native_v2) is None
+    assert target.parent.name == "workbench-tray-native-v3"
 
     _fixture_database(preview, LEGACY_COMMIT)
-    assert select_import_source(preview, tray, native_v1) == preview
+    assert select_import_source(preview, tray, native_v1, native_v2) == preview
 
     (tray / "data/business").mkdir(parents=True)
-    assert select_import_source(preview, tray, native_v1) == preview
+    assert select_import_source(preview, tray, native_v1, native_v2) == preview
     _fixture_database(tray, LEGACY_TRAY_COMMIT)
-    assert select_import_source(preview, tray, native_v1) == tray
+    assert select_import_source(preview, tray, native_v1, native_v2) == tray
 
     _fixture_database(native_v1, LEGACY_NATIVE_COMMIT)
-    assert select_import_source(preview, tray, native_v1) == native_v1
-    assert not native_v2.parent.exists()
+    assert select_import_source(preview, tray, native_v1, native_v2) == native_v1
+
+    _fixture_database(native_v2, LEGACY_NATIVE_V2_COMMIT, version="0.1.26")
+    assert select_import_source(preview, tray, native_v1, native_v2) == native_v2
+    assert not target.parent.exists()
 
 
 def test_source_selection_refuses_incomplete_or_mismatched_newest_data(tmp_path):
-    preview, tray, native_v1, _ = roots(tmp_path / "app/license-preview-v1" / ("b" * 20))
+    preview, tray, native_v1, native_v2, _ = roots(tmp_path / "app/license-preview-v1" / ("b" * 20))
     _fixture_database(preview, LEGACY_COMMIT)
     _fixture_database(tray, LEGACY_TRAY_COMMIT)
     newest_business = native_v1 / "data/business"
@@ -269,10 +279,10 @@ def test_source_selection_refuses_incomplete_or_mismatched_newest_data(tmp_path)
     (newest_business / "app.sqlite3-wal").touch()
 
     with pytest.raises(ValueError, match="缺少主文件"):
-        select_import_source(preview, tray, native_v1)
+        select_import_source(preview, tray, native_v1, native_v2)
     _fixture_database(native_v1, LEGACY_TRAY_COMMIT)
     with pytest.raises(ValueError, match="旧版发行标记"):
-        select_import_source(preview, tray, native_v1)
+        select_import_source(preview, tray, native_v1, native_v2)
 
 
 def test_wrong_migration_prefix_never_publishes(profiles):
@@ -298,7 +308,7 @@ def test_interrupted_migration_leaves_old_profile_and_allows_retry(profiles, mon
         assert database.is_relative_to(new.parent) and not database.is_relative_to(old)
         real_ensure()
         with closing(sqlite3.connect(database)) as connection:
-            assert connection.execute("PRAGMA user_version").fetchone() == (40,)
+            assert connection.execute("PRAGMA user_version").fetchone() == (41,)
         raise OSError("synthetic migration interruption")
 
     with monkeypatch.context() as failure:
@@ -308,5 +318,5 @@ def test_interrupted_migration_leaves_old_profile_and_allows_retry(profiles, mon
     assert not new.exists()
     assert not list(new.parent.glob(".tray-import-*"))
     assert _contents(old) == before
-    assert import_legacy(old, new, _NEW)["schema"] == 40
+    assert import_legacy(old, new, _NEW)["schema"] == 41
     assert _contents(old) == before

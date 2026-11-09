@@ -840,9 +840,18 @@
   }
 }
 .ai-incomplete-note {
-  font-size: var(--workbench-type-caption, 11px);
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-inline-start: 2px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-label, 12px);
+}
+.ai-incomplete-note strong {
   color: var(--amber);
-  margin-bottom: 8px;
+}
+.ai-incomplete-note p {
+  margin: 4px 0 0;
 }
 .ai-message-more {
   color: var(--subtle);

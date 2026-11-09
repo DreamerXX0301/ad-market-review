@@ -1,6 +1,7 @@
 .dragon-tiger-page {
   display: grid;
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
 }
 .dragon-tiger-page .stock-name-link {
   border: 0;
@@ -20,13 +21,13 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
-  padding: 18px 20px;
+  gap: 8px 12px;
+  padding: 12px 16px;
 }
 .dragon-tiger-search {
   position: relative;
   flex: 1;
-  min-width: 220px;
+  min-width: min(220px, 100%);
   max-width: 360px;
   margin-left: auto;
 }
@@ -43,30 +44,32 @@
 .dragon-tiger-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 .dragon-tiger-summary > section {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  padding: 20px;
-  border-radius: 12px;
+  padding: 11px 15px;
   display: grid;
-  gap: 14px;
+  gap: 5px;
   min-width: 0;
+}
+.dragon-tiger-summary > section + section {
+  border-inline-start: 1px solid var(--border-soft);
 }
 .dragon-tiger-summary span {
   color: var(--workbench-type-muted, var(--muted));
   font-size: var(--workbench-type-label, 12px);
 }
 .dragon-tiger-summary strong {
-  font-size: 25px;
+  font-size: 22px;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 .dragon-tiger-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) clamp(220px, 19vw, 310px);
+  gap: 14px;
   align-items: start;
 }
 .dragon-tiger-grid > * {
@@ -74,14 +77,19 @@
 }
 .dragon-tiger-side {
   display: grid;
-  gap: 20px;
+  gap: 14px;
 }
 .dragon-tiger-table-scroll {
   overflow: auto;
+  max-width: 100%;
+}
+.dragon-tiger-table-scroll:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
 }
 .dragon-tiger-table {
   width: 100%;
-  min-width: 900px;
+  min-width: 700px;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: var(--workbench-type-body, 13px);
@@ -105,16 +113,16 @@
 }
 .dragon-tiger-table th,
 .dragon-tiger-table td {
-  padding: 16px;
+  padding: 10px 11px;
   text-align: left;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 .dragon-tiger-table th:first-child {
-  width: 26%;
+  width: 23%;
 }
 .dragon-tiger-table th:nth-child(2) {
-  width: 10%;
+  width: 13%;
 }
 .dragon-tiger-table th:nth-child(n + 3) {
   width: 16%;
@@ -154,6 +162,12 @@
 }
 .dragon-tiger-sort.active {
   color: var(--blue);
+}
+.dragon-tiger-sort svg {
+  flex-shrink: 0;
+}
+.dragon-tiger-sort span {
+  white-space: normal;
 }
 .dragon-tiger-code {
   display: flex;
@@ -419,10 +433,15 @@
 @media (max-width: 760px) {
   .dragon-tiger-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
   }
   .dragon-tiger-summary > section {
-    padding: 15px;
+    padding: 9px 12px;
+  }
+  .dragon-tiger-summary > section:nth-child(odd) {
+    border-inline-start: 0;
+  }
+  .dragon-tiger-summary > section:nth-child(n + 3) {
+    border-top: 1px solid var(--border-soft);
   }
   .dragon-tiger-summary strong,
   .dragon-tiger-seat-summary strong {
@@ -433,8 +452,23 @@
     padding: 14px;
   }
   .dragon-tiger-search {
+    flex-basis: 100%;
     margin-left: 0;
     max-width: none;
+  }
+  .dragon-tiger-table :is(th, td):first-child {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 1;
+    background: var(--surface);
+    box-shadow: 1px 0 var(--border-soft);
+  }
+  .dragon-tiger-table th:first-child {
+    background: var(--surface2);
+    z-index: 2;
+  }
+  .dragon-tiger-table tr.selected td:first-child {
+    background: color-mix(in srgb, var(--blue) 7%, var(--surface));
   }
   .dragon-tiger-side {
     grid-template-columns: 1fr;

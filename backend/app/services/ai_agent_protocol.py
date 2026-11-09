@@ -38,7 +38,16 @@ def page_anchor(session, context):
         'kind':session.get('kind'), 'subject':context.get('subject') or context.get('instrument',{}).get('name'),
         'instrument_id':session.get('instrument_id') or context.get('instrument_id'),
         'as_of':session.get('as_of') or context.get('as_of'),
-        'report_id':session.get('report_id') or context.get('report_id') or context.get('source_report_id')}.items() if value not in (None,'')}
+        'report_id':session.get('report_id') or context.get('report_id') or context.get('source_report_id'),
+        'news_context':context.get('news_context'),
+        'market_scope':context.get('market_scope')}.items() if value not in (None,'')}
+
+
+def model_page_anchor(anchor):
+    selection=anchor.get('news_context')
+    if not isinstance(selection,dict):
+        return anchor
+    return {**anchor,'news_context':{key:selection[key] for key in ('kind','days') if key in selection}}
 
 
 def protocol():
@@ -63,7 +72,7 @@ def history_items(rows):
 
 def seed_messages(anchor, clock, history, text, frozen):
     return [{'role':'system','content':frozen['system_prompt']},
-            {'role':'user','content':'页面锚点与本次时间（仅查询上下文）：\n'+json.dumps({'page_anchor':anchor,'request_time':clock},ensure_ascii=False)},
+            {'role':'user','content':'页面锚点与本次时间（仅查询上下文）：\n'+json.dumps({'page_anchor':model_page_anchor(anchor),'request_time':clock},ensure_ascii=False)},
             *history_items(history),{'role':'user','content':text}]
 
 
@@ -85,6 +94,12 @@ def planner_messages(request):
         try:
             if date.fromisoformat(observed).isoformat()==observed:context['observation_date']=observed
         except ValueError:pass
+    if (request.get('page_anchor') or {}).get('market_scope')=='full_review':
+        context['market_review_read_hint']=(
+            '通过领域校验后，系统会先汇集所选日的各盘面栏目，无需重复规划同日总览、全档盘中或其他已涵盖的概览；确需更多明细时才规划。'
+            if request.get('initial_market_overview_read') is True else
+            '若本轮明确要求重新完整复盘所选日，用 read_market_overview(scope=selected_day) 汇集各栏目。'
+            '单项追问或改问其他日期时，按实际问题选用相应工具。')
     return [{'role':'system','content':request['round_protocol']['system_prompt']},
             {'role':'user','content':json.dumps(context,ensure_ascii=False)}]
 

@@ -1455,7 +1455,7 @@ export default function NoonReview({
             <Sun size={15} />
             手动午间观察
           </div>
-          <h1>午评快照</h1>
+          <h2>午间快照</h2>
           {view?.is_demo && (
             <Badge tone="warn">
               样式演示 · 昨日复盘与对照基准为模拟 ·{" "}
@@ -1498,20 +1498,22 @@ export default function NoonReview({
           </button>
         </div>
       </div>
-      <div className="noon-scope-strip">
-        <span>{selected || "正在读取观察日"}</span>
-        <Badge>每天只提交一次</Badge>
-        <span>
-          {retentionDays
-            ? `保留 ${retentionDays} 个自然日 · 到期随盘后增量自动清理`
-            : "到期随盘后增量自动清理"}
-        </span>
-      </div>
-      <p className="noon-control-reason">
-        {tab === "close"
-          ? "收盘回看复用已经发布的同日事实，不重新采集午评。"
-          : control.reason}
-      </p>
+      <section className="noon-reading-status" aria-label="午评日期与状态">
+        <div className="noon-scope-strip">
+          <span>{selected || "正在读取观察日"}</span>
+          <Badge>每天只提交一次</Badge>
+          <span>
+            {retentionDays
+              ? `保留 ${retentionDays} 个自然日 · 到期随盘后增量自动清理`
+              : "到期随盘后增量自动清理"}
+          </span>
+        </div>
+        <p className="noon-control-reason">
+          {tab === "close"
+            ? "收盘回看复用已经发布的同日事实，不重新采集午评。"
+            : control.reason}
+        </p>
+      </section>
       {tab !== "close" && result.error && (
         <ErrorBox message={result.error} retry={result.reload} />
       )}
@@ -1579,7 +1581,7 @@ export default function NoonReview({
         !payload &&
         tab !== "close" &&
         !["queued", "running", "paused"].includes(view.state) && (
-          <Panel title={noonStateText[view.state] || "午评状态待核验"}>
+          <Panel>
             <Empty
               title={noonStateText[view.state] || "尚无可展示快照"}
               description={

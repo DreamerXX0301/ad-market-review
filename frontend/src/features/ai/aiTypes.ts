@@ -1,4 +1,9 @@
 export type AIKind = "stock" | "market";
+export type AIMarketScope = "full_review";
+export type AINewsContext =
+  | { kind: "day" }
+  | { kind: "news"; source: string; id: string }
+  | { kind: "event"; source: string; id: string; days: 7 | 30 };
 export type AIItem = Record<string, any>;
 export interface AIProvider {
   provider_id: string;
@@ -91,6 +96,7 @@ export interface AIMessage extends AIItem {
   interpretation?: AIItem;
   created_at_ms: number;
   state: string;
+  reason_code?: string;
   attachments?: AIAttachment[];
   response_type?: string;
   web?: {

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useId, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
 import {
   Check,
   Eye,
@@ -89,10 +89,12 @@ function sourceSetup(source: Row) {
 }
 function SourceEditor({
   source,
+  blockedReason,
   onClose,
   onSaved,
 }: {
   source: Row;
+  blockedReason: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -106,6 +108,7 @@ function SourceEditor({
   const setup = sourceSetup(source);
   const keyId = useId();
   async function save() {
+    if (busy || blockedReason) return;
     setBusy(true);
     setError("");
     try {
@@ -208,6 +211,7 @@ function SourceEditor({
             </p>
           </div>
         )}
+        {blockedReason && <p role="status">{blockedReason}</p>}
         {error && <ErrorBox message={error} />}
       </div>
       <div className="modal-footer settings-dialog-footer">
@@ -220,7 +224,11 @@ function SourceEditor({
         >
           取消
         </button>
-        <button className="btn primary" disabled={busy} onClick={save}>
+        <button
+          className="btn primary"
+          disabled={busy || !!blockedReason}
+          onClick={save}
+        >
           {busy ? <Spinner /> : <Check size={14} />}保存配置
         </button>
       </div>
@@ -232,8 +240,23 @@ function MarketSources() {
   const [editing, setEditing] = useState<Row | null>(null),
     [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
-    [probe, setProbe] = useState<Row | null>(null);
+    [probe, setProbe] = useState<Row | null>(null),
+    [refreshRequested, setRefreshRequested] = useState(false);
   const toast = useToast();
+  const statusId = useId();
+  const refreshReason =
+    refreshRequested || result.loading
+      ? "正在刷新数据源配置，暂时只显示上次结果。"
+      : result.error
+        ? "刷新失败，暂时只显示上次结果。请重试后再配置或验证。"
+        : "";
+  useEffect(() => {
+    if (result.loading) setRefreshRequested(false);
+  }, [result.loading]);
+  function reload() {
+    setRefreshRequested(true);
+    result.reload();
+  }
   useEffect(() => {
     const clearOnLeave = (event: Event) => {
       if ((event as CustomEvent).detail !== "sources") setEditing(null);
@@ -242,13 +265,14 @@ function MarketSources() {
     return () => window.removeEventListener("workbench-route", clearOnLeave);
   }, []);
   async function verify(source: Row) {
+    if (refreshReason || busy) return;
     const id = source.source_id || source.id;
     setBusy(id);
     setError("");
     try {
       const r = await post(`/sources/${id}/verify`);
       setProbe({ ...r, source_name: source.name });
-      result.reload();
+      reload();
       toast("能力验证完成，请查看逐项结果");
     } catch (e: any) {
       setError(e.message);
@@ -257,6 +281,18 @@ function MarketSources() {
     }
   }
   const sources = list(result.data);
+  const currentEdit = editing
+    ? sources.find(
+        (source) =>
+          (source.source_id || source.id) === (editing.source_id || editing.id),
+      )
+    : null;
+  const editingChanged =
+    editing &&
+    (!currentEdit ||
+      ["active", "enabled", "configured"].some(
+        (field) => currentEdit[field] !== editing[field],
+      ));
   const supplement = result.data?.public_supplement;
   const coverage = supplementCoverageView(supplement);
   return (
@@ -271,15 +307,18 @@ function MarketSources() {
           密钥仅在本机后端保管
         </Badge>
       </div>
-      {result.error && (
-        <ErrorBox message={result.error} retry={result.reload} />
+      {result.error && <ErrorBox message={result.error} retry={reload} />}
+      {refreshReason && sources.length > 0 && (
+        <p id={statusId} className="muted" role="status">
+          {refreshReason}
+        </p>
       )}
       {error && <ErrorBox message={error} />}
-      <div className="sources-connections">
-        {result.loading ? (
-          <Loading />
-        ) : sources.length ? (
-          sources.map((source) => {
+      {result.loading && !result.data ? (
+        <Loading />
+      ) : sources.length ? (
+        <div className="sources-connections">
+          {sources.map((source) => {
             const id = source.source_id || source.id;
             const setup = sourceSetup(source);
             const caps = sourceCapabilities(source);
@@ -407,13 +446,20 @@ function MarketSources() {
                   </span>
                 </div>
                 <div className="sources-connection-actions">
-                  <button className="btn" onClick={() => setEditing(source)}>
+                  <button
+                    className="btn"
+                    disabled={!!refreshReason || !!busy}
+                    aria-describedby={refreshReason ? statusId : undefined}
+                    onClick={() => setEditing(source)}
+                  >
                     <Settings2 size={13} />
                     配置
                   </button>
                   <button
                     className="btn primary"
+                    aria-describedby={refreshReason ? statusId : undefined}
                     disabled={
+                      !!refreshReason ||
                       !!busy ||
                       !source.enabled ||
                       (setup.requiresKey && !source.configured)
@@ -424,26 +470,27 @@ function MarketSources() {
                     验证能力
                   </button>
                 </div>
-                {(!source.enabled ||
-                  (setup.requiresKey && !source.configured)) && (
-                  <small className="sources-next-step">
-                    {!source.enabled
-                      ? "启用来源后可验证。"
-                      : "先保存 Key，再手动验证能力。"}
-                  </small>
-                )}
+                {!refreshReason &&
+                  (!source.enabled ||
+                    (setup.requiresKey && !source.configured)) && (
+                    <small className="sources-next-step">
+                      {!source.enabled
+                        ? "启用来源后可验证。"
+                        : "先保存 Key，再手动验证能力。"}
+                    </small>
+                  )}
               </section>
             );
-          })
-        ) : (
-          <Panel title="数据源">
-            <Empty
-              title="暂无来源配置"
-              description="请确认后端数据源注册表已初始化。"
-            />
-          </Panel>
-        )}
-      </div>
+          })}
+        </div>
+      ) : result.error ? null : (
+        <Panel title="数据源">
+          <Empty
+            title="暂无来源配置"
+            description="请确认后端数据源注册表已初始化。"
+          />
+        </Panel>
+      )}
       <div className="sources-legend" aria-label="能力状态图例">
         <span>
           <Check size={12} />
@@ -663,8 +710,12 @@ function MarketSources() {
       {editing && (
         <SourceEditor
           source={editing}
+          blockedReason={
+            refreshReason ||
+            (editingChanged ? "此来源配置已更新，请关闭并重新打开设置。" : "")
+          }
           onClose={() => setEditing(null)}
-          onSaved={result.reload}
+          onSaved={reload}
         />
       )}
     </div>
@@ -678,13 +729,37 @@ export default function Sources({
   initialTab?: "market" | "ai";
 }) {
   const [tab, setTab] = useState(initialTab);
+  const marketTab = useRef<HTMLButtonElement>(null);
+  const aiTab = useRef<HTMLButtonElement>(null);
   useEffect(() => setTab(initialTab), [initialTab]);
   return (
-    <div className="page-stack">
-      <div className="sources-tabs" role="tablist" aria-label="连接配置类型">
+    <div className="sources-workspace page-stack">
+      <div
+        className="sources-tabs"
+        role="tablist"
+        aria-label="连接配置类型"
+        onKeyDown={(event) => {
+          const next =
+            event.key === "Home"
+              ? "market"
+              : event.key === "End"
+                ? "ai"
+                : event.key === "ArrowLeft" || event.key === "ArrowRight"
+                  ? tab === "market"
+                    ? "ai"
+                    : "market"
+                  : null;
+          if (!next) return;
+          event.preventDefault();
+          setTab(next);
+          (next === "market" ? marketTab : aiTab).current?.focus();
+        }}
+      >
         <button
           role="tab"
           id="source-market-tab"
+          ref={marketTab}
+          tabIndex={tab === "market" ? 0 : -1}
           aria-controls="source-config-panel"
           aria-selected={tab === "market"}
           onClick={() => setTab("market")}
@@ -694,6 +769,8 @@ export default function Sources({
         <button
           role="tab"
           id="source-ai-tab"
+          ref={aiTab}
+          tabIndex={tab === "ai" ? 0 : -1}
           aria-controls="source-config-panel"
           aria-selected={tab === "ai"}
           onClick={() => setTab("ai")}
@@ -703,6 +780,7 @@ export default function Sources({
       </div>
       <div
         role="tabpanel"
+        tabIndex={0}
         id="source-config-panel"
         aria-labelledby={
           tab === "market" ? "source-market-tab" : "source-ai-tab"

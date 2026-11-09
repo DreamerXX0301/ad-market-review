@@ -324,7 +324,7 @@ export default function SectorStrategies({
   }
   const rows = list(run).filter((row) => row.decision === decision);
   return (
-    <div className="page-stack sector-workspace">
+    <div className="page-stack sector-workspace strategy-workspace">
       <div className="section-intro">
         <p>独立筛选行业与概念 → 跟踪板块自身 → 按需展开成分股</p>
         <button
@@ -384,7 +384,12 @@ export default function SectorStrategies({
           {result.loading ? (
             <Loading />
           ) : strategies.length ? (
-            <div className="strategy-list">
+            <div
+              className="strategy-list"
+              role="region"
+              aria-label="板块策略列表"
+              tabIndex={0}
+            >
               {strategies.map((item) => (
                 <div
                   className={`strategy-select-card ${batchSelection.selected.has(item.strategy_id) ? "checked" : ""}`}
@@ -401,6 +406,7 @@ export default function SectorStrategies({
                   </label>
                   <button
                     className={`strategy-card ${chosen?.strategy_id === item.strategy_id ? "active" : ""}`}
+                    aria-pressed={chosen?.strategy_id === item.strategy_id}
                     disabled={!!busy}
                     onClick={() => setSelectedId(item.strategy_id)}
                   >

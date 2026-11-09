@@ -1,10 +1,10 @@
 # Windows 桌面安装版
 
-Windows 0.1.26 面向 Windows 11 x64，业务基线为 7ce7f84978bb7aa6611394dad11f588bfcca91fc，完整集成提交、桌面版号、业务版本与依赖摘要以包内 BUILD-MANIFEST.json 为准。盘面研究、自定义研究和管理功能的第一方后端都使用原生扩展。Windows 发布的第一方前端脚本经过混淆。浏览器脚本与原生扩展仍可被分析。安装程序与启动器目前未签名。
+Windows 0.1.27 面向 Windows 11 x64，业务基线为 29397a4d2871e80c56d4d0be54947a7a9982dba6，完整集成提交、桌面版号、业务版本与依赖摘要以包内 BUILD-MANIFEST.json 为准。盘面研究、自定义研究和管理功能的第一方后端都使用原生扩展。Windows 发布的第一方前端脚本经过混淆。浏览器脚本与原生扩展仍可被分析。安装程序与启动器目前未签名。
 
 ## 打开工作台
 
-1. 双击 `AMR-Desktop-0.1.26-Windows-x64-Setup.exe`，选择本机固定 NTFS 磁盘上的可写文件夹。选择 `D:\` 时会新建 `D:\AMR-Desktop`。安装结束后打开工作台。若已有同名目录，请选择另一个文件夹。
+1. 双击 `AMR-Desktop-0.1.27-Windows-x64-Setup.exe`，选择本机固定 NTFS 磁盘上的可写文件夹。选择 `D:\` 时会新建 `D:\AMR-Desktop`。安装结束后打开工作台。若已有同名目录，请选择另一个文件夹。
 2. 关闭网页或浏览器后，后台仍会运行。双击托盘图标、右键点「打开工作台」或再次双击 EXE，可以重新打开页面。使用托盘的「退出工作台」后，后台停止接收新任务，等当前工作安全收尾后退出。也可以在安装目录的 `app` 子目录打开 PowerShell，运行 `.\AMR-Desktop-Preview.exe --quit` 请求安全退出。
 3. 同一 Windows 用户先前激活的有效卡会沿用。授权与工作台在同一个包里。进入授权页后可复制机器码，选取 `.amr-license` 文件并导入。续期时打开「授权管理」，导入新卡即可。
 4. 新安装使用空业务库，数据源按原工作台流程配置。初始化与研究手动发起，新安装的自动计划关闭。
@@ -17,10 +17,10 @@ API 只监听 127.0.0.1。每次用托盘打开页面会使用短时、一次性
 
 安装版从空业务库开始。先退出旧托盘，再进行换装。旧安装和业务文件留在原处。Windows 当前用户的 `license-preview-v1` 授权身份目录沿用原位置，凭据则需要在新工作台重新配置。
 
-构建时把 `scripts/build_windows_desktop_preview.py` 的 `--output` 指向一个新的 `.exe` 路径。交付目录同时生成独立的 `使用说明.html`。保留 `.zip` 输出作为便携构建入口，旧版数据迁移按原版独立备份恢复流程。 [版本升级与回滚](版本升级与回滚.md)
+构建时把 `scripts/build_windows_desktop_preview.py` 的 `--output` 指向一个新的 `.exe` 路径。交付目录同时生成独立的 `使用说明.html`。保留 `.zip` 输出作为便携构建入口。便携版可以将支持的旧便携 schema 39 或 40 先备份、再独立恢复并迁移至 schema 41，原目录保留。 [版本升级与回滚](版本升级与回滚.md)
 
 ## 真机验收
 
-- 在安装目录的 `app` 子目录打开 PowerShell，运行 `.\AMR-Desktop-Preview.exe --diagnose`。结果窗口应包含 api、frontend、worker_once、backup_restore 四项 ok。诊断使用独立空库，并在 Windows 上核验 DPAPI 及原生核心模块载入。
+- 在安装目录的 `app` 子目录打开 PowerShell，运行 `.\AMR-Desktop-Preview.exe --diagnose`。结果窗口应包含 api、frontend、worker_once、backup_restore 四项 ok，数据库结构版本应为 41。诊断使用独立空库，并在 Windows 上核验 DPAPI 及原生核心模块载入。
 - 双击 EXE，检查默认浏览器打开、有效授权沿用、关闭浏览器后后台继续、再次打开页面、托盘退出以及任务安全收尾。
 - 在非 C 盘完成干净安装，核对安装目录与业务库、行情和临时文件实际落盘位置。覆盖取消、同名目录冲突、空间不足和安全退出。用旧版已激活的同一 Windows 用户验证授权沿用及到期续期。

@@ -15,7 +15,7 @@ from app.services.strategy_limits import quote_index
 from app.services.ladder_age import BASIS as AGE_BASIS, quote_age_evidence
 from app.services.chart_patterns import attach_chart_patterns
 from app.services.stock_board_presentation import build_board_presentation, down_state, pattern_fields, retained_proof, source_board_events
-from app.services.market_mainline_synthesis import build_system_mainlines
+from app.services.market_mainline_synthesis import ALGORITHM_VERSION as MAINLINE_VERSION, build_system_mainlines
 
 REGIME_SOURCES = [
     {'board': 'chinext', 'effective_since': '2020-08-24', 'url': 'https://www.szse.cn/aboutus/trends/news/t20200821_580924.html'},
@@ -115,7 +115,7 @@ def read_ladder(market, status, day, reference, rows, current_events, *, evidenc
     from app.services.pane_read_cache import read_block
 
     membership = resolve_reference('sectors', day, status, reference)
-    return read_block('closing-ladder', day, (evidence, digest(membership)),
+    return read_block('closing-ladder', day, (evidence, digest(membership), MAINLINE_VERSION),
                       lambda: build_ladder(market, status, day, reference, rows, current_events,
                                            membership=membership), market=market)
 

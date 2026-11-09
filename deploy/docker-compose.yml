@@ -55,6 +55,8 @@ services:
     environment:
       <<: *environment
       SQLITE_TMPDIR: /var/lib/shixu/work
+      SHIXU_EVENT_CALENDAR_ENABLED: ${SHIXU_EVENT_CALENDAR_ENABLED:-0}
+      SHIXU_NEWS_CLS_LOCAL_AUTHORIZED: ${SHIXU_NEWS_CLS_LOCAL_AUTHORIZED:-0}
     # Explicit opt-in prevents a candidate `up -d` from starting a worker.
     profiles: [worker]
     command: [python, -m, app.worker]

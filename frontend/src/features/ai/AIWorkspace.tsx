@@ -36,17 +36,33 @@ import {
   aiReason,
   canGenerate,
   chatSessionTitle,
+  failedTask,
   sessionMatches,
   terminalTask,
 } from "./aiState";
-import type { AIKind, AIMessage, AIProvider, AISession } from "./aiTypes";
+import type {
+  AIKind,
+  AIMarketScope,
+  AIMessage,
+  AINewsContext,
+  AIProvider,
+  AISession,
+} from "./aiTypes";
 import "./AI.css";
+
+const newsDraftLabels = {
+  day: "已留存消息",
+  news: "所选消息",
+  event: "所选日历事件",
+};
 
 export interface AIWorkspaceProps {
   kind: AIKind;
   reportId?: string;
   instrumentId?: string;
   asOf?: string;
+  marketScope?: AIMarketScope;
+  newsContext?: AINewsContext;
   initialQuestion?: string;
   onConfigure?: () => void;
   onBusyChange?: (busy: boolean) => void;
@@ -60,6 +76,8 @@ export default function AIWorkspace({
   reportId,
   instrumentId,
   asOf,
+  marketScope,
+  newsContext,
   initialQuestion,
   onConfigure,
   onBusyChange,
@@ -85,6 +103,14 @@ export default function AIWorkspace({
   const [taskId, setTaskId] = useState("");
   const [text, setText] = useState(() =>
     sessionId ? "" : initialQuestion || "",
+  );
+  const [newsDraft, setNewsDraft] = useState(() =>
+    sessionId ? undefined : newsContext,
+  );
+  const [marketScopeDraft, setMarketScopeDraft] = useState(() =>
+    sessionId || newsContext || kind !== "market" || !asOf
+      ? undefined
+      : marketScope,
   );
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -201,6 +227,8 @@ export default function AIWorkspace({
         pageRoute,
         pageLaunchId,
         resolvedSession: !!session,
+        hasMarketScopeDraft: !!marketScopeDraft,
+        hasNewsDraft: !!newsDraft,
         instrumentId: session ? session.instrument_id : instrumentId,
         reportId: session ? session.report_id : reportId,
         asOf: session ? session.as_of : asOf,
@@ -216,6 +244,8 @@ export default function AIWorkspace({
     instrumentId,
     reportId,
     asOf,
+    marketScopeDraft,
+    newsDraft,
     pageRoute,
     pageLaunchId,
     session?.instrument_id,
@@ -314,14 +344,6 @@ export default function AIWorkspace({
     reloadHistory();
     providers.reload();
     if (sessionId) publishAIChange({ scope: "session", id: sessionId });
-    if (["failed", "interrupted_manual_retry", "stale"].includes(terminal))
-      setError(
-        task.data?.reason_code === "budget_exceeded"
-          ? aiReason("budget_exceeded")
-          : typeof task.data?.message === "string" && task.data.message
-            ? task.data.message
-            : aiReason(task.data?.reason_code || terminal),
-      );
   }, [taskId, sessionId, terminal, detail.reload, providers.reload]);
   useEffect(() => {
     if (
@@ -390,6 +412,8 @@ export default function AIWorkspace({
     setTaskId("");
     if (!keepDraft) {
       setText("");
+      setMarketScopeDraft(undefined);
+      setNewsDraft(undefined);
       clearAttachments();
     }
     setError("");
@@ -448,6 +472,8 @@ export default function AIWorkspace({
           ...(reportId ? { report_id: reportId } : {}),
           ...(instrumentId ? { instrument_id: instrumentId } : {}),
           ...(asOf ? { as_of: asOf } : {}),
+          ...(marketScopeDraft ? { market_scope: marketScopeDraft } : {}),
+          ...(newsDraft ? { news_context: newsDraft } : {}),
           provider_id: providerId,
           expected_config_revision: provider!.config_revision,
           expected_model: provider!.model,
@@ -487,6 +513,8 @@ export default function AIWorkspace({
       setSessionId(response.session_id || sessionId);
       setTaskId(response.task_id);
       setText("");
+      setMarketScopeDraft(undefined);
+      setNewsDraft(undefined);
       clearAttachments();
       attempt.current = null;
       detail.reload();
@@ -564,6 +592,14 @@ export default function AIWorkspace({
   const finalReply = stored.some(
     (message) => message.role === "assistant" && message.task_id === taskId,
   );
+  const terminalReason =
+    (task.data?.task_id === taskId && task.data.reason_code) ||
+    live.terminalReason ||
+    (terminal === "interrupted_manual_retry" ? terminal : "");
+  const taskError =
+    !finalReply && !live.text && failedTask(terminal)
+      ? (terminalReason && aiReason(terminalReason)) || "回答未完成。"
+      : "";
   if (!sessionMissing && live.text && !finalReply)
     displayed.push({
       message_id: `live-${taskId}`,
@@ -571,11 +607,11 @@ export default function AIWorkspace({
       role: "assistant",
       text: live.text,
       response_type: "agent_answer",
-      state: ["cancelled", "failed", "interrupted_manual_retry"].includes(
-        terminal,
-      )
-        ? terminal
-        : "streaming",
+      state:
+        terminal === "cancelled" || failedTask(terminal)
+          ? terminal
+          : "streaming",
+      reason_code: terminalReason || undefined,
       created_at_ms: partialClock.current.at,
     });
   const latest = displayed.at(-1);
@@ -775,6 +811,8 @@ export default function AIWorkspace({
                     setSessionId(item.session_id);
                     setTaskId("");
                     setText("");
+                    setMarketScopeDraft(undefined);
+                    setNewsDraft(undefined);
                     clearAttachments();
                     setError("");
                     setBusyDraft(false);
@@ -1152,7 +1190,13 @@ export default function AIWorkspace({
               {text.length ? `${text.length}/2000 · ` : ""}Ctrl / ⌘ + Enter
             </span>
           </div>
-          <p className="ai-egress-note">AI 可查询站内及网络资料，可能计费。</p>
+          <p className="ai-egress-note">
+            {newsDraft
+              ? `随问题引用 ${asOf} 的${newsDraftLabels[newsDraft.kind]}。AI 回答可能计费。`
+              : marketScopeDraft
+                ? `随问题引用 ${asOf} 各盘面栏目的已留存资料。AI 回答可能计费。`
+                : "AI 可查询站内及网络资料，可能计费。"}
+          </p>
           {!matches && !providers.loading && provider && (
             <p className="ai-chat-unavailable">
               模型设置已更改，请开始新对话。
@@ -1165,9 +1209,9 @@ export default function AIWorkspace({
                 : "草稿已保留，可以继续发送。"}
             </p>
           )}
-          {error && (
+          {(error || taskError) && (
             <p className="ai-chat-unavailable" role="alert">
-              {error}
+              {error || taskError}
             </p>
           )}
         </form>

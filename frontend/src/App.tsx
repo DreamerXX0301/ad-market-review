@@ -38,6 +38,7 @@ const IntradayObservation = lazyView(
   () => import("./features/market/IntradayObservation"),
 );
 const NoonReview = lazyView(() => import("./features/market/NoonReview"));
+const NewsEvents = lazyView(() => import("./features/market/NewsEvents"));
 const AuctionReview = lazyView(() => import("./features/market/AuctionReview"));
 import { auctionInitialDate } from "./features/market/auctionPresentation";
 import {
@@ -128,7 +129,9 @@ export default function App() {
     [dateChoice, setDateChoice] = useState<MarketDateChoice>(() => {
       const day =
         auctionInitialDate(location.hash) ||
-        noonInitialDate(location.hash.replace(/^#intraday(?=\?|$)/, "#noon"));
+        noonInitialDate(
+          location.hash.replace(/^#(?:intraday|news-events)(?=\?|$)/, "#noon"),
+        );
       return day ? { date: day, mode: "manual" } : null;
     }),
     [stock, setStock] = useState<{
@@ -231,7 +234,9 @@ export default function App() {
       const next = currentRoute();
       const day =
         auctionInitialDate(location.hash) ||
-        noonInitialDate(location.hash.replace(/^#intraday(?=\?|$)/, "#noon"));
+        noonInitialDate(
+          location.hash.replace(/^#(?:intraday|news-events)(?=\?|$)/, "#noon"),
+        );
       if (day) setDate(day);
       setRoute(next);
       setVisited((v) => (v.includes(next) ? v : [...v, next]));
@@ -260,7 +265,7 @@ export default function App() {
     );
   }, [route]);
   const shellDates =
-    route === "noon" || route === "intraday"
+    route === "noon" || route === "intraday" || route === "news-events"
       ? noonCalendarDates(dates, { ...noonDates.data, today })
       : route === "auction"
         ? noonCalendarDates(dates, { ...auctionDates.data, today })
@@ -315,7 +320,7 @@ export default function App() {
     [],
   );
   function page(key: string) {
-    if (marketRoutes.has(key)) {
+    if (marketRoutes.has(key) && key !== "news-events") {
       const state = marketInstallationState(
         bootstrap.data,
         bootstrap.loading,
@@ -409,6 +414,29 @@ export default function App() {
         );
     }
     switch (key) {
+      case "news-events":
+        if (!date)
+          return (
+            <Panel title="正在核验观察日期">
+              {noonDates.error ? (
+                <ErrorBox message={noonDates.error} retry={noonDates.reload} />
+              ) : noonDates.loading || !noonDates.data ? (
+                <Loading />
+              ) : (
+                <ErrorBox
+                  message="服务尚未返回有效的当天日期，请重新读取。"
+                  retry={noonDates.reload}
+                />
+              )}
+            </Panel>
+          );
+        return (
+          <NewsEvents
+            key={date}
+            date={date}
+            onStock={dates.includes(date) ? openStock : undefined}
+          />
+        );
       case "auction":
         return (
           <AuctionReview
@@ -598,7 +626,8 @@ export default function App() {
           today={today}
           dateFixed={
             dateChoice?.mode === "manual" ||
-            (isIntradayReview(route) && dateChoice !== null)
+            ((isIntradayReview(route) || route === "news-events") &&
+              dateChoice !== null)
           }
           datePublished={dates.includes(date)}
           dates={shellDates}

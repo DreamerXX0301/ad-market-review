@@ -5,13 +5,31 @@ import re
 from app.core import connect, now_ms, new_id, dumps, digest
 from app.adapters.ai_agent import AgentBridge, perform_agent
 from app.services import ai_service as service, ai_web, ai_scope, ai_attachments as files
-from app.services.ai_catalog import estimated_nusd, max_output
+from app.services.ai_catalog import detailed_market_review, estimated_nusd, request_max_output
 from app.services.ai_tool_budget import assess_tool, tool_budget
 from app.services.ai_scope_semantic import classify_frozen_read, safe_diagnostic
 
 EVENT_TTL=15*60*1000
 MAX_EVENTS=2048
 MAX_STREAM_TEXT=64*1024
+
+
+def _covered_overview_read(read, result, request):
+    """Skip only the same day's generic views already returned to the model."""
+    args=read['arguments']
+    day=args.get('date')
+    if day=='today':day=request['request_time']['request_date_bj']
+    if not result.get('ok') or not day or day!=result.get('date'):
+        return False
+    if read['name']=='read_market_data' and args.get('section')=='overview':
+        module='overview'
+    elif read['name']=='read_intraday_data' and args.get('slot')=='all' and not args.get('query','').strip():
+        module='intraday'
+    else:
+        return False
+    return (any(item['module']==module and item['state'] in ('available','partial')
+                for item in result.get('summary',{}).get('modules',[]))
+            and any(item['kind']==module and item['data'] for item in result.get('evidence',[])))
 
 
 def append_event(db,task,kind,data):
@@ -85,7 +103,8 @@ def _bind_stock_anchor(db,session_id,result):
     if row is None or row['instrument_id']:return
     context=json.loads(row['context_json']);protocol=json.loads(row['protocol_json'])
     if (protocol.get('version')!='ai-session-binding-v1' or not protocol.get('binding')
-            or context.get('kind')!='page_anchor' or context.get('instrument_id')):return
+            or context.get('kind')!='page_anchor' or context.get('instrument_id')
+            or context.get('news_context') or context.get('market_scope')):return
     subject=instrument.get('name')
     context={**context,'instrument_id':identifier,'subject':subject[:100] if isinstance(subject,str) and subject.strip() else identifier,'stock_focus_verified':True}
     db.execute("UPDATE ai_session SET kind='stock',instrument_id=?,context_json=?,context_digest=? WHERE session_id=? AND instrument_id IS NULL",
@@ -107,7 +126,7 @@ class AgentRuntimeMixin:
 
     def _start_agent(self,task,request,key):
         import threading
-        from app.services.ai_agent_protocol import request_time, planner_messages
+        from app.services.ai_agent_protocol import model_page_anchor, request_time, planner_messages
         from app.services.ai_scope_focus import resolve_scope_focus
         trusted=request.get('scope_input') or {}
         if trusted and not trusted.get('validated_stock_focus') and ai_scope.scope_for(request)['state'] in ('unknown','planning'):
@@ -118,7 +137,7 @@ class AgentRuntimeMixin:
         ai_scope.apply_to_request(request)
         request['submitted_request_time']=request['request_time']
         request['request_time']=request_time(now_ms())
-        request['seed_messages'][1]={'role':'user','content':'页面锚点与本次执行时间（仅查询上下文）：\n'+dumps({'page_anchor':request['page_anchor'],'request_time':request['request_time']})}
+        request['seed_messages'][1]={'role':'user','content':'页面锚点与本次执行时间（仅查询上下文）：\n'+dumps({'page_anchor':model_page_anchor(request['page_anchor']),'request_time':request['request_time']})}
         if request['round_protocol'].get('version')=='ai-agent-round-v5':
             request['planner_messages']=planner_messages(request)
         with connect() as db:db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(request),task['task_id']))
@@ -159,7 +178,9 @@ class AgentRuntimeMixin:
                 return {'_error':'agent_tool_limit'}
             if hosted and (trusted.get('scope_denied') or not ai_scope.authorize_plan(trusted,trusted.get('accepted_web_plan'))):
                 return {'_error':'stock_scope_required'}
-            reservation=files.estimated_reservation(current['provider_id'],current['model'],size,max_output(current['provider_id']),image_tokens,rates=rates)
+            planning=(ordinal==1 and (trusted.get('round_protocol') or {}).get('version')=='ai-agent-round-v5')
+            output_tokens=request_max_output(current['provider_id'],trusted,planning=planning)
+            reservation=files.estimated_reservation(current['provider_id'],current['model'],size,output_tokens,image_tokens,rates=rates)
             price={'price_rates':rates,'price_version':metadata['price_version']}
             if image_tokens:price['attachment_pricing']=json.loads(current['request_json'])['attachment_pricing']
             if hosted:
@@ -286,11 +307,27 @@ class AgentRuntimeMixin:
             if json.loads(current['request_json']).get('accepted_stock_plan') is not None:return {'_error':'invalid_tool_arguments'}
             db.execute('UPDATE ai_task SET request_json=? WHERE task_id=?',(dumps(request),task['task_id']))
         outputs=[]
-        for index,read in enumerate(accepted['reads']):
+        reads=accepted['reads']
+        overview=None
+        if request.get('initial_news_read') is True and accepted['scope']['resources_allowed']:
+            from app.services.ai_news_context import TOOL_ARGS, TOOL_NAME
+            reads=[{'name':TOOL_NAME,'arguments':TOOL_ARGS},*[read for read in reads if read['name']!=TOOL_NAME]]
+        elif (request.get('initial_market_overview_read') is True
+              and accepted['scope'].get('semantic_purpose')=='market_review'):
+            from app.services.ai_full_market_review import TOOL_ARGS, TOOL_NAME
+            reads=[{'name':TOOL_NAME,'arguments':TOOL_ARGS},*[read for read in reads if read['name']!=TOOL_NAME]]
+        elif detailed_market_review(request):
+            from app.services.ai_full_market_review import TOOL_NAME
+            reads=sorted(reads,key=lambda read: read['name']!=TOOL_NAME)
+        for index,read in enumerate(reads):
+            if overview and _covered_overview_read(read,overview,request):
+                continue
             nested_id=call_id[:160]+':read:'+str(index+1)
             prior=len(self.agent_state.get('local_tool_calls',[]))
             result=self._agent_tool(task,{'name':read['name'],'args':read['arguments'],'call_id':nested_id})
             if result.get('_error'):return result
+            if detailed_market_review(request) and read['name']=='read_market_overview':
+                overview=result
             outputs.append({'name':read['name'],'args':read['arguments'],'call_id':nested_id,'result':result,
                             'executed':len(self.agent_state.get('local_tool_calls',[]))>prior})
         web_plan=accepted['web_plan'];web_gap=None

@@ -15,6 +15,7 @@ export interface AIStreamState {
   tools: AIItem[];
   finished: boolean;
   terminalState: string;
+  terminalReason: string;
   connection:
     | "idle"
     | "connecting"
@@ -37,6 +38,7 @@ export const emptyStream = (taskId = "", sessionId = ""): AIStreamState => ({
   tools: [],
   finished: false,
   terminalState: "",
+  terminalReason: "",
   connection: "idle",
   error: "",
 });
@@ -177,7 +179,8 @@ export function applyStreamPacket(
   if (type === "error")
     return {
       ...next,
-      error: "这次回答暂时无法继续接收",
+      terminalReason:
+        typeof event.reason_code === "string" ? event.reason_code : "",
       status: "正在确认回答状态…",
     };
   return previous;

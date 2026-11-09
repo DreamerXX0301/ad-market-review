@@ -1,6 +1,6 @@
 """Local AI API operations; only the unique worker sends paid requests."""
 from __future__ import annotations
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 import json
 import re
@@ -8,7 +8,9 @@ import uuid
 from fastapi import HTTPException
 from app.core import connect, now_ms, new_id, digest, dumps
 from app.infrastructure.credentials import CredentialStore
-from app.services.ai_catalog import MODELS, OPENAI_MODEL_IDS, MAX_INPUT_BYTES, LEGACY_INPUT_BYTES, PRICE_VERSION, price, usd, estimated_nusd, max_output
+from app.services.ai_catalog import (MODELS, OPENAI_MODEL_IDS, MAX_INPUT_BYTES, LEGACY_INPUT_BYTES,
+                                     PRICE_VERSION, DETAILED_MARKET_REVIEW, price, usd,
+                                     estimated_nusd, request_max_output)
 from app.services.ai_validation import PROBE_SCHEMA, output_schema
 from app.services import ai_web
 from app.services import ai_attachments as files
@@ -45,6 +47,7 @@ MESSAGES = {
  'provider_error': '供应商未完成请求', 'network_error': '网络请求未完成', 'timeout': '请求已超时，可能已计费',
  'cancelled': '本次请求已取消，发送后可能已计费', 'invalid_response': '供应商响应不符合协议',
  'invalid_output': '模型输出不符合结构要求', 'incomplete_response': '模型未完整完成本次响应',
+ 'output_truncated': '模型达到本轮输出上限，回答未完成',
  'refusal': '模型拒绝本次请求', 'response_too_large': '供应商响应超过大小限制',
  'invalid_reference': '模型引用超出本次证据范围', 'ungrounded_number': '模型文字含未核验数值或日期',
  'configuration_changed': '模型配置已变化，本次结果未发布', 'credential_unavailable': '凭据或外置主密钥不可用，请重新配置',
@@ -249,7 +252,7 @@ def _enqueue(db, row, limits, operation, key, fingerprint, request, session_id=N
     input_bytes = _input_size(row, request, operation)
     if input_bytes > input_limit(request): fail(422, 'input_too_large', '完整请求与结构化输出约束超过本会话输入上限，请新建会话')
     rates = price(row['provider_id'],row['model'])
-    reservation = files.estimated_reservation(row['provider_id'], row['model'], input_bytes, max_output(row['provider_id'], operation=='verify'), request.get('attachment_input_tokens', 0), rates=rates)
+    reservation = files.estimated_reservation(row['provider_id'], row['model'], input_bytes, request_max_output(row['provider_id'], request, probe=operation=='verify'), request.get('attachment_input_tokens', 0), rates=rates)
     if request.get('allow_web'):
         if not ai_web.supported(row['provider_id'],row['model']): fail(422, 'web_search_unavailable')
         reservation += ai_web.extra_reservation_nusd(rates, request['web_policy'])
@@ -419,11 +422,13 @@ def get_session(identifier):
             "SELECT task_id FROM ai_task WHERE session_id=? AND state IN ('queued','running')",
             (identifier,),
         ).fetchone()
-        rows = db.execute('SELECT m.*,t.usage_json,t.cost_nusd,t.cost_state,t.reservation_nusd,t.price_version FROM ai_message m LEFT JOIN ai_task t USING(task_id) WHERE m.session_id=? ORDER BY m.created_at_ms,m.rowid', (identifier,)).fetchall()
+        rows = db.execute('SELECT m.*,t.usage_json,t.cost_nusd,t.cost_state,t.reservation_nusd,t.price_version,t.reason_code FROM ai_message m LEFT JOIN ai_task t USING(task_id) WHERE m.session_id=? ORDER BY m.created_at_ms,m.rowid', (identifier,)).fetchall()
     session['title']=next((row['text'][:60] for row in rows if row['role']=='user'),None)
     messages = []
     for row in rows:
         view = {key: row[key] for key in ('message_id','task_id','role','text','state','created_at_ms')}
+        if row['role']=='assistant' and row['reason_code']:
+            view['reason_code']=row['reason_code']
         interpretation = json.loads(row['interpretation_json']) if row['interpretation_json'] else None
         if row['role']=='user' and isinstance(interpretation,dict) and interpretation.get('response_type')=='user_attachments':
             view['attachments']=files.metadata(files.saved(interpretation),identifier,row['message_id'])
@@ -563,11 +568,22 @@ def _bound_session(row,session,limits):
     return any(session['config_signature']==config_signature(row,{**limits,'timeout_seconds':seconds}) for seconds in (30,45,60))
 
 
-def _agent_request(row,session,context,text,history):
+def _agent_request(row,session,context,text,history,*,opening=False):
     from app.services import ai_agent_protocol as agent
     from app.services.ai_read_tools import tool_schemas
     from app.services import ai_scope
     frozen=agent.protocol();clock=agent.request_time(now_ms());anchor=agent.page_anchor(session,context)
+    has_news=context.get('news_context') is not None
+    full_review=context.get('market_scope')=='full_review'
+    if has_news:
+        from app.services.ai_news_context import PROMPT
+        frozen['system_prompt'] += '\n' + PROMPT
+    if full_review:
+        from app.services.ai_full_market_review import PROMPT
+        frozen['answer_profile']=DETAILED_MARKET_REVIEW
+        frozen['system_prompt'] += '\n' + PROMPT
+    schemas=(tool_schemas(include_full_review=True) if full_review
+             else tool_schemas(include_news=True) if has_news else tool_schemas())
     focus={}
     if context.get('instrument_id') and (context.get('stock_focus_verified') is True or (context.get('kind')=='stock_research' and context.get('evidence'))):
         focus={'instrument_id':context['instrument_id'],'name':context.get('subject') or (context.get('instrument') or {}).get('name') or context['instrument_id']}
@@ -576,8 +592,13 @@ def _agent_request(row,session,context,text,history):
     messages=agent.seed_messages(anchor,clock,history,text,frozen)
     request={'agent':True,'round_protocol':frozen,'page_anchor':anchor,'request_time':clock,
             'seed_messages':messages,'scope_input':scope_input,
-            'tool_schemas':tool_schemas(),'web_plan_schema':agent.web_plan_schema(),
+            'tool_schemas':schemas,
+            'web_plan_schema':agent.web_plan_schema(),
             'fallback_context':context,'max_input_bytes':frozen['max_input_bytes']}
+    if has_news and opening:
+        request['initial_news_read']=True
+    if full_review and opening:
+        request['initial_market_overview_read']=True
     from app.services.ai_scope_semantic import schema
     request['intent_plan_schema']=schema(request)
     ai_scope.apply_to_request(request)
@@ -608,7 +629,32 @@ def create_session(payload):
     prepared=files.prepare(payload.get('attachments',[]))
     _request_key(payload['request_key']);fingerprint=_attachment_fingerprint(payload,prepared)
     kind=payload['kind']
-    text=(payload.get('text') or '').strip() or ('请查看我上传的附件。' if prepared else '请复盘当前所选交易日。' if kind=='market' else '请分析当前所选股票。')
+    news_selection=payload.get('news_context')
+    market_scope=payload.get('market_scope')
+    if market_scope is not None:
+        observed=payload.get('as_of')
+        try:
+            valid_day=isinstance(observed,str) and date.fromisoformat(observed).isoformat()==observed
+        except ValueError:
+            valid_day=False
+        if (market_scope!='full_review' or kind!='market' or not valid_day or news_selection is not None
+                or payload.get('report_id') or payload.get('instrument_id')):
+            fail(422,'invalid_market_scope','盘面完整复盘需要明确的观察日及独立的盘面范围')
+    if news_selection is not None:
+        from app.services.ai_news_context import validate_selection
+        if kind!='market' or payload.get('report_id') or payload.get('instrument_id'):
+            fail(422,'invalid_news_context','消息与事件解读不能同时绑定个股或研究报告')
+        try:
+            validate_selection(payload.get('as_of'),news_selection)
+        except (TypeError,ValueError):
+            fail(422,'invalid_news_context','消息与事件解读需要明确的观察日和归档范围')
+    if market_scope:
+        default_question='请用本地资料详细复盘所选交易日的 A 股盘面，分章节分析情绪、炸板、涨停梯队和各时段轮动，给出具体证据及覆盖缺口。'
+    elif news_selection is not None:
+        default_question='请用本地资料解读所选消息与事件，说明和 A 股有关的事实及待核验点。'
+    else:
+        default_question='请复盘当前所选交易日。' if kind=='market' else '请分析当前所选股票。'
+    text=(payload.get('text') or '').strip() or ('请查看我上传的附件。' if prepared else default_question)
     if not 1<=len(text)<=2000:fail(422,'invalid_message','问题须为1至2000字')
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
@@ -625,12 +671,16 @@ def create_session(payload):
         instrument=payload.get('instrument_id') or (report['instrument_id'] if report else None)
         as_of=payload.get('as_of') or (report['data_cutoff'] if report else day_key())
         context={'kind':'page_anchor','subject':instrument or 'A股市场复盘','instrument_id':instrument,'as_of':as_of,'report_id':payload.get('report_id')}
+        if news_selection is not None:
+            context.update(subject='消息与事件',news_context=news_selection)
+        if market_scope:
+            context.update(subject='A股盘面完整复盘',market_scope=market_scope)
         identifier=new_id('ai-session');stamp=now_ms();message_id=new_id('ai-message')
         session={'session_id':identifier,'kind':kind,'provider_id':row['provider_id'],'model':row['model'],'instrument_id':instrument,'as_of':as_of,'report_id':payload.get('report_id')}
         binding={'version':'ai-session-binding-v1','binding':{'credential_revision':row['credential_revision'],'credential_ref':row['credential_ref']}}
         db.execute('INSERT INTO ai_session(session_id,kind,report_id,instrument_id,as_of,provider_id,model,config_signature,context_digest,context_json,protocol_json,created_at_ms,updated_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                    (identifier,kind,payload.get('report_id'),instrument,as_of,row['provider_id'],row['model'],config_signature(row,limits),digest(context),dumps(context),dumps(binding),stamp,stamp,stamp+SESSION_TTL))
-        request=files.enrich_request(_agent_request(row,session,context,text,[]),[],message_id,prepared)
+        request=files.enrich_request(_agent_request(row,session,context,text,[],opening=True),[],message_id,prepared)
         result=_enqueue(db,row,limits,'message',payload['request_key'],fingerprint,request,identifier)
         db.execute('INSERT INTO ai_message VALUES(?,?,?,?,?,?,?,?)',(message_id,identifier,result['task_id'],'user',text,dumps(files.envelope(prepared)) if prepared else None,'completed',stamp))
     return result

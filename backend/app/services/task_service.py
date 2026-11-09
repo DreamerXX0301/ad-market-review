@@ -110,11 +110,42 @@ def create_task(kind: str, parameters: dict, target_date: str | None = None, req
     return task_view(identifier)
 
 
+_CAPTURE_ARCHIVES = {
+    'auction_snapshot': ('market_auction_snapshot', '盘前竞价', '$.gaps'),
+    'intraday_snapshot': ('market_intraday_capture', '盘中快照', '$.summary.gaps'),
+    'noon_snapshot': ('market_noon_snapshot', '午评快照', '$.gaps'),
+}
+
+
+def _capture_completion(connection, job, operation, *, detail):
+    table, label, gap_path = _CAPTURE_ARCHIVES[operation]
+    saved = connection.execute(f'''SELECT snapshot_id FROM {table}
+        WHERE job_id=? AND trade_date=? AND snapshot_id IS NOT NULL
+          AND content_sha256 IS NOT NULL''', (job['job_id'], job['target_date'])).fetchone()
+    if not saved:
+        return {}
+    summary = f'{label}已留存，数据缺口见详情。'
+    if detail:
+        # History uses only the indexed archive receipt; decode coverage only
+        # when opening this task, because an intraday body contains all quotes.
+        row = connection.execute(f'''SELECT CASE WHEN json_valid(payload_json)
+            THEN json_extract(payload_json, ?) END FROM {table}
+            WHERE snapshot_id=?''', (gap_path, saved['snapshot_id'])).fetchone()
+        gaps = json.loads(row[0]) if row and isinstance(row[0], str) and row[0].startswith('[') else []
+        reasons = [gap['reason'].strip() for gap in gaps if isinstance(gap, dict)
+                   and isinstance(gap.get('reason'), str) and gap['reason'].strip()]
+        if reasons:
+            summary = f'{label}已留存。' + '。'.join(dict.fromkeys(reason.rstrip('。') for reason in reasons[:6])) + '。'
+    return {'display_status': 'succeeded', 'coverage_summary': summary}
+
+
 def _completion_display(connection, job, parameters, *, detail=False):
     if job['status'] != 'partial':
         return {}
     job_id = job['job_id']
     kind, operation = job['kind'], parameters.get('operation')
+    if kind == 'source_check' and operation in _CAPTURE_ARCHIVES:
+        return _capture_completion(connection, job, operation, detail=detail)
     if operation == 'sector_charts':
         row = connection.execute("""SELECT details_json FROM job_event WHERE job_id=?
             AND stage='板块历史K线核验完成' ORDER BY seq DESC LIMIT 1""", (job_id,)).fetchone()

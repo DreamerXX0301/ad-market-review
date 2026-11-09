@@ -1,7 +1,6 @@
 """Bounded stateless Responses tool loop. IO thread never reads SQLite/files."""
 from __future__ import annotations
 import asyncio
-import codecs
 from concurrent.futures import Future
 import json
 import os
@@ -10,14 +9,60 @@ import time
 import uuid
 import httpx
 from app.adapters.ai_responses import BASE_URLS, ProviderError, error_code, usage_of
-from app.services.ai_catalog import MAX_RESPONSE_BYTES, max_output
+from app.services.ai_catalog import (MAX_RESPONSE_BYTES, MAX_AGENT_OUTPUT_TOKENS,
+                                    DETAILED_MARKET_REVIEW_SECONDS, detailed_market_review,
+                                    request_max_output)
 from app.services import ai_web, ai_scope, ai_attachments as files
 from app.services.ai_tool_budget import assess_tool, classify_tool, tool_budget
 from app.services.ai_agent_protocol import FINALIZE_SYSTEM_PROMPT, planner_messages
 from app.services.ai_scope_semantic import classify_frozen_read
 
-MAX_STREAM_BYTES=4*MAX_RESPONSE_BYTES
+BASE_STREAM_BYTES=4*MAX_RESPONSE_BYTES
+# A short delta may carry IDs, indexes and sequence metadata many times
+# larger than its text. Keep that wire allowance separate from useful content.
+SSE_BYTES_PER_OUTPUT_TOKEN=1024
+STREAM_FLUSH_SECONDS=.25
 MAX_TEXT_BYTES=64*1024
+
+
+class _SSEFrames:
+    """Bound incomplete lines and whole events, not HTTP transport chunks."""
+    def __init__(self):
+        self.line=bytearray()
+        self.data=[]
+        self.data_bytes=0
+
+    def feed(self,chunk):
+        offset=0
+        while offset<len(chunk):
+            newline=chunk.find(b'\n',offset)
+            end=len(chunk) if newline<0 else newline
+            if len(self.line)+end-offset>MAX_RESPONSE_BYTES:
+                raise ProviderError('response_too_large')
+            self.line.extend(memoryview(chunk)[offset:end])
+            if newline<0:return
+            offset=newline+1
+            line=bytes(self.line).removesuffix(b'\r')
+            self.line.clear()
+            if line.startswith(b'data:'):
+                part=line[5:].removeprefix(b' ')
+                self.data_bytes+=len(part)+bool(self.data)
+                if self.data_bytes>MAX_RESPONSE_BYTES:
+                    raise ProviderError('response_too_large')
+                self.data.append(part)
+            elif not line and self.data:
+                data=b'\n'.join(self.data)
+                self.data.clear()
+                self.data_bytes=0
+                yield data
+
+
+def _emit_delta(bridge,text):
+    # A JSON-escaped character takes at most six bytes here. Keep every local
+    # event under its 8 KiB envelope even if one provider delta is very large.
+    for start in range(0,len(text),1024):
+        bridge.emit('delta',{'text':text[start:start+1024]})
+
 
 class AgentBridge:
     def __init__(self):
@@ -38,10 +83,10 @@ class AgentBridge:
         return result
 
 
-def payload_for(request,items,tools):
+def payload_for(request,items,tools,*,planning=False):
     payload={'model':request['model'],'input':files.clean_input(items),'stream':True,'store':False,
              'reasoning':{'effort':'low' if request['provider_id']=='openai' else 'none'},
-             'max_output_tokens':max_output(request['provider_id']),
+             'max_output_tokens':request_max_output(request['provider_id'],request,planning=planning),
              'tools':tools,'parallel_tool_calls':request['provider_id']=='openai' and bool(tools) and not any(tool.get('type')=='web_search' for tool in tools)}
     if request['provider_id']=='openai':payload['include']=['reasoning.encrypted_content']
     if any(tool.get('type')=='web_search' for tool in tools):
@@ -51,24 +96,29 @@ def payload_for(request,items,tools):
 
 
 async def stream_response(client,path,payload,cancel,bridge,*,emit_text=True):
-    body=None;items={};wire=0;buffer='';decoder=codecs.getincrementaldecoder('utf-8')()
-    pending='';text='';last_flush=time.monotonic();data_lines=[]
+    body=None;items={};wire=0;frames=_SSEFrames()
+    token_limit=payload.get('max_output_tokens')
+    allowed_tokens=max(0,min(MAX_AGENT_OUTPUT_TOKENS,token_limit)) if type(token_limit) is int else 0
+    wire_limit=BASE_STREAM_BYTES+allowed_tokens*SSE_BYTES_PER_OUTPUT_TOKEN
+    pending='';text='';text_bytes=0;last_flush=time.monotonic()
     def flush():
         nonlocal pending,last_flush
         if pending:
-            if emit_text:bridge.emit('delta',{'text':pending})
+            if emit_text:_emit_delta(bridge,pending)
             pending=''
         last_flush=time.monotonic()
     async def pulse():
         while True:
-            await asyncio.sleep(.1)
+            await asyncio.sleep(STREAM_FLUSH_SECONDS)
             flush()
     flusher=asyncio.create_task(pulse())
     try:
         async with client.stream('POST',path,json=payload) as response:
             if response.status_code>=400:
-                raw=await response.aread()
-                if len(raw)>MAX_RESPONSE_BYTES:raise ProviderError('response_too_large')
+                raw=bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(raw)+len(chunk)>MAX_RESPONSE_BYTES:raise ProviderError('response_too_large')
+                    raw.extend(chunk)
                 try:error=json.loads(raw)
                 except ValueError:error={}
                 raise ProviderError(error_code(response.status_code,error))
@@ -76,30 +126,27 @@ async def stream_response(client,path,payload,cancel,bridge,*,emit_text=True):
             async for chunk in response.aiter_bytes():
                 if cancel.is_set():raise ProviderError('cancelled')
                 wire+=len(chunk)
-                if wire>MAX_STREAM_BYTES:raise ProviderError('response_too_large')
-                buffer+=decoder.decode(chunk)
-                if len(buffer.encode())>MAX_RESPONSE_BYTES:raise ProviderError('response_too_large')
-                while '\n' in buffer:
-                    line,buffer=buffer.split('\n',1);line=line.rstrip('\r')
-                    if line.startswith('data:'):data_lines.append(line[5:].lstrip())
-                    if line or not data_lines:continue
-                    data='\n'.join(data_lines);data_lines=[]
-                    if data=='[DONE]':continue
-                    try:event=json.loads(data)
+                if wire>wire_limit:raise ProviderError('response_too_large')
+                for data in frames.feed(chunk):
+                    if data==b'[DONE]':continue
+                    try:event=json.loads(data.decode('utf-8'))
                     except ValueError:raise ProviderError('invalid_response') from None
+                    if not isinstance(event,dict):raise ProviderError('invalid_response')
                     kind=event.get('type')
                     if kind=='response.output_text.delta':
                         delta=event.get('delta')
                         if not isinstance(delta,str):raise ProviderError('invalid_response')
+                        text_bytes+=len(delta.encode())
+                        if text_bytes>MAX_TEXT_BYTES:raise ProviderError('stream_limit')
                         pending+=delta;text+=delta
-                        if len(text.encode())>MAX_TEXT_BYTES:raise ProviderError('stream_limit')
-                        if time.monotonic()-last_flush>=.1 or len(pending.encode())>=1024:flush()
+                        if time.monotonic()-last_flush>=STREAM_FLUSH_SECONDS or len(pending.encode())>=1024:flush()
                     elif kind=='response.output_item.done':
                         item=event.get('item');index=event.get('output_index')
                         if isinstance(item,dict) and type(index)is int:items[index]=item
                     elif kind in ('response.completed','response.incomplete','response.failed'):
                         body=event.get('response')
                         if not isinstance(body,dict):raise ProviderError('invalid_response')
+                        break
                     elif kind=='error':
                         code=event.get('code')
                         raise ProviderError('quota_exhausted' if code=='insufficient_quota' else 'provider_error')
@@ -109,7 +156,6 @@ async def stream_response(client,path,payload,cancel,bridge,*,emit_text=True):
         try:await flusher
         except (asyncio.CancelledError,Exception):pass
         flush()
-    flush()
     if body is None:raise ProviderError('incomplete_response')
     # The completed response is authoritative, including ordering and statuses.
     # A prior output_item.done must not replace it by index. Supplement only a
@@ -120,14 +166,20 @@ async def stream_response(client,path,payload,cancel,bridge,*,emit_text=True):
         if item.get('type')=='reasoning' and 'encrypted_content' not in item:
             encrypted=reasoning.get(item.get('id'),{}).get('encrypted_content')
             if isinstance(encrypted,str):item['encrypted_content']=encrypted
-    if len(json.dumps(body,ensure_ascii=False).encode())>MAX_RESPONSE_BYTES:raise ProviderError('response_too_large')
+    if len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())>MAX_RESPONSE_BYTES:
+        raise ProviderError('response_too_large',usage=usage_of(body))
     final=''.join(content.get('text','') for item in body.get('output',[]) if item.get('type')=='message'
                   for content in item.get('content',[]) if content.get('type')=='output_text')
     if text and final and text!=final:raise ProviderError('invalid_response',usage=usage_of(body))
     if not text and final:
-        if emit_text:bridge.emit('delta',{'text':final})
+        if len(final.encode())>MAX_TEXT_BYTES:raise ProviderError('stream_limit',usage=usage_of(body))
+        if emit_text:_emit_delta(bridge,final)
         text=final
-    if body.get('status')!='completed':raise ProviderError('incomplete_response',usage=usage_of(body))
+    if body.get('status')!='completed':
+        incomplete=body.get('incomplete_details')
+        truncated=(body.get('status')=='incomplete' and isinstance(incomplete,dict)
+                   and incomplete.get('reason')=='max_output_tokens')
+        raise ProviderError('output_truncated' if truncated else 'incomplete_response',usage=usage_of(body))
     return body,text
 
 
@@ -157,7 +209,8 @@ async def _run(request,key,cancel,bridge):
                             'tool_calls':tool_calls,'web_request':web_request}},'response_model':body.get('model')}
     configured=os.environ.get('SHIXU_AI_AGENT_TIMEOUT_SECONDS')
     if configured in ('60','120'):timeout=int(configured)
-    async with asyncio.timeout(timeout):
+    deadline=max(timeout,DETAILED_MARKET_REVIEW_SECONDS) if detailed_market_review(request) else timeout
+    async with asyncio.timeout(deadline):
         async with httpx.AsyncClient(base_url=BASE_URLS[request['provider_id']],headers={'Authorization':'Bearer '+key},
             timeout=httpx.Timeout(timeout),trust_env=os.environ.get('SHIXU_AI_SYSTEM_PROXY_ENABLED')=='1',follow_redirects=False) as client:
             for ordinal in range(1,frozen['max_model_requests']+1):
@@ -186,7 +239,7 @@ async def _run(request,key,cancel,bridge):
                     # The router receives actual users and verified identity
                     # metadata, not previous assistant prose or local reports.
                     outbound=request.get('planner_messages') or planner_messages(request)
-                payload=payload_for(request,outbound,tools)
+                payload=payload_for(request,outbound,tools,planning=planning)
                 if planning:
                     payload['tool_choice']='required';payload['parallel_tool_calls']=False
                 if restricted:payload['max_output_tokens']=min(payload['max_output_tokens'],256)

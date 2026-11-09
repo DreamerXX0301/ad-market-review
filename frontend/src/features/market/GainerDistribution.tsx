@@ -52,7 +52,7 @@ export default function GainerDistribution({
     >
       <div className="gainer-distribution-heading">
         <div>
-          <strong>强势股集中在哪些方向</strong>
+          <h3>强势股分类分布</h3>
           <span>
             原始涨幅排名前 {integer(data.sample_limit)} · 实际{" "}
             {integer(data.sample_count)} 只
@@ -63,7 +63,7 @@ export default function GainerDistribution({
             </span>
           )}
         </div>
-        <div className="segmented" aria-label="分布分类">
+        <div className="segmented" role="group" aria-label="分布分类">
           {(
             [
               ["topics", "题材"],

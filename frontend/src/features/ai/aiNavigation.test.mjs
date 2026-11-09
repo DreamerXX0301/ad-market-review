@@ -203,7 +203,127 @@ assert.match(
   aiLaunchQuestion(overview),
   /2026-10-30.*市场情绪.*题材轮动.*涨停梯队/,
 );
+const fullReview = {
+  kind: "market",
+  asOf: "2026-10-30",
+  marketScope: "full_review",
+};
+const fullReviewLink = aiLaunchLocation(fullReview);
+const fullReviewDraft = readAILaunch(fullReviewLink);
+assert.match(fullReviewLink, /ai_scope=full_review/);
+assert.doesNotMatch(fullReviewLink, /ai_chat=/);
+assert.equal(fullReviewDraft.marketScope, "full_review");
+assert.notEqual(fullReviewDraft.key, overview.key);
+const fullQuestion = aiLaunchQuestion(fullReviewDraft);
+assert.match(fullQuestion, /^请完整复盘 2026-10-30/);
+for (const section of [
+  "盘面总览",
+  "指数行情",
+  "成交额",
+  "盘前竞价",
+  "盘中观察",
+  "午评快照",
+  "消息与事件",
+  "市场情绪",
+  "昨日涨停反馈",
+  "行业与概念",
+  "涨停梯队",
+  "断层",
+  "炸板数量与集中方向",
+  "龙虎榜",
+  "30 日涨幅榜",
+  "异动与监管",
+  "留存时点",
+  "缺档或覆盖不足",
+])
+  assert.ok(fullQuestion.includes(section), section);
+const reviewPage = {
+  ...fullReview,
+  pageRoute: "ai",
+  hasMarketScopeDraft: true,
+};
+assert.match(
+  chatLocation(fullReviewLink, reviewPage, ""),
+  /ai_scope=full_review/,
+);
+assert.doesNotMatch(
+  chatLocation(fullReviewLink, reviewPage, "saved_session"),
+  /ai_scope=/,
+);
+assert.doesNotMatch(
+  chatLocation(
+    fullReviewLink,
+    { ...reviewPage, hasMarketScopeDraft: false },
+    "",
+  ),
+  /ai_scope=/,
+);
+for (const link of [
+  fullReviewLink + "&ai_chat=saved_session",
+  fullReviewLink + "&ai_news=day",
+  fullReviewLink + "&ai_stage=0945",
+  fullReviewLink.replace("full_review", "unknown_scope"),
+  fullReviewLink.replace("2026-10-30", "2026-02-30"),
+  fullReviewLink.replace("ai_kind=market", "ai_kind=stock"),
+])
+  assert.equal(readAILaunch(link).marketScope, undefined, link);
+for (const context of [
+  { marketStage: "0945" },
+  { newsContext: { kind: "day" } },
+]) {
+  const specialized = { ...fullReview, ...context };
+  assert.doesNotMatch(aiLaunchLocation(specialized), /ai_scope=/);
+  assert.doesNotMatch(aiLaunchQuestion(specialized), /完整复盘/);
+}
 assert.equal(aiLaunchQuestion(readAILaunch("#ai")), "");
+for (const [newsContext, prompt] of [
+  [{ kind: "day" }, /2026-11-10 的已收录消息.*覆盖不完整/],
+  [
+    { kind: "news", source: "财联社电报", id: "roll:1234" },
+    /选中的这条消息.*发布时间和来源/,
+  ],
+  [
+    { kind: "event", source: "国家统计局", id: "2026-11-15/gdp", days: 30 },
+    /选中的这项日历事件.*确认状态.*尚未公布的结果/,
+  ],
+]) {
+  const link = aiLaunchLocation({
+    kind: "market",
+    asOf: "2026-11-10",
+    newsContext,
+  });
+  const news = readAILaunch(link);
+  assert.deepEqual(news.newsContext, newsContext);
+  assert.match(aiLaunchQuestion(news), prompt);
+  assert.doesNotMatch(link, /ai_chat/);
+  const draft = { kind: "market", asOf: "2026-11-10", pageRoute: "ai" };
+  assert.match(
+    chatLocation(link, { ...draft, hasNewsDraft: true }, ""),
+    /ai_news=/,
+  );
+  assert.doesNotMatch(
+    chatLocation(link, draft, ""),
+    /ai_(?:news|source|item|days)=/,
+  );
+  const saved = chatLocation(
+    link,
+    { ...draft, hasNewsDraft: true },
+    "saved_session",
+  );
+  assert.doesNotMatch(saved, /ai_(?:news|source|item|days)=/);
+  assert.equal(readAILaunch(saved).newsContext, undefined);
+}
+for (const suffix of [
+  "ai_news=news&ai_item=1",
+  "ai_news=event&ai_source=NBS&ai_item=1&ai_days=31",
+  "ai_news=news&ai_source=CLS&ai_item=%0Awrong",
+  "ai_news=day&ai_chat=already_saved",
+]) {
+  assert.equal(
+    readAILaunch(`#ai?ai_kind=market&ai_day=2026-11-10&${suffix}`).newsContext,
+    undefined,
+  );
+}
 for (const [marketStage, clock, phrase] of [
   ["auction", "09:25", /重点名单之外/],
   ["0935", "09:35", /盘中观察快照/],

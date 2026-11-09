@@ -454,6 +454,41 @@ def test_invalid_ai_proxy_control_refused_without_starting(installation, enabled
     assert service.children == {}
 
 
+@pytest.mark.parametrize('enabled_field', native.WORKER_FEATURE_FLAGS)
+def test_news_control_only_reaches_worker_and_is_verified(installation, monkeypatch, enabled_field):
+    item = installation
+    item['value'][enabled_field] = True
+    item['freeze']()
+    for variable in native.WORKER_FEATURE_FLAGS.values():
+        monkeypatch.setenv(variable, '1')
+
+    service = item['service']()
+    result = service.execute('start')
+    for role, pid in result['processes'].items():
+        process = service.inspector.read(pid)
+        for field, variable in native.WORKER_FEATURE_FLAGS.items():
+            expected = '1' if role == 'worker' and field == enabled_field else None
+            assert process.environment.get(variable) == expected
+        assert service.matches(process, role)
+        variable = native.WORKER_FEATURE_FLAGS[enabled_field]
+        if role == 'api':
+            process.environment[variable] = '1'
+        else:
+            process.environment.pop(variable)
+        assert not service.matches(process, role)
+    assert item['service']().execute('status')['status'] == 'running'
+
+
+@pytest.mark.parametrize('field', native.WORKER_FEATURE_FLAGS)
+def test_invalid_news_control_refused_without_starting(installation, field):
+    installation['value'][field] = 'true'
+    installation['freeze']()
+    service = installation['service']()
+    with pytest.raises(native.ServiceError, match=field + ' 必须为布尔值'):
+        service.execute('start')
+    assert service.children == {}
+
+
 def test_reused_start_token_refused_without_stopping_existing_children(installation):
     service = installation['service']()
     service.execute('start')

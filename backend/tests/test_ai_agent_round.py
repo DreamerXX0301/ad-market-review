@@ -154,6 +154,9 @@ def test_each_request_is_budget_checked_and_does_not_automatically_retry(agent_c
         with core.connect() as db:db.execute('UPDATE ai_instance_limits SET daily_request_limit=2 WHERE singleton=1')
         result=create(client).json();task=drive(runtime,result['task_id'])
         assert task['state']=='failed' and task['reason_code']=='budget_exceeded'
+        detail=client.get('/api/v1/ai/sessions/'+result['session_id']).json()
+        assert 'reason_code' not in detail['messages'][0]
+        assert detail['messages'][-1]['reason_code']=='budget_exceeded'
         assert len(calls)==1 and service.providers()['usage']['requests']==2
         for _ in range(3):runtime.tick('fixture')
         assert len(calls)==1
@@ -202,6 +205,7 @@ def test_restart_keeps_sent_child_receipt_and_partial_without_resending(agent_cl
         task=service.get_task(result['task_id']);assert task['state']=='interrupted_manual_retry' and task['cost']['state']=='pending'
         detail=client.get('/api/v1/ai/sessions/'+result['session_id']).json()
         assert detail['messages'][-1]['text']=='中断前已收到的文字'
+        assert detail['messages'][-1]['reason_code']=='interrupted_manual_retry'
         runtime.tick('fixture',allow_start=False)
         with core.connect() as db:assert db.execute('SELECT count(*) FROM ai_request_receipt WHERE task_id=?',(result['task_id'],)).fetchone()[0]==1
         assert service.providers()['usage']['requests']==2

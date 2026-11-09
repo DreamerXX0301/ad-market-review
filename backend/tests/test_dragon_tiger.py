@@ -328,6 +328,49 @@ def test_failed_day_keeps_old_anchor_and_successful_components_for_manual_retry(
     assert service.Store().index()['anchor_date']==DAY
 
 
+def test_manual_retry_refreshes_a_mismatched_public_group_without_refetching_accepted_days(local):
+    market,provider,public=local
+    previous=market.days[-2]
+    store=service.Store()
+    service.collect_for_market(market,DAY,dates=[previous],adapter=provider,public=public)
+    previous_pointer=store.index()['days'][previous]
+
+    class IncompletePublic(Public):
+        def report(self,day,kind,**kwargs):
+            value=super().report(day,kind,**kwargs)
+            if kind in ('buy','sell'):
+                value['rows']=[row for row in value['rows'] if row['SECUCODE']!='600814.SH']
+            return value
+
+    incomplete=IncompletePublic()
+    original=service.collect_for_market(market,DAY,adapter=provider,public=incomplete)
+    assert original['accepted_days']==0 and original['requested_components']==6
+    assert original['failures']==[{'date':DAY,'reason':'龙虎榜披露汇总与席位记录范围不完整'}]
+    assert store.index()['anchor_date']==previous
+    pointers={kind:(store.root/'parts'/('eastmoney-'+kind)/(DAY+'.json')).read_bytes() for kind in adapter.REPORTS}
+    provider.calls.clear();incomplete.calls.clear()
+
+    still_incomplete=service.collect_for_market(market,DAY,dates=[previous,DAY],adapter=provider,public=incomplete)
+    assert still_incomplete['quality']=='partial' and still_incomplete['reused_days']==1
+    assert still_incomplete['cached_components']==6 and still_incomplete['requested_components']==3
+    assert incomplete.calls==[(DAY,kind) for kind in adapter.REPORTS]
+    assert provider.calls==[] and store.index()['days']=={previous:previous_pointer}
+    assert all((store.root/'parts'/('eastmoney-'+kind)/(DAY+'.json')).read_bytes()==pointer
+               for kind,pointer in pointers.items())
+
+    public.calls.clear()
+    repaired=service.collect_for_market(market,DAY,dates=[previous,DAY],adapter=provider,public=public)
+    assert repaired['quality']=='complete' and repaired['accepted_days']==2 and repaired['reused_days']==1
+    assert repaired['cached_components']==6 and repaired['requested_components']==3
+    assert public.calls==[(DAY,kind) for kind in adapter.REPORTS] and provider.calls==[]
+    index=store.index()
+    assert index['anchor_date']==DAY and index['days'][previous]==previous_pointer and DAY not in index['failures']
+    day=store.day(index,DAY)
+    assert '600814.SH' in day['seats']['instruments']
+    fresh={item['capability']:item['payload'] for item in map(store.object,day['source_objects'])}
+    assert {kind:fresh['eastmoney-'+kind] for kind in adapter.REPORTS}==reports(DAY)
+
+
 def test_hot_failure_keeps_successful_components_retryable_without_false_complete(local):
     market,provider,public=local;original=provider.request
     def broken(path,params):

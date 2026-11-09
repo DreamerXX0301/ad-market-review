@@ -63,11 +63,6 @@ const AUCTION_PAGE_SECTIONS = [
     description: "日期、留存状态与样本覆盖",
   },
   {
-    id: "auction-automation",
-    label: "自动采集",
-    description: "服务计划、工作进程与最近结果",
-  },
-  {
     id: "auction-feedback",
     label: "昨日重点反馈",
     description: "昨日涨停炸板与今日高低开的反馈",
@@ -106,6 +101,11 @@ const AUCTION_PAGE_SECTIONS = [
     id: "auction-close-review",
     label: "盘后核对",
     description: "竞价到收盘的事后核对",
+  },
+  {
+    id: "auction-automation",
+    label: "自动采集",
+    description: "服务计划、工作进程与最近结果",
   },
 ];
 
@@ -434,7 +434,7 @@ export default function AuctionReview({
                 ? "服务自动采集 · 终态观察"
                 : "开盘前五分钟 · 终态观察"}
             </div>
-            <h1>盘前竞价</h1>
+            <h2>竞价概览</h2>
             <p>核对昨日重点股的竞价表现，也看重点名单外有哪些新方向。</p>
           </div>
           <div className="auction-head-actions">
@@ -484,31 +484,6 @@ export default function AuctionReview({
           <ErrorBox message={submitError} retry={result.reload} />
         )}
         {result.loading && !view && <Loading />}
-        <section id="auction-automation" tabIndex={-1}>
-          <AuctionAutomation
-            value={automaticResult.data}
-            loading={automaticResult.loading}
-            error={automaticResult.error}
-            reload={automaticResult.reload}
-          />
-        </section>
-        <div className="auction-method-strip">
-          <div>
-            <span>01</span>
-            <strong>准备关注</strong>
-            <p>先看昨日留存复盘与原关注，再补自选及已核验强势样本。</p>
-          </div>
-          <div>
-            <span>02</span>
-            <strong>09:25:30自动核对</strong>
-            <p>开启计划后由服务自动留存终态，比较高低开、竞价额与来源量比。</p>
-          </div>
-          <div>
-            <span>03</span>
-            <strong>带着证据观察</strong>
-            <p>高开不等于持续走强；开盘后的变化另行核验。</p>
-          </div>
-        </div>
         {!payload && preparation && (
           <Panel
             title="采集前准备 · 最近已发布日"
@@ -1476,6 +1451,36 @@ export default function AuctionReview({
             </Panel>
           </>
         )}
+        <section id="auction-automation" tabIndex={-1}>
+          <AuctionAutomation
+            value={automaticResult.data}
+            loading={automaticResult.loading}
+            error={automaticResult.error}
+            reload={automaticResult.reload}
+          />
+        </section>
+        <details className="auction-method">
+          <summary>怎么看竞价结果</summary>
+          <div className="auction-method-strip">
+            <div>
+              <span>01</span>
+              <strong>准备关注</strong>
+              <p>先看昨日留存复盘与原关注，再补自选及已核验强势样本。</p>
+            </div>
+            <div>
+              <span>02</span>
+              <strong>09:25:30自动核对</strong>
+              <p>
+                开启计划后由服务自动留存终态，比较高低开、竞价额与来源量比。
+              </p>
+            </div>
+            <div>
+              <span>03</span>
+              <strong>带着证据观察</strong>
+              <p>高开不等于持续走强；开盘后的变化另行核验。</p>
+            </div>
+          </div>
+        </details>
         <p className="auction-boundary-note">
           观察边界：竞价只留存当日终态，不提供09:20—09:24的挂单轨迹，也不据未匹配量推断净流入或封单方向。页面只读取设置与结果；服务自动采集遵循已保存授权，不依赖浏览器保持打开。
         </p>

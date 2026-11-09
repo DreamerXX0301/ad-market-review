@@ -32,12 +32,14 @@ function SourceItem({
   snapshotId,
   onStock,
   badges = false,
+  tagLabel,
 }: {
   item: MainlineSourceItem;
   date: string;
   snapshotId: unknown;
   onStock: (id: string) => void;
   badges?: boolean;
+  tagLabel?: "命中标签" | "来源标签";
 }) {
   return (
     <li className="daily-mainline-source-item">
@@ -61,22 +63,28 @@ function SourceItem({
           volume={false}
         />
       )}
+      {tagLabel && item.evidence.matched_tags.length > 0 && (
+        <p className="daily-mainline-matched-tags">
+          {tagLabel} · {item.evidence.matched_tags.join("、")}
+        </p>
+      )}
       <OriginalReason text={item.sourceReason} />
     </li>
   );
 }
+const searchText = (value: string) =>
+  value.toLocaleLowerCase().replace(/[“”"'‘’「」『』]/g, "");
 const matches = (item: MainlineSourceItem, query: string) =>
-  [
-    item.stock.name,
-    item.stock.code,
-    item.stock.instrument_id,
-    item.sourceReason,
-  ]
-    .join(" ")
-    .toLocaleLowerCase()
-    .includes(query);
+  searchText(
+    [
+      item.stock.name,
+      item.stock.code,
+      item.stock.instrument_id,
+      item.sourceReason,
+    ].join(" "),
+  ).includes(query);
 function visibleItems(group: MainlineDirection, query: string) {
-  return !query || group.name.toLocaleLowerCase().includes(query)
+  return !query || searchText(group.name).includes(query)
     ? group.items
     : group.items.filter((item) => matches(item, query));
 }
@@ -105,20 +113,82 @@ export default function DailyMainlines({
   onBrowseView?: (view: "height" | "theme") => void;
 }) {
   const plan = buildDailyMainlineDisplay(date, rows, systemFocus, snapshotId);
-  const search = query.trim().toLocaleLowerCase();
-  const focus = plan.groups
+  const search = searchText(query).trim();
+  const directions = new Map<
+    string,
+    MainlineDirection & { focus: boolean; related: boolean }
+  >();
+  for (const group of plan.groups)
+    directions.set(group.key, { ...group, focus: true, related: false });
+  for (const group of plan.otherGroups)
+    if (group.kind === "direction")
+      directions.set(group.key, { ...group, focus: false, related: false });
+  for (const group of plan.relatedGroups) {
+    const primary = directions.get(group.key);
+    if (primary) {
+      const relatedIds = new Set(
+        group.items.map((item) => item.stock.instrument_id),
+      );
+      if (
+        group.name !== primary.name ||
+        group.count <= primary.count ||
+        !primary.items.every((item) => relatedIds.has(item.stock.instrument_id))
+      )
+        continue;
+    }
+    directions.set(group.key, {
+      ...group,
+      focus: primary?.focus ?? false,
+      related: true,
+    });
+  }
+  const sortedDirections = [...directions.values()].sort(
+    (a, b) =>
+      b.count - a.count || (b.maxKnownHeight ?? 0) - (a.maxKnownHeight ?? 0),
+  );
+  const maxDirectionCount = sortedDirections[0]?.count ?? 1;
+  const visibleDirections = sortedDirections
     .map((group) => ({ ...group, visible: visibleItems(group, search) }))
     .filter((group) => group.visible.length);
-  const [selectedKey, setSelectedKey] = useState("");
+  const [selection, setSelection] = useState<{
+    date: string;
+    search: string;
+    key: string;
+  } | null>(null);
   const selected =
-    focus.find((group) => `${date}:${group.key}` === selectedKey) || focus[0];
-  const others = plan.otherGroups
+    (selection?.date === date && selection.search === search
+      ? visibleDirections.find((group) => group.key === selection.key)
+      : undefined) ||
+    (search
+      ? visibleDirections.find((group) =>
+          searchText(group.name).includes(search),
+        )
+      : undefined) ||
+    visibleDirections[0];
+  const selectedItems = selected
+    ? [...selected.visible].sort((a, b) => (b.height || 0) - (a.height || 0))
+    : [];
+  const selectedTagLabel = selected?.related ? "命中标签" : undefined;
+  const events = plan.otherGroups
+    .filter((group) => group.kind === "catalyst")
     .map((group) => ({ ...group, visible: visibleItems(group, search) }))
     .filter((group) => group.visible.length);
+  const directionStockIds = new Set(
+    sortedDirections.flatMap((group) =>
+      group.items.map((item) => item.stock.instrument_id),
+    ),
+  );
+  const individualCues = plan.individualCues.filter(
+    (item) => !directionStockIds.has(item.stock.instrument_id),
+  );
   const individuals = search
-    ? plan.individualCues.filter((item) => matches(item, search))
-    : plan.individualCues;
-  const item = (value: MainlineSourceItem, badges = false) => (
+    ? individualCues.filter((item) => matches(item, search))
+    : individualCues;
+  const item = (
+    value: MainlineSourceItem,
+    badges = false,
+    tagLabel?: "命中标签" | "来源标签",
+  ) => (
     <SourceItem
       key={value.stock.instrument_id}
       item={value}
@@ -126,6 +196,7 @@ export default function DailyMainlines({
       snapshotId={snapshotId}
       onStock={onStock}
       badges={badges}
+      tagLabel={tagLabel}
     />
   );
   return (
@@ -143,9 +214,7 @@ export default function DailyMainlines({
         )}
       </header>
       <div className="daily-mainline-scope">
-        <p>
-          主线看重点方向与来源线索；完整高度结构看连板梯队，题材成员看概念关联。
-        </p>
+        <p>在左侧选方向查看样本和原文。完整高度结构可在连板梯队查看。</p>
         {onBrowseView && (
           <div className="daily-mainline-navigation">
             <button
@@ -248,37 +317,40 @@ export default function DailyMainlines({
                   <b>{plan.classifiedCount - plan.missingReasonCount}</b> 只
                 </span>
               </div>
-              {!!focus.length && (
+              {visibleDirections.length > 0 && (
                 <div className="daily-mainline-focus-groups daily-mainline-comparison">
                   <div
                     className="daily-mainline-direction-list"
                     aria-label="主线方向对比"
                   >
                     <div className="daily-mainline-direction-head">
-                      <span>方向 / 原样本</span>
+                      <span>方向 / 涨停样本</span>
                       <span>首板</span>
                       <span>2板</span>
                       <span>3板+</span>
                       <span>待核验</span>
                     </div>
-                    {focus.map((group) => (
+                    {visibleDirections.map((group) => (
                       <button
                         key={group.key}
                         className={`daily-mainline-direction-row${selected?.key === group.key ? " is-selected" : ""}`}
                         aria-pressed={selected?.key === group.key}
-                        onClick={() => setSelectedKey(`${date}:${group.key}`)}
+                        onClick={() =>
+                          setSelection({ date, search, key: group.key })
+                        }
                       >
                         <span>
                           <strong>{group.name}</strong>
                           <small>
-                            {group.count} 只
+                            {group.count} 只{group.focus ? " · 重点" : ""}
+                            {group.related ? " · 来源关联" : ""}
                             {search && group.visible.length !== group.count
                               ? ` · 匹配 ${group.visible.length}`
                               : ""}
                           </small>
                           <i
                             style={{
-                              width: `${(100 * group.count) / Math.max(1, ...focus.map((value) => value.count))}%`,
+                              width: `${(100 * group.count) / maxDirectionCount}%`,
                             }}
                           />
                         </span>
@@ -310,7 +382,9 @@ export default function DailyMainlines({
                       </button>
                     ))}
                     <p className="daily-mainline-caption">
-                      左侧数量保留原方向统计；搜索只影响匹配名单。
+                      {plan.relatedGroups.length
+                        ? "方向按样本数排序。同一只股票可关联多个方向。搜索只筛选名单。"
+                        : "方向按样本数排序。搜索只筛选名单。"}
                     </p>
                   </div>
                   {selected && (
@@ -322,6 +396,7 @@ export default function DailyMainlines({
                         <h3>{selected.name}</h3>
                         <span>
                           {selected.count} 只
+                          {selected.related ? " · 来源关联" : ""}
                           {search && selected.visible.length !== selected.count
                             ? ` · 匹配 ${selected.visible.length} 只`
                             : ""}
@@ -334,23 +409,23 @@ export default function DailyMainlines({
                             : `本方向已核验最高 ${selected.maxKnownHeight}板`}
                         </p>
                         <ul className="daily-mainline-representatives">
-                          {[...selected.visible]
-                            .sort((a, b) => (b.height || 0) - (a.height || 0))
+                          {selectedItems
                             .slice(0, 2)
-                            .map((value) => item(value, true))}
+                            .map((value) =>
+                              item(value, true, selectedTagLabel),
+                            )}
                         </ul>
-                        {selected.visible.length > 2 && (
+                        {selectedItems.length > 2 && (
                           <details className="daily-mainline-more-members" open>
                             <summary>
-                              展开其余 {selected.visible.length - 2} 只
+                              展开其余 {selectedItems.length - 2} 只
                             </summary>
                             <ul className="daily-mainline-source-list">
-                              {[...selected.visible]
-                                .sort(
-                                  (a, b) => (b.height || 0) - (a.height || 0),
-                                )
+                              {selectedItems
                                 .slice(2)
-                                .map((value) => item(value))}
+                                .map((value) =>
+                                  item(value, false, selectedTagLabel),
+                                )}
                             </ul>
                           </details>
                         )}
@@ -361,23 +436,22 @@ export default function DailyMainlines({
               )}
               {!plan.groups.length && !search && (
                 <p className="daily-mainline-caption">
-                  当日来源尚未形成集中的重点方向，可继续查看下方方向与个股线索。
+                  当日来源尚未形成集中的重点方向，可查看其他方向与个股线索。
                 </p>
               )}
-              {others.length > 0 && (
+              {events.length > 0 && (
                 <section className="daily-mainline-other">
                   <header>
-                    <h3>其他方向与事件线索</h3>
+                    <h3>事件线索</h3>
                     <span>按来源归类</span>
                   </header>
                   <div className="daily-mainline-other-grid">
-                    {others.map((group) => (
+                    {events.map((group) => (
                       <details key={group.key} open>
                         <summary>
                           <strong>{group.name}</strong>
                           <span>
                             {group.count} 只
-                            {group.kind === "catalyst" ? " · 事件线索" : ""}
                             {search && group.visible.length !== group.count
                               ? ` · 匹配 ${group.visible.length} 只`
                               : ""}
@@ -394,30 +468,35 @@ export default function DailyMainlines({
               {individuals.length > 0 && (
                 <section className="daily-mainline-individual">
                   <header>
-                    <h3>个股来源线索</h3>
+                    <h3>未形成共同方向</h3>
                     <span>
-                      {plan.individualCues.length} 只
+                      {individualCues.length} 只
                       {search ? ` · 匹配 ${individuals.length} 只` : ""}
                     </span>
                   </header>
+                  <p className="daily-mainline-caption">
+                    保留个股来源标签和原文。
+                  </p>
                   <ul className="daily-mainline-source-list">
-                    {individuals.slice(0, 5).map((value) => item(value))}
+                    {individuals
+                      .slice(0, 5)
+                      .map((value) => item(value, false, "来源标签"))}
                   </ul>
                   {individuals.length > 5 && (
                     <details className="daily-mainline-more-cues" open>
-                      <summary>
-                        展开其余 {individuals.length - 5} 只个股线索
-                      </summary>
+                      <summary>展开其余 {individuals.length - 5} 只</summary>
                       <ul className="daily-mainline-source-list">
-                        {individuals.slice(5).map((value) => item(value))}
+                        {individuals
+                          .slice(5)
+                          .map((value) => item(value, false, "来源标签"))}
                       </ul>
                     </details>
                   )}
                 </section>
               )}
               {search &&
-                !focus.length &&
-                !others.length &&
+                !visibleDirections.length &&
+                !events.length &&
                 !individuals.length && (
                   <Empty
                     title="没有匹配的来源线索"

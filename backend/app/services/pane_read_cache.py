@@ -20,7 +20,7 @@ VERSION = 'pane-read-cache-v1'
 SESSIONS = 7
 MAX_BLOCK_BYTES = 2 * 1024 * 1024
 MAX_MEMORY_BYTES = 16 * 1024 * 1024
-MAX_FILES = 128
+MAX_FILES = 256
 MAX_DISK_BYTES = 64 * 1024 * 1024
 HISTORY_TTL_MS = 24 * 60 * 60 * 1000
 MAX_HISTORY_FILES = 64
@@ -31,7 +31,8 @@ _NAME = re.compile(r'[a-z][a-z0-9-]{0,47}\Z')
 _CLOSED_BLOCKS = ('index-summary', 'gainers-price-rank-v1', 'gainers-full-events-v1', 'gainers-overview',
                   'overview-breadth', 'emotion-facts', 'closing-ladder', 'sector-overview')
 _CLOSED_OPTIONAL_BLOCKS = ('monitor-historical', 'monitor-latest', 'emotion-broken-board-facts',
-                           'emotion-ladder-feedback-facts', 'emotion-first-board-facts')
+                           'emotion-ladder-feedback-facts', 'emotion-first-board-facts',
+                           'broken-board-day-facts')
 _CLOSED_RECEIPT = 'closed-day-warm'
 _warming = ContextVar('closed_day_cache_warming', default=None)
 _history_requested = ContextVar('historical_pane_cache_requested', default=False)
@@ -60,6 +61,10 @@ def with_historical_cache(read):
 
 def historical_cache_requested():
     return _history_requested.get()
+
+
+def pane_warm_in_progress():
+    return _warming.get() is not None
 
 
 def retained_days(market, *, live_snapshot=False, status=None):
@@ -282,10 +287,14 @@ def read_block(name, day, evidence, build, *, market=None, live_snapshot=False):
         return build()
     path = root / day / (name + '.json')
     key = (root, name, day, token)
-    with _lock:
-        body = _memory.get(key)
-        if body is not None:
-            _memory.move_to_end(key)
+    body = None
+    # The API and worker do not share memory. A warm pass must verify the
+    # shared file so a previous process hit cannot hide a missing block.
+    if not pane_warm_in_progress():
+        with _lock:
+            body = _memory.get(key)
+            if body is not None:
+                _memory.move_to_end(key)
     if body is None:
         body = _on_disk(path, token)
         if body is not None:
@@ -333,13 +342,17 @@ def snapshot_evidence(market, status, reference=None, *, verified_source=None):
     return (snapshot, digest(manifest), source, verified[1] if reference is not None else None)
 
 
-def _warm(readers):
-    for read in readers:
-        try:
-            read()
-        except Exception:
-            # Warming must not change a verified publication's outcome.
-            continue
+def _warm(readers, *, checked=None):
+    capture = _warming.set(set() if checked is None else checked)
+    try:
+        for read in readers:
+            try:
+                read()
+            except Exception:
+                # Warming must not change a verified publication's outcome.
+                continue
+    finally:
+        _warming.reset(capture)
 
 
 def warm_noon(day):
@@ -384,25 +397,8 @@ def _warm_token(folder, source):
     return digest((VERSION, _CLOSED_RECEIPT, _CLOSED_BLOCKS, _CLOSED_OPTIONAL_BLOCKS, source, files))
 
 
-def closed_day_warm_steps(day=None):
-    """Yield after each local cache read so a startup worker can admit jobs."""
-    from functools import partial
-
-    from app.core import get_market
-    from app.routers.intraday import view as intraday_view
-    from app.services import auction_feedback, auction_service, dragon_tiger, market_service, noon_service
-
-    market = get_market()
-    status = market.status()
-    latest = status.get('data_end')
-    generation = status.get('snapshot_id')
-    day = day or latest
-    dates = retained_days(market, status=status)
-    if day not in dates or latest != day:
-        return
+def _prune_recent(dates):
     root = _root()
-    folder = root / day
-    receipt = folder / (_CLOSED_RECEIPT + '.json')
     try:
         if not path_is_link_or_reparse(root) and root.is_dir():
             with locked_file(root / '.write-lock', exclusive=True):
@@ -410,16 +406,73 @@ def closed_day_warm_steps(day=None):
                 _prune_files(root, {*dates, today})
     except OSError:
         pass
+
+
+def closed_day_warm_steps(day=None):
+    """Warm the day just published by a verified closing or initial chain."""
+    from app.core import get_market
+
+    market = get_market()
+    status = market.status()
+    latest = status.get('data_end')
+    day = day or latest
+    dates = retained_days(market, status=status)
+    if day not in dates or latest != day:
+        return
+    _prune_recent(dates)
+    yield from _pane_warm_steps(market, status, day)
+
+
+def recent_pane_warm_steps():
+    """Fill the rolling window, yielding between readers for scheduled work."""
+    from functools import partial
+
+    from app.core import get_market
+    from app.services import news_events
+
+    market = get_market()
+    status = market.status()
+    generation = status.get('snapshot_id')
+    dates = retained_days(market, status=status)
+    if not generation or not dates:
+        return
+    _prune_recent(dates)
+    for day in reversed(dates):
+        if get_market().status().get('snapshot_id') != generation:
+            return
+        yield from _pane_warm_steps(market, status, day)
+        for read in (partial(news_events.read_view, day),
+                     partial(news_events.read_calendar, day, 30),
+                     partial(news_events.read_calendar, day, 7)):
+            if get_market().status().get('snapshot_id') != generation:
+                return
+            _warm((read,))
+            yield
+
+
+def _pane_warm_steps(market, status, day):
+    from functools import partial
+
+    from app.core import get_market
+    from app.routers.intraday import view as intraday_view
+    from app.services import auction_feedback, auction_service, dragon_tiger, market_service, noon_service
+
+    generation = status.get('snapshot_id')
+    root = _root()
+    folder = root / day
+    receipt = folder / (_CLOSED_RECEIPT + '.json')
     closed_readers = (
         partial(market_service.index_overview, day),
         partial(market_service.market_page, 'gainers', day, 25, top_n=100, page_size=25),
         partial(market_service.overview, day),
         partial(market_service.market_page, 'emotion', day, 1000),
+        partial(market_service.market_page, 'broken-boards', day, 1000),
         partial(market_service.market_page, 'sectors', day, 1000),
         partial(market_service.market_page, 'ladder', day, 1000),
         partial(market_service.market_page, 'abnormal', day, 1000),
-        partial(market_service.market_page, 'abnormal', day, 1000, monitor_scope='latest'),
     )
+    if day == status.get('data_end'):
+        closed_readers += (partial(market_service.market_page, 'abnormal', day, 1000, monitor_scope='latest'),)
     source = _warm_source(market, status)
     token = _warm_token(folder, source)
     if token is None or _on_disk(receipt, token) is None:
@@ -427,11 +480,7 @@ def closed_day_warm_steps(day=None):
         for read in closed_readers:
             if get_market().status().get('snapshot_id') != generation:
                 return
-            capture = _warming.set(checked)
-            try:
-                _warm((read,))
-            finally:
-                _warming.reset(capture)
+            _warm((read,), checked=checked)
             yield
         if get_market().status().get('snapshot_id') != generation:
             return
