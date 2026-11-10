@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 41,
+  "migration_version": 42,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -162,15 +162,19 @@
     {
       "name": "041_news_events.sql",
       "sha256": "122d3bae86199b8715c7558a0c7338a767694cb14928c477a50b85cccea3d146"
+    },
+    {
+      "name": "042_market_node_topic_overrides.sql",
+      "sha256": "492dc95745cabf6f4a5e856859e49a11e38c9e9cccd5be5ce52e8ea7ca2c329a"
     }
   ],
   "counts": {
-    "table": 82,
+    "table": 83,
     "index": 54,
     "view": 1,
     "trigger": 151
   },
-  "schema_sha256": "afca9dfa6933d0d4a2db89517beda7530fdb8f01c67ec2fac6bbf0928d3a5ec3",
+  "schema_sha256": "fa99715e55486d5184060e17724e2d2e6f1412cb7f275cc66c6cc55cc61312a4",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -3471,6 +3475,68 @@
       "triggers": [
         "market_news_snapshot_no_update"
       ]
+    },
+    "market_node_topic_override": {
+      "columns": [
+        {
+          "cid": 0,
+          "name": "trade_date",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "instrument_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "topic_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "topic_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "topic_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "revision",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "updated_at_ms",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        }
+      ],
+      "foreign_keys": [],
+      "triggers": []
     },
     "market_noon_capture": {
       "columns": [

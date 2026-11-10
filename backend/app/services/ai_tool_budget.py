@@ -20,7 +20,7 @@ GAINERS_LOOKUP_MODES = {'gainers_topic': 'topic_id', 'gainers_related': 'related
 TREND_PERIODS = ('D', 'W', 'M')
 TREND_WINDOWS = ('5', '10', '12', '20', '30', '40', '60')
 DETAIL_SECTIONS = ('indices', 'sectors', 'emotion', 'gainers', 'abnormal', 'dragon_tiger',
-                   'auction', 'noon', 'broken_boards', *GAINERS_LOOKUP_MODES)
+                   'auction', 'noon', 'broken_boards', 'mainline', *GAINERS_LOOKUP_MODES)
 INTRADAY_SLOTS = ('all', '0935', '0945', '1000', '1030', '1100', '1330', '1400', '1430')
 
 
@@ -86,6 +86,13 @@ def classify_tool(name, args):
         if set(args) != {'date'}:
             raise ValueError('invalid_tool_arguments')
         _day(args['date'])
+        return 'data'
+    if name == 'read_node_replay':
+        if set(args) != {'date', 'as_of'} or args['as_of'] == 'today':
+            raise ValueError('invalid_tool_arguments')
+        _day(args['date'])
+        if args['as_of'] != '':
+            _day(args['as_of'])
         return 'data'
     if name == 'read_market_detail':
         if (set(args) != {'date', 'section', 'query'}

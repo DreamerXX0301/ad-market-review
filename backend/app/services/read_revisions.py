@@ -22,6 +22,8 @@ _ARCHIVES = {
          ORDER BY revision DESC LIMIT 1) FROM market_noon_snapshot s WHERE s.trade_date=:day''',
     'news': '''SELECT stage,status,captured_at,content_sha256 FROM market_news_snapshot
         WHERE trade_date=:day ORDER BY stage''',
+    'node_topics': '''SELECT instrument_id,revision FROM market_node_topic_override
+        WHERE trade_date=:day ORDER BY instrument_id''',
 }
 
 

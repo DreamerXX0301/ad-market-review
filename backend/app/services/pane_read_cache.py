@@ -445,7 +445,8 @@ def _pane_warm_steps(market, status, day):
 
     from app.core import get_market
     from app.routers.intraday import view as intraday_view
-    from app.services import auction_feedback, auction_service, dragon_tiger, market_service, noon_service
+    from app.services import (auction_feedback, auction_service, dragon_tiger,
+                              market_node_replay, market_service, noon_service)
 
     generation = status.get('snapshot_id')
     root = _root()
@@ -485,6 +486,7 @@ def _pane_warm_steps(market, status, day):
         partial(noon_service.read_view, day),
         partial(intraday_view, day),
         partial(dragon_tiger.read_view, day),
+        partial(market_node_replay.read_nodes, day, market=market),
     )
     for read in readers:
         if get_market().status().get('snapshot_id') != generation:

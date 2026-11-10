@@ -84,6 +84,22 @@ def test_explicit_tags_produce_candidates_with_individual_verbatim_evidence():
     assert rows == before
 
 
+def test_manual_placement_keeps_provider_evidence_and_removes_automatic_duplicates():
+    rows = [row(1, '冰雪经济+光伏', 3), row(2, '冰雪经济', 2), row(3, None)]
+    solar = {'topic_id': 'reason:family:photovoltaic', 'name': '光伏', 'kind': 'concept', 'revision': 'rev'}
+    result = build(rows, overrides={'000001.SH': solar, '000003.SH': solar})
+    group, = result['other_groups']
+    assert group['key'] == 'family:photovoltaic' and group['count'] == group['manual_count'] == 2
+    assert group['labels'] == []
+    assert [(item['instrument_id'], item['source_reason'], item['matched_tags'], item['manual_override'])
+            for item in group['members']] == [
+        ('000001.SH', '冰雪经济+光伏', [], solar), ('000003.SH', None, [], solar)]
+    assert not result['related_groups']
+    assert [item['instrument_id'] for item in result['individual_cues']] == ['000002.SH']
+    assert result['coverage']['eligible_reason_count'] == 2
+    assert result['coverage']['manual_count'] == 2
+
+
 def test_related_directions_read_later_tags_without_counting_a_stock_twice_in_the_partition():
     rows = [
         row(1, '冰雪旅游保障+高速公路', 2),

@@ -33,7 +33,7 @@ def call(section, **kwargs):
 
 def test_tool_schemas_are_closed_responses_functions():
     schemas = tools.tool_schemas()
-    assert {s['name'] for s in schemas} == {'read_market_data', 'read_intraday_data', 'read_stock_research', 'check_data_availability', 'read_stock_quote', 'read_stock_trend', 'read_limit_up_data', 'read_market_detail'}
+    assert {s['name'] for s in schemas} == {'read_market_data', 'read_intraday_data', 'read_stock_research', 'check_data_availability', 'read_stock_quote', 'read_stock_trend', 'read_limit_up_data', 'read_node_replay', 'read_market_detail'}
     assert all(s['type'] == 'function' and s['strict'] is True for s in schemas)
     assert all(s['parameters']['additionalProperties'] is False for s in schemas)
     assert schemas[0]['parameters']['properties']['section']['enum'] == list(tools.SECTIONS)

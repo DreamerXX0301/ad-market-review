@@ -105,6 +105,35 @@ def test_raw_price_conflict_is_retained_only_in_unverified_candidates(market):
     assert result['main_coverage']['complete'] is False
 
 
+@pytest.mark.parametrize('mode', ['same_generation', 'different_generation', 'action', 'nonmatching_price'])
+def test_promotion_failure_does_not_hide_a_same_tick_price_reference_conflict(market, mode):
+    prior, current = market.history[B][-2:]
+    prior.update(open=6.12, high=6.12, low=6.12, close=6.12)
+    current.update(open=6.73, high=6.73, low=6.30, close=6.73)
+    previous_event = market.ref['_supplement']['annual_pools'][DAYS[-2]]['items'][0]
+    previous_event.update(last_price=6.12, continue_day_cnt=4)
+    if mode == 'nonmatching_price': current.update(close=6.72)
+    rows = market.rows()
+    panel = next(row for row in rows if row['instrument_id'] == B)
+    panel.update(snapshot_id='other' if mode == 'different_generation' else 'fixture',
+                 corporate_action_coverage_known=True, corporate_action=mode == 'action')
+    result = ladder.build_ladder(market, market.status(), TODAY, market.ref, rows, {})
+    assert B not in {row['instrument_id'] for row in result['items']}
+    if mode != 'same_generation':
+        assert result['failed_items'][0]['instrument_id'] == B
+        assert result['unverified_items'] == []
+        return
+    assert result['failed_items'] == []
+    [unknown] = result['unverified_items']
+    assert unknown['instrument_id'] == B and unknown['previous_board_count'] == 4
+    assert unknown['limit_up_state'] is None and unknown['failed_state'] is None
+    assert unknown['limit_up_evidence']['status'] == 'conflict'
+    assert unknown['limit_up_evidence']['price_reference']['reference_price'] == 6.73
+    assert result['classification_coverage']['failed']['unknown_count'] == 1
+    assert result['main_coverage']['source_pool_complete'] is True
+    assert result['main_coverage']['complete'] is False
+
+
 @pytest.mark.parametrize('missing_day', [DAYS[-2], DAYS[-3]])
 def test_rebound_missing_exact_prior_day_stays_unknown(market, missing_day):
     market.history[A] = [row for row in market.history[A] if row['date'] != missing_day]

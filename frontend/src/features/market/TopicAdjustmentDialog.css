@@ -1,0 +1,71 @@
+.topic-adjustment-body {
+  gap: 12px;
+}
+.topic-adjustment-caption {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.topic-adjustment-stock,
+.topic-adjustment-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topic-adjustment-body :is(select, input:not([type="checkbox"])) {
+  width: 100%;
+  min-width: 0;
+}
+.topic-adjustment-body label {
+  min-width: 0;
+}
+.topic-adjustment-stock {
+  flex-wrap: wrap;
+}
+.topic-adjustment-fields,
+.topic-adjustment-options {
+  display: grid;
+  gap: 12px;
+}
+.topic-adjustment-options > label {
+  display: grid;
+  gap: 8px;
+}
+.topic-adjustment-evidence {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border-radius: 6px;
+}
+.topic-adjustment-evidence > :last-child {
+  grid-column: 1 / -1;
+}
+.topic-adjustment-evidence dt {
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+}
+.topic-adjustment-evidence dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+.topic-adjustment-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.topic-adjustment-edit {
+  display: inline-grid;
+  place-items: center;
+  padding: 3px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+}
+.topic-adjustment-edit:hover,
+.topic-adjustment-edit:focus-visible {
+  color: var(--blue);
+  background: var(--blue-bg);
+}

@@ -119,7 +119,7 @@ def test_startup_warm_skips_an_uninitialized_market(monkeypatch):
 
 @pytest.mark.parametrize('recent', [False, True], ids=['closing-day', 'recent-days'])
 def test_warm_steps_reuse_verified_files_and_rebuild_a_missing_block(monkeypatch, tmp_path, recent):
-    from app.services import (auction_feedback, auction_service, dragon_tiger, market_service,
+    from app.services import (auction_feedback, auction_service, dragon_tiger, market_node_replay, market_service,
                               news_events, noon_service, pane_read_cache)
     from app.routers import intraday
 
@@ -162,6 +162,7 @@ def test_warm_steps_reuse_verified_files_and_rebuild_a_missing_block(monkeypatch
     monkeypatch.setattr(market_service, 'market_page', page)
     monkeypatch.setattr(market_service, 'index_overview', lambda day: read(day, 'index-summary'))
     monkeypatch.setattr(market_service, 'overview', lambda day: read(day, 'gainers-overview', 'overview-breadth'))
+    monkeypatch.setattr(market_node_replay, 'read_nodes', lambda day, *, market: read(day, 'node-replay'))
     warm_steps = (pane_read_cache.recent_pane_warm_steps if recent
                   else pane_read_cache.closed_day_warm_steps)
     list(warm_steps())
@@ -170,7 +171,7 @@ def test_warm_steps_reuse_verified_files_and_rebuild_a_missing_block(monkeypatch
                                   for name in ('auction', 'auction-feedback', 'noon', 'intraday', 'dragon-tiger')}
     assert news_reads == ([(day, scope) for day in expected_days for scope in ('news', 30, 7)] if recent else [])
     expected_blocks = set(pane_read_cache._CLOSED_BLOCKS) | {
-        'emotion-broken-board-facts', 'emotion-ladder-feedback-facts', 'emotion-first-board-facts',
+        'emotion-broken-board-facts', 'emotion-ladder-feedback-facts', 'emotion-first-board-facts', 'node-replay',
     }
     assert set(builds) == {(day, name) for day in expected_days for name in expected_blocks}
     assert {path.name for path in tmp_path.iterdir() if path.is_dir()} == set(expected_days)
@@ -178,8 +179,15 @@ def test_warm_steps_reuse_verified_files_and_rebuild_a_missing_block(monkeypatch
     reads.clear()
     builds.clear()
     list(warm_steps())
-    assert reads == builds == []
+    assert reads == [(day, 'node-replay') for day in expected_days]
+    assert not builds
     target = expected_days[-1]
+    (tmp_path / target / 'node-replay.json').unlink()
+    reads.clear()
+    list(warm_steps())
+    assert reads == [(day, 'node-replay') for day in expected_days]
+    assert builds == [(target, 'node-replay')]
+    builds.clear()
     # A still-valid worker memory entry must not hide the missing shared file.
     (tmp_path / target / 'gainers-full-events-v1.json').unlink()
     list(warm_steps())

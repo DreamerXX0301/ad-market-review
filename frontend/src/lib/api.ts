@@ -71,7 +71,8 @@ const scopePaths: Record<string, RegExp> = {
     /^\/(?:bootstrap|data\/status|market\/(?:overview|emotion|broken-boards|ladder|sectors|gainers|intraday|noon))(?:[/?-]|$)/,
   suspensions: /^\/market\/(?:gainers|overview|auction|noon|intraday)(?:\?|$)/,
   historical_reference:
-    /^\/market\/(?:overview|emotion|ladder|sectors|abnormal|gainers|intraday|noon)(?:\?|$)/,
+    /^\/market\/(?:overview|emotion|ladder(?:\/nodes)?|sectors|abnormal|gainers|intraday|noon)(?:\?|$)/,
+  node_topics: /^\/market\/ladder(?:\/(?:nodes|topic-adjustments))?(?:\?|$)/,
   archive_controls: /^\/market\/(?:auction|noon|intraday)(?:\?|$)/,
   dragon_tiger: /^\/market\/dragon-tiger(?:[/?-]|$)/,
   sector_charts:
@@ -127,6 +128,13 @@ export function notifyReadChanges(changes: ReadChange[]) {
     )
   )
     clearHistoricalWarmReads();
+  const nodeChanges = changes.filter(({ scope }) => scope === "node_topics");
+  if (nodeChanges.length) {
+    for (const reads of [historicalWarmReads, sameDayAttempts])
+      for (const path of reads.keys())
+        if (nodeChanges.some((change) => matchesReadChange(path, change)))
+          reads.delete(path);
+  }
   for (const path of pendingReads.keys())
     if (changes.some((change) => matchesReadChange(path, change)))
       pendingReads.delete(path);
@@ -154,6 +162,8 @@ function revisionCoversPath(path: string) {
 function savedMutationScope(path: string, method: string | undefined) {
   if (!method || method === "GET") return;
   const endpoint = path.split("?")[0];
+  if (method === "POST" && endpoint === "/market/ladder/topic-adjustments")
+    return "node_topics";
   if (
     /^\/(?:sector-)?strategies(?:\/[^/]+(?:\/restore)?|\/bootstrap)?$/.test(
       endpoint,
@@ -366,7 +376,12 @@ export async function api<T = any>(
     );
   }
   const scope = savedMutationScope(path, options.method?.toUpperCase());
-  if (scope) notifyReadChanges([{ scope }]);
+  if (scope === "node_topics") {
+    const date =
+      data?.date ?? new URLSearchParams(path.split("?")[1]).get("date");
+    if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date))
+      notifyReadChanges([{ scope, date }]);
+  } else if (scope) notifyReadChanges([{ scope }]);
   return data;
 }
 export const post = <T = any>(path: string, data: unknown = {}) =>
@@ -387,6 +402,11 @@ const historicalPlans = {
   gainers: { bytes: 4096 * KiB, days: 1, domains: marketHistory },
   emotion: { bytes: 1024 * KiB, days: 1, domains: marketHistory },
   ladder: { bytes: 2048 * KiB, days: 1, domains: marketHistory },
+  "ladder/nodes": {
+    bytes: 512 * KiB,
+    days: 0,
+    domains: ["supplement", "historical_reference"],
+  },
   sectors: { bytes: 5120 * KiB, days: 1, domains: marketHistory },
   abnormal: { bytes: 128 * KiB, days: 2, domains: marketHistory },
   "dragon-tiger": { bytes: 512 * KiB, days: 2, domains: ["dragon_tiger"] },
@@ -420,6 +440,8 @@ type HistoricalTarget = {
 
 function historicalPath({ day, kind, monitorScope }: HistoricalTarget) {
   if (kind === "gainers") return firstGainersReadPath(day);
+  if (kind === "ladder/nodes")
+    return `/market/ladder/nodes?date=${day}&as_of=${day}`;
   if (kind === "abnormal")
     return `/market/abnormal?monitor_scope=${monitorScope || "historical"}&limit=1000&date=${day}`;
   const limit = ["emotion", "ladder", "sectors"].includes(kind)
@@ -465,6 +487,8 @@ function readMarketProof({ day, kind }: HistoricalTarget, receipt: Row) {
   if ("archive" in plan && typeof archiveRevision !== "string") return null;
   const anchors =
     kind === "intraday" ? [dateRevisions?.auction, dateRevisions?.noon] : [];
+  if (kind === "ladder" || kind === "ladder/nodes")
+    anchors.push(dateRevisions?.node_topics);
   if (anchors.some((value) => value !== null && typeof value !== "string"))
     return null;
   let clockBucket: number | null = null;
@@ -554,6 +578,13 @@ function validHistoricalBody(
       )
     );
   if (value.snapshot_id !== snapshotId) return false;
+  if (kind === "ladder/nodes")
+    return (
+      value.as_of === day &&
+      Array.isArray(value.sessions) &&
+      value.sessions.length === 0 &&
+      Array.isArray(value.groups)
+    );
   if (kind === "dragon-tiger")
     return (
       value.availability?.available === true &&

@@ -87,6 +87,7 @@
 }
 .ladder-view-switch {
   display: flex;
+  flex-wrap: wrap;
   padding: 3px;
   gap: 3px;
   border: 1px solid var(--border);

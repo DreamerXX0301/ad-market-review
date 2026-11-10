@@ -16,6 +16,7 @@ const {
   ladderTopics,
   groupLadderRows,
   filterLadderRows,
+  ladderSearch,
   ladderClassificationCount,
   themeCountText,
   ladderPatternTags,
@@ -110,6 +111,48 @@ assert.equal(
 );
 assert.equal(filterLadderRows(full, "", null).length, 137);
 
+const searchNames = {
+  东方新能: ["dongfangxinneng", "dfxn"],
+  东方系: ["dongfangxi", "dfx"],
+  绿色能源: ["lvsenengyuan", "lsny"],
+};
+const datedRows = [
+  {
+    name: "东方新能",
+    instrument_id: "000958.SZ",
+    source_industry: "绿色能源",
+    topics: [{ topic_id: "oriental", name: "东方系" }],
+    reason: "签下算力大单",
+  },
+  { name: "东方电气", instrument_id: "600875.SH" },
+];
+for (const query of [
+  "方新",
+  "ｄｆｘｎ",
+  "dong-fang xin neng",
+  "dongfangxingneng",
+  "东方心能",
+  "东新方能",
+  "０ ０ ０ ９ ５ ８．ｓｚ",
+  "「东方系」",
+  "算力 + 大单",
+  "lǜ sè néng yuán",
+])
+  assert.deepEqual(
+    filterLadderRows(datedRows, query, null, searchNames).map(
+      (row) => row.instrument_id,
+    ),
+    ["000958.SZ"],
+    query,
+  );
+assert.equal(
+  filterLadderRows(datedRows, "000959", null, searchNames).length,
+  0,
+);
+assert.equal(ladderSearch("「 」").term, "");
+assert.equal(ladderSearch("算立大单").contains("算力大单"), false);
+assert.equal(ladderSearch("东方", searchNames).label("东方电气"), true);
+
 assert.equal(ladderClassificationCount([], null), null);
 assert.equal(
   ladderClassificationCount([], {
@@ -184,7 +227,9 @@ const marked = {
   pattern_status: { earth_to_sky: { state: true, status: "confirmed" } },
 };
 assert.deepEqual(
-  ladderPatternTags(marked, observed, "synthetic-generation").map((item) => item.label),
+  ladderPatternTags(marked, observed, "synthetic-generation").map(
+    (item) => item.label,
+  ),
   ["地天板"],
   "only backend-confirmed same-day shape is rendered and duplicates collapse",
 );
@@ -196,7 +241,14 @@ for (const [key, value] of [
   ["pattern_status", {}],
   ["pattern_events", null],
 ]) {
-  assert.deepEqual(ladderPatternTags({ ...marked, [key]: value }, observed, "synthetic-generation"), []);
+  assert.deepEqual(
+    ladderPatternTags(
+      { ...marked, [key]: value },
+      observed,
+      "synthetic-generation",
+    ),
+    [],
+  );
 }
 for (const [key, value] of [
   ["kind", "constructor"],
@@ -208,14 +260,46 @@ for (const [key, value] of [
   ["raw_price_basis", "forward"],
   ["raw_ohlc", { open: 10, high: 11, low: null, close: 11 }],
 ]) {
-  assert.deepEqual(ladderPatternTags({ ...marked, pattern_events: [{ ...pattern, [key]: value }] }, observed, "synthetic-generation"), []);
+  assert.deepEqual(
+    ladderPatternTags(
+      { ...marked, pattern_events: [{ ...pattern, [key]: value }] },
+      observed,
+      "synthetic-generation",
+    ),
+    [],
+  );
 }
-assert.deepEqual(ladderPatternTags(marked, "2026-10-22", "synthetic-generation"), []);
+assert.deepEqual(
+  ladderPatternTags(marked, "2026-10-22", "synthetic-generation"),
+  [],
+);
 assert.deepEqual(ladderPatternTags(marked, observed, null), []);
-assert.deepEqual(ladderPatternTags({ ...marked, pattern_events: [] }, observed, "synthetic-generation"), []);
-assert.deepEqual(ladderPatternTags({ date: observed, change_pct: 10, open: 11, close: 11 }, observed, "synthetic-generation"), [], "display OHLC/10% return never invents a badge");
+assert.deepEqual(
+  ladderPatternTags(
+    { ...marked, pattern_events: [] },
+    observed,
+    "synthetic-generation",
+  ),
+  [],
+);
+assert.deepEqual(
+  ladderPatternTags(
+    { date: observed, change_pct: 10, open: 11, close: 11 },
+    observed,
+    "synthetic-generation",
+  ),
+  [],
+  "display OHLC/10% return never invents a badge",
+);
 for (const kind of ["one_price_limit_up", "one_price_limit_down"]) {
-  const row = { ...marked, pattern_events: [{ ...pattern, kind }], pattern_status: { [kind]: { state: true, status: "confirmed" } } };
-  assert.equal(ladderPatternTags(row, observed, "synthetic-generation")[0].label, kind === "one_price_limit_up" ? "一字涨停" : "一字跌停");
+  const row = {
+    ...marked,
+    pattern_events: [{ ...pattern, kind }],
+    pattern_status: { [kind]: { state: true, status: "confirmed" } },
+  };
+  assert.equal(
+    ladderPatternTags(row, observed, "synthetic-generation")[0].label,
+    kind === "one_price_limit_up" ? "一字涨停" : "一字跌停",
+  );
 }
 console.log("ladder presentation cases passed");

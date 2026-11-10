@@ -76,7 +76,7 @@ def test_activity_revisions_follow_saved_snapshots_for_exact_days(isolated):
     initial = client.get(path).json()['read_revisions']
     assert initial['today'] == today
     assert set(initial['dates']) == {today, historical}
-    assert initial['dates'][historical] == dict(auction=None, intraday=None, noon=None, news=None)
+    assert initial['dates'][historical] == dict(auction=None, intraday=None, noon=None, news=None, node_topics=None)
 
     stamp = core.now_ms()
     for slot in ('0935', '0945'):

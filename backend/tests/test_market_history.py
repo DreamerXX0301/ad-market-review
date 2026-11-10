@@ -101,6 +101,18 @@ def test_older_generation_members_use_requested_day_quotes_and_local_source_only
     assert current == before  # Neither annual inputs nor the global ref are replaced.
 
 
+def test_retained_topics_read_only_selected_market_archive(archives):
+    _, save = archives
+    day, later = '2026-10-19', '2026-10-20'
+    save('market-later', later, reference(later, B, observed=day))
+    assert history.retained_topics_for_market_day(day) == []
+
+    older = reference(day, A, observed='2026-10-16')
+    older['topics'].append(topic(later, B))
+    save('market-exact', day, older)
+    assert history.retained_topics_for_market_day(day) == [older['topics'][0]]
+
+
 def test_exact_verified_historical_index_snapshot_can_supply_real_index_change(archives, monkeypatch):
     _, save = archives
     old = reference('2026-10-19')

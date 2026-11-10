@@ -42,6 +42,7 @@
 -- 039_auction_discovery.sql sha256=01681f2b4b20912a050e37256bb792c2482c15a0f46cd3622f3373b97ddd17da
 -- 040_auction_retention_30_days.sql sha256=77316c0066d358afe552f1d52043451505f0800d11443c80b6631128f3f07727
 -- 041_news_events.sql sha256=122d3bae86199b8715c7558a0c7338a767694cb14928c477a50b85cccea3d146
+-- 042_market_node_topic_overrides.sql sha256=492dc95745cabf6f4a5e856859e49a11e38c9e9cccd5be5ce52e8ea7ca2c329a
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -459,6 +460,19 @@ CREATE TABLE market_news_snapshot (
     content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
     PRIMARY KEY (trade_date, stage)
 ) STRICT;
+
+CREATE TABLE market_node_topic_override (
+    trade_date TEXT NOT NULL CHECK(date(trade_date, '+0 days') IS trade_date),
+    instrument_id TEXT NOT NULL CHECK(
+        instrument_id GLOB '[0-9][0-9][0-9][0-9][0-9][0-9].S[HZ]'
+        OR instrument_id GLOB '[0-9][0-9][0-9][0-9][0-9][0-9].BJ'),
+    topic_id TEXT NOT NULL CHECK(length(topic_id) BETWEEN 1 AND 200),
+    topic_name TEXT NOT NULL CHECK(length(topic_name) BETWEEN 1 AND 80),
+    topic_kind TEXT NOT NULL CHECK(topic_kind IN ('industry', 'concept')),
+    revision TEXT NOT NULL CHECK(length(revision)=32 AND revision NOT GLOB '*[^0-9a-f]*'),
+    updated_at_ms INTEGER NOT NULL CHECK(updated_at_ms>0),
+    PRIMARY KEY (trade_date, instrument_id)
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE market_noon_capture (
  trade_date TEXT PRIMARY KEY CHECK(date(trade_date,'+0 days') IS trade_date),

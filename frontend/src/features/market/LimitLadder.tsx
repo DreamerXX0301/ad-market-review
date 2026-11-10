@@ -24,6 +24,7 @@ import {
 import MarketDataCoverage from "./MarketDataCoverage";
 import TopicMembersDialog from "./TopicMembersDialog";
 import DailyMainlines from "./DailyMainlines";
+import NodeReplay from "./NodeReplay";
 import { CurrencyCell } from "./MarketTable";
 import CopyStockCode from "../../components/CopyStockCode";
 import BoardTags from "./BoardTags";
@@ -33,6 +34,7 @@ import {
   filterLadderRows,
   groupLadderRows,
   ladderClassificationCount,
+  ladderSearch,
   ladderTopics,
   themeCountText,
 } from "./ladderPresentation";
@@ -389,7 +391,9 @@ export default function LimitLadder({
   const [query, setQuery] = useState("");
   const [selectedTopic, setSelectedTopic] = useState<LadderTopic | null>(null);
   const [memberTopic, setMemberTopic] = useState<Row | null>(null);
-  const [view, setView] = useState<"height" | "theme" | "mainlines">("height");
+  const [view, setView] = useState<"height" | "theme" | "mainlines" | "nodes">(
+    "height",
+  );
   const [rawTopicsOpen, setRawTopicsOpen] = useState(false);
   const [sort, setSort] = useState<MarketSort>({
     key: "first_limit_time",
@@ -400,15 +404,63 @@ export default function LimitLadder({
     setSelectedTopic(null);
     setMemberTopic(null);
   }, [date]);
+  const viewSwitch = (
+    <div className="ladder-view-switch" aria-label="切换涨停看板视图">
+      {(
+        [
+          ["height", "连板梯队"],
+          ["theme", "概念关联"],
+          ["mainlines", "当日主线"],
+          ["nodes", "节点回放"],
+        ] as const
+      ).map(([key, text]) => (
+        <button
+          key={key}
+          aria-pressed={view === key}
+          className={view === key ? "active" : ""}
+          onClick={() => {
+            setView(key);
+            if (key === "mainlines") setSelectedTopic(null);
+          }}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+  if (view === "nodes")
+    return (
+      <IntradayPageNavigation
+        className="limit-ladder"
+        scopeKey={date + "-nodes"}
+        pageTitle="节点回放"
+        pageActive={pageActive}
+        inlineSectionNavigation
+      >
+        <div className="ladder-controls">{viewSwitch}</div>
+        <NodeReplay
+          key={date}
+          date={date}
+          latestDate={latestDate}
+          onStock={onStock}
+        />
+      </IntradayPageNavigation>
+    );
   const main = rowsAt(data?.items),
     rebound = rowsAt(data?.rebound_items),
     failed = rowsAt(data?.failed_items),
     twenty = rowsAt(data?.twenty_cm_items),
     themes = rowsAt(data?.theme_counts);
   const themeIndex = ladderThemeIndex(themes);
-  const filtered = filterLadderRows(main, query, selectedTopic);
+  const searchNames = data?.search_names;
+  const search = ladderSearch(query, searchNames);
+  const filtered = filterLadderRows(main, query, selectedTopic, searchNames);
   const groups = groupLadderRows(filtered);
-  if (!groups.some((group) => group.height === 1) && !query && !selectedTopic)
+  if (
+    !groups.some((group) => group.height === 1) &&
+    !search.term &&
+    !selectedTopic
+  )
     groups.splice(
       groups.findIndex((group) => group.height == null) < 0
         ? groups.length
@@ -421,6 +473,13 @@ export default function LimitLadder({
   const conceptOverview = ladderThemeGroups(main, themes, "concept").filter(
     (group) => !isStructuralLadderTopic(group.topic),
   );
+  const visibleConcepts = search.term
+    ? conceptOverview.filter(
+        (group) =>
+          search.label(group.topic.name) ||
+          group.items.some((row) => filteredSet.has(row)),
+      )
+    : conceptOverview;
   const selectedConcept = conceptOverview.find(
     (group) => group.topic.key === selectedTopic?.key,
   );
@@ -439,7 +498,7 @@ export default function LimitLadder({
     .map((row) => row.board_count)
     .filter(positiveCount)
     .sort((a, b) => b - a)[0];
-  const searching = !!query.trim() || !!selectedTopic;
+  const searching = !!search.term || !!selectedTopic;
   const onTopic = (topic: LadderTopic) =>
     setSelectedTopic((current) => (current?.key === topic.key ? null : topic));
   const baseId = "limit-ladder-" + date;
@@ -493,6 +552,7 @@ export default function LimitLadder({
       pageActive={pageActive}
       inlineSectionNavigation
     >
+      <div className="ladder-controls">{viewSwitch}</div>
       <div className="ladder-intro">
         <div className="ladder-compact-caption">
           <Layers3 size={14} />
@@ -577,35 +637,14 @@ export default function LimitLadder({
             </div>
           )}
           <div className="ladder-controls">
-            <div className="ladder-view-switch" aria-label="切换涨停看板视图">
-              {(
-                [
-                  ["height", "连板梯队"],
-                  ["theme", "概念关联"],
-                  ["mainlines", "当日主线"],
-                ] as const
-              ).map(([key, text]) => (
-                <button
-                  key={key}
-                  aria-pressed={view === key}
-                  className={view === key ? "active" : ""}
-                  onClick={() => {
-                    setView(key);
-                    if (key === "mainlines") setSelectedTopic(null);
-                  }}
-                >
-                  {text}
-                </button>
-              ))}
-            </div>
             <label className="ladder-search">
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={
                   view === "mainlines"
-                    ? "搜索股票、代码或主线…"
-                    : "搜索股票、代码或题材…"
+                    ? "股票、代码、主线或拼音…"
+                    : "股票、代码、题材或拼音…"
                 }
                 aria-label="搜索涨停梯队股票或题材"
               />
@@ -658,7 +697,7 @@ export default function LimitLadder({
             <div className="ladder-filter-state">
               <span>
                 {selectedTopic ? `题材：${selectedTopic.name}` : ""}
-                {query.trim() ? ` 搜索：${query.trim()}` : ""} · 匹配{" "}
+                {search.term ? ` 搜索：${query.trim()}` : ""} · 匹配{" "}
                 {filtered.length}/{main.length}只
               </span>
               <button
@@ -748,7 +787,7 @@ export default function LimitLadder({
                 <p className="ladder-display-notice">
                   按已留存概念成员作浏览分组，不代表涨停主因；不修改题材归属。其余关联见股票卡片或下方数据详情。
                 </p>
-                {!!conceptOverview.length && (
+                {!!visibleConcepts.length && (
                   <nav
                     className="ladder-concept-counts"
                     aria-label="概念关联涨停数量快捷查看"
@@ -756,7 +795,8 @@ export default function LimitLadder({
                     <div className="ladder-concept-counts-heading">
                       <strong>概念关联涨停数</strong>
                       <span>
-                        前20个概念 · 按数量降序 · 概念之间有重叠，不可相加
+                        {search.term ? "匹配概念前20个" : "前20个概念"} ·
+                        按数量降序 · 概念之间有重叠，不可相加
                       </span>
                       {selectedTopic && (
                         <button
@@ -768,7 +808,7 @@ export default function LimitLadder({
                       )}
                     </div>
                     <div className="ladder-concept-count-chips">
-                      {conceptOverview.slice(0, 20).map((group) => (
+                      {visibleConcepts.slice(0, 20).map((group) => (
                         <button
                           key={group.topic.key}
                           className={
@@ -852,6 +892,8 @@ export default function LimitLadder({
                 date={date}
                 rows={main}
                 query={query}
+                searchNames={searchNames}
+                adjustmentsEnabled={data?.topic_adjustments_enabled !== false}
                 onStock={onStock}
                 snapshotId={data?.snapshot_id}
                 systemFocus={data?.system_mainlines}
@@ -879,7 +921,12 @@ export default function LimitLadder({
                   title={section.title}
                   description={section.description}
                   accent={section.accent}
-                  rows={filterLadderRows(section.rows, query, selectedTopic)}
+                  rows={filterLadderRows(
+                    section.rows,
+                    query,
+                    selectedTopic,
+                    searchNames,
+                  )}
                   allRows={section.rows}
                   coverage={coverage[section.key]}
                   onStock={onStock}

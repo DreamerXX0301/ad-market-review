@@ -34,6 +34,19 @@ export const intradayReadingSections = {
     description: "当前视图的梯队、题材或当日主线",
   },
   ladderEvents: { label: "补充事件", description: "其他涨停及事件分类" },
+  nodeReplay: { label: "节点回放", description: "回放日期与反馈截止日" },
+  nodePrior: {
+    label: "前日梯队对照",
+    description: "最高和次高梯队的量价与节点日反馈",
+  },
+  nodeTopics: {
+    label: "行业与概念梯队",
+    description: "节点日行业和概念的各板高样本",
+  },
+  nodeFeedback: {
+    label: "原名单与反馈",
+    description: "首板至三板同批样本的后续晋级和断板",
+  },
   sources: { label: "数据与来源", description: "本页覆盖范围与数据口径" },
   dataSummary: { label: "数据概况", description: "数据水位与已发布文件" },
   automatic: { label: "自动计划", description: "竞价、盘中、午评与盘后复盘" },

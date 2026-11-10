@@ -109,6 +109,11 @@ assert.deepEqual(
   ["auction", "noon", "news-events"].map((route) => marketPrimaryReadPath(route, day)),
   "opening today's saved intraday view does not pull yesterday's quote pages",
 );
+assert.equal(
+  sameDayMarketPaths(routes, "ladder", day, () => day)[0],
+  `/market/ladder/nodes?date=${day}&as_of=${day}`,
+  "the ladder prioritizes the selected day's default replay",
+);
 
 const NativeDate = Date;
 globalThis.Date = class extends NativeDate {

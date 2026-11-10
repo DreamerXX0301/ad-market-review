@@ -126,37 +126,101 @@ export function groupLadderRows(rows: Row[]) {
     .map(([height, items]) => ({ height, items }));
 }
 
+export type LadderSearchNames = Record<string, readonly [string, string]>;
+
+function normalizeSearch(value: unknown) {
+  return typeof value === "string"
+    ? value
+        .normalize("NFKC")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/u\u0308|u:/g, "v")
+        .replace(/[^\p{L}\p{N}]/gu, "")
+    : "";
+}
+
+function oneEdit(left: string, right: string) {
+  if (Math.abs(left.length - right.length) > 1) return false;
+  if (left.length > right.length) [left, right] = [right, left];
+  let index = 0;
+  while (index < left.length && left[index] === right[index]) index++;
+  if (left.length !== right.length)
+    return left.slice(index) === right.slice(index + 1);
+  return (
+    left.slice(index + 1) === right.slice(index + 1) ||
+    (left[index] === right[index + 1] &&
+      left[index + 1] === right[index] &&
+      left.slice(index + 2) === right.slice(index + 2))
+  );
+}
+
+/** Match only labels supplied by the dated view. Codes and reasons use literal inclusion. */
+export function ladderSearch(query: string, names?: LadderSearchNames) {
+  const term = normalizeSearch(query);
+  const han = /^\p{Script=Han}{3,40}$/u.test(term);
+  const latin = /^[a-z][a-z0-9]+$/.test(term) && term.length <= 80;
+  const contains = (value: unknown) => normalizeSearch(value).includes(term);
+  return {
+    term,
+    contains,
+    results<T>(items: T[], match: (item: T, typo: boolean) => boolean) {
+      if (!term) return items;
+      const direct = items.filter((item) => match(item, false));
+      return direct.length ? direct : items.filter((item) => match(item, true));
+    },
+    label(value: unknown, typo = false) {
+      if (typeof value !== "string") return false;
+      const label = normalizeSearch(value);
+      if (label.includes(term)) return true;
+      const key = value.trim();
+      if (latin && names && Object.hasOwn(names, key)) {
+        const [pinyin, initials] = names[key].map(normalizeSearch);
+        if (
+          pinyin.startsWith(term) ||
+          initials.startsWith(term) ||
+          (term.length >= 4 && pinyin.includes(term)) ||
+          (typo && /^[a-z]{5,}$/.test(term) && oneEdit(term, pinyin))
+        )
+          return true;
+      }
+      return (
+        typo &&
+        han &&
+        /^\p{Script=Han}{2,41}$/u.test(label) &&
+        oneEdit(term, label)
+      );
+    },
+  };
+}
+
 export function filterLadderRows(
   rows: Row[],
   query: string,
   topic: LadderTopic | null,
+  names?: LadderSearchNames,
 ) {
-  const search = query.trim().toLocaleLowerCase();
-  return rows.filter((row) => {
+  const search = ladderSearch(query, names);
+  const candidates = rows.flatMap((row) => {
     const topics = ladderTopics(row);
-    const matchesTopic =
-      !topic ||
+    return !topic ||
       topics.some((value) =>
         topic.topic_id
           ? value.topic_id === topic.topic_id
           : value.name === topic.name,
-      );
-    return (
-      matchesTopic &&
-      (!search ||
-        [
-          row.name,
-          row.code,
-          row.instrument_id,
-          row.reason,
-          ...topics.map((value) => value.name),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase()
-          .includes(search))
-    );
+      )
+      ? [{ row, topics }]
+      : [];
   });
+  return search
+    .results(
+      candidates,
+      ({ row, topics }, typo) =>
+        search.label(row.name, typo) ||
+        search.label(row.source_industry, typo) ||
+        topics.some((value) => search.label(value.name, typo)) ||
+        [row.code, row.instrument_id, row.reason].some(search.contains),
+    )
+    .map(({ row }) => row);
 }
 
 export function ladderClassificationCount(

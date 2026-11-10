@@ -332,8 +332,10 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
     elif kind == "sectors":
         base.update(_sectors_from_panel(market, status, day, reference, indexed, evidence=evidence))
     elif kind == "ladder":
+        from app.infrastructure.config import topic_adjustments_enabled
         from app.services.market_ladder import read_ladder
         base.update(read_ladder(market, status, day, reference, rows, events, evidence=evidence))
+        base['topic_adjustments_enabled'] = topic_adjustments_enabled()
         base["high_position_feedback"]=[r for r in prior_ladder_feedback(market,reference,day,indexed) if (r.get("previous_board_count") or 0)>=3]
         base['supplement_status']=supplement_status(reference,day,'seal_details')
     elif kind == "abnormal":

@@ -25,9 +25,11 @@ const viewReact =
   encode(`import * as React from ${JSON.stringify(import.meta.resolve("react"))};
 export * from ${JSON.stringify(import.meta.resolve("react"))};
 let viewOverride=null;
+const stateOverrides=new Map();
 export const changes=[];
 export function setViewOverride(value){viewOverride=value;changes.length=0;}
-export function useState(initial){const [value]=React.useState(initial==="height"&&viewOverride?viewOverride:initial);return [value,(next)=>changes.push(next)];}`);
+export function setStateOverride(initial,value){stateOverrides.set(initial,value);}
+export function useState(initial){const [value]=React.useState(initial==="height"&&viewOverride?viewOverride:stateOverrides.get(initial)??initial);return [value,(next)=>changes.push(next)];}`);
 const mainlineProbe = encode(`import {jsx} from ${JSON.stringify(runtime)};
 export const received=[];
 export default function Mainlines(props){received.push(props);return jsx('section',{className:'synthetic-mainline-probe',children:'合成重点视图入口'});}`);
@@ -43,7 +45,15 @@ const replacements = {
     "export default function Members(){return null;}",
   ),
   "./DailyMainlines": mainlineProbe,
-  "../../lib/api": encode("export function usePageActive(){return true;}"),
+  "./TopicAdjustmentDialog": encode(
+    "export default function TopicAdjustmentDialog(){return null;}",
+  ),
+  "../../lib/api": encode(`
+    export function usePageActive(){return true;}
+    let replay=null;
+    export const replayPaths=[];
+    export function setReplay(value){replay=value;}
+    export function useApi(path){replayPaths.push(path);return {data:replay,error:'',loading:false,reload(){}};}`),
   "./IntradayPageNavigation": encode(
     "export default function Navigation({children}){return children;}",
   ),
@@ -398,7 +408,7 @@ const otherGenerationMarkup = renderToStaticMarkup(
   }),
 );
 assert.doesNotMatch(otherGenerationMarkup, /data-board-tag="type:/);
-const { setViewOverride, changes } = await import(viewReact);
+const { setViewOverride, setStateOverride, changes } = await import(viewReact);
 const { received } = await import(mainlineProbe);
 setViewOverride("mainlines");
 const focusMarkup = renderToStaticMarkup(
@@ -449,6 +459,333 @@ assert.match(themeMarkup, /概念之间有重叠，不可相加/);
 assert.match(themeMarkup, /ladder-concept-count-chips/);
 assert.match(themeMarkup, /class="ladder-supplemental-sections"/);
 assert.match(themeMarkup, /class="ladder-theme-shortcuts"/);
+const { setReplay, replayPaths } = await import(replacements["../../lib/api"]);
+const originalReason =
+  "合成第三板原因，" + "原始内容用于检验完整展开。".repeat(5);
+const replayFixture = {
+  date: props.date,
+  as_of: props.date,
+  latest_date: "2026-10-23",
+  previous_date: "2026-10-20",
+  topic_ladders: {
+    state: "partial",
+    reason: "合成部分成员证据",
+    search_names: {
+      合成完整概念: ["hechengwanzhenggainian", "hcwzgn"],
+    },
+    stocks: [
+      { instrument_id: "600011.SH", name: "合成题材首板", height: 1 },
+      { instrument_id: "600012.SH", name: "合成题材二板", height: 2 },
+      {
+        instrument_id: "600013.SH",
+        name: "合成题材三板",
+        height: 3,
+        reason: originalReason,
+        reason_match: "related",
+      },
+      { instrument_id: "600015.SH", name: "合成题材五板", height: 5 },
+      { instrument_id: "600016.SH", name: "合成另只五板", height: 5 },
+    ],
+    items: [
+      {
+        topic_id: "high",
+        name: "合成单高概念",
+        kind: "concept",
+        basis: "membership_fallback",
+        observed_date: "2026-10-20",
+        members_complete: false,
+        buckets: [{ height: 5, stock_ids: ["600015.SH", "600016.SH"] }],
+      },
+      {
+        topic_id: "shared-id",
+        name: "合成完整概念",
+        kind: "concept",
+        basis: "limit_up_reason",
+        observed_date: null,
+        members_complete: null,
+        buckets: [
+          { height: 3, stock_ids: ["600013.SH"] },
+          { height: 2, stock_ids: ["600012.SH"] },
+          { height: 1, stock_ids: ["600011.SH"] },
+        ],
+      },
+      {
+        topic_id: "shared-id",
+        name: "合成行业",
+        kind: "industry",
+        basis: "limit_up_reason",
+        observed_date: null,
+        members_complete: null,
+        buckets: [
+          { height: 3, stock_ids: ["600013.SH"] },
+          { height: 2, stock_ids: ["600012.SH"] },
+        ],
+      },
+      {
+        topic_id: "structural",
+        name: "沪股通",
+        kind: "concept",
+        basis: "membership_fallback",
+        observed_date: "2026-10-20",
+        members_complete: true,
+        buckets: [{ height: 3, stock_ids: ["600013.SH"] }],
+      },
+    ],
+  },
+  groups: [
+    {
+      regime: "main_10",
+      state: "highest_diverged",
+      previous_height: 5,
+      anchors: [
+        {
+          instrument_id: "600001.SH",
+          name: "合成高标样本",
+          attribution: {
+            basis: "limit_up_reason",
+            labels: ["合成主要方向", "合成次要方向"],
+            reason: "合成前日原始原因",
+            observed_date: null,
+            reason_match: "primary",
+          },
+          height: 5,
+          previous_board_shape: "one_price",
+          previous_volume_ratio: 0.35,
+          current_volume_ratio: null,
+          change_pct: 1.2,
+          state: "unknown",
+        },
+      ],
+      secondary: [
+        {
+          instrument_id: "600003.SH",
+          name: "合成次高样本",
+          attribution: {
+            basis: "membership_fallback",
+            labels: ["合成成员方向", "合成第二回退"],
+            reason: null,
+            observed_date: "2026-10-19",
+          },
+          height: 4,
+          previous_board_shape: "not_one_price",
+          previous_volume_ratio: 1.2,
+          current_volume_ratio: 0.8,
+          change_pct: 10,
+          state: "advanced",
+        },
+      ],
+      cohorts: [
+        {
+          height: 1,
+          count: 1,
+          members: [
+            {
+              instrument_id: "600002.SH",
+              name: "合成首板样本",
+              attribution: {
+                basis: "limit_up_reason",
+                labels: ["合成名单方向"],
+                reason: "合成节点日原始原因",
+                observed_date: null,
+                reason_match: "related",
+              },
+              feedback: [],
+            },
+          ],
+          feedback: [],
+        },
+      ],
+    },
+  ],
+  sessions: [],
+  notice: "合成回放口径",
+};
+setReplay(replayFixture);
+setViewOverride("nodes");
+const replayMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, {
+    ...props,
+    loading: true,
+    data: null,
+  }),
+).replaceAll(/<!--[^]*?-->/g, "");
+assert.equal(
+  replayPaths.at(-1),
+  "/market/ladder/nodes?date=2026-10-21&as_of=2026-10-21",
+);
+assert.match(replayMarkup, /aria-pressed="true" class="active">节点回放/);
+assert.match(replayMarkup, /普通主板（10%）/);
+assert.deepEqual(
+  [
+    ...replayMarkup.matchAll(
+      /<section id="intraday-reading-(node\w+)" data-intraday-reading="\1"/g,
+    ),
+  ].map((match) => match[1]),
+  ["nodeReplay", "nodePrior", "nodeTopics", "nodeFeedback"],
+);
+assert.match(replayMarkup, /<h3>原名单与反馈<\/h3>/);
+assert.doesNotMatch(replayMarkup, /涨跌幅制度|北交所|创业板与科创板/);
+assert.match(replayMarkup, /前日最高梯队分化/);
+assert.match(replayMarkup, /合成高标样本/);
+assert.match(replayMarkup, /合成次高样本/);
+assert.match(replayMarkup, /前日归类<small[^>]*><time datetime="2026-10-20">/i);
+assert.match(replayMarkup, /合成主要方向/);
+assert.match(replayMarkup, /合成前日原始原因/);
+assert.match(replayMarkup, /合成成员方向/);
+assert.match(replayMarkup, /依据日期 <time datetime="2026-10-19">/i);
+assert.doesNotMatch(replayMarkup, /合成次要方向|合成第二回退/);
+assert.equal(
+  (replayMarkup.match(/class="node-replay-table node-replay-anchors"/g) || [])
+    .length,
+  1,
+);
+assert.match(replayMarkup, /0\.35 倍/);
+assert.match(replayMarkup, /当前截止日内暂无后续反馈/);
+assert.match(replayMarkup, /查看首板原始名单/);
+assert.doesNotMatch(
+  replayMarkup,
+  /合成首板样本|class="ladder-supplemental-sections"/,
+);
+assert.match(replayMarkup, /行业与概念梯队/);
+assert.match(replayMarkup, /沿用「当日主线」的涨停原因归类/);
+assert.match(replayMarkup, /归类依据/);
+assert.match(replayMarkup, /4 板及以上/);
+assert.match(replayMarkup, /合成部分成员证据/);
+assert.ok(
+  replayMarkup.indexOf("合成完整概念") < replayMarkup.indexOf("合成单高概念"),
+);
+assert.equal((replayMarkup.match(/1–3板齐/g) || []).length, 1);
+assert.doesNotMatch(replayMarkup, /合成行业|沪股通|合成题材三板/);
+setStateOverride("", "hc-wzgn");
+const fuzzyTopicMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, props),
+);
+assert.match(fuzzyTopicMarkup, /合成完整概念/);
+assert.doesNotMatch(fuzzyTopicMarkup, /合成单高概念/);
+setStateOverride("", undefined);
+setStateOverride(null, { key: "concept:limit_up_reason:shared-id", height: 3 });
+const topicBucketMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, props),
+);
+assert.match(topicBucketMarkup, /合成题材三板/);
+assert.match(topicBucketMarkup, /popover="auto" role="dialog"/);
+assert.match(topicBucketMarkup, /查看原始原因/);
+assert.match(topicBucketMarkup, /aria-label="复制代码">600013\.SH/);
+assert.match(
+  topicBucketMarkup,
+  /<small class="node-replay-note">原因关联<\/small>/,
+);
+assert.ok(topicBucketMarkup.includes(originalReason));
+assert.doesNotMatch(topicBucketMarkup, /合成题材二板|合成题材首板/);
+setReplay({ ...replayFixture, topic_adjustments_enabled: false });
+const publicTopicMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, props),
+);
+assert.match(publicTopicMarkup, /合成题材三板/);
+assert.doesNotMatch(publicTopicMarkup, /手工调整归类|调整合成题材三板的归类/);
+setReplay(replayFixture);
+setStateOverride("concept", "industry");
+const industryMarkup = renderToStaticMarkup(createElement(LimitLadder, props));
+assert.match(industryMarkup, /合成行业/);
+assert.doesNotMatch(
+  industryMarkup,
+  /合成完整概念|4 板及以上|合成题材三板|合成题材二板/,
+);
+setStateOverride("concept", undefined);
+setStateOverride(null, 1);
+const rosterMarkup = renderToStaticMarkup(createElement(LimitLadder, props));
+assert.match(
+  rosterMarkup,
+  /节点日归类<small[^>]*><time datetime="2026-10-21">/i,
+);
+assert.match(rosterMarkup, /合成名单方向/);
+assert.match(
+  rosterMarkup,
+  /合成名单方向<\/strong><small class="node-replay-note">原因关联<\/small>/,
+);
+assert.match(rosterMarkup, /合成节点日原始原因/);
+setStateOverride(null, undefined);
+setReplay({
+  ...replayFixture,
+  groups: [
+    {
+      ...replayFixture.groups[0],
+      anchors: replayFixture.groups[0].anchors.map((stock) => ({
+        ...stock,
+        attribution: undefined,
+      })),
+    },
+  ],
+});
+const missingAttributionMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, props),
+);
+assert.match(missingAttributionMarkup, /归类待核验/);
+assert.doesNotMatch(missingAttributionMarkup, /合成主要方向/);
+setReplay({
+  ...replayFixture,
+  groups: [{ ...replayFixture.groups[0], regime: "growth_20" }],
+});
+const missingMainMarkup = renderToStaticMarkup(
+  createElement(LimitLadder, props),
+);
+assert.match(missingMainMarkup, /暂无可核验的普通主板样本/);
+assert.doesNotMatch(missingMainMarkup, /合成高标样本/);
+
+setReplay({
+  ...replayFixture,
+  topic_ladders: {
+    ...replayFixture.topic_ladders,
+    items: Array.from({ length: 11 }, (_, index) => ({
+      ...replayFixture.topic_ladders.items[1],
+      topic_id: `page-${index + 1}`,
+      name: `合成分页组${String(index + 1).padStart(2, "0")}`,
+    })),
+  },
+});
+const firstTopicPage = renderToStaticMarkup(createElement(LimitLadder, props));
+assert.match(firstTopicPage, /第 1–10 组 \/ 共 11 组/);
+assert.match(firstTopicPage, /合成分页组10/);
+assert.doesNotMatch(firstTopicPage, /合成分页组11/);
+setStateOverride(0, 1);
+const secondTopicPage = renderToStaticMarkup(createElement(LimitLadder, props));
+assert.match(secondTopicPage, /第 11 组 \/ 共 11 组/);
+assert.match(secondTopicPage, /合成分页组11/);
+assert.doesNotMatch(secondTopicPage, /合成分页组10/);
+setStateOverride(0, undefined);
+
+const feedbackDates = ["2026-10-22", "2026-10-23"];
+setStateOverride(props.date, feedbackDates[1]);
+setReplay({
+  ...replayFixture,
+  as_of: feedbackDates[1],
+  sessions: feedbackDates,
+  groups: [
+    {
+      ...replayFixture.groups[0],
+      cohorts: [
+        {
+          ...replayFixture.groups[0].cohorts[0],
+          count: 4,
+          feedback: [
+            { date: feedbackDates[0], advanced: 2, broken: 2, unknown: 0 },
+            { date: feedbackDates[1], advanced: 1, broken: 2, unknown: 1 },
+          ],
+        },
+      ],
+    },
+  ],
+});
+const followUpMarkup = renderToStaticMarkup(createElement(LimitLadder, props));
+assert.match(followUpMarkup, /连续晋级率50\.0%/);
+assert.match(followUpMarkup, /连续晋级率25\.0%–50\.0%/);
+assert.match(followUpMarkup, /暂无已核验样本/);
+assert.equal(
+  (followUpMarkup.match(/aria-label="同批样本按反馈日对照"/g) || []).length,
+  2,
+);
+setStateOverride(props.date, undefined);
+setViewOverride("theme");
 const manyConcepts = Array.from({ length: 30 }, (_, i) => ({
   topic_id: "count-fixture-" + i,
   name: "合成数量测试" + i,

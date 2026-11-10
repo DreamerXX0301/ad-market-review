@@ -1,10 +1,12 @@
 import type { Row } from "../../lib/api";
+import type { ManualTopicOverride } from "./TopicAdjustmentDialog";
 
 export type SystemMainlineMember = {
   instrument_id: string;
   source_reason: string | null;
   matched_tag: string | null;
   matched_tags: string[];
+  manual_override?: ManualTopicOverride;
   source: string | null;
   source_ref: {
     snapshot_id: string;
@@ -26,6 +28,7 @@ export type SystemMainlineGroup = {
   grouping_rule: string;
   labels: string[];
   count: number;
+  manual_count?: number;
   state?: "candidate";
   max_known_height: number | null;
   high_stock_ids: string[];
@@ -67,12 +70,14 @@ export type MainlineDirection = {
   kind: "direction" | "catalyst";
   items: MainlineSourceItem[];
   count: number;
+  manualCount: number;
   maxKnownHeight: number | null;
 };
 export type DailyMainlineDisplay = {
   available: boolean;
   total: number;
   classifiedCount: number;
+  sourceReasonCount: number;
   groups: MainlineDirection[];
   otherGroups: MainlineDirection[];
   relatedGroups: MainlineDirection[];
@@ -83,6 +88,18 @@ export type DailyMainlineDisplay = {
 };
 const object = (value: unknown): value is Row =>
   !!value && typeof value === "object" && !Array.isArray(value);
+function validManualOverride(value: unknown): value is ManualTopicOverride {
+  return (
+    object(value) &&
+    typeof value.topic_id === "string" &&
+    !!value.topic_id.trim() &&
+    typeof value.name === "string" &&
+    !!value.name.trim() &&
+    (value.kind === "concept" || value.kind === "industry") &&
+    typeof value.revision === "string" &&
+    !!value.revision.trim()
+  );
+}
 const count = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const stockId = (value: unknown): value is string =>
@@ -203,6 +220,7 @@ export function buildDailyMainlineDisplay(
     available: false,
     total: identities.size,
     classifiedCount: 0,
+    sourceReasonCount: 0,
     groups: [],
     otherGroups: [],
     relatedGroups: [],
@@ -243,6 +261,7 @@ export function buildDailyMainlineDisplay(
   )
     return empty;
   const seen = new Set<string>();
+  const manuallyPlaced = new Set<string>();
   const groupKeys = new Set<string>();
   const member = (
     value: unknown,
@@ -269,12 +288,19 @@ export function buildDailyMainlineDisplay(
       return null;
     const rawReason = value.source_reason;
     if (rawReason != null && typeof rawReason !== "string") return null;
+    const manual = value.manual_override;
+    if (
+      manual != null &&
+      (!validManualOverride(manual) || category === "missing")
+    )
+      return null;
     const text = rawReason ?? "";
     if (
       text !== (stock.reason ?? "") ||
-      (category === "missing"
-        ? hasSourceReason(text)
-        : !hasSourceReason(text)) ||
+      (!manual &&
+        (category === "missing"
+          ? hasSourceReason(text)
+          : !hasSourceReason(text))) ||
       !Array.isArray(value.matched_tags) ||
       !value.matched_tags.every(
         (tag: unknown) => typeof tag === "string" && !!tag.trim(),
@@ -282,8 +308,9 @@ export function buildDailyMainlineDisplay(
       new Set(value.matched_tags).size !== value.matched_tags.length ||
       (value.matched_tag !== null && typeof value.matched_tag !== "string") ||
       (value.matched_tag ?? "") !== (value.matched_tags[0] || "") ||
-      (category === "group" && !value.matched_tags.length) ||
-      (category === "missing" && value.matched_tags.length)
+      (category === "group" && !manual && !value.matched_tags.length) ||
+      ((category === "missing" || manual) && value.matched_tags.length) ||
+      (manual && value.matched_tag !== null)
     )
       return null;
     const tags = text.split(/[+＋]/).map((tag: string) => tag.trim());
@@ -294,6 +321,7 @@ export function buildDailyMainlineDisplay(
       source_reason: rawReason ?? null,
       matched_tag: value.matched_tag,
       matched_tags: [...value.matched_tags],
+      ...(manual ? { manual_override: manual } : {}),
       source: typeof value.source === "string" ? value.source : null,
       source_ref: {
         snapshot_id: reference.snapshot_id,
@@ -319,6 +347,7 @@ export function buildDailyMainlineDisplay(
         : [],
     };
     seenIds.add(value.instrument_id);
+    if (manual && seenIds === seen) manuallyPlaced.add(value.instrument_id);
     return {
       stock,
       sourceReason: text,
@@ -345,7 +374,7 @@ export function buildDailyMainlineDisplay(
       !Array.isArray(value.members) ||
       !count(value.count) ||
       value.count !== value.members.length ||
-      value.count < (scope === "focus" ? 3 : 2) ||
+      value.count < (scope === "focus" ? 3 : scope === "other" ? 1 : 2) ||
       !Array.isArray(value.labels) ||
       !value.labels.every(
         (label: unknown) => typeof label === "string" && !!label.trim(),
@@ -357,12 +386,26 @@ export function buildDailyMainlineDisplay(
     const groupMembers = scope === "related" ? new Set<string>() : seen;
     for (const entry of value.members) {
       const item = member(entry, "group", groupMembers);
-      if (!item || (scope === "related" && !seen.has(item.stock.instrument_id)))
+      const manual = item?.evidence.manual_override;
+      if (
+        !item ||
+        (scope === "related" &&
+          (manual ||
+            manuallyPlaced.has(item.stock.instrument_id) ||
+            !seen.has(item.stock.instrument_id))) ||
+        (manual && (value.kind !== "direction" || manual.name !== value.name))
+      )
         return null;
       items.push(item);
     }
+    const manualCount = items.filter(
+      (item) => item.evidence.manual_override,
+    ).length;
     const labels = new Set(items.flatMap((item) => item.evidence.matched_tags));
     if (
+      (value.count === 1 && !manualCount) ||
+      (value.manual_count !== undefined &&
+        value.manual_count !== manualCount) ||
       labels.size !== value.labels.length ||
       !value.labels.every((label: string) => labels.has(label))
     )
@@ -374,6 +417,7 @@ export function buildDailyMainlineDisplay(
       kind: value.kind,
       items,
       count: items.length,
+      manualCount,
       maxKnownHeight: items.reduce<number | null>(
         (maximum, item) =>
           item.height == null ? maximum : Math.max(maximum || 0, item.height),
@@ -444,6 +488,10 @@ export function buildDailyMainlineDisplay(
     available: true,
     total: seen.size,
     classifiedCount: seen.size,
+    sourceReasonCount: eligibleKnown.filter(
+      ({ stock }) =>
+        typeof stock.reason === "string" && hasSourceReason(stock.reason),
+    ).length,
     groups,
     otherGroups,
     relatedGroups,

@@ -56,18 +56,20 @@ def _fetched_order(value):
         return 0
 
 
-def _catalog_rows(connection, limit):
-    return connection.execute("""SELECT s.snapshot_id,s.module,s.data_end,
+def _catalog_rows(connection, limit, *, snapshot_day=None):
+    day_filter = ' AND s.data_end=?' if snapshot_day is not None else ''
+    params = (snapshot_day, limit) if snapshot_day is not None else (limit,)
+    return connection.execute(f"""SELECT s.snapshot_id,s.module,s.data_end,
         s.lineage_json,s.published_at_ms,a.object_key,a.sha256,a.byte_count
         FROM dataset_snapshot s JOIN snapshot_artifact a ON a.snapshot_id=s.snapshot_id
         WHERE s.state='published' AND s.module IN ('topics','market_review')
         AND a.role='reference.json' AND NOT EXISTS(
-            SELECT 1 FROM snapshot_gc g WHERE g.snapshot_id=s.snapshot_id AND g.state<>'available')
+            SELECT 1 FROM snapshot_gc g WHERE g.snapshot_id=s.snapshot_id AND g.state<>'available'){day_filter}
         ORDER BY s.data_end DESC,s.published_at_ms DESC,s.snapshot_id LIMIT ?""",
-        (limit,)).fetchall()
+        params).fetchall()
 
 
-def _catalog():
+def _catalog(*, snapshot_day=None):
     path = sqlite_path()
     if not path.is_file():
         return [], False
@@ -77,7 +79,7 @@ def _catalog():
         connection.execute('PRAGMA foreign_keys=ON')
         connection.execute('PRAGMA recursive_triggers=ON')
         connection.execute('PRAGMA busy_timeout=10000')
-        rows = _catalog_rows(connection, CATALOG_ROW_LIMIT + 1)
+        rows = _catalog_rows(connection, CATALOG_ROW_LIMIT + 1, snapshot_day=snapshot_day)
     except sqlite3.OperationalError:
         return [], False
     finally:
@@ -120,24 +122,26 @@ def _read_reference(path, signature):
     return value
 
 
-def _read_monitor_reference(path, signature):
-    # latest命中目录缓存后仍核验名单自身的三个CAS对象，不能只信轻清单stat。
+def _read_reference_fields(path, signature, fields):
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != signature[1]:
-        raise ValueError('监管参考文件校验失败')
+        raise ValueError('参考资料文件校验失败')
     document = json.loads(raw)
     if not isinstance(document, dict):
-        raise ValueError('监管参考文件结构无效')
-    fields = ('abnormal', 'abnormal_observed_date', 'abnormal_fetched_at')
+        raise ValueError('参考资料文件结构无效')
     if document.get('storage_version') in ('market-reference-parts-v1', 'market-reference-parts-v2'):
         original = document.get('fields')
         if not isinstance(original, dict):
-            raise ValueError('监管参考资料轻清单结构无效')
-        # 只读监控小对象；不为监管列表展开全部证券资料或指数历史。
+            raise ValueError('参考资料轻清单结构无效')
         document = {'storage_version': document['storage_version'], 'indices': {},
                     'fields': {key: original[key] for key in fields if key in original}}
         document = load_reference(path, document=document)
     return {key: document[key] for key in fields if key in document}
+
+
+def _read_monitor_reference(path, signature):
+    # Recheck the original fields even when the descriptor index was cached.
+    return _read_reference_fields(path, signature, ('abnormal', 'abnormal_observed_date', 'abnormal_fetched_at'))
 
 
 def _topics_for_day(reference, snapshot_day, day):
@@ -146,6 +150,27 @@ def _topics_for_day(reference, snapshot_day, day):
             and _day(topic.get('observed_date')) is not None
             and topic['observed_date'] <= day
             and (snapshot_day == day or topic['observed_date'] == day)]
+
+
+def retained_topics_for_market_day(day):
+    """Read only topic constituents from an archive whose market date is day."""
+    rows, _ = _catalog(snapshot_day=day)
+    root = published_dir().resolve()
+    seen = set()
+    for row in rows:
+        artifact = _artifact(row, root)
+        if artifact is None or artifact[2] in seen:
+            continue
+        _, path, signature = artifact
+        seen.add(signature)
+        try:
+            source = _read_reference_fields(path, signature, ('topics',))
+            topics = _topics_for_day(source, day, day)
+            if topics:
+                return topics
+        except (OSError, ValueError, TypeError):
+            continue
+    return []
 
 
 def _source_dates(reference, snapshot_day):

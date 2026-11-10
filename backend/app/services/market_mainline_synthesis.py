@@ -77,7 +77,7 @@ def _positive(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
 
-def _has_reason(reason):
+def has_source_reason(reason):
     if reason is None:
         return False
     if not isinstance(reason, str):
@@ -161,6 +161,13 @@ def _classification(tags, source_directions):
     return ('exact:' + first, first, 'direction', 'exact-first-tag-v2', [first])
 
 
+def classify_source_reason(reason):
+    """Return the primary classification and secondary tags of a source reason."""
+    tags = _tags(reason)
+    directions = list(_source_directions(tags))
+    return _classification(tags, directions), directions
+
+
 def _first_time(value):
     if not isinstance(value, str) or not re.fullmatch(r'\d{2}:\d{2}(:\d{2})?', value):
         return '99:99:99'
@@ -217,7 +224,7 @@ def _closing_refs(row, quote, day):
     return [refs[key] for key in sorted(refs)]
 
 
-def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None):
+def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None, overrides=None):
     """Synthesize a deterministic, disjoint display partition of local samples.
 
     ``quotes`` can supply the caller's authoritative raw history rows when panel
@@ -264,19 +271,21 @@ def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None
         # Detail metadata can describe a later overlaid price/time feed rather
         # than the retained reason field. Do not assign its vendor to the cause.
         source = None
-        value = {'row': row, 'tags': _tags(row.get('reason')), 'height': _height(row, day, snapshot_id),
+        value = {'row': row, 'height': _height(row, day, snapshot_id),
                  'first_time': _first_time(row.get('first_limit_time')), 'refs': refs,
                  'source': source.strip() if isinstance(source, str) and source.strip() else None}
         # Equal repeated rows are one stock. Conflicting duplicates are excluded
         # instead of letting input order choose its reason, source or height.
         if symbol in eligible and any(eligible[symbol][key] != value[key]
-                                      for key in ('tags', 'height', 'first_time', 'refs', 'source')):
+                                      for key in ('height', 'first_time', 'refs', 'source')):
             conflicts.add(symbol)
         if symbol in eligible and eligible[symbol]['row'].get('reason') != row.get('reason'):
             conflicts.add(symbol)
         eligible.setdefault(symbol, value)
     for symbol in conflicts:
         eligible.pop(symbol, None)
+    overrides = {symbol: value for symbol, value in (overrides or {}).items()
+                 if symbol in eligible and value.get('topic_id')}
     def order_member(symbol):
         item = eligible[symbol]
         return (-(item['height'] or 0), item['first_time'], symbol)
@@ -289,7 +298,8 @@ def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None
                 'source_ref': {'snapshot_id': snapshot_id, 'date': day,
                                'endpoint': '/api/v1/market/ladder',
                                'field_path': f'items[instrument_id="{symbol}"].reason'},
-                'closing_pool_refs': item['refs']}
+                'closing_pool_refs': item['refs'],
+                **({'manual_override': overrides[symbol]} if symbol in overrides else {})}
 
     def make_group(key, name, kind, rule, members):
         ordered = sorted(members, key=lambda item: order_member(item[0]))
@@ -299,7 +309,9 @@ def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None
                 'count': len(ordered), 'state': 'candidate', 'max_known_height': highest,
                 'high_stock_ids': [symbol for symbol, _ in ordered
                                    if highest is not None and eligible[symbol]['height'] == highest],
-                'members': [member(symbol, matched) for symbol, matched in ordered]}
+                'members': [member(symbol, matched) for symbol, matched in ordered],
+                **({'manual_count': sum(symbol in overrides for symbol, _ in ordered)}
+                   if any(symbol in overrides for symbol, _ in ordered) else {})}
 
     buckets = defaultdict(list)
     relations = defaultdict(list)
@@ -307,14 +319,19 @@ def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None
     classifications = {}
     for symbol in sorted(eligible, key=order_member):
         item = eligible[symbol]
-        if not _has_reason(item['row'].get('reason')):
+        reason = item['row'].get('reason')
+        if override := overrides.get(symbol):
+            key = override['topic_id'].removeprefix('reason:')
+            classifications[symbol] = (key, override['name'], 'direction', 'manual-placement-v1', [])
+            buckets[key].append(symbol)
+            continue
+        if not has_source_reason(reason):
             result['missing_reason'].append(member(symbol, []))
             continue
-        source_directions = list(_source_directions(item['tags']))
+        classification, source_directions = classify_source_reason(reason)
         for key, name, rule, matches in source_directions:
             relation_names[key] = (name, rule)
             relations[key].append((symbol, matches))
-        classification = _classification(item['tags'], source_directions)
         if classification is None:
             result['individual_cues'].append(member(symbol, []))
             continue
@@ -322,11 +339,11 @@ def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None
         buckets[classification[0]].append(symbol)
     groups = []
     for symbols in buckets.values():
-        if len(symbols) < MIN_MEMBERS:
+        if len(symbols) < MIN_MEMBERS and not any(symbol in overrides for symbol in symbols):
             symbol = symbols[0]
             result['individual_cues'].append(member(symbol, classifications[symbol][4]))
             continue
-        key, name, kind, rule, _ = classifications[symbols[0]]
+        key, name, kind, rule, _ = classifications[next((symbol for symbol in symbols if symbol not in overrides), symbols[0])]
         groups.append(make_group(key, name, kind, rule, [(symbol, classifications[symbol][4]) for symbol in symbols]))
 
     def order_group(group):
@@ -338,7 +355,8 @@ def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None
                         and group['count'] >= MIN_FOCUS_MEMBERS][:MAX_GROUPS]
     focus_keys = {group['key'] for group in result['groups']}
     result['other_groups'] = [group for group in groups if group['key'] not in focus_keys]
-    primary_ids = {group['key']: {item['instrument_id'] for item in group['members']} for group in groups}
+    primary_ids = {group['key']: {item['instrument_id'] for item in group['members']
+                                  if item['instrument_id'] not in overrides} for group in groups}
     related = [make_group(key, relation_names[key][0], 'direction', relation_names[key][1], matches)
                for key, matches in relations.items() if len(matches) >= MIN_MEMBERS
                and primary_ids.get(key, set()) < {symbol for symbol, _ in matches}]
@@ -348,12 +366,15 @@ def build_system_mainlines(rows, *, day, snapshot_id, coverage=None, quotes=None
     for key in ('individual_cues', 'missing_reason'):
         result[key].sort(key=lambda item: order_member(item['instrument_id']))
     result['coverage'].update(confirmed_sample_count=len(eligible),
-                              eligible_reason_count=len(eligible) - len(result['missing_reason']),
+                              eligible_reason_count=sum(has_source_reason(item['row'].get('reason')) for item in eligible.values()),
                               focus_count=sum(group['count'] for group in result['groups']),
                               other_count=sum(group['count'] for group in result['other_groups']),
                               individual_count=len(result['individual_cues']),
                               missing_reason_count=len(result['missing_reason']),
                               rejected_row_count=len(source_rows) - len(eligible))
+    if overrides:
+        result['coverage']['manual_count'] = len(overrides)
+        result['notice'] += ' 人工归类仅作用于指定交易日的展示，保留来源原因原文。'
     reasons = []
     if coverage.get('complete') is not True or coverage.get('source_pool_complete') is not True:
         reasons.append('来源池或逐股报价覆盖不完整，仅整理已返回且可核验的本地样本，不代表全市场')

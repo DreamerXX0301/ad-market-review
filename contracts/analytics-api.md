@@ -71,6 +71,34 @@
 | abnormal | 指定日历史仅名单观察日精确匹配；显式latest读取最新已留存名单，两个范围不混用 |
 | flow（旧接口兼容） | 历史留存资金只读；页面与趋势撤下，新手动任务不再采集 |
 
+涨停梯队对前日已确认的候选额外核验缺席证据。若指定日有效未复权收盘与最高价同时精确匹配已核验相邻前收推得的常规涨停参考价，完整来源池缺席暂记冲突，保留于 `unverified_items`，同时返回 `limit_up_evidence.price_reference` 的前日、前收、档位和参考价。参考价依证券身份、上市期、公司行动和分价取整核验，不能确认当日涨停。节点回放复用此守卫。
+
+涨停梯队和手工归类编辑器的 `search_names`，以及节点回放的 `topic_ladders.search_names`，按已返回的名称附上 `[全拼, 首字母]`。前端在各自交易日和视图的已留存样本中本地匹配，支持中文、拼音、首字母及近似名称。证券代码忽略输入空格与标点后按原值或片段匹配，数字不作纠错。搜索只筛选展示，不修改股票、题材身份或行情统计。
+
+### 节点回放
+
+`GET /market/ladder/nodes?date=YYYY-MM-DD&as_of=YYYY-MM-DD` 仅读当前发布代际及指定日留存来源池。节点日 `date` 为盘面共享观察日，`as_of` 默认为节点日，必须是从节点日至最新已发布日之间的留存市场交易日。响应回显 `date/as_of/latest_date/previous_date/snapshot_id`，`sessions` 为截止日内节点日后的前五个严格市场交易日。请求只读取这批日期及节点日之前两个交易日的相关来源和报价，不自动采集、不写入数据库，不使用当前题材回填历史。当前留存证据回放不代表节点当时已计算发布。
+
+`state=observed|partial|unknown` 与 `reason` 描述可核验范围。`groups` 为空或包含唯一的 `regime=main_10`，即普通主板（10%）。样本需满足已核验收盘事件、源板高、相邻未复权价格、常规限价、有效身份及适用期。特别处理、新股例外和无法确认制度的样本不并入。前一交易日的主板梯队仅在可核验覆盖下判定 `highest_broken|highest_diverged|highest_advanced|unknown|no_highest`，最高梯队从2板起。并列最高股票全部保留；只有同组既有确认晋级又有确认断板才可标为分化。次高为不同板高且至少2板。样本资料不足时只展示已核验名单及原因。
+
+`anchors/secondary` 给出前日高度、节点日状态及待核验原因、可比涨幅、前一日及当日分别对比各自严格前一日的股数成交量倍数和前日成交板型。节点日的 `cohorts` 按确认的1/2/3板冻结原名单口径，同一代际下延长 `as_of` 不替换成员。每个反馈日统计 `advanced/broken/unknown`，三者合计为该队列的已核验初始人数。晋级指连续从节点日每个交易日取得同制度、预期高度的连板；确认断板后在这条连板链保持断板，缺档使后续延续保持未知，除非其后证据明确证明已断。数据缺口与失效分开，未知样本保留在原分母。
+
+高标和固定名单各行返回 `attribution={basis,labels,reason,observed_date,reason_match}`。自动归因的 `basis` 为 `limit_up_reason`、`membership_fallback` 或 `unknown`，`labels` 为字符串数组，`reason` 为留存原文或 `null`，`observed_date` 为来源观察日或 `null`。高标及次高标按前一交易日归因，固定名单按节点日归因。来源有实质原因时沿用当日主线的主要方向规则，并保留原文。暂无法归组的原因及事件催化单列为个股线索。只有原因缺失或全为占位词时，才取最多一个归属，优先同日来源行业，其次是该日档案中唯一可核验的行业或概念。成员采集日可以早于其存档对应的交易日，归属独立于上涨原因。缺资料保留 `unknown`。
+
+`topic_ladders` 使用节点日全部已核验的普通主板板高，包括四板及以上。自动组至少两只股票。先用共同主要方向成组。主要方向有效但仅有单股的个股，若其来源原文中的其他已核验标签恰好命中一个已成组的主要方向，可以并入该组。每只股票最多入一组。`reason_match` 为 `primary`（主要方向）、`related`（原文明示的关联方向）或 `null`。`items[]` 标明 `basis=limit_up_reason|membership_fallback|manual` 和分板高的 `buckets[]`，每档含 `height/stock_ids`。原因方向与归属参考各自成组，按其各自的来源身份去重，同名也分开。`observed_date/members_complete` 可为 `null`。`stocks` 是成组股票的去重明细，字段为 `instrument_id/name/height/reason/reason_match`。未成组的原因在前日梯队或节点日首板至三板原队列中可作为个股线索。`coverage` 分列已核验样本数 `confirmed_count`、有来源原因数 `reason_count`、归属参考数 `fallback_count`、待归类数 `unclassified_count`。状态及 `reason` 说明来源覆盖，缺资料的样本不推定归因。延长反馈截止日不改变节点日的名单或归因日期。
+
+每次读取重新核验所选行情、补充来源和对应交易日的题材存档。核验后可复用有界的盘面派生缓存。已发布盘面的本地预热附带默认节点回放，单独读取，缺失时按需补建。涨停梯队的客户端预读只请求所选节点日且 `as_of=date` 的默认回放，并沿用盘面读数的证据核验与容量上限。其他截止日按需读取。客户端可合并同路径的并发读取，收到行情、补充来源或相关存档变更通知时重新加载。
+
+### 逐日题材调整
+
+`GET /market/ladder/topic-adjustments?date=YYYY-MM-DD` 返回所选日可核验的收盘涨停样本和可选题材。`stocks[]` 包含股票代码、名称、板高、来源原因、自动方向、`mainboard/in_scope` 和可空的 `override`。`topics[]` 每项含 `topic_id/name/kind`。仍留存但已离开当前核验范围的调整可恢复自动归类。
+
+`POST /market/ladder/topic-adjustments` 严格接收 `date/instrument_id/topic_id/name/kind/expected_revision`。选择已有项时提交真实 `topic_id`，`name/kind` 传空值。自定义项用 `topic_id=null` 和有效名称及类型 `concept|industry`。恢复时三项均为 `null`。新调整用 `expected_revision=null`，已有项的更新或恢复需提供该行当前 `revision`。版本冲突返回 409。成功返回 `date/instrument_id/override`，`override` 为 `topic_id/name/kind/revision` 或空值。
+
+匿名浏览实例设置 `SHIXU_TOPIC_ADJUSTMENTS_ENABLED=0` 后，编辑器的读取与保存入口返回 403。涨停梯队与节点回放返回 `topic_adjustments_enabled=false`，界面据此隐藏调整操作。
+
+同一日期和股票只保存一项调整，当日主线和节点回放共用。节点回放只应用节点日调整，前日锚点保留原归因。受影响的节点日个股归因标明 `basis=manual`，保留 `automatic/manual_override` 和来源原因。题材行可附 `manual_count`，对应成分可附 `manual_override`，人工组允许单只股票。普通主板范围及板高核验继续使用原规则。两个页面的派生缓存和预读证据绑定对应交易日人工调整版本；`/tasks/activity` 在 `read_revisions.dates[date].node_topics` 提供小回执。调整只写独立业务表，不改变历史来源行情、全局题材成员或策略规则。
+
 ### 盘面浏览缓存与分层读取
 
 - 盘面缓存仅保存有界的派生读模型。盘面总览、指数、市场情绪、行业与概念、涨停梯队、30 日涨幅榜、监管、龙虎榜及竞价、午评、盘中观察分别复用其已核验的行情、名单或快照计算。请求仍先确认观察日、发布代际和实际来源，题材归属、任务状态和其它可变业务信息按原接口读取。不同日期、名单范围或来源各自校验。缺档、冲突和未知保留原口径。

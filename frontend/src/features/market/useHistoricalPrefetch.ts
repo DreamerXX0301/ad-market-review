@@ -46,11 +46,14 @@ export function sameDayMarketPaths(
   date: string,
   viewDate: (route: string) => string,
 ) {
-  return [...routes].flatMap((route) => {
+  const paths = [...routes].flatMap((route) => {
     if (route === sourceRoute || viewDate(route) !== date) return [];
     const path = marketPrimaryReadPath(route, date);
     return path ? [path] : [];
   });
+  return sourceRoute === "ladder"
+    ? [`/market/ladder/nodes?date=${date}&as_of=${date}`, ...paths]
+    : paths;
 }
 
 const quietMs = 1_800;

@@ -49,6 +49,10 @@ for (const [name, replacement] of Object.entries({
   "../../components/UI": ui,
   "./dailyMainlinePresentation": helpers,
   "./BoardTags": boardComponent,
+  "./ladderPresentation": ladder,
+  "./TopicAdjustmentDialog": encode(
+    "export default function TopicAdjustmentDialog(){throw Error('closed editor must not mount');}",
+  ),
 }))
   compiled = compiled.replaceAll(
     JSON.stringify(name),
@@ -225,10 +229,11 @@ const render = (props = {}) =>
 const before = structuredClone({ rows, systemFocus });
 let html = render();
 assert.match(html, /当日主线/);
-assert.match(html, /根据当日已发布来源自动归类/);
+assert.match(html, /依据当日已发布来源及手工调整/);
 assert.match(html, />连板梯队</);
 assert.match(html, />概念关联</);
 assert.match(html, /刷新/);
+assert.match(html, /手工调整归类/);
 assert.doesNotMatch(
   html,
   /<input|<select|<textarea|<form|补录|更正|审计|待整理|未归因|人工录入/,
@@ -463,7 +468,7 @@ assert.match(html, /role="alert"/);
 assert.match(html, /合成读取失败/);
 assert.match(html, />重试</);
 html = render({ onReload: undefined, onBrowseView: undefined });
-assert.doesNotMatch(html, />刷新<|>重试<|class="daily-mainline-navigation"/);
+assert.doesNotMatch(html, />刷新<|>重试</);
 
 // Known group heights and shared board tags must reject stale facts independently.
 const staleRows = structuredClone(rows);
@@ -495,6 +500,72 @@ assert.match(
   /机器人相关/,
 );
 assert.doesNotMatch(html, /补录|待整理|未归因/);
+html = render({
+  query: "j q r x g",
+  searchNames: { 机器人相关: ["jiqirenxiangguan", "jqrxg"] },
+});
+assert.match(elementByClass(html, "daily-mainline-focus"), /机器人相关/);
+assert.doesNotMatch(html, /没有匹配的来源线索/);
+
+const manualPayload = structuredClone(relatedFocus);
+const manualMember = manualPayload.missing_reason.shift();
+manualMember.manual_override = {
+  topic_id: "manual:合成自定义",
+  name: "合成自定义",
+  kind: "industry",
+  revision: "opaque-test-revision",
+};
+manualPayload.other_groups.push({
+  ...group("manual:合成自定义", "合成自定义", "direction", [manualMember]),
+  manual_count: 1,
+});
+manualPayload.coverage.other_count++;
+manualPayload.coverage.missing_reason_count--;
+html = render({
+  rows: relatedRows,
+  query: "合成自定义",
+  systemFocus: manualPayload,
+});
+assert.match(html, /手工 1 只/);
+assert.match(html, /<strong>合成自定义<\/strong>/);
+assert.match(html, /调整合成缺原因甲的归类/);
+assert.match(html, /来源暂未提供明确原因/);
+assert.match(html, /有来源原因 <b>15<\/b> 只/);
+assert.doesNotMatch(html, /opaque-test-revision/);
+
+const invalidManual = structuredClone(manualPayload);
+delete invalidManual.other_groups.at(-1).members[0].manual_override;
+assert.match(
+  render({ rows: relatedRows, systemFocus: invalidManual }),
+  /来源暂不可用/,
+);
+
+html = render({ adjustmentsEnabled: false });
+assert.match(html, /当日主线/);
+assert.doesNotMatch(html, /手工调整归类|topic-adjustment-edit/);
+
+const mergeManual = structuredClone(relatedFocus);
+const moved = mergeManual.individual_cues.pop();
+moved.matched_tags = [];
+moved.matched_tag = null;
+moved.manual_override = {
+  topic_id: "reason:robot",
+  name: "机器人相关",
+  kind: "concept",
+  revision: "opaque-test-revision",
+};
+mergeManual.groups[0].members.push(moved);
+mergeManual.groups[0].count++;
+mergeManual.groups[0].manual_count = 1;
+mergeManual.coverage.focus_count++;
+mergeManual.coverage.individual_count--;
+html = render({ rows: relatedRows, systemFocus: mergeManual });
+const merged = elementByClass(html, "daily-mainline-focus");
+assert.match(merged, /6 只 · 来源关联 · 手工 1 只/);
+assert.match(merged, /合成海洋王/);
+assert.match(merged, /合成线索戊/);
+assert.match(merged, /独立词戊/);
+
 const emptyPayload = {
   ...systemFocus,
   groups: [],

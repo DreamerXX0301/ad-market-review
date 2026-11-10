@@ -59,7 +59,11 @@ def tool_schemas(*, include_news=False, include_full_review=False):
          ['date', 'instrument_id', 'period', 'count']),
         ('read_limit_up_data', '读取指定完成日已保存的涨停梯队、各连板高度名单、首板和最高板、反包/晋级失败/20cm及题材确认家数。复用与页面相同的日期及价格核验，来源不全时数量只给已确认下界，不能称全市场完整统计。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today'}}, ['date']),
-        ('read_market_detail', '读取系统已保存的盘面页面事实：指数、板块表现、情绪及次日观察条件、近30交易日涨幅榜、历史监管监控、龙虎榜、竞价及午评明细、炸板分析。auction/noon读取对应时点已存个股、方向、题材分布及封炸跌停池，query先筛完整已留存来源再有界返回，不要求今天已收盘。dragon_tiger分别返回单日和三日股票/机构/游资榜；query唯一精确命中股票名称或代码时另附对应席位，匿名席位不合并、金额不跨区间相加。abnormal保留监控标签、来源观察日与期限；供应商区间不是官方监管期限。gainers_related按真实分类名称关键词筛完整前1000并取股票并集，gainers_topic按真实topic_id等值筛选；两者query必填。其他分区query用于名称或代码筛选，空串不筛选。返回有界名单，区分已观察数、确认总数及截取范围；观察条件不是确定预测，板块成交额不是净流入。',
+        ('read_node_replay', '读取本地「节点回放」的前日最高及次高梯队、节点日题材梯队及可选的原队列后续反馈。仅普通主板（10%），各板高和名单为已核验样本；题材按涨停原因归类，归属参考独立。仅读取已发布完成日，缺口保持未知，不联网补齐。',
+         {'date': {'type': 'string', 'description': '节点日YYYY-MM-DD或today'},
+          'as_of': {'type': 'string', 'description': '用户明确指定的反馈截止交易日YYYY-MM-DD；只看节点日时传空串。最多反馈之后五个市场交易日'}},
+         ['date', 'as_of']),
+        ('read_market_detail', '读取系统已保存的盘面页面事实：指数、板块表现、情绪及次日观察条件、近30交易日涨幅榜、历史监管监控、龙虎榜、竞价及午评明细、炸板分析和当日主线。mainline读取所选日已核验的方向、原始个股原因和该日人工归类；query可按方向或股票名称、代码筛选。auction/noon读取对应时点已存个股、方向、题材分布及封炸跌停池，query先筛完整已留存来源再有界返回，不要求今天已收盘。dragon_tiger分别返回单日和三日股票/机构/游资榜；query唯一精确命中股票名称或代码时另附对应席位，匿名席位不合并、金额不跨区间相加。abnormal保留监控标签、来源观察日与期限；供应商区间不是官方监管期限。gainers_related按真实分类名称关键词筛完整前1000并取股票并集，gainers_topic按真实topic_id等值筛选；两者query必填。其他分区query用于名称或代码筛选，空串不筛选。返回有界名单，区分已观察数、确认总数及截取范围；观察条件不是确定预测，板块成交额不是净流入。',
          {'date': {'type': 'string', 'description': 'YYYY-MM-DD或today；仅gainers_related/gainers_topic可用latest读取最新已发布完成日，明确问今天用today，不回退旧日。'},
           'section': {'type': 'string', 'enum': list(DETAIL_SECTIONS)},
           'query': {'type': 'string', 'description': '最多80字符。gainers_related传分类名称关键词，如电池；gainers_topic传真实topic_id。其他分区不筛选传空串。'}}, ['date', 'section', 'query']),
@@ -610,7 +614,7 @@ def _stock_quote(result, identifier, day, page, now):
     _bind_detail(result, day, {'date': day, 'snapshot_id': status.get('snapshot_id'), 'instrument': identity, 'quote': quote}, heads, supplement)
 
 
-def _limit_up(result, day, now, *, market=None, full_review=False):
+def _limit_up(result, day, now, *, market=None, full_review=False, mainline_query=None):
     available = _completed_market(result, day, now, market=market)
     if available is None: return
     market, status, heads, supplement = available
@@ -627,11 +631,21 @@ def _limit_up(result, day, now, *, market=None, full_review=False):
         relevant.extend(reference.get(key) for key in ('limitup', 'limitdown', 'breakpool', 'pool_coverage'))
     if any(_source_denied(value) for value in relevant):
         _gap(result, 'source_permission', '指定日期事件来源明确禁止AI处理或外发；未发送名单或计数'); return
-    data = build_ladder(market, status, day, reference, market.panel(day), dated_events(reference, day), include_patterns=False)
+    options = {}
+    if mainline_query is not None:
+        from app.services.market_node_topics import read_overrides
+        options['overrides'] = read_overrides(day, read_connection=_business_read_connection)
+    data = build_ladder(market, status, day, reference, market.panel(day), dated_events(reference, day),
+                        include_patterns=False, **options)
     data.update(date=day, snapshot_id=status['snapshot_id'])
     if _source_denied(data):
         _gap(result, 'source_permission', '来源明确禁止AI处理或外发'); return
     rows = [_stock_fields(row) for row in data.get('items', []) if not _denied(row)]
+    if mainline_query is not None:
+        _mainline_evidence(result, day, data.get('system_mainlines'), rows, mainline_query)
+        _bind_detail(result, day, data, heads, supplement)
+        result['source_bindings']['published_detail']['pool_projection_sha256'] = digest(fp) if fp else None
+        return
     heights = [row['board_count'] for row in rows if isinstance(row.get('board_count'), int) and not isinstance(row['board_count'], bool)]
     unknown = len(rows)-len(heights); coverage = _coverage(data.get('main_coverage'))
     exact = coverage.get('complete') is True and unknown == 0
@@ -666,7 +680,153 @@ def _limit_up(result, day, now, *, market=None, full_review=False):
     result['source_bindings']['published_detail']['pool_projection_sha256'] = digest(fp) if fp else None
 
 
+def _manual_topic_fields(row):
+    # The optimistic-write revision has no evidentiary meaning to a model.
+    return _pick_fields(row, ('topic_id', 'name', 'kind'))
+
+
+def _mainline_evidence(result, day, mainlines, rows, query):
+    if not isinstance(mainlines, dict) or mainlines.get('state') == 'unavailable':
+        _gap(result, 'mainline_directions', '缺少与该日期和发布代际一致的当日主线证据')
+        return
+    stocks = {row['instrument_id']: row for row in rows}
+    needle = query.casefold()
+
+    def matching(row, keys):
+        return any(needle in str(row.get(key) or '').casefold() for key in keys)
+
+    def members(group):
+        for member in group['members']:
+            symbol = member['instrument_id']
+            view = _pick_fields(stocks.get(symbol), ('name', 'board_count'))
+            view.update(_pick_fields(member, ('instrument_id', 'source_reason', 'matched_tags')))
+            if member.get('manual_override'):
+                view['manual_override'] = _manual_topic_fields(member['manual_override'])
+            yield view
+
+    def group_table(key):
+        selected = []
+        for group in mainlines[key]:
+            complete = list(members(group))
+            if not matching(group, ('name', 'key')) and not any(matching(row, ('instrument_id', 'name')) for row in complete):
+                continue
+            complete.sort(key=lambda row: (bool(needle) and not matching(row, ('instrument_id', 'name')),
+                                           not row.get('manual_override')))
+            view = _pick_fields(group, ('key', 'name', 'kind', 'count', 'manual_count', 'max_known_height'))
+            view['members'] = _table(complete, maximum=10)
+            selected.append(view)
+        selected.sort(key=lambda row: -row.get('manual_count', 0))
+        return _table(selected, maximum=12)
+
+    def clue_table(key):
+        return _table([row for row in members({'members': mainlines[key]})
+                       if matching(row, ('instrument_id', 'name', 'source_reason'))], maximum=10)
+
+    coverage = mainlines['coverage']
+    projection = {**_pick_fields(mainlines, ('state', 'reason', 'notice', 'coverage')),
+                  'query': query, 'groups': group_table('groups'), 'other_groups': group_table('other_groups'),
+                  'related_groups': group_table('related_groups'),
+                  'individual_cues': clue_table('individual_cues'), 'missing_reason': clue_table('missing_reason')}
+    if not coverage.get('source_pool_complete') or coverage.get('rejected_row_count') or coverage.get('missing_reason_count'):
+        _gap(result, 'mainline_directions', mainlines.get('reason') or '部分主线来源或样本待核验')
+    result['evidence'] = [{'evidence_id': 'mainline_directions', 'kind': 'mainline_directions',
+        'source': 'local_verified_daily_mainlines', 'title': '指定交易日当日主线及个股原因',
+        'dates': {'trade_date': day}, 'data': _fit_detail(projection)}]
+
+
+def _node_row(row, keys):
+    result = _pick_fields(row, keys)
+    if row.get('manual_override'):
+        result['manual_override'] = _manual_topic_fields(row['manual_override'])
+    if 'attribution' in result:
+        attribution = result['attribution']
+        attribution_fields = ('basis', 'labels', 'reason', 'observed_date', 'reason_match')
+        result['attribution'] = _pick_fields(attribution, attribution_fields)
+        if attribution.get('automatic'):
+            result['attribution']['automatic'] = _pick_fields(attribution['automatic'], attribution_fields)
+        if attribution.get('manual_override'):
+            result['attribution']['manual_override'] = _manual_topic_fields(attribution['manual_override'])
+    return result
+
+
+def _node_projection(data):
+    groups = []
+    for group in data['groups']:
+        view = _pick_fields(group, ('regime', 'state', 'previous_height', 'secondary_height', 'reason'))
+        anchor_fields = ('instrument_id', 'name', 'height', 'state', 'reason', 'change_pct', 'previous_volume_ratio',
+                         'current_volume_ratio', 'previous_board_shape', 'attribution')
+        for key in ('anchors', 'secondary'):
+            view[key] = _table([_node_row(row, anchor_fields) for row in group[key]], maximum=12)
+        member_fields = ('instrument_id', 'name', 'attribution', 'feedback')
+        view['cohorts'] = [{**_pick_fields(cohort, ('height', 'count', 'feedback')),
+                            'members': _table([_node_row(row, member_fields) for row in sorted(
+                                cohort['members'], key=lambda item: (item.get('attribution') or {}).get('basis') != 'manual')], maximum=8)}
+                           for cohort in group['cohorts']]
+        groups.append(view)
+
+    topic_ladders = data['topic_ladders']
+    stock_fields = ('instrument_id', 'name', 'height', 'reason', 'reason_match')
+    stocks = {row['instrument_id']: _node_row(row, stock_fields) for row in topic_ladders['stocks']}
+    topics = []
+    for item in sorted(topic_ladders['items'], key=lambda row: -row.get('manual_count', 0)):
+        buckets = [{'height': bucket['height'],
+                    'stocks': _table(sorted((stocks[symbol] for symbol in bucket['stock_ids'] if symbol in stocks),
+                                            key=lambda row: not row.get('manual_override')),
+                                     maximum=8, total=len(bucket['stock_ids']))}
+                   for bucket in item['buckets']]
+        topics.append({**_pick_fields(item, ('topic_id', 'name', 'kind', 'basis', 'observed_date', 'members_complete', 'manual_count')),
+                       'buckets': buckets})
+    return {'groups': groups,
+            'topic_ladders': {**_pick_fields(topic_ladders, ('state', 'reason', 'coverage')),
+                              'items': _table(topics, maximum=16)},
+            'sessions': data['sessions'], 'notice': data['notice'],
+            'units': {'height': '板', 'count': '家', 'change_pct': '%', 'volume_ratio': '倍'}}
+
+
+def _require_node_source_allowed(source):
+    if _source_denied(source):
+        raise HTTPException(403, '节点证据来源限制AI处理')
+
+
+def _node_replay(result, day, cutoff, now):
+    available = _completed_market(result, day, now)
+    if available is None:
+        return
+    market, status, heads, supplement = available
+    market.business_read_connection = _business_read_connection
+    from app.services.market_node_replay import read_nodes
+    try:
+        data = read_nodes(day, cutoff, market=market, source_guard=_require_node_source_allowed)
+        _require_node_source_allowed(data)
+    except HTTPException as error:
+        if error.status_code == 403:
+            _gap(result, 'source_permission', '所选节点来源明确禁止AI处理或外发')
+            return
+        if error.status_code == 422:
+            _gap(result, 'node_replay_dates', '反馈截止日须为节点日至最新已发布日之间已留存的交易日')
+            return
+        raise
+    if data.get('as_of') != (cutoff or day) or data.get('snapshot_id') != status['snapshot_id']:
+        raise ValueError('节点资料截止日期或代际与请求不符')
+    result['summary'].update(_pick_fields(data, ('previous_date', 'as_of', 'sessions', 'reason')))
+    result['summary']['node_state'] = data['state']
+    topic = data['topic_ladders']
+    if data['state'] != 'observed':
+        _gap(result, 'node_replay', data.get('reason') or '节点回放资料存在缺口')
+    if topic['state'] != 'observed':
+        _gap(result, 'node_topic_ladders', topic.get('reason') or '节点日题材梯队资料存在缺口')
+    if data['groups'] or topic['items']:
+        result['evidence'] = [{'evidence_id': 'node_replay', 'source': 'local_verified_node_replay',
+            'kind': 'node_replay', 'title': '指定交易日节点回放与题材梯队',
+            'dates': {'trade_date': day, 'previous_trade_date': data['previous_date'], 'as_of': data['as_of']},
+            'data': _fit_detail(_node_projection(data))}]
+    _bind_detail(result, day, data, heads, supplement)
+
+
 def _market_detail(result, day, section, query, now, *, market=None, full_review=False):
+    if section == 'mainline':
+        _limit_up(result, day, now, market=market, mainline_query=query)
+        return
     if section in ('auction', 'noon'):
         from app.services.ai_review_detail import fill_review_detail
         fill_review_detail(result, day, section, query, now)
@@ -1102,6 +1262,13 @@ def execute_read_tool(name, args, *, page_context=None, fallback_context=None, i
             result['date'] = day
             from app.services.ai_intraday_read import fill_intraday
             fill_intraday(result, day, args['slot'], args['query'].strip(), now)
+        elif name == 'read_node_replay':
+            classify_tool(name, args)
+            day = _day(args['date'], now)
+            result['date'] = day
+            from app.services.supplement_access import supplement_access
+            with supplement_access():
+                _node_replay(result, day, args['as_of'] or None, now)
         elif name in ('read_stock_quote', 'read_limit_up_data', 'read_market_detail'):
             permitted = ({'date', 'instrument_id'} if name == 'read_stock_quote' else
                          {'date', 'section', 'query'} if name == 'read_market_detail' else {'date'})

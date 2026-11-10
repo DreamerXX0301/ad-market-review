@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, RefreshCw } from "lucide-react";
+import { ArrowRight, Pencil, RefreshCw } from "lucide-react";
 import { Empty, ErrorBox, Loading } from "../../components/UI";
 import type { Row } from "../../lib/api";
 import { buildDailyMainlineDisplay } from "./dailyMainlinePresentation";
@@ -9,6 +9,9 @@ import type {
   SystemMainlines,
 } from "./dailyMainlinePresentation";
 import BoardTags from "./BoardTags";
+import TopicAdjustmentDialog from "./TopicAdjustmentDialog";
+import { ladderSearch } from "./ladderPresentation";
+import type { LadderSearchNames } from "./ladderPresentation";
 import "./DailyMainlines.css";
 
 function OriginalReason({ text }: { text: string }) {
@@ -31,6 +34,7 @@ function SourceItem({
   date,
   snapshotId,
   onStock,
+  onEdit,
   badges = false,
   tagLabel,
 }: {
@@ -38,6 +42,7 @@ function SourceItem({
   date: string;
   snapshotId: unknown;
   onStock: (id: string) => void;
+  onEdit?: (id: string) => void;
   badges?: boolean;
   tagLabel?: "命中标签" | "来源标签";
 }) {
@@ -52,6 +57,20 @@ function SourceItem({
         </button>
         {item.height != null && (
           <span className="daily-mainline-known-height">{item.height}板</span>
+        )}
+        {item.evidence.manual_override && (
+          <span className="muted">手工归类</span>
+        )}
+        {onEdit && (
+          <button
+            type="button"
+            className="topic-adjustment-edit"
+            title="调整归类"
+            aria-label={`调整${item.stock.name || item.stock.instrument_id}的归类`}
+            onClick={() => onEdit(item.stock.instrument_id)}
+          >
+            <Pencil size={13} />
+          </button>
         )}
       </div>
       {badges && (
@@ -72,27 +91,31 @@ function SourceItem({
     </li>
   );
 }
-const searchText = (value: string) =>
-  value.toLocaleLowerCase().replace(/[“”"'‘’「」『』]/g, "");
-const matches = (item: MainlineSourceItem, query: string) =>
-  searchText(
-    [
-      item.stock.name,
-      item.stock.code,
-      item.stock.instrument_id,
-      item.sourceReason,
-    ].join(" "),
-  ).includes(query);
-function visibleItems(group: MainlineDirection, query: string) {
-  return !query || searchText(group.name).includes(query)
+const matches = (
+  item: MainlineSourceItem,
+  search: ReturnType<typeof ladderSearch>,
+  typo = false,
+) =>
+  search.label(item.stock.name, typo) ||
+  [item.stock.code, item.stock.instrument_id, item.sourceReason].some(
+    search.contains,
+  );
+function visibleItems(
+  group: MainlineDirection,
+  search: ReturnType<typeof ladderSearch>,
+  typo: boolean,
+) {
+  return !search.term || search.label(group.name, typo)
     ? group.items
-    : group.items.filter((item) => matches(item, query));
+    : group.items.filter((item) => matches(item, search, typo));
 }
 
 export default function DailyMainlines({
   date,
   rows,
   query = "",
+  searchNames,
+  adjustmentsEnabled = true,
   snapshotId,
   systemFocus,
   loading = false,
@@ -104,6 +127,8 @@ export default function DailyMainlines({
   date: string;
   rows: Row[];
   query?: string;
+  searchNames?: LadderSearchNames;
+  adjustmentsEnabled?: boolean;
   snapshotId?: unknown;
   systemFocus?: SystemMainlines;
   loading?: boolean;
@@ -113,7 +138,15 @@ export default function DailyMainlines({
   onBrowseView?: (view: "height" | "theme") => void;
 }) {
   const plan = buildDailyMainlineDisplay(date, rows, systemFocus, snapshotId);
-  const search = searchText(query).trim();
+  const [adjustment, setAdjustment] = useState<{
+    date: string;
+    stockId?: string;
+  } | null>(null);
+  function openAdjustment(stockId?: string) {
+    setAdjustment({ date, stockId });
+  }
+  const matcher = ladderSearch(query, searchNames);
+  const search = matcher.term;
   const directions = new Map<
     string,
     MainlineDirection & { focus: boolean; related: boolean }
@@ -125,19 +158,33 @@ export default function DailyMainlines({
       directions.set(group.key, { ...group, focus: false, related: false });
   for (const group of plan.relatedGroups) {
     const primary = directions.get(group.key);
+    const manual =
+      primary?.items.filter((item) => item.evidence.manual_override) ?? [];
     if (primary) {
       const relatedIds = new Set(
         group.items.map((item) => item.stock.instrument_id),
       );
       if (
         group.name !== primary.name ||
-        group.count <= primary.count ||
-        !primary.items.every((item) => relatedIds.has(item.stock.instrument_id))
+        group.count <= primary.count - manual.length ||
+        !primary.items.every(
+          (item) =>
+            item.evidence.manual_override ||
+            relatedIds.has(item.stock.instrument_id),
+        )
       )
         continue;
     }
+    const maxHeight = Math.max(
+      group.maxKnownHeight ?? 0,
+      primary?.maxKnownHeight ?? 0,
+    );
     directions.set(group.key, {
       ...group,
+      items: [...group.items, ...manual],
+      count: group.count + manual.length,
+      manualCount: manual.length,
+      maxKnownHeight: maxHeight || null,
       focus: primary?.focus ?? false,
       related: true,
     });
@@ -147,8 +194,16 @@ export default function DailyMainlines({
       b.count - a.count || (b.maxKnownHeight ?? 0) - (a.maxKnownHeight ?? 0),
   );
   const maxDirectionCount = sortedDirections[0]?.count ?? 1;
+  const typo =
+    !!search &&
+    ![...sortedDirections, ...plan.otherGroups].some(
+      (group) =>
+        matcher.label(group.name) ||
+        group.items.some((item) => matches(item, matcher)),
+    ) &&
+    !plan.individualCues.some((item) => matches(item, matcher));
   const visibleDirections = sortedDirections
-    .map((group) => ({ ...group, visible: visibleItems(group, search) }))
+    .map((group) => ({ ...group, visible: visibleItems(group, matcher, typo) }))
     .filter((group) => group.visible.length);
   const [selection, setSelection] = useState<{
     date: string;
@@ -160,9 +215,7 @@ export default function DailyMainlines({
       ? visibleDirections.find((group) => group.key === selection.key)
       : undefined) ||
     (search
-      ? visibleDirections.find((group) =>
-          searchText(group.name).includes(search),
-        )
+      ? visibleDirections.find((group) => matcher.label(group.name, typo))
       : undefined) ||
     visibleDirections[0];
   const selectedItems = selected
@@ -171,7 +224,7 @@ export default function DailyMainlines({
   const selectedTagLabel = selected?.related ? "命中标签" : undefined;
   const events = plan.otherGroups
     .filter((group) => group.kind === "catalyst")
-    .map((group) => ({ ...group, visible: visibleItems(group, search) }))
+    .map((group) => ({ ...group, visible: visibleItems(group, matcher, typo) }))
     .filter((group) => group.visible.length);
   const directionStockIds = new Set(
     sortedDirections.flatMap((group) =>
@@ -182,7 +235,7 @@ export default function DailyMainlines({
     (item) => !directionStockIds.has(item.stock.instrument_id),
   );
   const individuals = search
-    ? individualCues.filter((item) => matches(item, search))
+    ? individualCues.filter((item) => matches(item, matcher, typo))
     : individualCues;
   const item = (
     value: MainlineSourceItem,
@@ -195,6 +248,7 @@ export default function DailyMainlines({
       date={date}
       snapshotId={snapshotId}
       onStock={onStock}
+      onEdit={date && adjustmentsEnabled ? openAdjustment : undefined}
       badges={badges}
       tagLabel={tagLabel}
     />
@@ -204,14 +258,26 @@ export default function DailyMainlines({
       <header className="daily-mainline-heading">
         <div>
           <h2>当日主线</h2>
-          <p>{date} · 根据当日已发布来源自动归类</p>
+          <p>{date} · 依据当日已发布来源及手工调整</p>
         </div>
-        {onReload && (
-          <button className="btn small" onClick={onReload}>
-            <RefreshCw size={13} />
-            刷新
-          </button>
-        )}
+        <div className="daily-mainline-navigation">
+          {date && adjustmentsEnabled && (
+            <button
+              type="button"
+              className="btn small"
+              onClick={() => openAdjustment()}
+            >
+              <Pencil size={13} />
+              手工调整归类
+            </button>
+          )}
+          {onReload && (
+            <button className="btn small" onClick={onReload}>
+              <RefreshCw size={13} />
+              刷新
+            </button>
+          )}
+        </div>
       </header>
       <div className="daily-mainline-scope">
         <p>在左侧选方向查看样本和原文。完整高度结构可在连板梯队查看。</p>
@@ -313,8 +379,7 @@ export default function DailyMainlines({
                   重点方向 <b>{plan.groups.length}</b> 个
                 </span>
                 <span>
-                  有来源原因{" "}
-                  <b>{plan.classifiedCount - plan.missingReasonCount}</b> 只
+                  有来源原因 <b>{plan.sourceReasonCount}</b> 只
                 </span>
               </div>
               {visibleDirections.length > 0 && (
@@ -344,6 +409,8 @@ export default function DailyMainlines({
                           <small>
                             {group.count} 只{group.focus ? " · 重点" : ""}
                             {group.related ? " · 来源关联" : ""}
+                            {!!group.manualCount &&
+                              ` · 手工 ${group.manualCount} 只`}
                             {search && group.visible.length !== group.count
                               ? ` · 匹配 ${group.visible.length}`
                               : ""}
@@ -397,6 +464,8 @@ export default function DailyMainlines({
                         <span>
                           {selected.count} 只
                           {selected.related ? " · 来源关联" : ""}
+                          {!!selected.manualCount &&
+                            ` · 手工 ${selected.manualCount} 只`}
                           {search && selected.visible.length !== selected.count
                             ? ` · 匹配 ${selected.visible.length} 只`
                             : ""}
@@ -500,12 +569,13 @@ export default function DailyMainlines({
                 !individuals.length && (
                   <Empty
                     title="没有匹配的来源线索"
-                    description="请调整股票名称、代码或方向关键词；上方统计仍为当日完整返回样本。"
+                    description="可尝试股票名称、代码、方向、拼音或首字母。上方统计仍为当日完整返回样本。"
                   />
                 )}
-              {plan.missingReasonCount > 0 && (
+              {plan.classifiedCount > plan.sourceReasonCount && (
                 <p className="daily-mainline-missing">
-                  {plan.missingReasonCount} 只来源暂未提供明确原因。
+                  {plan.classifiedCount - plan.sourceReasonCount}{" "}
+                  只来源暂未提供明确原因。
                 </p>
               )}
               {plan.sourceGapCount > 0 && (
@@ -514,11 +584,18 @@ export default function DailyMainlines({
                 </p>
               )}
               <p className="daily-mainline-caption">
-                以上为当日留存来源的自动归类，不代表全市场完整覆盖，也不认证上涨主因；个股原始原因按来源保留。
+                归类以当日留存来源为基础，手工调整单独标注。覆盖范围为已核验样本，个股原始原因按来源保留。
               </p>
             </>
           )}
         </>
+      )}
+      {adjustmentsEnabled && adjustment?.date === date && (
+        <TopicAdjustmentDialog
+          date={date}
+          initialStock={adjustment.stockId}
+          onClose={() => setAdjustment(null)}
+        />
       )}
     </section>
   );

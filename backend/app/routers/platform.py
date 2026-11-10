@@ -2,6 +2,7 @@
 from fastapi import APIRouter,Body,HTTPException,Query
 from fastapi.responses import JSONResponse
 from app.core import APP_NAME,APP_ID,json_clean,connect
+from app.infrastructure.config import topic_adjustments_enabled
 from app.services import platform_service,market_service,task_service,source_service,research_service,workspace_automation
 from app.adapters.public_fund_budget import FUND_REQUEST_BUDGET_VERSION
 from app.services.pane_read_cache import with_historical_cache
@@ -59,6 +60,30 @@ def sector_chart_create(payload:dict=Body(...)):
 @with_historical_cache
 def index_overview(date:str|None=None):
     return JSONResponse(market_service.index_overview(date))
+
+@router.get('/market/ladder/nodes')
+@with_historical_cache
+def market_ladder_nodes(date:str,as_of:str|None=None):
+    from app.services.market_node_replay import read_nodes
+    return JSONResponse({**read_nodes(date,as_of), 'topic_adjustments_enabled': topic_adjustments_enabled()},
+                        headers={'Cache-Control':'no-store'})
+
+def _require_topic_adjustments():
+    if not topic_adjustments_enabled():
+        raise HTTPException(403,'此实例的题材调整入口未开放')
+
+@router.get('/market/ladder/topic-adjustments')
+@with_historical_cache
+def ladder_topic_adjustments(date:str):
+    from app.services.ladder_topic_adjustment import read_adjustments
+    _require_topic_adjustments()
+    return JSONResponse(read_adjustments(date), headers={'Cache-Control':'no-store'})
+
+@router.post('/market/ladder/topic-adjustments')
+def ladder_topic_adjustment_save(payload:dict=Body(...)):
+    from app.services.ladder_topic_adjustment import write_adjustment
+    _require_topic_adjustments()
+    return write_adjustment(payload)
 
 @router.get('/market/{kind}')
 @with_historical_cache

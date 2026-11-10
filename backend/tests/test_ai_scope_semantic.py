@@ -99,7 +99,7 @@ def test_plan_schema_uses_strict_declared_tool_arguments():
     branches = params['properties']['reads']['items']['anyOf']
     assert {branch['properties']['name']['enum'][0] for branch in branches} == {
         'read_market_data', 'read_intraday_data', 'read_stock_research', 'check_data_availability',
-        'read_stock_quote', 'read_stock_trend', 'read_limit_up_data', 'read_market_detail',
+        'read_stock_quote', 'read_stock_trend', 'read_limit_up_data', 'read_node_replay', 'read_market_detail',
     }
     assert all(branch['additionalProperties'] is False
                and branch['properties']['arguments']['additionalProperties'] is False
@@ -335,3 +335,16 @@ def test_stock_trend_uses_frozen_catalog_and_counts_as_one_substantive_read():
     with pytest.raises(ValueError):
         semantic.classify_frozen_read(old, 'read_stock_trend', args, diagnostic=diagnostic)
     assert diagnostic == {'code': 'tool_not_frozen', 'path': 'name'}
+
+
+def test_node_replay_uses_only_frozen_capability_and_explicit_cutoff():
+    args = {'date': '2026-11-09', 'as_of': '2026-11-10'}
+    fresh = request('看 11 月 9 日节点到 11 月 10 日的反馈')
+    assert semantic.classify_frozen_read(fresh, 'read_node_replay', args) == 'data'
+    assert semantic.classify_frozen_read(fresh, 'read_node_replay', {**args, 'as_of': ''}) == 'data'
+    for invalid in ({'date': args['date']}, {**args, 'as_of': 'today'}, {**args, 'as_of': '2026-02-30'}):
+        with pytest.raises(ValueError):
+            semantic.classify_frozen_read(fresh, 'read_node_replay', invalid)
+    old = {**fresh, 'tool_schemas': [tool for tool in fresh['tool_schemas'] if tool['name'] != 'read_node_replay']}
+    with pytest.raises(ValueError):
+        semantic.classify_frozen_read(old, 'read_node_replay', args)

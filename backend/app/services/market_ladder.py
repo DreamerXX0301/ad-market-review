@@ -5,6 +5,7 @@ is resolved for the observation day rather than borrowed from today's library.
 """
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import Counter
 from datetime import date
 import math
@@ -13,10 +14,13 @@ import re
 from app.services.market_history import resolve_reference
 from app.services.strategy_limits import quote_index
 from app.services.ladder_age import BASIS as AGE_BASIS, quote_age_evidence
-from app.services.chart_patterns import attach_chart_patterns
+from app.services.chart_patterns import _quote, _regular_board_rate, attach_chart_patterns
 from app.services.stock_board_presentation import build_board_presentation, down_state, pattern_fields, retained_proof, source_board_events
+from app.services.stock_limit_reference import upper_limit_at_rate
 from app.services.market_mainline_synthesis import ALGORITHM_VERSION as MAINLINE_VERSION, build_system_mainlines
+from app.services.search_matching import phonetic_index
 
+LADDER_VERSION = 'closing-ladder-source-price-conflict-v3'
 REGIME_SOURCES = [
     {'board': 'chinext', 'effective_since': '2020-08-24', 'url': 'https://www.szse.cn/aboutus/trends/news/t20200821_580924.html'},
     {'board': 'star', 'effective_since': '2019-07-22', 'url': 'https://www.sse.com.cn/star/media/news/c/c_20190719_4866789.shtml'},
@@ -55,6 +59,106 @@ def _events(proof, day, by_code):
                 found.setdefault(symbol, {}).update({key: value for key, value in event.items() if value is not None})
                 found[symbol].update(source=source, source_path=path)
     return found
+
+
+def overlay_closing_events(events, current_events, by_code):
+    """Apply the same dated provider precedence to closing metadata."""
+    for event in current_events.get('limitup', []):
+        symbol = _symbol(event, by_code)
+        if symbol:
+            events.setdefault(symbol, {}).update(event)
+    return events
+
+
+def complete_ladder_source(proof, target, by_code):
+    if not target: return False
+    complete = False
+    for record, _, _, _, granular, allow_absence in proof._records(target, 'up'):
+        items = record.get('items')
+        if not isinstance(items, list) or not items: continue
+        symbols = [_symbol(item, by_code) if isinstance(item, dict) else None for item in items]
+        # An unresolvable candidate cannot silently disappear from the
+        # denominator, even if another source proves generic absence.
+        if any(symbol is None for symbol in symbols): return False
+        if (not allow_absence or record.get('date') not in (None, target)
+                or record.get('pool_kind') not in (None, 'limitup')
+                or record.get('complete') is not True or record.get('quarantine')
+                or record.get('rejected_codes')): continue
+        if granular:
+            raw = record.get('raw_codes')
+            accepted = [symbol[:6] for symbol in symbols]
+            if (record.get('pagination_complete') is not True
+                    or record.get('ambiguous_code_rows') != 0
+                    or not isinstance(raw, list)
+                    or any(not isinstance(code, str) or not re.fullmatch(r'\d{6}', code) for code in raw)
+                    or len(raw) != len(set(raw)) or len(accepted) != len(set(accepted))
+                    or set(raw) != set(accepted)): continue
+        complete = True
+    return complete
+
+
+def _iso_day(value):
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except (TypeError, ValueError):
+        return False
+
+
+def ladder_action_dates(market, symbols):
+    """Read a batch of published actions; absent or invalid evidence stays unknown."""
+    method = getattr(market, 'actions_for_instruments', None)
+    records = method(symbols) if symbols and callable(method) else None
+    if not isinstance(records, dict): return {}
+    result = {}
+    for symbol, rows in records.items():
+        if isinstance(rows, list) and all(isinstance(row, dict) and _iso_day(row.get('date'))
+                and row.get('thscode', symbol) == symbol for row in rows):
+            result[symbol] = frozenset(row['date'] for row in rows)
+    return result
+
+
+def guard_ladder_up_state(up, *, symbol, day, previous_day, calendar, quotes, identity,
+                          current=None, snapshot_id=None, action_dates=None):
+    """A price match can invalidate negative source evidence but cannot confirm a board."""
+    if up.get('state') is not False or up.get('status') != 'source_absent' or not snapshot_id:
+        return up
+    position = bisect_left(calendar, day)
+    listing = identity.get('list_date')
+    if (position < 5 or position == len(calendar) or calendar[position] != day
+            or calendar[position - 1] != previous_day or not _iso_day(listing)
+            or listing > calendar[position - 5] or identity.get('kind') != 'stock'
+            or identity.get('instrument_id') != symbol or not re.fullmatch(r'\d{6}\.(SH|SZ|BJ)', symbol)
+            or (identity.get('end_date') and identity['end_date'] < day)
+            or (identity.get('is_st_date', identity.get('identity_date')) == day and identity.get('is_st') is True)
+            or any(previous_day < quoted_day < day for quoted_day in quotes)):
+        return up
+    rate = _regular_board_rate(symbol, day)
+    row, prior_row = quotes.get(day), quotes.get(previous_day)
+    quote, _ = _quote(row, symbol)
+    prior, _ = _quote(prior_row, symbol)
+    if (rate is None or quote is None or prior is None or row.get('date') != day
+            or prior_row.get('date') != previous_day or quote['source'] != prior['source']):
+        return up
+    previous_close = prior['prices']['close']
+    reference = upper_limit_at_rate(previous_close, rate * 100)
+    if quote['prices']['close'] != reference or quote['prices']['high'] != reference:
+        return up
+    evidence_rows = [row]
+    if (current and current.get('date') == day and current.get('snapshot_id') == snapshot_id
+            and current.get('instrument_id') == symbol and current.get('price_basis', 'none') == 'none'
+            and all(current.get(key) == row.get(key) for key in ('open', 'high', 'low', 'close', 'volume'))):
+        evidence_rows.append(current)
+    action_checks = [(item.get('corporate_action_coverage_known'), item.get('corporate_action'))
+                     for item in evidence_rows if 'corporate_action_coverage_known' in item or 'corporate_action' in item]
+    if action_dates is not None:
+        action_checks.append((True, day in action_dates))
+    if not action_checks or any(known is not True or action is not False for known, action in action_checks):
+        return up
+    return {**up, 'state': None, 'status': 'conflict',
+            'reason': '完整来源池未收录，但该日未复权收盘恰为常规涨停参考价；等待独立证据核验',
+            'price_reference': {'basis': 'regular-board-upper-price-reference-v1', 'date': day,
+                                'previous_date': previous_day, 'previous_close': float(previous_close),
+                                'reference_price': float(reference), 'rate_pct': float(rate * 100)}}
 
 
 def _pattern(*states):
@@ -109,18 +213,22 @@ def _coverage(day, previous, before, states, reason):
 
 
 def read_ladder(market, status, day, reference, rows, current_events, *, evidence=None):
+    from app.services.market_node_topics import read_overrides
+
+    options = {'read_connection': market.business_read_connection} if hasattr(market, 'business_read_connection') else {}
+    overrides = read_overrides(day, **options)
     if evidence is None:
-        return build_ladder(market, status, day, reference, rows, current_events)
+        return build_ladder(market, status, day, reference, rows, current_events, overrides=overrides)
     from app.infrastructure.storage import digest
     from app.services.pane_read_cache import read_block
 
     membership = resolve_reference('sectors', day, status, reference)
-    return read_block('closing-ladder', day, (evidence, digest(membership), MAINLINE_VERSION),
+    return read_block('closing-ladder', day, (evidence, digest(membership), MAINLINE_VERSION, LADDER_VERSION, digest(overrides)),
                       lambda: build_ladder(market, status, day, reference, rows, current_events,
-                                           membership=membership), market=market)
+                                           membership=membership, overrides=overrides), market=market)
 
 
-def build_ladder(market, status, day, reference, rows, current_events, *, include_patterns=True, membership=None):
+def build_ladder(market, status, day, reference, rows, current_events, *, include_patterns=True, membership=None, overrides=None):
     calendar = sorted(set(value for value in market.calendar() if value <= day))
     position = calendar.index(day)
     previous = calendar[position - 1] if position else None
@@ -134,9 +242,7 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
     # panel() already read the exact generation and supplement. Reuse both.
     event_days = {target: _events(proof, target, by_code) for target in (day, previous, before) if target}
     event_days.setdefault(day, {})
-    for event in current_events.get('limitup', []):
-        symbol = _symbol(event, by_code)
-        if symbol: event_days[day].setdefault(symbol, {}).update(event)
+    overlay_closing_events(event_days[day], current_events, by_code)
     # A ladder-only archive is still a useful candidate list, never proof of a
     # missing first board, raw close, or closing status.
     archive = next((item for item in reference.get('ladder', {}).get('item', []) if item.get('date') == day), {})
@@ -146,8 +252,10 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
             if symbol: event_days[day].setdefault(symbol, dict(event))
     candidates = sorted(set(event_days[day]) | set(event_days.get(previous, {})))
     method = getattr(market, 'history_for_instruments', None)
-    histories = method(candidates, start=before or previous or day, end=day) if candidates and callable(method) else {}
-    quotes = {symbol: quote_index(row for row in histories.get(symbol, []) if row.get('date') in calendar[-3:]) for symbol in candidates}
+    start = before or previous or day
+    histories = method(candidates, start=start, end=day) if candidates and callable(method) else {}
+    quotes = {symbol: quote_index(row for row in histories.get(symbol, [])
+                                 if isinstance(row.get('date'), str) and start <= row['date'] <= day) for symbol in candidates}
     # Exact current-day panel quotes can only fill an absent history method,
     # never replace a duplicate/missing day in an available history dataset.
     current_rows = {}
@@ -159,7 +267,11 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
         for symbol in candidates: quotes.setdefault(symbol, {})[day] = current_rows.get(symbol)
     states = {}
     for symbol in candidates:
-        states[symbol] = {target: proof._state(symbol, target, quotes.get(symbol, {}).get(target)) for target in (day, previous, before) if target}
+        own = quotes[symbol]
+        states[symbol] = {target: proof._state(symbol, target, own.get(target)) for target in (day, previous, before) if target}
+        states[symbol][day] = guard_ladder_up_state(
+            states[symbol][day], symbol=symbol, day=day, previous_day=previous, calendar=calendar,
+            quotes=own, identity=master.get(symbol, {}), current=current_rows.get(symbol), snapshot_id=proof.snapshot_id)
     downs = {symbol: down_state(proof, symbol, day, quotes.get(symbol, {}).get(day), states[symbol][day]) for symbol in candidates}
     age_candidates=[symbol for symbol in event_days[day]
                     if states.get(symbol,{}).get(day,{}).get('state') is True
@@ -272,15 +384,22 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
     for symbol in sorted(event_days.get(previous, {})):
         value = _pattern((state(symbol, previous)['state'], True), (state(symbol, day)['state'], False))
         failed_states.append(value)
+        current = state(symbol, day)
+        price_conflict = (symbol not in event_days[day] and state(symbol, previous)['state'] is True
+                          and current.get('price_reference') is not None)
+        if value is not True and not price_conflict: continue
+        row = row_for(symbol)
+        prior_event = event_days[previous][symbol]
+        row.update(previous_board_count=prior_event.get('continue_day_cnt', prior_event.get('board_count', prior_event.get('board_num'))),
+                   previous_board_date=previous,
+                   previous_limit_time=_time(prior_event.get('last_limit_time') or prior_event.get('limit_up_time')),
+                   failed_state=value, previous_limit_up_evidence=state(symbol, previous))
         if value is True:
-            row = row_for(symbol)
-            prior_event = event_days[previous][symbol]
-            row.update(previous_board_count=prior_event.get('continue_day_cnt', prior_event.get('board_count', prior_event.get('board_num'))),
-                       previous_board_date=previous,
-                       previous_limit_time=_time(prior_event.get('last_limit_time') or prior_event.get('limit_up_time')),
-                       failed_state=True, failed_reason='上一交易日已确认收盘涨停；今日有效原始报价及完整来源池证明未涨停',
-                       previous_limit_up_evidence=state(symbol, previous))
+            row['failed_reason'] = '上一交易日已确认收盘涨停；今日有效原始报价及完整来源池证明未涨停'
             failed.append(row)
+        else:
+            row['unverified_reason'] = current['reason']
+            unverified.append(row)
     key = lambda row: (-(_number(row.get('board_count')) or 0), row.get('first_limit_time') or row.get('last_limit_time') or '99:99', row['instrument_id'])
     for collection in (items, rebounds, twenties): collection.sort(key=key)
     failed.sort(key=lambda row: (-(_number(row.get('previous_board_count')) or 0), row['instrument_id']))
@@ -310,38 +429,13 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
                              'member_lookup': {'topic_id': topic.get('topic_id'), 'kind': topic.get('kind', 'concept')},
                              'reason': None if complete else '成员或逐股来源池/有效报价未完整；已确认家数只为下界'})
     theme_counts.sort(key=lambda row: (-row['limit_up_observed_count'], str(row.get('topic_id'))))
-    def complete_source(target):
-        if not target: return False
-        complete = False
-        for record, _, _, _, granular, allow_absence in proof._records(target, 'up'):
-            items = record.get('items')
-            if not isinstance(items, list) or not items: continue
-            symbols = [_symbol(item, by_code) if isinstance(item, dict) else None for item in items]
-            # An unresolvable candidate cannot silently disappear from the
-            # denominator, even if another source proves generic absence.
-            if any(symbol is None for symbol in symbols): return False
-            if (not allow_absence or record.get('date') not in (None, target)
-                    or record.get('pool_kind') not in (None, 'limitup')
-                    or record.get('complete') is not True or record.get('quarantine')
-                    or record.get('rejected_codes')): continue
-            if granular:
-                raw = record.get('raw_codes')
-                accepted = [symbol[:6] for symbol in symbols]
-                if (record.get('pagination_complete') is not True
-                        or record.get('ambiguous_code_rows') != 0
-                        or not isinstance(raw, list)
-                        or any(not isinstance(code, str) or not re.fullmatch(r'\d{6}', code) for code in raw)
-                        or len(raw) != len(set(raw)) or len(accepted) != len(set(accepted))
-                        or set(raw) != set(accepted)): continue
-            complete = True
-        return complete
-    source_complete = complete_source(day)
+    source_complete = complete_ladder_source(proof, day, by_code)
     classifications = {
         'rebound': _coverage(day, previous, before, rebound_states, '当前确认涨停股中的T涨停/T-1确认非涨停/T-2涨停候选；不是K线实体包络判定'),
         'failed': _coverage(day, previous, before, failed_states, '昨日来源涨停候选中，昨日已确认涨停且今日已确认未入完整来源池；缺报价/不完整池保持未知'),
         'twenty_cm': {**_coverage(day, previous, before, twenty_states, '已确认涨停事件与当日创业板/科创板20%制度；排除无法证明已度过上市前五日者'), 'regime_sources': REGIME_SOURCES}}
     for kind, coverage in classifications.items():
-        coverage['source_scope_complete'] = complete_source(previous) if kind == 'failed' else source_complete
+        coverage['source_scope_complete'] = complete_ladder_source(proof, previous, by_code) if kind == 'failed' else source_complete
         coverage['complete'] = coverage['complete'] and coverage['source_scope_complete']
         if not coverage['source_scope_complete']:
             coverage['reason'] += '；候选来源范围不完整，零条确认不等于全市场不存在该类股票'
@@ -351,12 +445,18 @@ def build_ladder(market, status, day, reference, rows, current_events, *, includ
                      'reason': None if source_complete and not unverified else '来源池或逐股原始报价仍有缺口，不代表全A完整涨停全集'}
     system_mainlines = build_system_mainlines(
         [{**row, 'kind': master.get(row['instrument_id'], {}).get('kind', 'unknown')} for row in items],
-        day=day, snapshot_id=presentation_snapshot, coverage=main_coverage,
+        day=day, snapshot_id=presentation_snapshot, coverage=main_coverage, overrides=overrides,
         quotes={symbol: values.get(day) for symbol, values in quotes.items()})
+    searchable_rows = (*items, *rebounds, *failed, *twenties)
+    search_names = phonetic_index([
+        *(row.get(key) for row in searchable_rows for key in ('name', 'source_industry')),
+        *(topic.get('name') for row in searchable_rows for topic in row.get('topics', [])),
+        *(group.get('name') for key in ('groups', 'other_groups', 'related_groups') for group in system_mainlines.get(key, [])),
+    ])
     return {'items': items, 'total': len(items), 'unverified_items': unverified,
             'rebound_items': rebounds, 'failed_items': failed, 'twenty_cm_items': twenties,
             'summary': dict(Counter(str(row['board_count']) + '板' if _number(row.get('board_count')) is not None else '高度未知' for row in items)),
-            'main_coverage': main_coverage, 'system_mainlines': system_mainlines,
+            'main_coverage': main_coverage, 'system_mainlines': system_mainlines, 'search_names': search_names,
             'classification_coverage': classifications,
             'theme_counts': theme_counts, 'theme_coverage': membership_coverage,
             'pagination_mode': 'all',

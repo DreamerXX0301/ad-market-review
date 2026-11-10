@@ -24,6 +24,12 @@ def phonetic_keys(name):
                  for style in (Style.NORMAL, Style.FIRST_LETTER))
 
 
+def phonetic_index(names):
+    """Expose keys for the labels already present in a bounded dated view."""
+    labels = {name.strip() for name in names if isinstance(name, str) and re.search(r'[\u3400-\u9fff]', name)}
+    return {name: list(phonetic_keys(name)) for name in sorted(labels)}
+
+
 def one_edit(left, right):
     """At most one substitution/insertion/deletion/adjacent transposition."""
     if left == right:

@@ -4,9 +4,12 @@ from datetime import datetime
 import socket
 
 import pytest
+from fastapi import HTTPException
 
 from app.core import dumps
-from app.services import ai_read_tools as tools, market_service, market_ladder, market_supplement
+from app.services import (
+    ai_read_tools as tools, market_service, market_ladder, market_node_replay, market_node_topics, market_supplement,
+)
 
 DAY = '2026-11-02'
 PREVIOUS = '2026-10-30'
@@ -170,6 +173,105 @@ def test_unknown_height_never_makes_exact_first_or_highest_counts(market, monkey
     assert summary['first_board_observed_count'] == 1 and summary['unknown_height_count'] == 1
 
 
+@pytest.mark.parametrize('cutoff', ['', DAY])
+def test_node_read_uses_page_projection_and_keeps_bounded_stock_counts(market, monkeypatch, cutoff):
+    day = PREVIOUS if cutoff else DAY
+    feedback = [{'date': cutoff, 'advanced': 1, 'broken': 1, 'unknown': 1}] if cutoff else []
+    raw_reason = '机器人+光伏'
+    stocks = [{'instrument_id': f'{600100 + i}.SH', 'name': f'测试股票{i}', 'height': 1 if i else 4,
+               'reason': raw_reason if i == 0 else raw_reason * 100,
+               'reason_match': 'related' if i == 0 else 'primary'} for i in range(32)]
+    manual = {'topic_id': 'reason:robotics', 'name': '机器人相关', 'kind': 'concept'}
+    stocks[0]['manual_override'] = {**manual, 'revision': 'private-revision'}
+    stocks[0]['reason_match'] = None
+    topic = {'topic_id': 'reason:robotics', 'name': '机器人相关', 'basis': 'limit_up_reason',
+             'kind': 'concept', 'observed_date': None, 'members_complete': None, 'manual_count': 1,
+             'buckets': [{'height': 4, 'stock_ids': [stocks[0]['instrument_id']]},
+                         {'height': 1, 'stock_ids': [row['instrument_id'] for row in stocks[1:]]}]}
+    calls = []
+
+    def read_nodes(date, as_of, *, market, source_guard):
+        calls.append((date, as_of, market))
+        source_guard([{'ai_processing_allowed': True}])
+        return {'date': date, 'as_of': as_of or date, 'snapshot_id': SNAPSHOT, 'state': 'partial',
+                'previous_date': '2026-10-29', 'reason': '部分样本待核验', 'sessions': [cutoff] if cutoff else [],
+                'notice': '已确认范围',
+                'groups': [{'regime': 'main_10', 'state': 'highest_broken', 'previous_height': 4,
+                            'anchors': [{'instrument_id': SYMBOL, 'name': '招商银行', 'state': 'broken',
+                                         'attribution': {'basis': 'limit_up_reason', 'reason': '银行', 'observed_date': '2026-10-29'}}],
+                            'secondary': [], 'secondary_height': None,
+                            'cohorts': [{'height': 1, 'count': 3, 'feedback': feedback, 'members': []}]}],
+                'topic_ladders': {'state': 'partial', 'reason': '部分资料待核验', 'items': [topic], 'stocks': stocks,
+                                  'coverage': {'confirmed_count': 33, 'reason_count': 32, 'fallback_count': 0,
+                                               'unclassified_count': 1}}}
+
+    monkeypatch.setattr(market_node_replay, 'read_nodes', read_nodes)
+    result = tools.execute_read_tool('read_node_replay', {'date': day, 'as_of': cutoff})
+    assert calls == [(day, cutoff or None, market)]
+    assert result['ok'] and result['state'] == 'partial'
+    assert result['summary']['as_of'] == (cutoff or day)
+    assert result['source_bindings']['published_detail']['market_snapshot_id'] == SNAPSHOT
+    assert len(dumps(result).encode()) <= tools.MAX_RESULT_BYTES
+    evidence, = result['evidence']
+    assert evidence['dates']['as_of'] == (cutoff or day)
+    data = evidence['data']
+    group, = data['groups']
+    assert group['anchors']['items'][0]['attribution']['observed_date'] == '2026-10-29'
+    assert group['cohorts'][0]['count'] == 3 and group['cohorts'][0]['feedback'] == feedback
+    assert data['topic_ladders']['coverage']['unclassified_count'] == 1
+    direction, = data['topic_ladders']['items']['items']
+    assert direction['manual_count'] == 1 and 'private-revision' not in dumps(result)
+    high, first = direction['buckets']
+    assert high['stocks']['items'] == [{**stocks[0], 'manual_override': manual}]
+    assert first['stocks']['observed_count'] == 31 and first['stocks']['truncated']
+    assert 0 < first['stocks']['returned_count'] <= 8
+
+
+def test_node_read_rejects_restricted_evidence_or_unavailable_cutoff(market, monkeypatch):
+    def read_nodes(date, as_of, *, market, source_guard):
+        if as_of:
+            raise HTTPException(422)
+        source_guard([{'by_date': [{'egress_allowed': False, 'name': '受限名单'}]}])
+        pytest.fail('restricted input reached evidence projection')
+
+    monkeypatch.setattr(market_node_replay, 'read_nodes', read_nodes)
+    args = {'date': 'today', 'as_of': ''}
+    denied = tools.execute_read_tool('read_node_replay', args)
+    assert not denied['evidence'] and not denied['source_bindings'] and '受限名单' not in dumps(denied)
+    assert [gap['capability'] for gap in denied['gaps']] == ['source_permission']
+    unverified = tools.execute_read_tool('read_node_replay', {**args, 'as_of': '2026-11-01'})
+    assert not unverified['evidence'] and unverified['gaps'][0]['capability'] == 'node_replay_dates'
+    assert not tools.execute_read_tool('read_node_replay', {**args, 'as_of': 'today'})['ok']
+
+
+def test_daily_mainline_uses_dated_manual_placement_and_preserves_raw_reason(market, monkeypatch):
+    override = {'topic_id': 'manual:fixture', 'name': '机器人', 'kind': 'concept', 'revision': 'private-revision'}
+    monkeypatch.setattr(market_supplement, '_load_supplement_with_fingerprint', lambda *a, **kw: ({}, {'sha': 'same'}))
+
+    def overrides(day, *, read_connection):
+        assert day == DAY and read_connection is tools._business_read_connection
+        return {SYMBOL: override}
+
+    def ladder(*args, **kwargs):
+        assert args[0] is market and kwargs['overrides'] == {SYMBOL: override}
+        member = {'instrument_id': SYMBOL, 'source_reason': '光伏', 'matched_tags': [], 'manual_override': override}
+        return {'items': [{**ladder_row(SYMBOL, 2), 'name': '招商银行'}],
+                'system_mainlines': {'state': 'candidate', 'coverage': {'source_pool_complete': True},
+                    'groups': [], 'other_groups': [{'key': 'manual:fixture', 'name': '机器人', 'count': 1,
+                                                   'manual_count': 1, 'members': [member]}],
+                    'related_groups': [], 'individual_cues': [], 'missing_reason': []}}
+
+    monkeypatch.setattr(market_node_topics, 'read_overrides', overrides)
+    monkeypatch.setattr(market_ladder, 'build_ladder', ladder)
+    value = tools.execute_read_tool('read_market_detail', {'date': 'today', 'section': 'mainline', 'query': '招商'})
+    assert value['state'] == 'available' and 'private-revision' not in dumps(value)
+    evidence, = value['evidence']
+    group, = evidence['data']['other_groups']['items']
+    assert group['manual_count'] == 1
+    assert group['members']['items'] == [{'instrument_id': SYMBOL, 'name': '招商银行', 'board_count': 2,
+        'source_reason': '光伏', 'matched_tags': [], 'manual_override': {key: override[key] for key in ('topic_id', 'name', 'kind')}}]
+
+
 def test_large_ladder_keeps_counts_and_explicit_bounded_lists(market, monkeypatch):
     rows = [ladder_row(f'{600000+n:06}.SH', 1 if n else 6) for n in range(400)]
     ladder_patch(monkeypatch, rows)
@@ -184,7 +286,7 @@ def test_large_ladder_keeps_counts_and_explicit_bounded_lists(market, monkeypatc
 # Stored review and dragon-tiger branches have their own immutable-source
 # fixtures; they must not inherit evidence from this generic market-page stub.
 @pytest.mark.parametrize('section', [section for section in tools.DETAIL_SECTIONS
-                                     if section not in ('auction', 'noon', 'dragon_tiger')])
+                                     if section not in ('auction', 'noon', 'dragon_tiger', 'mainline')])
 def test_detail_injects_fixed_market_and_is_bounded(market, monkeypatch, section):
     row = ladder_row(SYMBOL, 1)
     lookup_mode = tools.GAINERS_LOOKUP_MODES.get(section)
@@ -274,6 +376,7 @@ def test_future_calendar_entry_does_not_claim_a_completed_day(market):
 @pytest.mark.parametrize('name,args', [
     ('read_stock_quote', {'date': 'today', 'instrument_id': SYMBOL}),
     ('read_limit_up_data', {'date': 'today'}),
+    ('read_node_replay', {'date': 'today', 'as_of': ''}),
     ('read_market_detail', {'date': 'today', 'section': 'indices', 'query': ''}),
 ])
 @pytest.mark.parametrize('hour,known,expected', [(12, True, 'not_due'), (15, True, 'unknown'), (12, False, 'unknown')])

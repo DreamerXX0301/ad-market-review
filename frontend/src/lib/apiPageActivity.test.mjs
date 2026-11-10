@@ -281,6 +281,16 @@ assert.deepEqual(render().data, knownLadder);
 assert.equal(render().loading, false);
 await answer(requests.at(-1), knownLadder);
 
+path = "/market/ladder/nodes?date=2026-10-27&as_of=2026-10-28";
+render();
+await answer(requests.at(-1), { groups: [] });
+const beforeNodeArchive = requests.length;
+notifyReadChanges([{ scope: "historical_reference", date: "2026-10-27" }]);
+render();
+assert.equal(requests.length, beforeNodeArchive + 1);
+assert.equal(requests.at(-1).url, "/api/v1" + path);
+await answer(requests.at(-1), { groups: [] });
+
 path = "/market/intraday?date=2026-10-27";
 render();
 await answer(requests.at(-1), { slots: ["09:35"] });
@@ -459,7 +469,7 @@ const indexToday = `/market/indices?date=${today}`;
 const newsToday = `/market/news-events?date=${today}`;
 const monitorToday = `/market/abnormal?monitor_scope=latest&limit=1000&date=${today}`;
 const nowProof = {
-  ...proof("published-1", { [today]: { news: "archive-news" } }),
+  ...proof("published-1", { [today]: { news: "archive-news", node_topics: null } }),
   observed_at_ms: 1793174400000,
 };
 nowProof.read_revisions.current_windows = { news: "news-window-1" };
@@ -512,6 +522,50 @@ await answer(requests.at(-1), nowProof);
 assert.equal(requests.length, beforeLatestMonitor + 1, "matching latest-monitoring scope consumes the current-day warm body");
 assert.equal(render().data.monitor_scope, "latest");
 
+const nodePath = `/market/ladder/nodes?date=${today}&as_of=${today}`;
+const beforeNodeWarm = requests.length;
+const warmNodes = prefetchMarketReads(
+  `/market/ladder?date=${today}&limit=1000`,
+  [nodePath, `/market/ladder/nodes?date=${today}&as_of=2026-10-29`],
+  [],
+  "snapshot-1",
+  eligible.signal,
+  () => true,
+);
+await answer(requests.at(-1), nowProof);
+assert.equal(requests.at(-1).url, "/api/v1" + nodePath);
+const nodeBody = { date: today, as_of: today, snapshot_id: "snapshot-1", sessions: [], groups: [] };
+requests.at(-1).resolve(new Response(JSON.stringify(nodeBody)));
+await warmNodes;
+assert.equal(requests.length, beforeNodeWarm + 2, "only the default replay was preloaded");
+path = nodePath;
+render();
+await answer(requests.at(-1), nowProof);
+assert.equal(requests.length, beforeNodeWarm + 3, "the warm replay only needs a source proof request");
+assert.deepEqual(render().data, nodeBody);
+await prefetchHistoricalReads(nodePath, [recentDay], "snapshot-1", eligible.signal, () => true);
+assert.equal(requests.length, beforeNodeWarm + 3, "the replay never crawls earlier dates");
+
+const priorNodePath = `/market/ladder/nodes?date=${recentDay}&as_of=${recentDay}`;
+const priorNodeWarm = prefetchMarketReads(
+  `/market/ladder?date=${recentDay}&limit=1000`,
+  [priorNodePath],
+  [],
+  "snapshot-1",
+  eligible.signal,
+  () => true,
+);
+await answer(requests.at(-1), proof("published-1", { [recentDay]: { node_topics: null } }));
+assert.equal(requests.at(-1).url, "/api/v1" + priorNodePath);
+requests.at(-1).resolve(new Response(JSON.stringify({ ...nodeBody, date: recentDay, as_of: recentDay })));
+await priorNodeWarm;
+path = priorNodePath;
+render();
+await answer(requests.at(-1), proof("published-1", { [recentDay]: { node_topics: "saved-adjustment" } }));
+assert.equal(requests.at(-1).url, "/api/v1" + priorNodePath, "another tab's adjustment invalidates an already preloaded body");
+await answer(requests.at(-1), { groups: ["manual"] });
+assert.deepEqual(render().data.groups, ["manual"]);
+
 const blockedQueue = prefetchMarketReads(sourceToday, [indexToday], [recentDay], "snapshot-1", eligible.signal, () => true);
 const beforeBlockedQueue = requests.length;
 await answer(requests.at(-1), { ...nowProof, active_count: 1 });
@@ -521,6 +575,24 @@ assert.ok(
   requests.every((request) => !request.options.method),
   "visibility only rereads GETs",
 );
+path = `/market/ladder/nodes?date=${recentDay}&as_of=${today}`;
+render();
+await answer(requests.at(-1), { groups: [] });
+const beforeOtherDayEdit = requests.length;
+const wrongDay = api("/market/ladder/topic-adjustments", { method: "POST", body: "{}" });
+await answer(requests.at(-1), { date: today, override: null });
+await wrongDay;
+render();
+assert.equal(requests.length, beforeOtherDayEdit + 1, "only the node date binds a manual adjustment");
+const beforeDatedRefresh = requests.length;
+const edit = api("/market/ladder/topic-adjustments", { method: "POST", body: "{}" });
+await answer(requests.at(-1), { date: recentDay, override: { revision: "changed" } });
+await edit;
+render();
+assert.equal(requests.length, beforeDatedRefresh + 2);
+assert.equal(requests.at(-1).url, "/api/v1" + path);
+await answer(requests.at(-1), { groups: ["updated"] });
+assert.deepEqual(render().data.groups, ["updated"]);
 effects.forEach((effect) => effect?.cleanup?.());
 delete globalThis.__pageHooks;
 delete globalThis.window;
