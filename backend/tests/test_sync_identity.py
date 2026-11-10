@@ -28,6 +28,54 @@ def test_null_listing_date_keeps_only_same_identity_evidence():
     assert preserve_listing_dates(incoming, previous)[0][0]['list_date'] is None
 
 
+@pytest.mark.parametrize(('name', 'old_name'), [
+    ('XR伯特利', '伯特利'),
+    ('XD美邦股', '美邦股份'),
+    ('DR四字名称', '四字名称'),
+    ('美邦股份', 'XD美邦股'),
+])
+def test_null_listing_date_recovers_shanghai_action_short_name(name, old_name):
+    symbol = '605033.SH'
+    identity = {'thscode': symbol, 'exchange': 'SH', 'asset_type': 'a-share'}
+    incoming = {**identity, 'name': name, 'list_date': None}
+    previous = {symbol: {**identity, 'name': old_name, 'list_date': '2021-09-16'}}
+
+    rows, inherited = preserve_listing_dates([incoming], previous, 'market-previous')
+    assert inherited == [symbol]
+    assert rows[0]['list_date'] == '2021-09-16'
+    assert rows[0]['name'] == name and incoming['list_date'] is None
+    assert rows[0]['list_date_evidence']['snapshot_id'] == 'market-previous'
+
+    incoming['list_date'] = '2021-09-17'
+    rows, inherited = preserve_listing_dates([incoming], previous, 'market-previous')
+    assert not inherited and rows[0]['list_date'] == '2021-09-17'
+
+
+@pytest.mark.parametrize(('current_overrides', 'previous_overrides'), [
+    ({'name': '美邦股'}, {}),
+    ({'name': 'N美邦股'}, {}),
+    ({'name': 'C美邦股'}, {}),
+    ({'name': 'XD美邦'}, {}),
+    ({'name': 'XD美邦股'}, {'name': '美邦股权投资'}),
+    ({'name': 'XD美邦股'}, {'name': '美邦服装'}),
+    ({'name': 'XD美邦3'}, {'name': '美邦3股'}),
+    ({'thscode': '605033.SZ', 'exchange': 'SZ'}, {'thscode': '605033.SZ', 'exchange': 'SZ'}),
+    ({'exchange': 'SZ'}, {}),
+    ({'asset_type': None}, {}),
+    ({}, {'asset_type': 'index'}),
+    ({}, {'thscode': '605032.SH'}),
+    ({'end_date': '2025-01-01'}, {}),
+    ({}, {'end_date': '2025-01-01'}),
+    ({}, {'list_date': '2021-09-31'}),
+])
+def test_null_listing_date_does_not_guess_from_other_short_names_or_identities(current_overrides, previous_overrides):
+    identity = {'thscode': '605033.SH', 'exchange': 'SH', 'asset_type': 'a-share'}
+    incoming = {**identity, 'name': 'XD美邦股', 'list_date': None, **current_overrides}
+    previous = {incoming['thscode']: {**identity, 'name': '美邦股份', 'list_date': '2021-09-16', **previous_overrides}}
+    rows, inherited = preserve_listing_dates([incoming], previous)
+    assert not inherited and rows[0]['list_date'] is None
+
+
 def test_unknown_listing_dates_cannot_be_reported_as_zero_missing(tmp_path):
     calendar = ['2026-01-05', '2026-01-06']
     pd.DataFrame([{'thscode': '600000.SH', 'currency': 'CNY', 'interval': '1d', 'adjusted': 'none',

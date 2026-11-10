@@ -1,11 +1,16 @@
 """Conservative identity continuity for a current securities directory.
 
 Listing dates are stable identity evidence, unlike mutable valuation fields. A
-temporary null response may reuse the last verified date for the same code and
-name; a renamed/reused code needs fresh source evidence instead.
+temporary null response may reuse the last verified date for the same identity.
 """
 from datetime import date
 import json
+import re
+
+
+_SHARE_CODE = re.compile(r'[0-9]{6}\.SH')
+_ACTION_NAME = re.compile(r'(?:XD|XR|DR)([\u3400-\u4dbf\u4e00-\u9fff].*)')
+_CJK_NAME = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff]+')
 
 
 def valid_listing_date(value):
@@ -13,6 +18,31 @@ def valid_listing_date(value):
         return isinstance(value, str) and date.fromisoformat(value).isoformat() == value
     except ValueError:
         return False
+
+
+def _same_action_name(symbol, row, old):
+    if (not _SHARE_CODE.fullmatch(symbol) or row.get('exchange') != 'SH'
+            or old.get('exchange') != 'SH' or row.get('asset_type') != 'a-share'
+            or old.get('asset_type') != 'a-share' or old.get('thscode') != symbol):
+        return False
+    name, previous_name = row.get('name'), old.get('name')
+    if not isinstance(name, str) or not isinstance(previous_name, str):
+        return False
+    decorated = _ACTION_NAME.fullmatch(name)
+    previous_decorated = _ACTION_NAME.fullmatch(previous_name)
+    if not decorated and not previous_decorated:
+        return False
+    current_base = decorated[1] if decorated else name
+    previous_base = previous_decorated[1] if previous_decorated else previous_name
+    if current_base == previous_base:
+        return True
+    # Some Shanghai action-day short names retain only the first three of
+    # four Chinese characters. Apply this shape only against an unadorned name.
+    if bool(decorated) == bool(previous_decorated):
+        return False
+    short, full = (current_base, previous_base) if decorated else (previous_base, current_base)
+    return (len(short) == 3 and len(full) == 4 and full.startswith(short)
+            and _CJK_NAME.fullmatch(full) is not None)
 
 
 def preserve_listing_dates(items, previous, snapshot_id=None):
@@ -24,10 +54,10 @@ def preserve_listing_dates(items, previous, snapshot_id=None):
         old = previous.get(symbol, {})
         if not valid_listing_date(row.get('list_date')):
             row['list_date'] = None
-            if (row.get('name') and row.get('name') == old.get('name')
-                    and valid_listing_date(old.get('list_date'))
-                    and not old.get('end_date')
-                    and row.get('exchange') == old.get('exchange')):
+            exact_name = bool(row.get('name') and row.get('name') == old.get('name'))
+            if (valid_listing_date(old.get('list_date')) and not row.get('end_date')
+                    and not old.get('end_date') and row.get('exchange') == old.get('exchange')
+                    and (exact_name or _same_action_name(symbol, row, old))):
                 row['list_date'] = old['list_date']
                 row['list_date_evidence'] = {'kind': 'retained_verified_directory', 'snapshot_id': snapshot_id}
                 inherited.append(symbol)

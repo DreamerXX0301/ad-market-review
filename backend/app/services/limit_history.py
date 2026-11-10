@@ -1,20 +1,23 @@
 """Verified dated Fuyao up/down pools and per-security annual coverage.
 
 No price-limit rate or current ST flag is used here. A positive requires an
-identified source event at the requested day's raw closing price; absence needs
-complete pagination and unambiguous source codes. Empty history stays unknown.
+identified source event at the requested day's raw closing price. A zero-row
+down pool additionally requires a verified published same-day zero.
 """
 from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, date, time
 import math
+import re
 from zoneinfo import ZoneInfo
 
 from app.adapters.providers import ProviderError
 
 CHINA = ZoneInfo('Asia/Shanghai')
 NORMALIZATION_VERSION = 'explicit-ticker-date-coverage-v4'
+EMPTY_LIMITDOWN_REASON = '年度跌停池返回空，未确认该日无跌停；保留覆盖缺口'
+ZERO_LIMITDOWN_VERSION = 'published-fuyao-limitdown-zero-v1'
 POOL_SPECS = {
     'limitup': {'document_key':'annual_pools', 'coverage_key':'annual_coverage', 'endpoint':'limit-up-pool', 'label':'涨停', 'failure_capability':'year_limitup'},
     'limitdown': {'document_key':'annual_down_pools', 'coverage_key':'annual_down_coverage', 'endpoint':'limit-down-pool', 'label':'跌停', 'failure_capability':'year_limitdown'},
@@ -31,18 +34,110 @@ def _midnight(day):
     return int(datetime.combine(date.fromisoformat(day), time(), CHINA).timestamp()*1000)
 
 
-def fetch_fuyao_pool(adapter, day, closes, master, *, payload_pages=None, pool_kind='limitup'):
+def _declares_zero_limitdown(container, coverage_key, quarantine_key):
+    coverage = container.get(coverage_key, {}).get('limitdown', {})
+    return (container.get('limitdown') == []
+            and coverage.get('complete') is True and coverage.get('state', 'complete') == 'complete'
+            and not container.get(quarantine_key, {}).get('limitdown')
+            and coverage.get('pagination_complete', True) is True
+            and not coverage.get('raw_codes') and not coverage.get('rejected_codes')
+            and type(coverage.get('declared_total')) is int and coverage['declared_total'] == 0
+            and all(type(coverage.get(key, 0)) is int and coverage.get(key, 0) == 0
+                    for key in ('observed_rows', 'identified_rows', 'quarantined_rows')))
+
+
+def verified_primary_limitdown_zeros(market, status, days):
+    """Bind explicit Fuyao zero declarations to the verified published reference."""
+    from app.services.market_source_proof import verified_price_source
+
+    read = getattr(market, 'reference', None)
+    if not callable(read):
+        return {}
+    try:
+        reference = read()
+        eligible = set()
+        for day in days:
+            history = reference.get('pool_history', {}).get(day, {})
+            if (history.get('source') != 'fuyao' or history.get('date', day) != day
+                    or not _declares_zero_limitdown(history, 'coverage', 'quarantine')):
+                continue
+            if reference.get('pool_trade_date') == day and (
+                reference.get('source', 'fuyao') != 'fuyao'
+                or not _declares_zero_limitdown(reference, 'pool_coverage', 'pool_quarantine')
+            ):
+                continue
+            eligible.add(day)
+        proof = verified_price_source(market, status) if eligible else None
+        if proof is None or market.status().get('snapshot_id') != status.get('snapshot_id'):
+            return {}
+    except (AttributeError, OSError, TypeError, ValueError):
+        return {}
+    return {day: {'version': ZERO_LIMITDOWN_VERSION, 'reference_snapshot_id': status['snapshot_id'],
+                  'reference_proof_sha256': proof, 'date': day} for day in eligible}
+
+
+def _zero_reference_matches(value, day):
+    return (isinstance(value, dict) and value.get('version') == ZERO_LIMITDOWN_VERSION
+            and value.get('date') == day and isinstance(value.get('reference_snapshot_id'), str)
+            and bool(value['reference_snapshot_id'])
+            and isinstance(value.get('reference_proof_sha256'), str)
+            and re.fullmatch(r'[a-f0-9]{64}', value['reference_proof_sha256']) is not None)
+
+
+def verified_empty_limitdown(record, day):
+    """Recognize only normalized empty records carrying both Fuyao receipts."""
+    return (isinstance(record, dict) and record.get('date') == day and record.get('source') == 'fuyao'
+            and record.get('pool_kind') == 'limitdown' and record.get('items') == []
+            and record.get('complete') is True and record.get('pagination_complete') is True
+            and record.get('raw_codes') == [] and not record.get('quarantine')
+            and not record.get('rejected_codes')
+            and all(type(record.get(key)) is int and record[key] == 0
+                    for key in ('declared_total', 'verified_rows', 'ambiguous_code_rows'))
+            and _zero_reference_matches(record.get('zero_evidence'), day))
+
+
+def _successful_empty_down_page(body, day):
+    data = body['data']
+    page = data['pagination']
+    if (type(body.get('code')) is not int or body['code'] != 0 or data['item'] != []
+            or any(type(page.get(key)) is not int or page[key] != value
+                   for key, value in {'page': 1, 'pages': 0, 'size': 200, 'total': 0}.items())
+            or ('has_next' in page and page['has_next'] is not False)
+            or ('complete' in page and page['complete'] is not True)):
+        return False
+    if any(container.get(key, day) != day for container in (body, data) for key in ('date', 'trade_date')):
+        return False
+    expected_ms = _midnight(day)
+    if any(key in container and (type(container[key]) is not int or container[key] != expected_ms)
+           for container in (body, data) for key in ('date_ms', 'trade_date_ms')):
+        return False
+    if data.get('quarantine') or data.get('rejected_codes'):
+        return False
+    stamp = data.get('timestamp')
+    if type(stamp) is not int:
+        return False
+    try:
+        collected = datetime.fromtimestamp(stamp / 1000, CHINA)
+    except (OverflowError, OSError, ValueError):
+        return False
+    return collected >= datetime.combine(date.fromisoformat(day), time(15), CHINA)
+
+
+def fetch_fuyao_pool(adapter, day, closes, master, *, payload_pages=None, pool_kind='limitup',
+                     zero_reference=None):
     """Validate pages; rejected responses remain available for failure evidence."""
     captured=[]
     try:
-        return _fetch_fuyao_pool(adapter,day,closes,master,payload_pages=payload_pages,pool_kind=pool_kind,captured=captured)
+        return _fetch_fuyao_pool(adapter,day,closes,master,payload_pages=payload_pages,pool_kind=pool_kind,
+                                zero_reference=zero_reference,captured=captured)
     except ProviderError as error:
         error.raw_pages=captured
         error.pool_kind=pool_kind
         raise
 
 
-def _fetch_fuyao_pool(adapter, day, closes, master, *, payload_pages=None, pool_kind='limitup', captured=None):
+def _fetch_fuyao_pool(adapter, day, closes, master, *, payload_pages=None, pool_kind='limitup',
+                      zero_reference=None, captured=None):
     """Internal normalizer, with a caller-owned list of observed responses."""
     spec = pool_spec(pool_kind); label = '年度'+spec['label']+'池'
     records=[]; envelopes=captured if captured is not None else []; total=None; page=1
@@ -66,8 +161,11 @@ def _fetch_fuyao_pool(adapter, day, closes, master, *, payload_pages=None, pool_
         page+=1
     if len(records)!=total or (payload_pages is not None and len(payload_pages)!=page):
         raise ProviderError(label+'分页累计与总量不符')
-    if not records:
-        raise ProviderError(label+'返回空，未确认该日无'+spec['label']+'；保留覆盖缺口')
+    if not records and (pool_kind != 'limitdown' or not closes or len(envelopes) != 1
+                        or not _zero_reference_matches(zero_reference, day)
+                        or not _successful_empty_down_page(envelopes[0], day)):
+        raise ProviderError(EMPTY_LIMITDOWN_REASON if pool_kind == 'limitdown'
+                            else label+'返回空，未确认该日无'+spec['label']+'；保留覆盖缺口')
     known={r['instrument_id'] for r in master}
     by_code={r.get('code',r['instrument_id'][:6]):r['instrument_id'] for r in master}
     accepted=[];quarantine=[];seen=set();raw_codes=set();ambiguous=0
@@ -98,7 +196,11 @@ def _fetch_fuyao_pool(adapter, day, closes, master, *, payload_pages=None, pool_
         if isinstance(price,bool) or not isinstance(price,(int,float)) or not math.isfinite(price) or abs(price-closes[symbol])>.011:
             raise ProviderError(label+'价格与目标交易日收盘不符，拒绝该日')
         accepted.append({**row,'thscode':symbol,'instrument_id':symbol,'date':day,'source':'fuyao','pool_kind':pool_kind})
-    return {'items':accepted,'date':day,'pool_kind':pool_kind,'complete':not quarantine,'declared_total':total,'verified_rows':len(accepted),'quarantine':quarantine,'source':'fuyao','normalization_version':NORMALIZATION_VERSION,'pagination_complete':True,'raw_codes':sorted(raw_codes),'ambiguous_code_rows':ambiguous,'rejected_codes':[r['code'] for r in quarantine if r.get('code')],'scope':'Fuyao来源'+spec['label']+'池；逐股身份、日期收盘价及分页总量核验','price_check':'目标日未复权收盘价逐股核对'}, envelopes
+    result = {'items':accepted,'date':day,'pool_kind':pool_kind,'complete':not quarantine,'declared_total':total,'verified_rows':len(accepted),'quarantine':quarantine,'source':'fuyao','normalization_version':NORMALIZATION_VERSION,'pagination_complete':True,'raw_codes':sorted(raw_codes),'ambiguous_code_rows':ambiguous,'rejected_codes':[r['code'] for r in quarantine if r.get('code')],'scope':'Fuyao来源'+spec['label']+'池；逐股身份、日期收盘价及分页总量核验','price_check':'目标日未复权收盘价逐股核对'}
+    if not records:
+        result.update(zero_evidence=dict(zero_reference),
+                      price_check='目标日已发布主行情同日来源池完整零，与本次来源空分页交叉核验')
+    return result, envelopes
 
 
 def annual_coverage(document, calendar, day, instruments=None, pool_kind='limitup'):

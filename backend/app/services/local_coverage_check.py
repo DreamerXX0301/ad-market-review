@@ -276,20 +276,24 @@ def verify(market,context=None,*,progress=None,guard=None,listing_callback=None)
                 done+=1;tick(label,'本地结构与日期范围核验完成；缺口保持原状')
         finally:con.close()
     from .market_supplement import load_supplement
+    from .limit_pool_scope import VERSION as pool_history_version, rolling_days
+    from .source_service import _rolling_pool_coverage
     supplement=load_supplement(status['snapshot_id'])
+    calendar=market.calendar();target=status['data_end']
     absent=[]
     for kind,key in [('limitup','annual_pools'),('limitdown','annual_down_pools')]:
-        for day in market.calendar():
-            if day[:4]==status['data_end'][:4] and day<=status['data_end'] and day not in supplement.get(key,{}):absent.append({'date':day,'pool_kind':kind})
-    def brief(value):return {key:value.get(key) for key in ('observed_days','covered_days','expected_days','complete')}
-    report['market_pools']={'missing_batches':absent,'up':brief(supplement.get('annual_coverage',{})),'down':brief(supplement.get('annual_down_coverage',{}))}
-    # The remote action intentionally reuses the existing supplement task. It
-    # declares that task's broader partial-pool, public-detail and fund scope.
-    report['repair_plan']={'operation':'market_supplement','target_date':status['data_end'],
-        'endpoint':'/sync/market-supplement','payload':{'year_history':True,'sector_history':False,'recent_days':1},
+        for day in rolling_days(calendar,target):
+            if day not in supplement.get(key,{}):absent.append({'date':day,'pool_kind':kind})
+    coverage=_rolling_pool_coverage(supplement,calendar,target) or {}
+    def brief(key):
+        value=coverage.get(key,{})
+        return {**value,'complete':bool(value) and value['covered_days']==value['expected_days']}
+    report['market_pools']={'missing_batches':absent,'up':brief('up'),'down':brief('down')}
+    report['repair_plan']={'operation':'market_supplement','target_date':target,
+        'endpoint':'/sync/market-supplement','payload':{'year_history':True,'sector_history':False,'recent_days':1,'pool_history_version':pool_history_version},
         'missing_batches':absent,
-        'scope':['复用完整来源池，重新请求本年不完整或缺失的涨停/跌停批次','更新当前行情日封板明细及近20个留存交易日行业资金；不重新下载全库板块K线'],
-        'reason':'需要已配置来源并联网；来源若仍返回空或无法核验，继续保持未知，不能保证补齐。日K无报价日和未知上市日期不由此任务填补'}
+        'scope':['复用完整来源池，重新请求近一年不完整或缺失的涨停/跌停批次','更新当前行情日封板明细，历史板块K线独立保留'],
+        'reason':'需要已配置来源并联网；来源无法核验时保留缺口。日K无报价日和未知上市日期由各自的核验处理'}
     daily=report['daily'];actions=report['corporate_actions']
     if daily.get('duplicate_rows',0):failures.append('发现'+str(daily['duplicate_rows'])+'条重复证券日期键，未作为唯一有效报价计入')
     if daily.get('invalid_price_keys',0):failures.append('发现'+str(daily['invalid_price_keys'])+'个无效身份/价格键，未作为有效报价计入')

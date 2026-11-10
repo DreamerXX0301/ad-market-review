@@ -859,7 +859,7 @@ export default function DataCenter({
             盘面补充
           </h2>
           <p className="data-operation-description">
-            修补封板、行业与概念的板块日行情及年内统计；历史成分股单独核验。
+            修补封板、行业与概念的板块日行情及近一年涨跌停统计；历史成分股单独核验。
           </p>
           <button
             className="btn"

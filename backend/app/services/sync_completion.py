@@ -53,7 +53,7 @@ def remember_supplement(job_id, result, parameters):
     if not snapshot or not day:
         return
     receipt = {key: parameters.get(key, default) for key, default in
-               (('year_history', True), ('sector_history', False), ('recent_days', 20))}
+               (('year_history', True), ('sector_history', False), ('recent_days', 20), ('pool_history_version', None))}
     receipt.update(job_id=job_id, quality=result.get('quality'), snapshot_id=snapshot, target_date=day)
     with connect() as connection:
         connection.execute('INSERT INTO platform_setting(key,value_json,updated_at_ms) VALUES(?,?,?) '
@@ -70,6 +70,8 @@ def _supplement(connection, snapshot, day, scope):
     if not job or job['status'] not in ('succeeded', 'no_change') or receipt.get('quality') != 'complete':
         return None
     if any(scope.get(key, default) and not receipt.get(key) for key, default in (('year_history', True), ('sector_history', True))):
+        return None
+    if scope.get('pool_history_version') and receipt.get('pool_history_version') != scope['pool_history_version']:
         return None
     if scope.get('recent_days', 1) > receipt.get('recent_days', 0):
         return None
@@ -90,6 +92,8 @@ def _published_supplement(snapshot, day, scope):
     params = json.loads(row['parameters_json'])
     if any(scope.get(key, default) and not params.get(key, fallback) for key, default, fallback in
            (('year_history', True, True), ('sector_history', True, False))):
+        return None
+    if scope.get('pool_history_version') and doc.get('pool_history_version') != scope['pool_history_version']:
         return None
     if scope.get('recent_days', 1) > params.get('recent_days', 20):
         return None

@@ -549,6 +549,9 @@ export default function App() {
             route={key}
             date={date}
             latestDate={bootstrap.data?.data_date}
+            prefetchDates={
+              key === "gainers" ? bootstrap.data?.market_dates : undefined
+            }
             onStock={openStock}
           />
         );

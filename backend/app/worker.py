@@ -136,10 +136,14 @@ def _queue_followup_once(job,completed_result=None):
     from app.services.retention_policy import validate as validate_retention
     retention_version=validate_retention(parameters.get('retention_policy_version'))
     if retention_version is not None:fund_policy['retention_policy_version']=retention_version
+    from app.services.limit_pool_scope import validate as validate_pool_history
+    pool_history=validate_pool_history(parameters.get('pool_history_version'))
+    if pool_history is not None:fund_policy['pool_history_version']=pool_history
+    pool_scope='近一年' if pool_history else '年内'
     if job['kind']=='initialise':
         extra={'data_chain_version':'sector-charts-v1'} if parameters.get('data_chain_version')=='sector-charts-v1' else {}
         child=tasks.create_task('topic_refresh',{'source_id':'fuyao','scope':'current-full-catalog','initialization_chain':True,'parent_sync_job_id':job['job_id'],**extra,**fund_policy},target_date=target,request_key='topics-after-initialise:'+job['job_id'])
-        message='历史行情已发布，完整题材库已排队；新初始化将接续板块历史K线，再补充年内统计、目标日封板与资金' if extra else '历史行情已发布，完整题材库已排队；题材完成后一次回补年内统计，并补充目标日封板与资金'
+        message=f'历史行情已发布，完整题材库已排队；新初始化将接续板块历史K线，再补充{pool_scope}统计、目标日封板与资金' if extra else f'历史行情已发布，完整题材库已排队；题材完成后一次回补{pool_scope}统计，并补充目标日封板与资金'
     elif job['kind']=='increment' and parameters.get('data_chain_version')=='sector-charts-increment-v1':
         from app.core import get_market
         from app.services.sector_chart_batch_jobs import create_batch_job
@@ -168,7 +172,7 @@ def _queue_followup_once(job,completed_result=None):
         request_key='full-supplement-after-initialise:'+parent
         parameters={'operation':'market_supplement','year_history':True,'sector_history':True,'recent_days':1,'source_id':'fuyao','parent_sync_job_id':parent,'previous_chain_job_id':job['job_id'],**fund_policy}
         child=_supplement_child(parameters,target,request_key)
-        message='完整题材已发布，年内涨跌停统计一次回补、目标日封板、资金及板块日行情补充已排队；日后增量会自动补当日，失败可单独补缺'
+        message=f'完整题材已发布，{pool_scope}涨跌停统计一次回补、目标日封板、资金及板块日行情补充已排队；日后增量会自动补当日，失败可单独补缺'
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
         if not connection.execute("SELECT 1 FROM job_event WHERE job_id=? AND stage='followup_queued'",(job['job_id'],)).fetchone():

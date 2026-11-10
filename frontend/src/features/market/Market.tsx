@@ -2,7 +2,8 @@ import { StockEventBadges } from "./BoardTags";
 import AbnormalMonitor from "./AbnormalMonitor";
 import { useEffect, useState } from "react";
 import { ChevronRight, RefreshCw, Search } from "lucide-react";
-import { list, useApi, usePageActive } from "../../lib/api";
+import { firstGainersReadPath, list, useApi, usePageActive } from "../../lib/api";
+import { useGainersPrefetch } from "./useGainersPrefetch";
 import IntradayPageNavigation from "./IntradayPageNavigation";
 import { intradayReadingProps } from "./intradayReadingNavigation";
 import type { Row } from "../../lib/api";
@@ -742,11 +743,13 @@ export function MarketPage({
   route,
   date,
   latestDate,
+  prefetchDates,
   onStock,
 }: {
   route: string;
   date: string;
   latestDate?: string;
+  prefetchDates?: string[];
   onStock: (id: string, navigation?: StockNavigation) => void;
 }) {
   const info = pageDetails[route];
@@ -781,12 +784,32 @@ export function MarketPage({
     key: "change_30d_pct",
     order: "desc" as const,
   };
+  const firstGainersPage =
+    isGainers &&
+    gainerPage === 1 &&
+    gainerTopN === 100 &&
+    !gainerUnranked &&
+    !gainerQuery &&
+    !columnSort;
   const result = useApi<Row>(
-    date && route !== "abnormal"
+    date && firstGainersPage
+      ? firstGainersReadPath(date)
+      : date && route !== "abnormal"
       ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
       : null,
   );
   const data = result.data;
+  useGainersPrefetch(
+    firstGainersPage &&
+      !filter &&
+      date === latestDate &&
+      !result.loading &&
+      !result.error &&
+      data?.date === date,
+    date,
+    data?.snapshot_id,
+    prefetchDates,
+  );
   const sectorResult = useApi<Row>(
     route === "flow" && kind === "concept" && date
       ? `/market/sectors?date=${date}&limit=1000`

@@ -153,6 +153,12 @@ def test_activity_revision_survives_terminal_window_and_separates_publication_he
     receipts = tasks.task_activity()['read_revisions']
     assert receipts['market'] == complete['market']
     assert receipts['domains']['supplement'] and receipts['domains']['dragon_tiger']
+    assert receipts['domains']['suspensions'] is None
+    archive = core.work_dir() / 'market-suspensions' / 'confirmed.json'
+    core.atomic_json(archive, {'version': 'market-suspensions-v1', 'items': []})
+    updated = tasks.task_activity()['read_revisions']
+    assert updated['domains']['suspensions'] is not None
+    assert updated['market'] == receipts['market']
 
     publishing = tasks.create_task('initialise', {})
     close_day = '2026-10-19'

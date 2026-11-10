@@ -23,6 +23,22 @@ type PendingRead = {
 };
 const pendingReads = new Map<string, PendingRead>();
 const retainedReadRecheckMs = 60_000;
+const gainersWarmTtlMs = 90_000;
+const gainersWarmMaxBytes = 512 * 1024;
+const gainersWarmReads = new Map<
+  string,
+  { proof: string; value: Row; expires: number }
+>();
+let gainersWarmRevision = 0;
+
+export function firstGainersReadPath(day: string) {
+  return `/market/gainers?date=${day}&page=1&page_size=25&query=&sort_by=change_30d_pct&sort_order=desc&top_n=100`;
+}
+
+function clearGainersWarmReads() {
+  gainersWarmRevision += 1;
+  gainersWarmReads.clear();
+}
 
 export type ReadChange = {
   scope: string;
@@ -41,6 +57,7 @@ const scopePaths: Record<string, RegExp> = {
   calendar: /^\/market\/(?:noon|auction)\/dates(?:\?|$)/,
   supplement:
     /^\/(?:bootstrap|data\/status|market\/(?:overview|emotion|broken-boards|ladder|sectors|gainers|intraday|noon))(?:[/?-]|$)/,
+  suspensions: /^\/market\/gainers(?:\?|$)/,
   dragon_tiger: /^\/market\/dragon-tiger(?:[/?-]|$)/,
   sector_charts:
     /^\/(?:market\/(?:sector-chart|sectors)|data\/status)(?:[/?]|$)/,
@@ -75,6 +92,12 @@ function hasReadRevision(scope: string) {
 
 export function notifyReadChanges(changes: ReadChange[]) {
   if (!changes.length) return;
+  if (
+    changes.some(({ scope }) =>
+      ["market", "supplement", "suspensions", "topics"].includes(scope),
+    )
+  )
+    clearGainersWarmReads();
   for (const path of pendingReads.keys())
     if (changes.some((change) => matchesReadChange(path, change)))
       pendingReads.delete(path);
@@ -213,8 +236,10 @@ function responseText(
   // no completed responses, policies or task states are cached here.
   const method = (options.method || "GET").toUpperCase();
   if (method !== "GET") {
+    clearGainersWarmReads();
     pendingReads.clear();
     return readResponse(path, options).finally(() => {
+      clearGainersWarmReads();
       pendingReads.clear();
     });
   }
@@ -319,6 +344,112 @@ export const post = <T = any>(path: string, data: unknown = {}) =>
   api<T>(path, { method: "POST", body: JSON.stringify(data) });
 export const patch = <T = any>(path: string, data: unknown) =>
   api<T>(path, { method: "PATCH", body: JSON.stringify(data) });
+
+async function gainersReadProof(signal: AbortSignal) {
+  const receipt = await api<Row>("/tasks/activity", { signal });
+  const revision = receipt?.read_revisions;
+  const supplement = revision?.domains?.supplement;
+  const suspensions = revision?.domains?.suspensions;
+  if (
+    receipt?.active_count !== 0 ||
+    revision?.market_locked !== false ||
+    typeof revision.market !== "string" ||
+    (supplement !== null && typeof supplement !== "string") ||
+    (suspensions !== null && typeof suspensions !== "string")
+  )
+    return null;
+  return JSON.stringify([revision.market, supplement, suspensions]);
+}
+
+async function readGainersWarmBody(path: string, signal: AbortSignal) {
+  const response = await fetch("/api/v1" + path, {
+    signal,
+    priority: "low",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    return null;
+  }
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let size = 0;
+  let content = "";
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) return JSON.parse(content + decoder.decode()) as Row;
+      size += chunk.value.byteLength;
+      if (size > gainersWarmMaxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      content += decoder.decode(chunk.value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function prefetchGainersReads(
+  days: string[],
+  snapshotId: string,
+  signal: AbortSignal,
+  canContinue: () => boolean,
+) {
+  if (signal.aborted || !canContinue()) return;
+  const revision = gainersWarmRevision;
+  const proof = await gainersReadProof(signal);
+  if (!proof) return;
+  for (const day of days.slice(0, 2)) {
+    if (signal.aborted || revision !== gainersWarmRevision || !canContinue())
+      return;
+    const path = firstGainersReadPath(day);
+    const saved = gainersWarmReads.get(path);
+    if (saved?.proof === proof && saved.expires > performance.now()) continue;
+    const value = await readGainersWarmBody(path, signal);
+    if (signal.aborted || revision !== gainersWarmRevision || !canContinue())
+      return;
+    if (
+      value?.date !== day ||
+      value.snapshot_id !== snapshotId ||
+      !Array.isArray(value.items)
+    )
+      continue;
+    gainersWarmReads.set(path, {
+      proof,
+      value,
+      expires: performance.now() + gainersWarmTtlMs,
+    });
+    while (gainersWarmReads.size > 2)
+      gainersWarmReads.delete(gainersWarmReads.keys().next().value!);
+  }
+}
+
+async function readRetainedPage<T>(path: string, signal: AbortSignal) {
+  const saved = gainersWarmReads.get(path);
+  if (saved) {
+    gainersWarmReads.delete(path);
+    if (saved.expires > performance.now()) {
+      const revision = gainersWarmRevision;
+      let proof: string | null = null;
+      try {
+        proof = await gainersReadProof(signal);
+      } catch (cause: any) {
+        if (signal.aborted || cause?.incrementLocked) throw cause;
+      }
+      if (
+        !signal.aborted &&
+        revision === gainersWarmRevision &&
+        proof === saved.proof
+      )
+        return saved.value as T;
+    }
+  }
+  return api<T>(path, { signal });
+}
+
 export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
   const pageActivity = useContext(ApiPageActivity);
   const active = pageActivity !== false;
@@ -342,12 +473,18 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
   const reload = useCallback(() => {
     controller.current?.abort();
     background.current = false;
-    if (path) pendingReads.delete(path);
+    if (path) {
+      pendingReads.delete(path);
+      gainersWarmReads.delete(path);
+    }
     setKey((x) => x + 1);
   }, [path]);
   const invalidate = useCallback(() => {
     controller.current?.abort();
-    if (path) pendingReads.delete(path);
+    if (path) {
+      pendingReads.delete(path);
+      gainersWarmReads.delete(path);
+    }
     background.current = true;
     setKey((x) => x + 1);
   }, [path]);
@@ -387,7 +524,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     setErrorStatus(undefined);
     if (previousPath.current !== path) setData(null);
     previousPath.current = path;
-    api<T>(path, { signal: abort.signal })
+    readRetainedPage<T>(path, abort.signal)
       .then((value) => {
         if (!abort.signal.aborted) {
           incrementBlocked.current = false;

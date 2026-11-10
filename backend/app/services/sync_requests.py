@@ -28,7 +28,8 @@ def create_sync_request(payload: dict):
     from app.adapters.providers import SECTOR_TAIL_PACING_VERSION
     from app.services.supplement_policy import FUND_FLOW_RETIRED
     parameters={'source_id':adapter.source_id,'line_alert_check_version':'explicit-local-line-alert-v1','listing_status_check_version':'listing-evidence-v1','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'retention_policy_version':retention_version,**({'window':window,'data_chain_version':'sector-charts-v1'} if window else {'data_chain_version':'sector-charts-increment-v1','increment_session_version':LOCK_VERSION,'sector_tail_request_policy_version':SECTOR_TAIL_PACING_VERSION})}
-    parameters['fund_flow_policy']=FUND_FLOW_RETIRED
+    from app.services.limit_pool_scope import VERSION as pool_history_version
+    parameters.update(fund_flow_policy=FUND_FLOW_RETIRED,pool_history_version=pool_history_version)
     from app.adapters.dragon_tiger import VERSION as dragon_tiger_version
     parameters.update(dragon_tiger_policy=dragon_tiger_version,dragon_tiger_backfill=mode=='initialise')
     if mode=='increment':

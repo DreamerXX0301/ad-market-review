@@ -298,7 +298,7 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
 
 _SUMMARY_PARAMETERS = ('mode','operation','target_type','strategy_id','window','data_chain_version',
                        'initialization_chain','increment_chain','parent_sync_job_id','previous_chain_job_id',
-                       'year_history','recent_days','revalidate_only',
+                       'year_history','recent_days','revalidate_only','pool_history_version',
                        'topic_code','source_code','source_name','source_id','period','version','plan_version','auto_add','scope')
 
 

@@ -144,6 +144,7 @@ def validate_raw(con,table):
 
 class _MergeCoverage(dict):
     partition_reuse = None
+    changed_dates = ()
 
 
 def merge_daily(incoming,previous,output,start,end,calendar,master,*,unchanged_rows=None):
@@ -205,9 +206,11 @@ def merge_daily(incoming,previous,output,start,end,calendar,master,*,unchanged_r
         if any(hash_file(Path(path))!=checksum for path,checksum in previous_sha):
             raise ValueError('合并期间历史行情来源发生变化，拒绝发布')
         result=_MergeCoverage({'rows':count,'unexplained_missing':None if unknown_identity else missing,'confirmed_missing_lower_bound':missing,'identity_unknown_count':len(unknown_identity),'identity_unknown_symbols':unknown_identity,'expected_coverage_state':'unknown' if unknown_identity else 'partial','overlap_rows':overlap,'revised_overlap_rows':changed,'derived_file_written':write_output,'missing_classification':'上市日期未知时总缺口不可核验；已知身份中的缺口尚未区分停牌/数据缺失，不填0'})
+        if previous:
+            result.changed_dates = tuple(sorted({date_ms(value) for value in changed_days or []}))
         if previous and write_output:
             from app.analytics.market_storage import MergePartitionProof
-            result.partition_reuse=MergePartitionProof(hash_file(output),previous_sha,tuple(sorted({date_ms(value)[:7] for value in changed_days or []})))
+            result.partition_reuse=MergePartitionProof(hash_file(output),previous_sha,tuple(sorted({day[:7] for day in result.changed_dates})))
         return result
     finally:con.close()
 
@@ -374,6 +377,15 @@ def execute_sync(job_id,progress=None):
     coverage=merge_daily(downloaded,previous,collector.root/'year.parquet',begin,target,cal,master,unchanged_rows=unchanged_rows)
     coverage['master_request_params']=master_params
     coverage['inherited_listing_dates']=len(inherited_dates)
+    if prior and params.get('pool_history_version'):
+        prior_status=prior.status()
+        coverage['limit_pool_quote_delta']={
+            'previous_snapshot':prior_status['snapshot_id'],
+            'previous_begin':max(begin,prior_status['data_begin']),
+            'previous_end':prior_status['data_end'],
+            'same_stock_directory':set(symbols)==prior_symbols,
+            'changed_dates':list(coverage.changed_dates),
+        }
     if calendar_provenance:coverage['calendar_provenance']=calendar_provenance
     if plan.get('index_request_plan')==INDEX_REQUEST_PLAN:coverage['index_request_plan']=INDEX_REQUEST_PLAN
     coverage['initial_window']=prior.reference().get('coverage',{}).get('initial_window','inherited') if prior else plan.get('window','near-one-year')

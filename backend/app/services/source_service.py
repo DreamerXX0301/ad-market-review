@@ -112,14 +112,9 @@ def supplement_status():
 
 
 def _rolling_pool_coverage(doc, calendar, day):
-    from datetime import date, timedelta
+    from .limit_pool_scope import rolling_start
 
-    anchor = date.fromisoformat(day)
-    try:
-        anniversary = anchor.replace(year=anchor.year - 1)
-    except ValueError:
-        anniversary = anchor.replace(year=anchor.year - 1, day=28)
-    start = (anniversary + timedelta(days=1)).isoformat()
+    start = rolling_start(day)
     # Without a calendar covering the full window, the expected total is unknown.
     if not calendar or min(calendar) > start or day not in calendar:
         return None

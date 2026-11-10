@@ -259,6 +259,7 @@ def topic_sync(payload:dict=Body(default={})):
 @router.post('/sync/market-supplement')
 def market_supplement(payload:dict=Body(default={})):
     from app.core import get_market
+    from app.services.limit_pool_scope import VERSION as pool_history_version
     status=get_market().status()
     if not status.get('ready'):raise HTTPException(422,'请先初始化行情，再补充盘面事件')
     revalidate_only=payload.get('revalidate_only',False)
@@ -273,7 +274,7 @@ def market_supplement(payload:dict=Body(default={})):
         from app.services.sync_completion import replay_supplement_request
         replay=replay_supplement_request(payload.get('request_key'),{'revalidate_only':True})
         if replay:return replay
-        return task_service.create_task('source_check',{'operation':'market_supplement','revalidate_only':True,'year_history':True,'sector_history':False,'recent_days':1,'source_id':'local-cache'},target_date=status['data_end'],request_key=payload.get('request_key'))
+        return task_service.create_task('source_check',{'operation':'market_supplement','revalidate_only':True,'year_history':True,'sector_history':False,'recent_days':1,'source_id':'local-cache','pool_history_version':pool_history_version},target_date=status['data_end'],request_key=payload.get('request_key'))
     year_history=payload.get('year_history',True)
     recent_days=payload.get('recent_days',1)
     sector_history=payload.get('sector_history',True)
@@ -282,15 +283,18 @@ def market_supplement(payload:dict=Body(default={})):
     replay=replay_supplement_request(payload.get('request_key'),
         {'year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'coverage_plan_id':payload.get('coverage_plan_id')})
     if replay:return replay
+    # A previously reviewed repair plan keeps its original frozen scope.
+    if repair:
+        pool_history_version=repair.get('pool_history_version')
     if not repair:
         from app.services.sync_completion import require_published_supplement_available
         require_published_supplement_available(status.get('snapshot_id'), status['data_end'],
-            {'year_history':year_history,'sector_history':sector_history,'recent_days':recent_days})
-    if (year_history or sector_history) and not source_service.client('fuyao').key:raise HTTPException(422,'年内来源池及板块日行情补充需要已配置的扶摇免费Key')
+            {'year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'pool_history_version':pool_history_version})
+    if (year_history or sector_history) and not source_service.client('fuyao').key:raise HTTPException(422,'近一年来源池及板块日行情补充需要已配置的扶摇免费Key')
     from app.services.retention_policy import VERSION as retention_version
     from app.services.supplement_policy import FUND_FLOW_RETIRED
     from app.adapters.dragon_tiger import VERSION as dragon_tiger_version
-    return task_service.create_task('source_check',{'operation':'market_supplement','year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'source_id':'fuyao' if year_history or sector_history else 'akshare-public','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'fund_flow_policy':FUND_FLOW_RETIRED,'retention_policy_version':retention_version,'market_snapshot_id':status.get('snapshot_id'),'completion_target_date':status['data_end'],'dragon_tiger_policy':dragon_tiger_version,'dragon_tiger_backfill':False,**repair},target_date=status['data_end'],request_key=payload.get('request_key'))
+    return task_service.create_task('source_check',{'operation':'market_supplement','year_history':year_history,'sector_history':sector_history,'recent_days':recent_days,'source_id':'fuyao' if year_history or sector_history else 'akshare-public','fund_request_budget_version':FUND_REQUEST_BUDGET_VERSION,'fund_flow_policy':FUND_FLOW_RETIRED,'retention_policy_version':retention_version,'market_snapshot_id':status.get('snapshot_id'),'completion_target_date':status['data_end'],'pool_history_version':pool_history_version,'dragon_tiger_policy':dragon_tiger_version,'dragon_tiger_backfill':False,**repair},target_date=status['data_end'],request_key=payload.get('request_key'))
 
 @router.post('/research/jobs')
 def research_create(payload:dict=Body(...)):return research_service.create(payload)

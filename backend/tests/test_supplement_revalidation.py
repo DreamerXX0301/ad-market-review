@@ -99,6 +99,92 @@ def test_offline_rebuilds_items_from_raw_instead_of_copying_previous_normalizati
     assert result['annual_coverage']['counts']=={UP:1}
 
 
+def test_offline_repairs_verified_primary_zero_from_exact_rejected_empty_receipt(offline, tmp_path, monkeypatch):
+    from app.services import market_source_proof
+
+    market = LocalMarket(tmp_path/'current', {FIRST: {UP: 10., DOWN: 10.}})
+    coverage = {'complete': True, 'declared_total': 0, 'observed_rows': 0}
+    same_day = {'source': 'fuyao', 'limitdown': [], 'coverage': {'limitdown': coverage}}
+    reference = {'pool_trade_date': FIRST, 'limitdown': [], 'pool_coverage': {'limitdown': coverage},
+                 'pool_history': {FIRST: same_day}}
+    market.reference = lambda: reference
+    monkeypatch.setattr(market_source_proof, 'verified_price_source', lambda *_: 'a' * 64)
+    identity = core.digest({row['code']: row['instrument_id'] for row in market.instruments()})
+    signature = supplement._pool_signature(FIRST, 'fuyao', market.quotes[FIRST], identity, 'limitdown')
+    raw = [{'code': 0, 'data': {'item': [], 'timestamp': supplement._midnight(FIRST) + 17 * 3600_000,
+                               'pagination': {'page': 1, 'pages': 0, 'size': 200, 'total': 0}}}]
+    empty = {'date': FIRST, 'pool_kind': 'limitdown', 'complete': False, 'state': 'unknown',
+             'items': [], 'reason': supplement.EMPTY_LIMITDOWN_REASON,
+             'fetched_at': FIRST + 'T17:20:00+08:00'}
+    offline.accept('fuyao', 'limitdown-failed', FIRST, 'other-signature', empty, raw)
+    result = supplement.revalidate_for_market(market, FIRST)
+    assert result['annual_down_pools'] == {}
+    accepted = offline.accept('fuyao', 'limitdown-failed', FIRST, signature, empty, raw)
+    result = supplement.revalidate_for_market(market, FIRST)
+    repaired = result['annual_down_pools'][FIRST]
+    assert repaired['items'] == [] and repaired['complete'] is True
+    assert repaired['raw_sha256'] == accepted['raw_sha256'] and repaired['fetched_at'] == accepted['fetched_at']
+    assert result['annual_down_coverage']['complete'] and result['annual_down_coverage']['covered_days'] == 1
+    assert supplement.revalidate_for_market(market, FIRST)['annual_down_pools'][FIRST] == repaired
+
+    # A newly contradictory primary declaration invalidates even an accepted zero.
+    same_day['limitdown'] = [{'instrument_id': DOWN}]
+    invalidated = supplement.revalidate_for_market(market, FIRST)
+    assert invalidated['annual_down_pools'] == {}
+    assert invalidated['annual_down_coverage']['covered_days'] == 0
+
+
+def test_increment_revalidates_a_historical_zero_if_the_primary_pool_changes(offline, tmp_path, monkeypatch):
+    from app.services import market_source_proof
+    from app.services.limit_pool_scope import VERSION
+    from app.services.supplement_policy import FUND_FLOW_RETIRED
+
+    previous = LocalMarket(tmp_path/'previous', {FIRST: {UP: 10., DOWN: 10.}})
+    current = LocalMarket(tmp_path/'current', {**previous.quotes, SECOND: {UP: 10., DOWN: 10.}})
+    status = current.status()
+    status['coverage'] = {'limit_pool_quote_delta': {
+        'previous_snapshot': previous.status()['snapshot_id'], 'same_stock_directory': True,
+        'changed_dates': [SECOND], 'previous_begin': FIRST, 'previous_end': FIRST,
+    }}
+    current.status = lambda: status
+    historical = {'source': 'fuyao', 'limitdown': [],
+                  'coverage': {'limitdown': {'complete': True, 'declared_total': 0}}}
+    current.reference = lambda: {'pool_history': {FIRST: historical}}
+    monkeypatch.setattr(market_source_proof, 'verified_price_source', lambda *_: 'a' * 64)
+    identity = core.digest({row['code']: row['instrument_id'] for row in previous.instruments()})
+    signature = supplement._pool_signature(FIRST, 'fuyao', previous.quotes[FIRST], identity, 'limitdown')
+    raw = [{'code': 0, 'data': {'item': [], 'timestamp': supplement._midnight(FIRST) + 17 * 3600_000,
+                               'pagination': {'page': 1, 'pages': 0, 'size': 200, 'total': 0}}}]
+    empty = {'date': FIRST, 'pool_kind': 'limitdown', 'complete': False, 'state': 'unknown',
+             'items': [], 'reason': supplement.EMPTY_LIMITDOWN_REASON}
+    offline.accept('fuyao', 'limitdown-failed', FIRST, signature, empty, raw)
+    publish(offline, previous)
+
+    class Adapter:
+        def request(self, path, params):
+            assert params['date_ms'] == supplement._midnight(SECOND)
+            symbol = UP if path.endswith('limit-up-pool') else DOWN
+            return {'data': {'item': [{'thscode': symbol, 'last_price': 10.}], 'pagination': {'total': 1}}}
+
+    class Public:
+        def limit_pool(self, day):
+            raise ProviderError('fixture public unavailable')
+
+    monkeypatch.setattr(source_service, 'client', lambda *_: Adapter())
+    monkeypatch.setattr(supplement, 'PublicMarketClient', Public)
+    result = supplement.refresh_for_market(current, SECOND, pool_history_version=VERSION,
+                                           fund_flow_policy=FUND_FLOW_RETIRED)
+    repaired = result['annual_down_pools'][FIRST]
+    assert repaired['complete'] and repaired['items'] == []
+
+    publish(offline, previous, down={FIRST: repaired})
+    historical['limitdown'] = [{'instrument_id': DOWN}]
+    contradicted = supplement.refresh_for_market(current, SECOND, pool_history_version=VERSION,
+                                                 fund_flow_policy=FUND_FLOW_RETIRED)
+    assert FIRST not in contradicted['annual_down_pools']
+    assert contradicted['annual_down_coverage']['covered_days'] == 1
+
+
 @pytest.mark.parametrize('problem',['missing_quote','revised_price','raw_sha','artifact_sha','missing_raw','empty'])
 def test_unverifiable_evidence_never_becomes_complete_zero(offline,tmp_path,problem):
     previous=LocalMarket(tmp_path/'old',{FIRST:{UP:10.,DOWN:10.}})
@@ -254,6 +340,7 @@ def test_increment_preserves_in_window_pool_evidence_across_year_boundary(offlin
 
 def test_revalidate_route_never_reads_provider_credentials_and_worker_uses_frozen_scope(isolated,monkeypatch):
     from app.routers import platform
+    from app.services.limit_pool_scope import VERSION
     status={'ready':True,'snapshot_id':'market-fixture','data_end':SECOND}
     market=SimpleNamespace(status=lambda:dict(status))
     monkeypatch.setattr(core,'get_market',lambda:market)
@@ -266,16 +353,18 @@ def test_revalidate_route_never_reads_provider_credentials_and_worker_uses_froze
         response=client.post('/api/v1/sync/market-supplement',json={'revalidate_only':True,'request_key':'offline-fixture'})
     assert response.status_code==200
     task=response.json()
-    assert task['parameters']=={'operation':'market_supplement','revalidate_only':True,'year_history':True,'sector_history':False,'recent_days':1,'source_id':'local-cache'}
+    assert task['parameters']=={'operation':'market_supplement','revalidate_only':True,'year_history':True,
+                                'sector_history':False,'recent_days':1,'source_id':'local-cache',
+                                'pool_history_version':VERSION}
     assert task['target_date']==SECOND and task['kind']=='source_check'
     monkeypatch.setattr(supplement,'refresh_for_market',lambda *a,**k:pytest.fail('offline job must not call network refresh'))
     calls=[]
     def revalidate(current,target,**kwargs):
-        calls.append((current,target));kwargs['guard']()
+        calls.append((current,target,kwargs['pool_history_version']));kwargs['guard']()
         # The same mutable market object changing generation must be detected.
         status['snapshot_id']='changed-generation'
         with pytest.raises(ValueError,match='代际'):kwargs['guard']()
         return {'quality':'partial'}
     monkeypatch.setattr(supplement,'revalidate_for_market',revalidate)
     assert supplement.execute_supplement(task['job_id'])=={'quality':'partial'}
-    assert calls==[(market,SECOND)]
+    assert calls==[(market,SECOND,VERSION)]

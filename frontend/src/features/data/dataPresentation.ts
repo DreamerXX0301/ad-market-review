@@ -25,14 +25,21 @@ export function dataTaskTitle(task: DataRow) {
     return `单板块历史K线${name ? " · " + name : ""}`;
   }
   if (task.kind === "source_check" && operation === "market_supplement") {
-    const { revalidate_only, year_history, recent_days, parent_sync_job_id } =
-      task.parameters;
+    const {
+      revalidate_only,
+      year_history,
+      recent_days,
+      parent_sync_job_id,
+      pool_history_version,
+    } = task.parameters;
     if (revalidate_only === true) return "本地涨跌停证据核验";
     if (year_history === false)
       return parent_sync_job_id && recent_days === 1
         ? "当日盘面增量"
         : "盘面缺口修补";
-    return "盘面细节与年内涨跌停回补";
+    return pool_history_version
+      ? "盘面细节与近一年涨跌停回补"
+      : "盘面细节与年内涨跌停回补";
   }
   return (
     task.title ||

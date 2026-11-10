@@ -7,7 +7,8 @@ import pandas as pd
 import pytest
 
 from app.adapters.providers import ProviderError
-from app.services.limit_history import fetch_fuyao_pool, annual_coverage, _midnight, NORMALIZATION_VERSION
+from app.services.limit_history import (fetch_fuyao_pool, annual_coverage, _midnight, NORMALIZATION_VERSION,
+    ZERO_LIMITDOWN_VERSION, verified_empty_limitdown)
 from app.services.market_supplement import SupplementCache
 
 A='600001.SH';B='000001.SZ'
@@ -89,6 +90,34 @@ def test_down_pagination_total_change_fails_with_both_observed_pages():
     with pytest.raises(ProviderError,match='总量变化') as caught:
         fetch_fuyao_pool(Adapter(),'2026-01-05',{A:10,B:10},MASTER,pool_kind='limitdown')
     assert len(caught.value.raw_pages)==2
+
+
+def test_only_an_exact_after_close_down_zero_with_primary_reference_counts_complete():
+    day = '2026-01-05'
+    raw = {'code': 0, 'data': {'item': [], 'timestamp': _midnight(day) + 17 * 3600_000,
+           'pagination': {'page': 1, 'pages': 0, 'size': 200, 'total': 0}}}
+    proof = {'version': ZERO_LIMITDOWN_VERSION, 'date': day, 'reference_snapshot_id': 'published-market',
+             'reference_proof_sha256': '1' * 64}
+    record, _ = fetch_fuyao_pool(None, day, {A: 10}, MASTER, payload_pages=[raw],
+                                 pool_kind='limitdown', zero_reference=proof)
+    assert verified_empty_limitdown(record, day)
+    coverage = annual_coverage({'annual_down_pools': {day: record}}, [day], day, MASTER, pool_kind='limitdown')
+    assert coverage['complete'] and coverage['observed_days'] == coverage['covered_days'] == 1
+    assert coverage['counts'] == {} and coverage['instrument_coverage'][A]['complete']
+    for change in (
+        {**raw, 'code': False},
+        {**raw, 'data': {**raw['data'], 'date': '2026-01-06'}},
+        {**raw, 'data': {**raw['data'], 'trade_date_ms': _midnight('2026-01-06')}},
+        {**raw, 'data': {**raw['data'], 'timestamp': _midnight(day) + 14 * 3600_000}},
+        {**raw, 'data': {**raw['data'], 'pagination': {**raw['data']['pagination'], 'pages': 1}}},
+        {**raw, 'data': {**raw['data'], 'pagination': {**raw['data']['pagination'], 'has_next': True}}},
+    ):
+        with pytest.raises(ProviderError, match='返回空'):
+            fetch_fuyao_pool(None, day, {A: 10}, MASTER, payload_pages=[change],
+                             pool_kind='limitdown', zero_reference=proof)
+    with pytest.raises(ProviderError, match='返回空'):
+        fetch_fuyao_pool(None, day, {A: 10}, MASTER, payload_pages=[raw],
+                         pool_kind='limitup', zero_reference=proof)
 
 
 def test_down_coverage_is_independent_of_up_and_prior_year_stays_out_of_scope():

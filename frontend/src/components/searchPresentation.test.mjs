@@ -13,10 +13,15 @@ const compiled = ts.transpileModule(
     },
   },
 ).outputText;
-const { instrumentSearchRequest, searchResultView, globalSectorSelection } =
-  await import(
-    "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
-  );
+const {
+  instrumentSearchRequest,
+  searchResultView,
+  globalSectorSelection,
+  loadRecentStocks,
+  rememberRecentStock,
+} = await import(
+  "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
+);
 assert.equal(
   instrumentSearchRequest("出版"),
   "/instruments?query=%E5%87%BA%E7%89%88&limit=12&fuzzy=true",
@@ -150,6 +155,71 @@ assert.equal(
   ).pendingCloseDay,
   undefined,
 );
+
+const historyKey = "workbench-global-recent-stocks-v1";
+const storage = new Map();
+globalThis.localStorage = {
+  getItem: (key) => storage.get(key) ?? null,
+  setItem: (key, value) => storage.set(key, value),
+  removeItem: (key) => storage.delete(key),
+};
+const now = Date.parse("2026-11-10T00:01:00+08:00");
+const saved = (selectedAt, fields = {}) => ({
+  ...stock,
+  ...fields,
+  selectedAt: Date.parse(selectedAt),
+});
+assert.deepEqual(loadRecentStocks(now), []);
+for (const row of [index, industry, concept, { ...stock, instrument_id: "bad" }])
+  assert.equal(rememberRecentStock(row, now), undefined);
+assert.equal(storage.has(historyKey), false, "non-stock picks write nothing");
+storage.set(
+  historyKey,
+  JSON.stringify([
+    saved("2026-11-04T00:00:00+08:00", { name: "旧名" }),
+    saved("2026-11-08T12:30:00+08:00", { name: "最新名称" }),
+    saved("2026-11-03T23:59:59+08:00", { instrument_id: "600826.SH" }),
+    saved("2026-11-04T00:00:00+08:00", { instrument_id: "600827.SH" }),
+    saved("2026-11-10T00:02:00+08:00", { instrument_id: "600828.SH" }),
+    saved("2026-11-09T00:00:00+08:00", { kind: "index" }),
+    null,
+  ]),
+);
+assert.deepEqual(
+  loadRecentStocks(now).map((row) => [row.instrument_id, row.name]),
+  [
+    ["600825.SH", "最新名称"],
+    ["600827.SH", "新华传媒"],
+  ],
+  "today and six preceding Beijing dates, deduplicated by newest pick",
+);
+assert.equal(
+  rememberRecentStock({ ...stock, instrument_id: "600827.SH", quote: 13 }, now)[0]
+    .instrument_id,
+  "600827.SH",
+);
+assert.equal(JSON.parse(storage.get(historyKey)).length, 2);
+assert.equal(JSON.parse(storage.get(historyKey))[0].code, "600827");
+assert.equal(JSON.parse(storage.get(historyKey))[0].quote, undefined);
+
+for (let index = 0; index < 16; index++) {
+  const code = String(600100 + index);
+  rememberRecentStock({ ...stock, instrument_id: code + ".SH" }, now + index);
+}
+const bounded = loadRecentStocks(now + 16);
+assert.equal(bounded.length, 12);
+assert.equal(bounded[0].code, "600115");
+assert.equal(bounded.at(-1).code, "600104");
+storage.set(historyKey, "{broken");
+assert.deepEqual(loadRecentStocks(now), []);
+assert.equal(storage.has(historyKey), false);
+globalThis.localStorage.getItem = () => {
+  throw new Error("storage is restricted");
+};
+globalThis.localStorage.setItem = globalThis.localStorage.getItem;
+assert.deepEqual(loadRecentStocks(now), []);
+assert.doesNotThrow(() => rememberRecentStock(stock, now));
+delete globalThis.localStorage;
 console.log(
-  "global search: type separation, code identity and independent date scopes passed",
+  "global search: type separation, independent dates and recent-stock expiration passed",
 );

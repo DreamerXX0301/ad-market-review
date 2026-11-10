@@ -14,6 +14,8 @@ import { Spinner } from "./UI";
 import { instrumentSearchLayout } from "./instrumentSearchLayout";
 import {
   instrumentSearchRequest,
+  loadRecentStocks,
+  rememberRecentStock,
   searchResultView,
 } from "./searchPresentation";
 import "./InstrumentSearch.css";
@@ -28,6 +30,7 @@ export default function InstrumentSearch({
   multiple,
   disabled = false,
   autoFocus = false,
+  recentStocks = false,
 }: {
   onSelect: (id: string, row: Row) => void;
   placeholder?: string;
@@ -38,6 +41,7 @@ export default function InstrumentSearch({
   multiple?: { selectedIds: readonly string[]; limit: number };
   disabled?: boolean;
   autoFocus?: boolean;
+  recentStocks?: boolean;
 }) {
   const [query, setQuery] = useState(""),
     [debounced, setDebounced] = useState(""),
@@ -51,22 +55,28 @@ export default function InstrumentSearch({
   const input = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
   const [composing, setComposing] = useState(false);
+  const [recent, setRecent] = useState<ReturnType<typeof loadRecentStocks>>([]);
   const listId = useId();
-  const visible = !disabled && open && !!query.trim();
+  const text = query.trim();
+  const hasQuery = !!text;
+  const waiting = composing || text !== debounced;
+  const showingRecent = recentStocks && !hasQuery && !composing;
+  const visible =
+    !disabled && open && (hasQuery || (showingRecent && !!recent.length));
   useEffect(() => {
     if (composing) return;
     const t = setTimeout(() => setDebounced(query.trim()), 200);
     return () => clearTimeout(t);
   }, [query, composing]);
   const result = useApi<Row>(
-    composing
-      ? null
-      : instrumentSearchRequest(debounced, includeSectors, stocksOnly),
+    waiting ? null : instrumentSearchRequest(text, includeSectors, stocksOnly),
   );
   // A newly typed query must not select the previous query's still-loaded rows.
-  const searching = composing || query.trim() !== debounced || result.loading;
-  const rows =
-    searching || result.error
+  const searching = hasQuery && (waiting || result.loading);
+  const searchError = hasQuery ? result.error : "";
+  const rows: Row[] = showingRecent
+    ? recent
+    : !hasQuery || searching || searchError
       ? []
       : list(result.data).filter((row) => {
           const view = searchResultView(row);
@@ -134,14 +144,27 @@ export default function InstrumentSearch({
       document
         .getElementById(`${listId}-${activeIndex}`)
         ?.scrollIntoView({ block: "nearest" });
-  }, [visible, activeIndex, debounced, result.data]);
+  }, [visible, activeIndex, debounced, result.data, recent]);
+  function openSearch() {
+    if (showingRecent) {
+      setRecent(loadRecentStocks());
+      setActiveIndex(0);
+    }
+    setOpen(true);
+  }
   function choose(row: Row) {
     const view = searchResultView(row);
     if (disabled || !view.selectable || optionDisabled(row)) return;
     if (view.sector) {
       if (!includeSectors || !onSector) return;
       onSector(row);
-    } else onSelect(row.instrument_id, row);
+    } else {
+      if (recentStocks && view.kind === "stock") {
+        const updated = rememberRecentStock(row);
+        if (updated) setRecent(updated);
+      }
+      onSelect(row.instrument_id, row);
+    }
     if (multiple) {
       input.current?.focus();
     } else {
@@ -176,7 +199,10 @@ export default function InstrumentSearch({
         placeholder={placeholder}
         maxLength={100}
         value={query}
-        onFocus={() => setOpen(true)}
+        onFocus={openSearch}
+        onClick={() => {
+          if (showingRecent && !open) openSearch();
+        }}
         onCompositionStart={() => {
           composingRef.current = true;
           setComposing(true);
@@ -188,6 +214,8 @@ export default function InstrumentSearch({
         }}
         onChange={(e) => {
           setQuery(e.target.value);
+          if (recentStocks && hasQuery && !e.target.value.trim())
+            setRecent(loadRecentStocks());
           setActiveIndex(0);
           setOpen(true);
         }}
@@ -211,6 +239,15 @@ export default function InstrumentSearch({
           }
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
+            if (showingRecent && !open) {
+              const history = loadRecentStocks();
+              setRecent(history);
+              setActiveIndex(
+                e.key === "ArrowUp" ? Math.max(0, history.length - 1) : 0,
+              );
+              setOpen(true);
+              return;
+            }
             setOpen(true);
             if (rows.length)
               setActiveIndex((index) =>
@@ -236,6 +273,11 @@ export default function InstrumentSearch({
           className="icon-btn"
           onClick={() => {
             setQuery("");
+            if (recentStocks) {
+              setRecent(loadRecentStocks());
+              setActiveIndex(0);
+              setOpen(true);
+            }
             input.current?.focus();
           }}
         >
@@ -252,11 +294,13 @@ export default function InstrumentSearch({
             role="listbox"
             aria-multiselectable={multiple ? true : undefined}
             aria-label={
-              stocksOnly
-                ? "匹配的A股股票"
-                : includeSectors
-                  ? "匹配的股票、指数、行业与概念"
-                  : "匹配的股票与指数"
+              showingRecent
+                ? "近 7 天查看的股票"
+                : stocksOnly
+                  ? "匹配的A股股票"
+                  : includeSectors
+                    ? "匹配的股票、指数、行业与概念"
+                    : "匹配的股票与指数"
             }
             aria-busy={searching}
             className="instrument-search-popover"
@@ -272,13 +316,16 @@ export default function InstrumentSearch({
                 setOpen(false);
             }}
           >
+            {showingRecent && (
+              <div className="search-recent-heading">最近查看 · 近 7 天</div>
+            )}
             {searching ? (
               <div className="search-hint">
                 <Spinner />
                 正在检索…
               </div>
-            ) : result.error ? (
-              <div className="search-hint">{result.error}</div>
+            ) : searchError ? (
+              <div className="search-hint">{searchError}</div>
             ) : !rows.length ? (
               <div className="search-hint">没有匹配的标的</div>
             ) : (

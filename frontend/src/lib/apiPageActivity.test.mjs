@@ -91,7 +91,14 @@ source = source
     '"../components/incrementSession"',
     JSON.stringify(encode("export function restoreIncrementSession(){}")),
   );
-const { useApi, ApiPageActivity, notifyReadChanges, observeReadScopes } = await import(encode(source));
+const {
+  useApi,
+  ApiPageActivity,
+  notifyReadChanges,
+  observeReadScopes,
+  firstGainersReadPath,
+  prefetchGainersReads,
+} = await import(encode(source));
 ApiPageActivity.value = true;
 function render() {
   cursor = 0;
@@ -314,6 +321,52 @@ assert.equal(
   beforeGlobal,
   "route navigation alone does not recheck the application bootstrap",
 );
+
+const proof = (market = "published-1") => ({
+  active_count: 0,
+  read_revisions: { market, market_locked: false, domains: { supplement: "retained-1", suspensions: null } },
+});
+async function stageGainers(day, options = {}) {
+  const warmed = prefetchGainersReads([day], "snapshot-1", new AbortController().signal, () => true);
+  assert.equal(requests.at(-1).url, "/api/v1/tasks/activity");
+  await answer(requests.at(-1), proof());
+  assert.equal(requests.at(-1).url, "/api/v1" + firstGainersReadPath(day));
+  assert.equal(requests.at(-1).options.priority, "low");
+  requests.at(-1).resolve(new Response(JSON.stringify({ date: day, snapshot_id: "snapshot-1", items: [day], ...options })));
+  await warmed;
+}
+ApiPageActivity.value = true;
+await stageGainers("2026-10-26");
+path = firstGainersReadPath("2026-10-26");
+const beforeWarmActivation = requests.length;
+render();
+assert.equal(requests.at(-1).url, "/api/v1/tasks/activity");
+assert.equal(render().data, null, "warm data remains hidden until its revisions are rechecked");
+await answer(requests.at(-1), proof());
+assert.equal(requests.length, beforeWarmActivation + 1, "valid warm data eliminates the duplicate ranked-page GET");
+assert.deepEqual(render().data.items, ["2026-10-26"]);
+
+await stageGainers("2026-10-23");
+path = firstGainersReadPath("2026-10-23");
+render();
+await answer(requests.at(-1), proof("published-2"));
+assert.equal(render().data, null, "a superseded prefetched snapshot stays out of the page");
+assert.equal(requests.at(-1).url, "/api/v1" + path);
+await answer(requests.at(-1), { items: ["fresh"] });
+assert.deepEqual(render().data.items, ["fresh"]);
+
+await stageGainers("2026-10-22", { padding: "x".repeat(512 * 1024) });
+path = firstGainersReadPath("2026-10-22");
+render();
+assert.equal(requests.at(-1).url, "/api/v1" + path, "oversized prefetch is discarded");
+await answer(requests.at(-1), { items: ["ordinary"] });
+
+await stageGainers("2026-10-21");
+now += 90001;
+path = firstGainersReadPath("2026-10-21");
+render();
+assert.equal(requests.at(-1).url, "/api/v1" + path, "expired prefetch returns to the normal page read");
+await answer(requests.at(-1), { items: ["current"] });
 assert.ok(
   requests.every((request) => !request.options.method),
   "visibility only rereads GETs",

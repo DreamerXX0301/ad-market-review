@@ -342,6 +342,7 @@ export default function AppShell({
             <InstrumentSearch
               compact
               includeSectors
+              recentStocks
               placeholder="名称 / 代码 / 拼音 / 首字母"
               onSelect={(id) => onStock(id)}
               onSector={onSector}
@@ -394,6 +395,7 @@ export default function AppShell({
             <InstrumentSearch
               autoFocus
               includeSectors
+              recentStocks
               placeholder="名称 / 代码 / 拼音 / 首字母"
               onSector={(row) => {
                 setMobileSearchOpen(false);

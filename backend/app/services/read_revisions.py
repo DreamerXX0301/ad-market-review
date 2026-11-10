@@ -95,6 +95,9 @@ def read_revisions(connection, observation_date):
     root = published_dir()
     domains['supplement'] = _published_file_receipt(root / 'market-supplement' / 'head.json', 'snapshot_id')
     domains['dragon_tiger'] = _published_file_receipt(root / 'dragon-tiger' / 'head.json', 'record_ref')
+    from .market_suspensions import suspension_revision
+    suspension = suspension_revision()
+    domains['suspensions'] = digest(suspension) if suspension else None
     domains['news_calendar'] = _receipt(connection, '''SELECT source,captured_at,content_sha256
         FROM market_news_calendar_archive ORDER BY rowid DESC LIMIT 1''')
     return {'today': today, 'market': market, 'market_locked': False, 'dates': dates, 'domains': domains}
