@@ -641,8 +641,9 @@ export default function App() {
             const next = globalSectorSelection(
               row,
               date,
-              bootstrap.data?.data_date,
+              latestDate,
               marketRoutes.has(route),
+              today,
             );
             if (!next) {
               notify("请先完成行情初始化，核验板块观察日期。", "error");
@@ -713,6 +714,7 @@ export default function App() {
                   `当前目录中的${sector.topic.kind === "industry" ? "行业" : "概念"}板块；历史成分需单独核验`,
               }}
               date={sector.date}
+              pendingCloseDay={sector.pendingCloseDay}
               onClose={() => setSector(null)}
               onMembers={() => setSector({ ...sector, view: "members" })}
             />
@@ -720,11 +722,17 @@ export default function App() {
             <SectorMembersDialog
               topic={sector.topic}
               date={sector.date}
-              businessDate={bootstrap.data?.data_date}
-              contextNotice={sector.topic.noon_scope_notice}
+              businessDate={latestDate}
+              publishedDates={dates.length ? dates : undefined}
+              contextNotice={
+                sector.topic.noon_scope_notice ||
+                (sector.pendingCloseDay &&
+                sector.pendingCloseDay !== sector.date
+                  ? `从 ${sector.pendingCloseDay} 的盘面打开。下方单独标明成员采集日和已发布行情日。`
+                  : undefined)
+              }
               initialScope={
-                !sector.topic.noon_snapshot_date &&
-                sector.date === bootstrap.data?.data_date
+                !sector.topic.noon_snapshot_date && sector.date === latestDate
                   ? "latest"
                   : "historical"
               }

@@ -330,7 +330,6 @@
 }
 .discovery-scroll {
   overflow: auto;
-  max-height: 320px;
 }
 .discovery-direction-table {
   width: 100%;

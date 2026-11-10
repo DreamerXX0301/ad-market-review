@@ -41,6 +41,7 @@ export default function SectorMembersDialog({
   topic,
   date,
   businessDate,
+  publishedDates,
   initialScope = "latest",
   contextNotice,
   onChart,
@@ -51,6 +52,7 @@ export default function SectorMembersDialog({
   topic?: Row;
   date: string;
   businessDate?: string;
+  publishedDates?: string[];
   initialScope?: "latest" | "historical";
   contextNotice?: string;
   onChart?: (date?: string) => void;
@@ -71,6 +73,9 @@ export default function SectorMembersDialog({
   );
   const data = result.data,
     quoteDate = memberQuoteDate(data);
+  const memberCount = data?.total ?? list(data).length;
+  const knownMemberCount =
+    data?.members_complete === true || memberCount > 0 ? memberCount : null;
   const rows = list(data).filter(
     (row) =>
       !query ||
@@ -119,7 +124,9 @@ export default function SectorMembersDialog({
           </span>
           <span className="member-context-item">
             <small>已知成员</small>
-            <strong>{data?.total ?? list(data).length} 只</strong>
+            <strong>
+              {knownMemberCount === null ? "未知" : `${knownMemberCount} 只`}
+            </strong>
           </span>
         </div>
         <div className="filter-bar member-dialog-toolbar member-dialog-fields">
@@ -143,6 +150,7 @@ export default function SectorMembersDialog({
               title="成分股行情观察日"
               help="选择日期后读取该日已有历史档案，缺档不会使用当前成员回填。"
               max={businessDate || date}
+              allowedDates={publishedDates}
               disabled={scope === "latest"}
               value={asOf}
               onChange={setAsOf}
@@ -191,10 +199,17 @@ export default function SectorMembersDialog({
         )}
         {result.loading ? (
           <Loading />
-        ) : (
+        ) : !data ? null : (
           <Table
             key={`${round?.round_id || topic?.topic_code}-${scope}-${asOf}-${query}`}
             rows={rows}
+            emptyTitle={
+              query
+                ? "没有匹配的成分股"
+                : knownMemberCount === null
+                  ? "暂无可核验的成员档案"
+                  : "暂无成分股"
+            }
             pageSize={25}
             onStock={quoteDate ? (id) => onStock(id, quoteDate) : undefined}
             onStockNavigate={
@@ -241,7 +256,11 @@ export default function SectorMembersDialog({
                   </span>
                 ),
               },
-              { key: "close", title: "收盘价", render: (value) => num(value) },
+              {
+                key: "close",
+                title: "收盘价",
+                render: (value) => num(value),
+              },
               {
                 key: "amount",
                 title: "成交额",

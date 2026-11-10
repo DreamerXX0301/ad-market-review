@@ -230,6 +230,30 @@ assert.equal(
 );
 packets["/market/noon/dates"] = { today: "2026-10-30", dates: ["2026-10-29"] };
 render();
+const tungsten = { kind: "industry", topic_code: "884282.TI", name: "钨" };
+const sectorDialog = () =>
+  elements(tree).find((node) => node.props.topic?.name === tungsten.name).props;
+for (const route of ["auction", "intraday"]) {
+  assert.equal(navigate(route).date, "2026-10-30");
+  shell().onSector(tungsten);
+  render();
+  assert.equal(sectorDialog().date, "2026-10-29");
+  assert.equal(sectorDialog().pendingCloseDay, "2026-10-30");
+  assert.equal(shell().date, "2026-10-30");
+  sectorDialog().onMembers();
+  render();
+  assert.equal(sectorDialog().date, "2026-10-29");
+  assert.equal(sectorDialog().initialScope, "latest");
+  sectorDialog().onClose();
+  render();
+  assert.equal(navigate("market").date, "2026-10-29");
+  shell().onSector(tungsten);
+  render();
+  assert.equal(sectorDialog().date, "2026-10-29");
+  assert.equal(sectorDialog().pendingCloseDay, undefined);
+  sectorDialog().onClose();
+  render();
+}
 assert.equal(navigate("market").date, "2026-10-29");
 assert.equal(navigate("auction").date, "2026-10-30");
 shell().onDate("2026-10-28");

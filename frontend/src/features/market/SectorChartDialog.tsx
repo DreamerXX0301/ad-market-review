@@ -21,11 +21,13 @@ import {
 export default function SectorChartDialog({
   topic,
   date,
+  pendingCloseDay,
   onClose,
   onMembers,
 }: {
   topic: { topicCode: string; name: string; proxy: boolean; notice: string };
   date: string;
+  pendingCloseDay?: string;
   onClose: () => void;
   onMembers?: () => void;
 }) {
@@ -113,6 +115,7 @@ export default function SectorChartDialog({
     chart.data.bars.length > 0;
   const busy = submitting || !!taskId || progress?.active;
   const paused = progress?.status === "paused";
+  const usingPublishedClose = pendingCloseDay && pendingCloseDay !== date;
   return (
     <Modal title={`${topic.name} · 板块K线`} onClose={onClose} wide>
       <div className="modal-body sector-chart-dialog-body entry-page-scroll">
@@ -123,7 +126,9 @@ export default function SectorChartDialog({
         )}
         <div className="sector-chart-context">
           <div>
-            <Badge>{date} · 观察日期</Badge>
+            <Badge>
+              {date} · {usingPublishedClose ? "已发布收盘日" : "观察日期"}
+            </Badge>
             <span>{topic.topicCode}</span>
             <span>同花顺板块指数 · 原始指数点位</span>
           </div>
@@ -135,6 +140,11 @@ export default function SectorChartDialog({
             <RefreshCw size={15} />
           </button>
         </div>
+        {usingPublishedClose && (
+          <Warning>
+            从 {pendingCloseDay} 的盘面打开，K 线截至 {date} 已发布收盘。
+          </Warning>
+        )}
         {topic.proxy ? (
           <Warning>{topic.notice}</Warning>
         ) : (

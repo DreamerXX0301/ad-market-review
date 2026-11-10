@@ -51,16 +51,23 @@ export function globalSectorSelection(
   viewDate: string | undefined,
   latestDate: string | undefined,
   useMarketDate: boolean,
+  today?: string,
 ) {
   const view = searchResultView(row);
-  const date = useMarketDate ? viewDate : latestDate;
+  const requestedDate = useMarketDate ? viewDate : latestDate;
   if (
     !view.sector ||
     !view.selectable ||
-    typeof date !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    typeof requestedDate !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)
   )
     return null;
+  const usePublishedClose =
+    useMarketDate &&
+    requestedDate === today &&
+    typeof latestDate === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(latestDate) &&
+    latestDate < requestedDate;
   return {
     topic: {
       ...row,
@@ -69,7 +76,8 @@ export function globalSectorSelection(
       topic_id: row.topic_id || `fuyao-${view.code}`,
       kind: row.kind || row.sector_kind,
     },
-    date,
+    date: usePublishedClose ? latestDate : requestedDate,
+    ...(usePublishedClose ? { pendingCloseDay: requestedDate } : {}),
     view: "chart" as "chart" | "members",
   };
 }

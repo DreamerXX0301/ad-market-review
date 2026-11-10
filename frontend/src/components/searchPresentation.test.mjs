@@ -119,6 +119,37 @@ assert.equal(
     .topic_id,
   "fuyao-TI885333",
 );
+const currentUnpublished = globalSectorSelection(
+  industry,
+  "2026-11-10",
+  "2026-11-09",
+  true,
+  "2026-11-10",
+);
+assert.equal(currentUnpublished.date, "2026-11-09");
+assert.equal(currentUnpublished.pendingCloseDay, "2026-11-10");
+assert.equal(currentUnpublished.topic.topic_code, industry.topic_code);
+for (const selected of ["2026-11-08", "2026-11-09", "2026-11-11"]) {
+  const selection = globalSectorSelection(
+    industry,
+    selected,
+    "2026-11-09",
+    true,
+    "2026-11-10",
+  );
+  assert.equal(selection.date, selected);
+  assert.equal(selection.pendingCloseDay, undefined);
+}
+assert.equal(
+  globalSectorSelection(
+    industry,
+    "2026-11-10",
+    "2026-11-10",
+    true,
+    "2026-11-10",
+  ).pendingCloseDay,
+  undefined,
+);
 console.log(
   "global search: type separation, code identity and independent date scopes passed",
 );
