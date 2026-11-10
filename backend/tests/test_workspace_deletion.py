@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from app import core
 from app.analytics import backtest_store as store
 from app.analytics.backtest_engine import VERSION
+from app.infrastructure.database import EVENT_CALENDAR_INSTALL_DEFAULT
 from app.routers.backtests import router as backtests_router
 from app.routers.workspace import router as workspace_router
 from app.services import strategies, tracking, strategy_batches, task_service
@@ -377,6 +378,15 @@ def test_standard_backup_restore_preserves_tombstones_and_old_evidence(creation_
             expected_providers.append(tuple(expected[column] for column in columns))
         evidence['ai_provider_config']=expected_providers
         assert restored['ai_disabled'] is True
+        calendar_key = EVENT_CALENDAR_INSTALL_DEFAULT
+        settings = evidence['platform_setting']
+        assert [row[:2] for row in settings if row[0] == calendar_key] == [(calendar_key, 'true')]
+        disabled_calendar = (calendar_key, 'false', restored['restored_at_ms'])
+        assert restored['event_calendar_default_disabled'] is True
+        assert connection.execute(
+            'SELECT key,value_json,updated_at_ms FROM platform_setting WHERE key=?', (calendar_key,)
+        ).fetchone() == disabled_calendar
+        evidence['platform_setting'] = [disabled_calendar if row[0] == calendar_key else row for row in settings]
         # Only the explicitly checked permission/version/time fields above
         # change; all tables (including AI history), tombstones and triggers
         # still participate in the original full restoration comparison.
