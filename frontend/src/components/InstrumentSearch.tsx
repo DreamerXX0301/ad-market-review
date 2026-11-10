@@ -54,6 +54,7 @@ export default function InstrumentSearch({
   const popup = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
+  const scrollRecentOption = useRef(false);
   const [composing, setComposing] = useState(false);
   const [recent, setRecent] = useState<ReturnType<typeof loadRecentStocks>>([]);
   const listId = useId();
@@ -92,7 +93,13 @@ export default function InstrumentSearch({
     setPortalHost(
       container.current?.closest('[role="dialog"]') || document.body,
     );
-    const update = () => {
+    const update = (event?: Event) => {
+      if (
+        event?.type === "scroll" &&
+        event.target instanceof Node &&
+        popup.current?.contains(event.target)
+      )
+        return;
       const anchor = container.current?.getBoundingClientRect();
       if (!anchor) return;
       const next = instrumentSearchLayout(anchor, {
@@ -140,11 +147,29 @@ export default function InstrumentSearch({
     };
   }, [visible]);
   useEffect(() => {
-    if (visible && rows[activeIndex])
-      document
-        .getElementById(`${listId}-${activeIndex}`)
-        ?.scrollIntoView({ block: "nearest" });
-  }, [visible, activeIndex, debounced, result.data, recent]);
+    if (
+      !visible ||
+      !rows[activeIndex] ||
+      (showingRecent && !scrollRecentOption.current)
+    )
+      return;
+    const option = document.getElementById(`${listId}-${activeIndex}`);
+    if (!option) return;
+    scrollRecentOption.current = false;
+    const row = showingRecent
+      ? (option.closest(".instrument-search-result") ?? option)
+      : option;
+    row.scrollIntoView({ block: "nearest" });
+  }, [
+    visible,
+    activeIndex,
+    debounced,
+    result.data,
+    recent,
+    showingRecent,
+    portalHost,
+    !!layout,
+  ]);
   function openSearch() {
     if (showingRecent) {
       setRecent(loadRecentStocks());
@@ -239,6 +264,7 @@ export default function InstrumentSearch({
           }
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
+            scrollRecentOption.current = showingRecent;
             if (showingRecent && !open) {
               const history = loadRecentStocks();
               setRecent(history);
@@ -303,7 +329,7 @@ export default function InstrumentSearch({
                     : "匹配的股票与指数"
             }
             aria-busy={searching}
-            className="instrument-search-popover"
+            className={`instrument-search-popover${showingRecent ? " is-recent" : ""}`}
             style={layout}
             onMouseDown={(event) => event.preventDefault()}
             onBlur={(event) => {
@@ -329,71 +355,80 @@ export default function InstrumentSearch({
             ) : !rows.length ? (
               <div className="search-hint">没有匹配的标的</div>
             ) : (
-              rows.map((r, index) => (
-                <Fragment key={searchResultView(r).key}>
-                  {r.is_suggestion === true &&
-                    rows[index - 1]?.is_suggestion !== true && (
-                      <div className="search-suggestion-heading">
-                        可能想找 · 请核对名称和代码
-                      </div>
-                    )}
-                  <div
-                    className="instrument-search-result"
-                    key={searchResultView(r).key}
-                    data-search-index={index}
-                    data-active={index === activeIndex}
-                    onMouseEnter={() => setActiveIndex(index)}
-                  >
-                    <button
-                      type="button"
-                      className="instrument-search-choose"
-                      title={searchResultView(r).title}
-                      aria-label={searchResultView(r).title}
-                      id={`${listId}-${index}`}
-                      role="option"
-                      aria-selected={
-                        multiple ? selected(r) : index === activeIndex
-                      }
-                      aria-disabled={optionDisabled(r) || undefined}
-                      tabIndex={-1}
-                      onClick={() => choose(r)}
+              <div
+                key={showingRecent ? "recent" : "matches"}
+                role="presentation"
+                className={showingRecent ? "search-recent-list" : undefined}
+              >
+                {rows.map((r, index) => (
+                  <Fragment key={searchResultView(r).key}>
+                    {r.is_suggestion === true &&
+                      rows[index - 1]?.is_suggestion !== true && (
+                        <div className="search-suggestion-heading">
+                          可能想找 · 请核对名称和代码
+                        </div>
+                      )}
+                    <div
+                      className="instrument-search-result"
+                      key={searchResultView(r).key}
+                      data-search-index={index}
+                      data-active={index === activeIndex}
+                      onMouseEnter={() => {
+                        scrollRecentOption.current = false;
+                        setActiveIndex(index);
+                      }}
                     >
-                      {multiple && (
-                        <span
-                          className="search-selection-mark"
-                          aria-hidden="true"
-                        >
-                          {selected(r) && <Check size={13} />}
-                        </span>
-                      )}
-                      <span>
-                        <strong>{r.name}</strong>
-                        <small
-                          className={`search-result-type type-${searchResultView(r).kind}`}
-                        >
-                          {searchResultView(r).label}
-                        </small>
-                        {searchResultView(r).matchLabel && (
-                          <small
-                            className={`search-match-label${r.is_suggestion === true ? " is-suggestion" : ""}`}
+                      <button
+                        type="button"
+                        className="instrument-search-choose"
+                        title={searchResultView(r).title}
+                        aria-label={searchResultView(r).title}
+                        id={`${listId}-${index}`}
+                        role="option"
+                        aria-selected={
+                          multiple ? selected(r) : index === activeIndex
+                        }
+                        aria-disabled={optionDisabled(r) || undefined}
+                        tabIndex={-1}
+                        onClick={() => choose(r)}
+                      >
+                        {multiple && (
+                          <span
+                            className="search-selection-mark"
+                            aria-hidden="true"
                           >
-                            {searchResultView(r).matchLabel}
-                          </small>
+                            {selected(r) && <Check size={13} />}
+                          </span>
                         )}
-                      </span>
-                      {searchResultView(r).sector && (
-                        <code>{r.code || r.topic_code}</code>
+                        <span>
+                          <strong>{r.name}</strong>
+                          <small
+                            className={`search-result-type type-${searchResultView(r).kind}`}
+                          >
+                            {searchResultView(r).label}
+                          </small>
+                          {searchResultView(r).matchLabel && (
+                            <small
+                              className={`search-match-label${r.is_suggestion === true ? " is-suggestion" : ""}`}
+                            >
+                              {searchResultView(r).matchLabel}
+                            </small>
+                          )}
+                        </span>
+                        {searchResultView(r).sector && (
+                          <code>{r.code || r.topic_code}</code>
+                        )}
+                      </button>
+                      {!searchResultView(r).sector && (
+                        <CopyStockCode
+                          code={r.code}
+                          instrumentId={r.instrument_id}
+                        />
                       )}
-                    </button>
-                    {!searchResultView(r).sector && (
-                      <CopyStockCode
-                        code={r.code}
-                        instrumentId={r.instrument_id}
-                      />
-                    )}
-                  </div>
-                </Fragment>
-              ))
+                    </div>
+                  </Fragment>
+                ))}
+              </div>
             )}
             {multiple && (
               <div className="search-multiple-footer">

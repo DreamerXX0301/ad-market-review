@@ -56,6 +56,17 @@ def _fetched_order(value):
         return 0
 
 
+def _catalog_rows(connection, limit):
+    return connection.execute("""SELECT s.snapshot_id,s.module,s.data_end,
+        s.lineage_json,s.published_at_ms,a.object_key,a.sha256,a.byte_count
+        FROM dataset_snapshot s JOIN snapshot_artifact a ON a.snapshot_id=s.snapshot_id
+        WHERE s.state='published' AND s.module IN ('topics','market_review')
+        AND a.role='reference.json' AND NOT EXISTS(
+            SELECT 1 FROM snapshot_gc g WHERE g.snapshot_id=s.snapshot_id AND g.state<>'available')
+        ORDER BY s.data_end DESC,s.published_at_ms DESC,s.snapshot_id LIMIT ?""",
+        (limit,)).fetchall()
+
+
 def _catalog():
     path = sqlite_path()
     if not path.is_file():
@@ -66,14 +77,7 @@ def _catalog():
         connection.execute('PRAGMA foreign_keys=ON')
         connection.execute('PRAGMA recursive_triggers=ON')
         connection.execute('PRAGMA busy_timeout=10000')
-        rows = connection.execute("""SELECT s.snapshot_id,s.module,s.data_end,
-            s.lineage_json,s.published_at_ms,a.object_key,a.sha256,a.byte_count
-            FROM dataset_snapshot s JOIN snapshot_artifact a ON a.snapshot_id=s.snapshot_id
-            WHERE s.state='published' AND s.module IN ('topics','market_review')
-            AND a.role='reference.json' AND NOT EXISTS(
-                SELECT 1 FROM snapshot_gc g WHERE g.snapshot_id=s.snapshot_id AND g.state<>'available')
-            ORDER BY s.data_end DESC,s.published_at_ms DESC,s.snapshot_id LIMIT ?""",
-            (CATALOG_ROW_LIMIT + 1,)).fetchall()
+        rows = _catalog_rows(connection, CATALOG_ROW_LIMIT + 1)
     except sqlite3.OperationalError:
         return [], False
     finally:

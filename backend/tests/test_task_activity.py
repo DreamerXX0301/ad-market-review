@@ -179,6 +179,54 @@ def test_activity_revision_survives_terminal_window_and_separates_publication_he
     assert locked == {'today': '2026-10-20', 'market': None, 'market_locked': True, 'dates': {}, 'domains': {}}
 
 
+def test_historical_proof_tracks_archive_controls_and_reference_visibility(isolated):
+    app = FastAPI(); app.include_router(router)
+    client = TestClient(app)
+    day = '2026-10-19'
+    path = f'/api/v1/tasks/activity?date={day}'
+    archive_path = path + '&historical=true'
+    job = tasks.create_task('initialise', {})
+    generation = 'market-history-proof'
+    reference = core.published_dir() / generation / 'reference.json'
+    core.atomic_json(reference, {})
+    snapshot = core.publish_snapshot(module='topics', job_id=job['job_id'],
+        start=day, end=day, activate=False, lineage={'market_snapshot_id': generation}, artifacts=[{
+            'role': 'reference.json', 'object_key': f'{generation}/reference.json',
+            'sha256': core.hash_file(reference), 'byte_count': reference.stat().st_size, 'row_count': 1}])
+    tasks.finish(job['job_id'])
+    stamp = core.now_ms()
+    with core.connect() as connection:
+        connection.execute('INSERT INTO market_intraday_brief VALUES(?,?,?,?,?,?)',
+                           (day, '09:35', 'a' * 64, '{}', stamp, 0))
+
+    regular = client.get(path).json()['read_revisions']
+    assert 'historical_reference' not in regular['domains']
+    assert 'archive_controls' not in regular['domains']
+    before = client.get(archive_path).json()['read_revisions']
+    assert before['domains']['historical_reference']
+    assert before['domains']['archive_controls']
+    assert client.get(archive_path).json()['read_revisions'] == before
+    with core.connect() as connection:
+        connection.execute('UPDATE market_intraday_brief SET body_json=?,model_attempted=1 WHERE trade_date=?',
+                           ('{"updated":true}', day))
+        connection.execute('INSERT INTO platform_setting VALUES(?,?,?)',
+                           ('intraday-automation-v1', '{"enabled":true}', stamp))
+    updated = client.get(archive_path).json()['read_revisions']
+    assert updated['dates'][day]['intraday'] != before['dates'][day]['intraday']
+    assert updated['domains']['archive_controls'] != before['domains']['archive_controls']
+    assert updated['domains']['historical_reference'] == before['domains']['historical_reference']
+
+    with core.connect() as connection:
+        connection.execute('INSERT INTO snapshot_gc VALUES(?,?,?,?)',
+                           (snapshot, 'gc_pending', stamp, '测试归档撤回'))
+    assert client.get(archive_path).json()['read_revisions']['domains']['historical_reference'] is None
+
+    tasks.create_task('research', {})
+    busy = client.get(archive_path).json()
+    assert busy['active_count'] == 1
+    assert 'archive_controls' not in busy['read_revisions']['domains']
+
+
 def test_stock_conflict_names_actual_running_strategy_and_progress(ws):
     _, client = ws
     strategy = make_strategy(client)

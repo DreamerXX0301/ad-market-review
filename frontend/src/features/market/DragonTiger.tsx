@@ -34,12 +34,22 @@ import type {
   DragonTigerBoard,
   DragonTigerPeriod,
   DragonTigerRow,
+  DragonTigerSearchMatch,
   DragonTigerSort,
   DragonTigerSortKey,
 } from "./dragonTigerPresentation";
+import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 import "./DragonTiger.css";
 
 const names = { all: "全部榜", org: "机构榜", hot_money: "游资榜" };
+type SearchResult = {
+  date: string;
+  query: string;
+  day_record_sha256: string | null;
+  available: boolean;
+  reason?: string;
+  matches: Partial<Record<DragonTigerBoard, DragonTigerSearchMatch[]>>;
+};
 const finished = new Set([
   "completed",
   "succeeded",
@@ -114,17 +124,34 @@ function SeatTable({ rows, side }: { rows: unknown; side: "buy" | "sell" }) {
 
 export default function DragonTiger({
   date,
+  latestDate,
+  prefetchDates,
   onStock,
   onNavigate,
 }: {
   date: string;
+  latestDate?: string;
+  prefetchDates?: string[];
   onStock: (id: string, navigation?: StockNavigation) => void;
   onNavigate: (route: string, context?: Row) => void;
 }) {
-  const result = useApi<Row>(
-    date ? `/market/dragon-tiger?date=${encodeURIComponent(date)}` : null,
-  );
+  const path = date
+    ? `/market/dragon-tiger?date=${encodeURIComponent(date)}`
+    : null;
+  const result = useApi<Row>(path);
   const data = result.data?.date === date ? result.data : null;
+  useHistoricalPrefetch(
+    date === latestDate &&
+      !result.loading &&
+      !result.error &&
+      data?.availability?.available === true &&
+      typeof data.collection_snapshot_id === "string" &&
+      !!data.collection_snapshot_id,
+    path,
+    date,
+    data?.snapshot_id,
+    prefetchDates,
+  );
   const [board, setBoard] = useState<DragonTigerBoard>("all"),
     [period, setPeriod] = useState<DragonTigerPeriod>(1);
   const [query, setQuery] = useState(""),
@@ -141,6 +168,8 @@ export default function DragonTiger({
     [busy, setBusy] = useState(false),
     [actionError, setActionError] = useState("");
   const [job, setJob] = useState<{ id: string; date: string } | null>(null);
+  const [settledQuery, setSettledQuery] = useState(""),
+    [composing, setComposing] = useState(false);
   const toast = useToast(),
     active = usePageActive();
   const searchRef = useRef<HTMLInputElement>(null),
@@ -148,6 +177,37 @@ export default function DragonTiger({
     seatTitleRef = useRef<HTMLSpanElement>(null);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>()),
     completedJob = useRef("");
+  const searchTerm = query.trim();
+  useEffect(() => {
+    if (!active || composing || !searchTerm) return;
+    const timer = setTimeout(() => setSettledQuery(searchTerm), 200);
+    return () => clearTimeout(timer);
+  }, [active, composing, searchTerm]);
+  const archiveProof = data?.day_record_sha256;
+  const searchPath =
+    searchTerm && !composing && searchTerm === settledQuery && archiveProof
+      ? `/market/dragon-tiger/search?${new URLSearchParams({
+          date,
+          query: searchTerm,
+          archive_sha256: archiveProof,
+        })}`
+      : null;
+  const search = useApi<SearchResult>(searchPath);
+  const searchData =
+    searchPath && search.data?.date === date && search.data.query === searchTerm
+      ? search.data
+      : null;
+  const searchReady =
+    searchData?.available === true &&
+    searchData.day_record_sha256 === archiveProof;
+  const searchError = searchPath
+    ? search.error ||
+      (searchData && !searchData.available ? searchData.reason : "")
+    : "";
+  const boardAvailable = dragonTigerBoardAvailable(data, board);
+  const searchPending =
+    !!searchTerm && boardAvailable && !searchReady && !searchError;
+  const boardMatches = searchReady ? searchData.matches[board] : undefined;
   const sourceRows = useMemo(() => dragonTigerRows(data, board), [data, board]);
   const allLabels = useMemo(
     () => dragonTigerLabels(dragonTigerRows(data, "hot_money"), period),
@@ -159,13 +219,13 @@ export default function DragonTiger({
         filterDragonTigerRows(
           sourceRows,
           period,
-          query,
           board === "hot_money" ? label : null,
+          searchTerm ? (boardMatches ?? []) : undefined,
         ),
         sort,
         board,
       ),
-    [sourceRows, period, query, label, sort, board],
+    [sourceRows, period, searchTerm, boardMatches, label, sort, board],
   );
   const selected = rows.find((row) => row.key === selectedKey) ?? null;
   const currentPage = Math.max(
@@ -173,9 +233,13 @@ export default function DragonTiger({
     Math.min(page, Math.max(1, Math.ceil(rows.length / 25))),
   );
   const boardSource = data?.boards?.[board];
-  const boardAvailable = dragonTigerBoardAvailable(data, board);
   const hotStatistics = dragonTigerHotStatistics(data);
-  const summary = dragonTigerSummary(rows, board, label, boardAvailable);
+  const summary = dragonTigerSummary(
+    rows,
+    board,
+    label,
+    boardAvailable && (!searchTerm || searchReady),
+  );
   const seatRequest =
     seatOpen && selected?.instrument_id
       ? `/market/dragon-tiger/${encodeURIComponent(selected.instrument_id)}?date=${encodeURIComponent(date)}&range_days=${period}`
@@ -247,7 +311,7 @@ export default function DragonTiger({
   function showSeats(row: DragonTigerRow) {
     setSelectedKey(row.key);
     setSeatOpen(true);
-    setRecordId(null);
+    setRecordId(row.search_match?.seat_matches[0]?.record_id ?? null);
     setLocateRevision((value) => value + 1);
   }
   function changeBoard(value: DragonTigerBoard) {
@@ -267,7 +331,14 @@ export default function DragonTiger({
       );
     setPeriod(value);
     setPage(1);
-    setRecordId(null);
+    setRecordId(
+      boardMatches?.find(
+        (match) =>
+          match.instrument_id === replacement?.instrument_id &&
+          match.label_name === replacement?.label_name &&
+          match.range_days === value,
+      )?.seat_matches[0]?.record_id ?? null,
+    );
     if (replacement) setSelectedKey(replacement.key);
     else clearSelection();
     if (seatOpen) setLocateRevision((value) => value + 1);
@@ -407,9 +478,12 @@ export default function DragonTiger({
             <input
               ref={searchRef}
               className="search-input"
-              aria-label="搜索龙虎榜股票或概念"
-              placeholder="股票、代码或来源概念…"
+              aria-label="搜索龙虎榜股票、拼音、营业部或机构"
+              placeholder="股票、代码、拼音或席位…"
               value={query}
+              maxLength={100}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={() => setComposing(false)}
               onChange={(event) => {
                 setQuery(event.target.value);
                 setPage(1);
@@ -478,9 +552,21 @@ export default function DragonTiger({
           <div className="dragon-tiger-grid">
             <Panel
               title={`${names[board]} · ${period === 1 ? "单日榜" : "三日榜"}`}
-              subtitle={`${boardAvailable ? `${rows.length}条当前筛选记录` : "该日响应未留存"} · ${board === "hot_money" ? label || "全部标签" : "当前筛选"}`}
+              subtitle={`${boardUnavailable ? "该日响应未留存" : searchError ? "搜索未完成" : searchPending ? "正在搜索" : `${rows.length}条当前筛选记录`} · ${board === "hot_money" ? label || "全部标签" : "当前筛选"}`}
             >
-              {rows.length ? (
+              {searchError ? (
+                <ErrorBox
+                  message={searchError}
+                  retry={() => {
+                    result.reload();
+                    search.reload();
+                  }}
+                />
+              ) : searchPending ? (
+                <p className="panel-footnote" role="status">
+                  正在搜索当日已留存的股票和买卖席位…
+                </p>
+              ) : rows.length ? (
                 <DragonTigerTable
                   rows={rows}
                   board={board}

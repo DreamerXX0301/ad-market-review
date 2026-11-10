@@ -186,8 +186,8 @@ def verify(source_id:str):return source_service.verify(source_id)
 def tasks(limit:int=Query(50,ge=1,le=200),summary:bool=False):return task_service.list_tasks(limit,summary=summary)
 
 @router.get('/tasks/activity')
-def task_activity(date:str|None=Query(None,pattern=r'^\d{4}-\d{2}-\d{2}$')):
-    return task_service.task_activity(date)
+def task_activity(date:str|None=Query(None,pattern=r'^\d{4}-\d{2}-\d{2}$'), historical:bool=False):
+    return task_service.task_activity(date,historical=historical)
 
 @router.get('/sync/session')
 def sync_session(task_id:str|None=Query(None,max_length=200),request_key:str|None=Query(None,max_length=200)):

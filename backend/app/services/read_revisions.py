@@ -12,9 +12,9 @@ from .sync_progress import lock_record
 _ARCHIVES = {
     'auction': '''SELECT s.snapshot_id,s.content_sha256,d.content_sha256 FROM market_auction_snapshot s
         LEFT JOIN market_auction_discovery d USING(trade_date) WHERE s.trade_date=:day''',
-    'intraday': '''SELECT slot,snapshot_id,content_sha256,NULL FROM market_intraday_capture
+    'intraday': '''SELECT slot,snapshot_id,content_sha256,NULL,NULL FROM market_intraday_capture
         WHERE trade_date=:day AND snapshot_id IS NOT NULL
-        UNION ALL SELECT slot,NULL,source_sha256,generated_at_ms FROM market_intraday_brief
+        UNION ALL SELECT slot,NULL,source_sha256,generated_at_ms,model_attempted FROM market_intraday_brief
         WHERE trade_date=:day ORDER BY 1,2''',
     'noon': '''SELECT s.snapshot_id,s.content_sha256,
         (SELECT max(revision) FROM market_noon_note WHERE snapshot_id=s.snapshot_id),
@@ -57,7 +57,55 @@ def _published_file_receipt(path, identifier):
         return None
 
 
-def read_revisions(connection, observation_date):
+def _historical_reference(connection, root):
+    from .market_history import _artifact, _catalog_rows
+
+    limit = 256
+    rows = _catalog_rows(connection, limit + 1)
+    if not rows or len(rows) > limit:
+        return None
+    signatures = {}
+    for row in rows:
+        key = (row['object_key'], row['lineage_json'], row['sha256'], row['byte_count'])
+        if key not in signatures:
+            artifact = _artifact(row, root)
+            if artifact is None:
+                return None
+            signatures[key] = artifact[2]
+    gc = _receipt(connection, '''SELECT g.snapshot_id,g.state,g.changed_at_ms
+        FROM snapshot_gc g JOIN dataset_snapshot s USING(snapshot_id)
+        WHERE s.module IN ('daily_raw','analysis_bars','topics','market_review')
+        ORDER BY g.snapshot_id''')
+    return digest(([tuple(row) for row in rows], list(signatures.values()), gc))
+
+
+def _archive_controls(connection, day):
+    from .auction_service import _dates as auction_dates
+    from .noon_service import _dates as noon_dates
+
+    # Reuse the metadata that the historical responses actually expose. The
+    # snapshot bodies stay out of this receipt, including large intraday rows.
+    settings = _receipt(connection, '''SELECT key,value_json,updated_at_ms FROM platform_setting
+        WHERE key IN ('automatic-review-config-v1','intraday-automation-v1',
+            'auction-discovery-automation-v1') ORDER BY key''')
+    auction = _receipt(connection, 'SELECT revision FROM market_auction_automation')
+    auction_run = _receipt(connection, '''SELECT state,updated_at_ms
+        FROM market_auction_automation_run WHERE trade_date=?''', (day,))
+    noon_background = _receipt(connection, '''SELECT s.trade_date,s.content_sha256,r.result_sha256
+        FROM market_noon_snapshot s LEFT JOIN market_noon_close_review r ON r.snapshot_id=s.snapshot_id
+        WHERE s.trade_date<=? ORDER BY s.trade_date,r.revision''', (day,))
+    tasks = _receipt(connection, '''WITH captured(job_id) AS (
+        SELECT job_id FROM market_auction_capture WHERE trade_date=:day
+        UNION ALL SELECT job_id FROM market_noon_capture WHERE trade_date=:day
+        UNION ALL SELECT job_id FROM market_intraday_capture WHERE trade_date=:day
+    ) SELECT j.job_id,j.status,j.finished_at_ms,
+        (SELECT max(seq) FROM job_event e WHERE e.job_id=j.job_id)
+        FROM captured JOIN job j USING(job_id) ORDER BY j.job_id''', {'day': day})
+    return digest((settings, auction, auction_run, auction_dates(connection), noon_dates(connection),
+                   noon_background, tasks))
+
+
+def read_revisions(connection, observation_date, *, historical=False):
     # The caller's read transaction keeps the lock and the publication heads in
     # the same SQLite snapshot, even when a worker is publishing concurrently.
     today = sync_clock.now_china().date().isoformat()
@@ -100,4 +148,7 @@ def read_revisions(connection, observation_date):
     domains['suspensions'] = digest(suspension) if suspension else None
     domains['news_calendar'] = _receipt(connection, '''SELECT source,captured_at,content_sha256
         FROM market_news_calendar_archive ORDER BY rowid DESC LIMIT 1''')
+    if historical and observation_date and observation_date < today:
+        domains['historical_reference'] = _historical_reference(connection, root.resolve())
+        domains['archive_controls'] = _archive_controls(connection, observation_date)
     return {'today': today, 'market': market, 'market_locked': False, 'dates': dates, 'domains': domains}

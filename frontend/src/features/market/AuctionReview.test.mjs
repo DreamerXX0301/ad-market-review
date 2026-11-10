@@ -15,7 +15,8 @@ export function api(){throw Error('Rendering never reads outside useApi');}expor
 const uiProbe = encode(`import{jsx,jsxs}from ${JSON.stringify(runtime)};export const useToast=()=>()=>{};
 export const Table=()=>null;export const Modal=({children})=>jsx('div',{children});export const Badge=({children})=>jsx('span',{children});export const Panel=({title,subtitle,children,actions})=>jsxs('section',{children:[jsx('h2',{children:title}),jsx('p',{children:subtitle}),children,actions]});
 export const Empty=({title,description})=>jsxs('div',{className:'empty-state',children:[jsx('h3',{children:title}),jsx('p',{children:description})]});export const ErrorBox=({message})=>jsx('p',{role:'alert',children:message});export const Loading=()=>jsx('p',{children:'读取中'});`);
-const replacements = { react: reactProbe, "../../lib/api": apiProbe, "../../components/UI": uiProbe };
+const prefetchProbe = encode("export let last; export function useHistoricalPrefetch(...args){last=args;}");
+const replacements = { react: reactProbe, "../../lib/api": apiProbe, "../../components/UI": uiProbe, "./useHistoricalPrefetch": prefetchProbe };
 const cache = new Map();
 async function moduleUrl(url) {
   if (cache.has(url.href)) return cache.get(url.href);
@@ -33,12 +34,17 @@ async function moduleUrl(url) {
 }
 const { default: AuctionReview } = await import(await moduleUrl(new URL('./AuctionReview.tsx',import.meta.url)));
 const { setData, requests } = await import(apiProbe), { setStates } = await import(reactProbe);
+const prefetch = await import(prefetchProbe);
 const day='2026-10-29';
 const original={date:'2026-10-28',state:'retained',recorded_at_ms:Date.parse('2026-10-28T20:00:00+08:00'),summary:['原留存氛围'],payload:{atmosphere:{summary:'原留存氛围'}},observations:[{instrument_id:'600001.SH',name:'合成观察甲',mainline:'昨日原线',latest_price:9999,reason:'午间临时缺报不应显示'}],mainlines:[{date:'2026-10-28',instrument_id:'600001.SH',display_mainline:'昨日原线',recorded_at_ms:Date.parse('2026-10-28T19:00:00+08:00'),attributions:[{user_note:'昨日我的原判断',source_reason:'昨日来源转述',source_name:'合成来源'}]}]};
 const view={date:day,today:day,now:day+'T09:00:00+08:00',state:'not_collected',can_capture:false,capture_window:{allowed:false,reason:'请在09:25后手动采集'}};
 // These legacy one/two-stock fixtures exercise the full association view.
 // Focus-mode folding is covered separately by presentation and browser checks.
 function render(packet,states={},close=null,automatic=null,observedDate=day,topics=null,feedback=null,resonance=null,discovery=null,history=null){setData(packet,close,automatic,topics,feedback,resonance,discovery,history);setStates({auctionScope:"all",...states});return renderToStaticMarkup(createElement(AuctionReview,{date:observedDate,onDate(){},onStock(){},chartDate:'2026-10-28'})).replaceAll(/<!--[^]*?-->/g,'');}
+function renderPrefetch(packet) {
+  setData(packet, null); setStates({ auctionScope: "all" });
+  return renderToStaticMarkup(createElement(AuctionReview, { date: day, latestDate: day, prefetchDates: ["2026-10-28", day], onDate() {} }));
+}
 let html=render(view);
 assert.match(html,/自动竞价尚未开启/);
 assert.doesNotMatch(html,/样本竞价涨幅中位数|昨日我的原判断/,'empty view cannot invent any snapshot statistics or prior text');
@@ -52,6 +58,11 @@ assert.match(html,/严格前日待核验/);
 assert.doesNotMatch(html,/9,999|午间临时缺报不应显示/);
 const payload={date:day,version:'auction-snapshot-v1',previous_date:'2026-10-28',collected_start_at:day+'T09:25:10+08:00',universe:{requested:2,omitted:0,items:[{instrument_id:'600001.SH',reasons:['昨日原关注']},{instrument_id:'000001.SZ',reasons:['自选']}]},quotes:{auction_phase:'final',data_status:'ready',summary:{requested:2,valid:1,missing:1,up:0,down:1,flat:0,median_pct:-2,amount:980000,amount_valid:1},items:[{instrument_id:'600001.SH',name:'合成观察甲',state:'observed',auction_price:9.8,auction_pct:-2,auction_amount:980000,auction_volume:1000,auction_turnover_pct:0,auction_volume_ratio:1.2,auction_yesterday_ratio_pct:3},{instrument_id:'000001.SZ',name:'合成缺失乙',state:'unknown',reason:'竞价缺失保持未知',auction_price:null,auction_pct:null}]},previous_review:original,benchmark:{state:'unknown',items:[],reason:'同日基准缺失'},analysis:['真实冻结样本观察说明'],gaps:[],sources:[]};
 const retained={...view,state:'available',snapshot:{date:day,quality:'partial',payload,recorded_at_ms:Date.parse(day+'T09:25:20+08:00'),collected_start_at:payload.collected_start_at,collected_end_at:day+'T09:25:20+08:00'}};
+const retainedAnchor = { ...retained, snapshot: { ...retained.snapshot, snapshot_id: "saved-auction" }, task: { status: "succeeded" } };
+renderPrefetch(retainedAnchor);
+assert.deepEqual(prefetch.last, [true, `/market/auction?date=${day}`, day, "saved-auction", ["2026-10-28", day]]);
+renderPrefetch({ ...retainedAnchor, task: { status: "running" } });
+assert.equal(prefetch.last[0], false, "an unfinished collection cannot start prefetch");
 html=render(retained);
 assert.match(html,/昨日复盘 → 今日竞价/);
 assert.match(html,/昨日我的原判断/);

@@ -52,6 +52,7 @@ import AuctionCopyText from "./AuctionCopyText";
 import AuctionAssociationSummary from "./AuctionAssociationSummary";
 import AuctionPageNavigation from "./AuctionPageNavigation";
 import useAuctionCloseRefresh from "./useAuctionCloseRefresh";
+import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 import AuctionCloseGroups from "./AuctionCloseGroups";
 import { refreshTaskActivity } from "../../components/taskActivity";
 import "./AuctionReview.css";
@@ -151,20 +152,23 @@ function BackgroundTags({ reasons }: { reasons: unknown }) {
 
 export default function AuctionReview({
   date,
+  latestDate,
+  prefetchDates,
   onDate,
   onDatesChanged,
   onStock,
   chartDate,
 }: {
   date: string;
+  latestDate?: string;
+  prefetchDates?: string[];
   onDate: (day: string) => void;
   onDatesChanged?: () => void;
   onStock?: (id: string) => void;
   chartDate?: string;
 }) {
-  const result = useApi<Row>(
-    `/market/auction${date ? `?date=${encodeURIComponent(date)}` : ""}`,
-  );
+  const path = `/market/auction${date ? `?date=${encodeURIComponent(date)}` : ""}`;
+  const result = useApi<Row>(path);
   const automaticResult = useApi<Row>("/market/auction/automation");
   const automation = auctionAutomationView(automaticResult.data);
   const active = usePageActive();
@@ -174,6 +178,17 @@ export default function AuctionReview({
   const automaticToday =
     auctionAutomaticToday(automation) && selected === automation?.today;
   const payload = auctionPayload(view, selected);
+  useHistoricalPrefetch(
+    date === latestDate &&
+      !result.loading &&
+      !result.error &&
+      !!payload &&
+      !["queued", "running", "paused"].includes(view?.task?.status),
+    path,
+    date,
+    view?.snapshot?.snapshot_id,
+    prefetchDates,
+  );
   const [closeOpen, setCloseOpen] = useState(false);
   const closeResult = useApi<Row>(
     closeOpen && payload

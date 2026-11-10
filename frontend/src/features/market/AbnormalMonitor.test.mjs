@@ -31,6 +31,9 @@ export const ErrorBox=({message})=>jsx('p',{children:message});
 export const Warnings=({items})=>jsx('p',{children:items?.join('；')});
 export const Loading=()=>jsx('p',{children:'读取中'});
 export function Table(props){tables.push(props);return jsx('div',{children:props.rows.length?props.rows.map(row=>row.name).join(','):props.emptyTitle+'；'+props.emptyDescription});}`);
+const prefetchProbe = encode(
+  "export let last; export function useHistoricalPrefetch(...args){last=args;}",
+);
 const replacements = {
   react: reactProbe,
   "react/jsx-runtime": jsxProbe,
@@ -39,6 +42,7 @@ const replacements = {
   "./MarketDataCoverage": encode(
     "export default function Coverage(){return null;}",
   ),
+  "./useHistoricalPrefetch": prefetchProbe,
 };
 const modules = new Map();
 async function moduleUrl(path) {
@@ -74,6 +78,7 @@ const { setScope, changes } = await import(reactProbe);
 const { setData, requests } = await import(apiProbe);
 const { selectors } = await import(jsxProbe);
 const { tables } = await import(uiProbe);
+const prefetch = await import(prefetchProbe);
 assert.equal(
   monitorRequest("2026-10-23", "latest"),
   "/market/abnormal?monitor_scope=latest&limit=1000&date=2026-10-23",
@@ -164,6 +169,28 @@ assert.match(missing, /名单日期 未知/);
 assert.match(missing, /监控状态未知/);
 assert.doesNotMatch(missing, /0 条|非盘面选择日名单/);
 assert.match(missing, /不能用最新名单回填历史/);
+assert.equal(prefetch.last[0], false, "missing archives do not start prefetch");
+
+setScope("latest");
+setData({
+  date: props.date,
+  snapshot_id: "latest-market",
+  monitor_scope: "latest",
+  data_coverage: { selected_date_available: true },
+  items: [],
+});
+const prefetchDates = ["2026-10-16", props.date];
+renderToStaticMarkup(
+  createElement(Monitor, { ...props, latestDate: props.date, prefetchDates }),
+);
+assert.equal(requests[0], monitorRequest(props.date, "latest"));
+assert.deepEqual(prefetch.last, [
+  true,
+  monitorRequest(props.date, "historical"),
+  props.date,
+  "latest-market",
+  prefetchDates,
+]);
 
 setScope("latest");
 setData({

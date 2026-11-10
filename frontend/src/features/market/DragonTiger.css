@@ -183,6 +183,12 @@
 .dragon-tiger-concepts {
   margin-top: 8px;
 }
+.dragon-tiger-search-match {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
 .dragon-tiger-pagination {
   display: flex;
   align-items: center;

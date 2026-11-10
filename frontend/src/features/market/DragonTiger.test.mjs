@@ -12,10 +12,10 @@ export * from ${JSON.stringify(react)};
 let cursor=0,states={};
 export function setStates(value){cursor=0;states=value;}
 export function useState(initial){const index=cursor++;return React.useState(Object.hasOwn(states,index)?states[index]:initial);}`);
-const apiProbe = encode(`let packet=null;export const requests=[];
-export function setData(value){packet=value;requests.length=0;}
+const apiProbe = encode(`let packet=null,search=null;export const requests=[];
+export function setData(value,matched){packet=value;search=matched;requests.length=0;}
 export const usePageActive=()=>true;
-export function useApi(path){requests.push(path);return {data:path?.startsWith('/market/dragon-tiger?')?packet:null,loading:false,error:'',reload(){}};}
+export function useApi(path){requests.push(path);return {data:path?.startsWith('/market/dragon-tiger/search?')?search:path?.startsWith('/market/dragon-tiger?')?packet:null,loading:false,error:'',reload(){}};}
 export function post(){throw Error('SSR must never create a collection task');}
 export const requestKey=()=> 'synthetic-request';`);
 const uiProbe = encode(`import {jsx,jsxs} from ${JSON.stringify(runtime)};
@@ -26,7 +26,8 @@ export const Panel=({title,subtitle,children,actions})=>jsxs('section',{children
 export const Empty=({title,description})=>jsxs('div',{className:'empty-state',children:[jsx('h3',{children:title}),jsx('p',{children:description})]});
 export const ErrorBox=({message})=>jsx('p',{role:'alert',children:message});
 export const Loading=()=>jsx('p',{children:'读取中'});`);
-const replacements = { react: reactProbe, "../../lib/api": apiProbe, "../../components/UI": uiProbe };
+const prefetchProbe = encode("export let last; export function useHistoricalPrefetch(...args){last=args;}");
+const replacements = { react: reactProbe, "../../lib/api": apiProbe, "../../components/UI": uiProbe, "./useHistoricalPrefetch": prefetchProbe };
 const cache = new Map();
 async function moduleUrl(url) {
   if (cache.has(url.href)) return cache.get(url.href);
@@ -53,7 +54,11 @@ async function moduleUrl(url) {
 }
 const { default: DragonTiger } = await import(await moduleUrl(new URL("./DragonTiger.tsx", import.meta.url)));
 const { setData, requests } = await import(apiProbe), { setStates } = await import(reactProbe);
+const prefetch = await import(prefetchProbe);
 const date = "2026-01-12";
+const proof = "a".repeat(64);
+const emptyQuery = "无匹配合成查询";
+const emptyResult = { date, day_record_sha256: proof, query: emptyQuery, available: true, matches: {} };
 const a = { instrument_id: "600001.SH", code: "600001", name: "合成甲", range_days: 1, buy_value: 150, sell_value: 50, net_value: 100, label_net_value: 25 };
 const b = { ...a, instrument_id: null, code: "600002", name: "合成未匹配名录" };
 const groups = [{ name: "合成标签A", rows: [a, { ...a, range_days: 3 }, b] }, { name: "合成标签B", rows: [a] }];
@@ -61,9 +66,9 @@ const warning = "游资榜count/stock_count口径未核验，不按统计差额�
 function packet(fields = {}, extra = {}) {
   return { date, availability: { available: true }, boards: { hot_money: { state: "partial", statistics_state: "unverified", items: groups, ...fields } }, warnings: [warning], coverage: {}, ...extra };
 }
-function render(data, states = {}) {
-  setData(data); setStates({ 0: "hot_money", ...states });
-  return renderToStaticMarkup(createElement(DragonTiger, { date, onStock() {}, onNavigate() {} })).replaceAll(/<!--[^]*?-->/g, "");
+function render(data, states = {}, props = {}, search = null) {
+  setData(data, search); setStates({ 0: "hot_money", ...states });
+  return renderToStaticMarkup(createElement(DragonTiger, { date, onStock() {}, onNavigate() {}, ...props })).replaceAll(/<!--[^]*?-->/g, "");
 }
 for (const [count, stockCount] of [[0, 0], [1, 999], [52, 52], [999, 0]]) {
   const html = render(packet({ source_count: count, source_stock_count: stockCount }));
@@ -73,8 +78,8 @@ for (const [count, stockCount] of [[0, 0], [1, 999], [52, 52], [999, 0]]) {
   assert.match(html, /已留存上榜A股<\/span><strong[^>]*>1只/, "displayed stock summary uses verified identities within the current range");
   assert.match(html, new RegExp(warning), "the unverified-statistics warning remains visible");
 }
-for (const states of [{ 2: "无匹配合成查询" }, { 3: "不存在的合成标签" }]) {
-  const html = render(packet({ source_count: 52, source_stock_count: 52 }), states);
+for (const states of [{ 2: emptyQuery, 13: emptyQuery }, { 3: "不存在的合成标签" }]) {
+  const html = render(packet({ source_count: 52, source_stock_count: 52 }, { day_record_sha256: proof }), states, {}, emptyResult);
   assert.match(html, /当前筛选无匹配记录/);
   assert.doesNotMatch(html, /该日龙虎榜数据尚未就绪/);
   assert.match(html, /0条当前筛选记录/);
@@ -94,11 +99,19 @@ assert.match(unknown, /已留存上榜A股<\/span><strong[^>]*>—/);
 assert.match(unknown, /实际已观察—个标签、—条标签记录/);
 assert.doesNotMatch(unknown, /0条当前筛选记录|当前筛选无匹配记录/);
 assert.equal(requests[0], `/market/dragon-tiger?date=${date}`);
+const days = ["2026-01-08", "2026-01-09", date];
+const archived = packet({}, { snapshot_id: "market-current", collection_snapshot_id: "retained-day" });
+render(archived, {}, { latestDate: date, prefetchDates: days });
+assert.deepEqual(prefetch.last, [true, `/market/dragon-tiger?date=${date}`, date, "market-current", days]);
+render(archived, {}, { latestDate: "2026-01-13", prefetchDates: days });
+assert.equal(prefetch.last[0], false, "a historical date does not prefetch farther back");
+render({ ...archived, availability: { available: false } }, {}, { latestDate: date, prefetchDates: days });
+assert.equal(prefetch.last[0], false, "a missing archive does not authorize warming");
 const all = render({ date, availability: { available: true }, boards: { all: { state: "ready", items: [a], source_count: 1, source_stock_count: 1 } } }, { 0: "all" });
 assert.match(all, /源标的1个 \/ 原始记录1条/, "verified all/org source labels retain their existing explanation");
 assert.doesNotMatch(all, /来源统计 count=/);
 for (const board of ["all", "org"]) {
-  const partial = { date, availability: { available: true }, boards: { [board]: { state: "partial", items: [a, { ...a, range_days: null, source_range_days: 10 }, { ...a, range_days: null, source_range_days: 30 }], source_count: 3, source_stock_count: 1 } }, warnings: ["合成其他区间另行留存，不混入单日或三日榜"] };
+  const partial = { date, day_record_sha256: proof, availability: { available: true }, boards: { [board]: { state: "partial", items: [a, { ...a, range_days: null, source_range_days: 10 }, { ...a, range_days: null, source_range_days: 30 }], source_count: 3, source_stock_count: 1 } }, warnings: ["合成其他区间另行留存，不混入单日或三日榜"] };
   const single = render(partial, { 0: board });
   assert.match(single, /1条当前筛选记录/, "other source ranges stay out of single-day board rows");
   assert.match(single, /已留存上榜A股<\/span><strong[^>]*>1只/);
@@ -108,8 +121,32 @@ for (const board of ["all", "org"]) {
   assert.match(emptyRange, /已留存上榜A股<\/span><strong[^>]*>0只/);
   assert.doesNotMatch(emptyRange, /该日龙虎榜数据尚未就绪/);
   assert.match(emptyRange, /合成其他区间另行留存/);
-  const emptySearch = render(partial, { 0: board, 2: "无匹配合成查询" });
+  const emptySearch = render(partial, { 0: board, 2: emptyQuery, 13: emptyQuery }, {}, emptyResult);
   assert.match(emptySearch, /当前筛选无匹配记录/);
   assert.match(emptySearch, /已留存上榜A股<\/span><strong[^>]*>0只/);
 }
+const searchDay = packet({}, { day_record_sha256: proof });
+const seatQuery = "上海营业部";
+const searchResult = {
+  ...emptyResult, query: seatQuery,
+  matches: { hot_money: [{ instrument_id: a.instrument_id, range_days: 3, label_name: "合成标签A", stock_match: null, seat_matches: [{ side: "sell", name: "合成上海营业部", record_id: "second" }] }] },
+};
+const settled = { 1: 3, 2: seatQuery, 13: seatQuery };
+const searchHtml = render(searchDay, settled, {}, searchResult);
+assert.match(searchHtml, /卖方席位 · 合成上海营业部/);
+assert.match(searchHtml, /1条当前筛选记录/);
+assert.deepEqual(requests.filter(Boolean), [
+  `/market/dragon-tiger?date=${date}`,
+  `/market/dragon-tiger/search?${new URLSearchParams({ date, query: seatQuery, archive_sha256: proof })}`,
+], "one search call and no per-stock detail reads while filtering");
+assert.match(render(searchDay, { ...settled, 1: 1 }, {}, searchResult), /当前筛选无匹配记录/);
+assert.match(render(searchDay, { ...settled, 3: "合成标签B" }, {}, searchResult), /当前筛选无匹配记录/);
+for (const wrong of [{ day_record_sha256: "b".repeat(64) }, { date: "2026-01-09" }, { query: "前一个词" }]) {
+  const stale = render(searchDay, settled, {}, { ...searchResult, ...wrong });
+  assert.match(stale, /正在搜索当日已留存的股票和买卖席位/);
+  assert.match(stale, /已留存上榜A股<\/span><strong[^>]*>—/);
+  assert.doesNotMatch(stale, /0条当前筛选记录|合成上海营业部/);
+}
+render(searchDay, { ...settled, 14: true }, {}, searchResult);
+assert.deepEqual(requests.filter(Boolean), [`/market/dragon-tiger?date=${date}`], "IME composition does not issue an intermediate query");
 console.log("dragon tiger page: unverified source metadata, legacy actual observations, valid partial empty filters, retained empty and true unknown SSR passed");

@@ -92,12 +92,13 @@ source = source
     JSON.stringify(encode("export function restoreIncrementSession(){}")),
   );
 const {
+  api,
   useApi,
   ApiPageActivity,
   notifyReadChanges,
   observeReadScopes,
   firstGainersReadPath,
-  prefetchGainersReads,
+  prefetchHistoricalReads,
 } = await import(encode(source));
 ApiPageActivity.value = true;
 function render() {
@@ -322,29 +323,50 @@ assert.equal(
   "route navigation alone does not recheck the application bootstrap",
 );
 
-const proof = (market = "published-1") => ({
+const proof = (market = "published-1", dates = {}) => ({
   active_count: 0,
-  read_revisions: { market, market_locked: false, domains: { supplement: "retained-1", suspensions: null } },
+  read_revisions: { today: "2026-10-28", market, market_locked: false, dates, domains: { supplement: "retained-1", suspensions: null, historical_reference: "catalog-1", archive_controls: "controls-1", tasks: "tasks-1" } },
 });
-async function stageGainers(day, options = {}) {
-  const warmed = prefetchGainersReads([day], "snapshot-1", new AbortController().signal, () => true);
-  assert.equal(requests.at(-1).url, "/api/v1/tasks/activity");
+async function stageGainers(day, options = {}, overlappingRead = false) {
+  const warmed = prefetchHistoricalReads(firstGainersReadPath("2026-10-27"), [day], "snapshot-1", new AbortController().signal, () => true);
+  assert.match(requests.at(-1).url, /\/api\/v1\/tasks\/activity\?date=2026-10-\d{2}&historical=true/);
   await answer(requests.at(-1), proof());
   assert.equal(requests.at(-1).url, "/api/v1" + firstGainersReadPath(day));
   assert.equal(requests.at(-1).options.priority, "low");
-  requests.at(-1).resolve(new Response(JSON.stringify({ date: day, snapshot_id: "snapshot-1", items: [day], ...options })));
+  const speculative = requests.at(-1);
+  const foreground = overlappingRead && api("/market/intraday/history?date=2026-10-27");
+  speculative.resolve(new Response(JSON.stringify({ date: day, snapshot_id: "snapshot-1", items: [day], ...options })));
   await warmed;
+  if (foreground) {
+    await answer(requests.at(-1), { items: [] });
+    await foreground;
+  }
 }
 ApiPageActivity.value = true;
-await stageGainers("2026-10-26");
+await stageGainers("2026-10-26", {}, true);
 path = firstGainersReadPath("2026-10-26");
 const beforeWarmActivation = requests.length;
 render();
-assert.equal(requests.at(-1).url, "/api/v1/tasks/activity");
+assert.match(requests.at(-1).url, /\/api\/v1\/tasks\/activity\?date=2026-10-\d{2}&historical=true/);
 assert.equal(render().data, null, "warm data remains hidden until its revisions are rechecked");
 await answer(requests.at(-1), proof());
 assert.equal(requests.length, beforeWarmActivation + 1, "valid warm data eliminates the duplicate ranked-page GET");
 assert.deepEqual(render().data.items, ["2026-10-26"]);
+
+await stageGainers("2026-10-14");
+path = firstGainersReadPath("2026-10-14");
+const beforeRemount = requests.length;
+render();
+const cancelledProof = requests.at(-1);
+ApiPageActivity.value = false;
+render();
+assert.equal(cancelledProof.options.signal.aborted, true);
+ApiPageActivity.value = true;
+render();
+assert.match(requests.at(-1).url, /\/tasks\/activity\?date=2026-10-14&historical=true$/);
+await answer(requests.at(-1), proof());
+assert.equal(requests.length, beforeRemount + 2, "an aborted verification leaves the warmed response for the next reader");
+assert.deepEqual(render().data.items, ["2026-10-14"]);
 
 await stageGainers("2026-10-23");
 path = firstGainersReadPath("2026-10-23");
@@ -355,7 +377,7 @@ assert.equal(requests.at(-1).url, "/api/v1" + path);
 await answer(requests.at(-1), { items: ["fresh"] });
 assert.deepEqual(render().data.items, ["fresh"]);
 
-await stageGainers("2026-10-22", { padding: "x".repeat(512 * 1024) });
+await stageGainers("2026-10-22", { padding: "x".repeat(4 * 1024 * 1024) });
 path = firstGainersReadPath("2026-10-22");
 render();
 assert.equal(requests.at(-1).url, "/api/v1" + path, "oversized prefetch is discarded");
@@ -367,6 +389,67 @@ path = firstGainersReadPath("2026-10-21");
 render();
 assert.equal(requests.at(-1).url, "/api/v1" + path, "expired prefetch returns to the normal page read");
 await answer(requests.at(-1), { items: ["current"] });
+
+const auctionDay = "2026-10-20";
+const auctionTarget = `/market/auction?date=${auctionDay}`;
+const auctionProof = proof("published-1", { [auctionDay]: { auction: "auction-1" } });
+const eligible = new AbortController();
+const warmedAuction = prefetchHistoricalReads("/market/auction?date=2026-10-27", [auctionDay], "latest-auction", eligible.signal, () => true);
+assert.equal(requests.at(-1).url, `/api/v1/tasks/activity?date=${auctionDay}&historical=true`);
+await answer(requests.at(-1), auctionProof);
+assert.equal(requests.at(-1).url, "/api/v1" + auctionTarget);
+requests.at(-1).resolve(new Response(JSON.stringify({
+  date: auctionDay, can_capture: false, state: "available",
+  snapshot: { date: auctionDay, snapshot_id: "older-auction" },
+})));
+await warmedAuction;
+path = auctionTarget;
+const beforeAuctionSelection = requests.length;
+render();
+await answer(requests.at(-1), auctionProof);
+assert.equal(requests.length, beforeAuctionSelection + 1);
+assert.equal(render().data.snapshot.snapshot_id, "older-auction");
+
+const missingDay = "2026-10-19";
+const missing = prefetchHistoricalReads("/market/auction?date=2026-10-27", [missingDay], "latest-auction", eligible.signal, () => true);
+const beforeMissingBody = requests.length;
+await answer(requests.at(-1), proof("published-1", { [missingDay]: { auction: null } }));
+await missing;
+assert.equal(requests.length, beforeMissingBody, "an unarchived day does not start a page prefetch");
+
+const sectorDay = "2026-10-16";
+const sectorPath = `/market/sectors?date=${sectorDay}&limit=1000`;
+const warmedSector = prefetchHistoricalReads("/market/sectors?date=2026-10-27&limit=1000", [sectorDay, "2026-10-15"], "snapshot-1", eligible.signal, () => true);
+const beforeSectorBody = requests.length;
+await prefetchHistoricalReads("/market/indices?date=2026-10-27", [sectorDay], "snapshot-1", eligible.signal, () => true);
+assert.equal(requests.length, beforeSectorBody, "a second page cannot start another background chain concurrently");
+await answer(requests.at(-1), proof());
+assert.equal(requests.at(-1).url, "/api/v1" + sectorPath);
+requests.at(-1).resolve(new Response(JSON.stringify({ date: sectorDay, snapshot_id: "snapshot-1", items: [] })));
+await warmedSector;
+assert.equal(requests.length, beforeSectorBody + 1, "a heavy route speculates on at most one past day");
+path = sectorPath;
+render();
+const changedCatalog = proof();
+changedCatalog.read_revisions.domains.historical_reference = "catalog-2";
+await answer(requests.at(-1), changedCatalog);
+assert.equal(requests.at(-1).url, "/api/v1" + sectorPath, "catalog visibility changes bypass the warmed page");
+await answer(requests.at(-1), { date: sectorDay, items: ["updated"] });
+
+const beforeUnsafePath = requests.length;
+await prefetchHistoricalReads("/market/abnormal?monitor_scope=latest&limit=1000&date=2026-10-27", [sectorDay], "snapshot-1", eligible.signal, () => true);
+assert.equal(requests.length, beforeUnsafePath, "latest monitoring is not an archived read");
+
+const indexDay = "2026-10-15";
+const warmedIndex = prefetchHistoricalReads("/market/indices?date=2026-10-27", [indexDay], "snapshot-1", eligible.signal, () => true);
+await answer(requests.at(-1), proof());
+requests.at(-1).resolve(new Response("{invalid JSON"));
+await warmedIndex;
+path = `/market/indices?date=${indexDay}`;
+render();
+await answer(requests.at(-1), proof());
+assert.equal(requests.at(-1).url, "/api/v1" + path, "a malformed raw candidate falls back only when consumed");
+await answer(requests.at(-1), { date: indexDay, indices: [] });
 assert.ok(
   requests.every((request) => !request.options.method),
   "visibility only rereads GETs",

@@ -14,6 +14,7 @@ import {
 } from "../../components/UI";
 import { integer } from "../../lib/format";
 import MarketDataCoverage from "./MarketDataCoverage";
+import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 
 export type MonitorScope = "latest" | "historical";
 
@@ -34,9 +35,13 @@ export function monitorQuoteDate(value: unknown) {
 
 export default function AbnormalMonitor({
   date,
+  latestDate,
+  prefetchDates,
   onStock,
 }: {
   date: string;
+  latestDate?: string;
+  prefetchDates?: string[];
   onStock: (id: string, navigation?: StockNavigation) => void;
 }) {
   const [scope, setScope] = useState<MonitorScope>("latest");
@@ -45,6 +50,17 @@ export default function AbnormalMonitor({
   const scopeMismatch =
     result.data != null && result.data.monitor_scope !== scope;
   const data = scopeMismatch ? null : result.data;
+  useHistoricalPrefetch(
+    date === latestDate &&
+      !result.loading &&
+      !result.error &&
+      data?.date === date &&
+      data.data_coverage?.selected_date_available === true,
+    monitorRequest(date, "historical"),
+    date,
+    data?.snapshot_id,
+    prefetchDates,
+  );
   const rows = list(data).filter((row) =>
     [row.name, row.code, row.instrument_id, row.event_type]
       .join(" ")

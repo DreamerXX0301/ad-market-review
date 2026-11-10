@@ -4,7 +4,7 @@ import ts from "typescript";
 
 const source = ts.transpileModule(
   await fs.readFile(
-    new URL("./useGainersPrefetch.ts", import.meta.url),
+    new URL("./useHistoricalPrefetch.ts", import.meta.url),
     "utf8",
   ),
   {
@@ -16,7 +16,7 @@ const source = ts.transpileModule(
 ).outputText;
 const encode = (text) =>
   "data:text/javascript;base64," + Buffer.from(text).toString("base64");
-const { previousGainersDays, outsideAuctionWindow } = await import(
+const { previousPublishedDays, outsideAuctionWindow } = await import(
   encode(
     source
       .replaceAll(
@@ -31,7 +31,7 @@ const { previousGainersDays, outsideAuctionWindow } = await import(
         '"../../lib/api"',
         JSON.stringify(
           encode(
-            "export function prefetchGainersReads(){}; export function usePageActive(){}",
+            "export function historicalPrefetchBusy(){}; export function prefetchHistoricalReads(){}; export function usePageActive(){}",
           ),
         ),
       ),
@@ -39,7 +39,7 @@ const { previousGainersDays, outsideAuctionWindow } = await import(
 );
 
 assert.deepEqual(
-  previousGainersDays("2026-11-10", [
+  previousPublishedDays("2026-11-10", [
     "2026-11-09",
     "2026-11-06",
     "2026-11-11",
@@ -49,7 +49,7 @@ assert.deepEqual(
   ]),
   ["2026-11-09", "2026-11-06"],
 );
-assert.deepEqual(previousGainersDays("2026-11-07", ["2026-11-06"]), []);
+assert.deepEqual(previousPublishedDays("2026-11-07", ["2026-11-06"]), []);
 assert.equal(outsideAuctionWindow(new Date("2026-11-10T09:22:59+08:00")), true);
 assert.equal(
   outsideAuctionWindow(new Date("2026-11-10T09:23:00+08:00")),

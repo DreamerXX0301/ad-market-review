@@ -311,6 +311,77 @@ def test_collect_cas_publication_api_reads_do_not_network_and_reuse(local,monkey
     assert 'fixture-private-key' not in '\n'.join(p.read_text() for p in service._root().rglob('*.json'))
 
 
+def test_search_matches_archived_stock_and_seat_within_same_day_and_disclosure(local,monkeypatch):
+    market,provider,public=local
+    service.collect_for_market(market,DAY,adapter=provider,public=public)
+    store=service.Store();record=deepcopy(store.day(store.index(),DAY))
+    symbol='000678.SZ'
+    all_rows=record['boards']['all']['items']
+    first=all_rows[0];first['name']='日出东方'
+    all_rows.extend([{**first,'range_days':3}, {**first,'range_days':None,'source_range_days':10}])
+    all_rows.append({**first,'instrument_id':None,'identity_state':'unknown','name':'合成未知证券'})
+    groups=record['boards']['hot_money']['items']
+    groups[0]['rows'].append({**first,'range_days':3})
+    periods=record['seats']['instruments'][symbol]['periods']
+    single=periods['1'][0]
+    single['buy'][0]['name']='合成证券北京营业部'
+    three=deepcopy(single)
+    three.update(record_id='fixture-three',reason='连续三个交易日内涨幅偏离值累计达到20%的证券')
+    three['buy'][0]['name']='合成三日机构'
+    three['sell'][0]['name']='合成证券上海营业部'
+    unknown=deepcopy(single)
+    unknown.update(record_id='fixture-other',reason='严重异常期间日收盘价格涨幅偏离值累计达到100%的证券')
+    unknown['sell'][0]['name']='合成累计席位'
+    # Old archives can carry the earlier range assignment. Search uses the same
+    # read-only disclosure projection as the detail route.
+    periods['1'].extend([three,unknown])
+    record['seats']['instruments']['600999.SH'] = deepcopy(record['seats']['instruments'][symbol])
+    record['seats']['instruments']['600999.SH']['periods']['1'][0]['sell'][0]['name']='合成孤立席位'
+    store.accept(record,market.days)
+    expected_proof=store.index()['days'][DAY]['sha256']
+    calls=(len(provider.calls),len(public.calls))
+    monkeypatch.setattr(source_service,'client',lambda *_:pytest.fail('search must never request providers'))
+    monkeypatch.setattr(market,'instruments',lambda **_:pytest.fail('search must use the archived stock identity'))
+    from app.routers import dragon_tiger as router
+    app=FastAPI();app.include_router(router.router)
+    endpoint='/api/v1/market/dragon-tiger'
+    with TestClient(app) as client:
+        def search(term,day=DAY,**kwargs):
+            response=client.get(endpoint+'/search',params={'date':day,'query':term,**kwargs})
+            assert response.status_code==200,response.text
+            return response.json()
+
+        view=client.get(endpoint,params={'date':DAY}).json()
+        assert view['day_record_sha256']==expected_proof
+        for term, kind in [('日出东方','exact'),('000678.SZ','exact'),('rcdf','initials'),
+                           ('richudongfang','pinyin'),('日出东芳','homophone'),('日出东发','typo')]:
+            found=search(term,archive_sha256=expected_proof)
+            assert found['available'] and found['day_record_sha256']==expected_proof
+            assert [(hit['instrument_id'],hit['range_days'],hit['stock_match']['match_type'])
+                    for hit in found['matches']['all']]==[(symbol,1,kind),(symbol,3,kind)]
+        assert len(search('fixture concept')['matches']['all'])==4
+        assert {hit['label_name'] for hit in search('fixture A')['matches']['hot_money']}=={'fixture A'}
+        single_matches=search('北京营业部')['matches']
+        assert [(hit['instrument_id'],hit['range_days']) for hit in single_matches['all']]==[(symbol,1)]
+        assert single_matches['org'][0]['seat_matches']==[
+            {'side':'buy','name':'合成证券北京营业部','record_id':single['record_id']}]
+        three_matches=search('上海营业部')['matches']
+        assert not three_matches['org']
+        assert [(hit['instrument_id'],hit['range_days'],hit['label_name'])
+                for hit in three_matches['hot_money']]==[(symbol,3,'fixture A')]
+        assert three_matches['all'][0]['seat_matches']==[
+            {'side':'sell','name':'合成证券上海营业部','record_id':'fixture-three'}]
+        assert search('合成三日机构')['matches']['all'][0]['seat_matches'][0]['side']=='buy'
+        for term in ('合成累计席位','合成孤立席位','合成未知证券','000677'):
+            assert all(not hits for hits in search(term)['matches'].values())
+        missing=search('rcdf',day=market.days[-2])
+        assert not missing['available'] and missing['day_record_sha256'] is None and not missing['matches']
+        assert client.get(endpoint+'/search',params={'date':DAY,'query':'rcdf','archive_sha256':'0'*64}).status_code==409
+        for term in ('   ','x'*101):
+            assert client.get(endpoint+'/search',params={'date':DAY,'query':term}).status_code==422
+    assert calls==(len(provider.calls),len(public.calls))
+
+
 def test_failed_day_keeps_old_anchor_and_successful_components_for_manual_retry(local):
     market,provider,public=local
     previous=market.days[-2]

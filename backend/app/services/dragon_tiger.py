@@ -14,6 +14,7 @@ from app.core import atomic_json,connect,digest,dumps,get_market,hash_file,now_m
 from app.adapters.dragon_tiger import (VERSION,FUYAO_PATH,REPORTS,DragonTigerPublicClient,SeatCoverageMismatch,
     normalize_board,normalize_seats,project_hot_statistics,project_seat_ranges)
 from app.adapters.providers import ProviderError
+from .search_matching import identity_match,normalized
 from .supplement_access import supplement_access
 from .supplement_storage import _read_object
 from . import task_service as tasks
@@ -204,8 +205,71 @@ def read_view(day=None, *, market=None):
     boards = {**record['boards'], 'hot_money': hot['board']}
     labels = hot['labels']
     warnings=list(dict.fromkeys([*record.get('warnings',[]),*boards['hot_money'].get('warnings',[])]))
-    return {'date':day,'snapshot_id':status['snapshot_id'],'collection_snapshot_id':record.get('snapshot_id'),'state':'partial' if warnings else 'ready',
+    return {'date':day,'snapshot_id':status['snapshot_id'],'collection_snapshot_id':record.get('snapshot_id'),'day_record_sha256':proof,'state':'partial' if warnings else 'ready',
         'availability':{'available':True,'reason':None,'sources':['fuyao','eastmoney'],'date':day},'boards':boards,'labels':labels,'coverage':coverage,'warnings':warnings}
+
+
+def _matching_seats(seats, term):
+    matches = {}
+    for symbol, item in project_seat_ranges(seats)['instruments'].items():
+        for period in (1, 3):
+            records = item['periods'][str(period)]
+            hits = []
+            for side in ('buy', 'sell'):
+                hit = next((
+                    {'side': side, 'name': seat['name'], 'record_id': record['record_id']}
+                    for record in records for seat in record[side]
+                    if isinstance(seat.get('name'), str) and term in normalized(seat['name'])
+                ), None)
+                if hit:
+                    hits.append(hit)
+            if hits:
+                matches[symbol, period] = hits
+    return matches
+
+
+def search_day(query, day=None, archive_sha256=None, *, market=None):
+    query = query.strip()
+    term = normalized(query)
+    if not term:
+        raise HTTPException(422, '请输入龙虎榜搜索词')
+    market, status, day = _context(day, market=market)
+    store = Store()
+    with supplement_access():
+        try:
+            index = store.index()
+            record = store.day(index, day)
+        except (OSError, ValueError, TypeError, KeyError):
+            record = None
+    base = {'date': day, 'query': query, 'snapshot_id': status['snapshot_id']}
+    if record is None:
+        return {**base, 'day_record_sha256': None, 'available': False, 'matches': {},
+                'reason': '该日龙虎榜尚未留存或对象校验失败'}
+    proof = index['days'][day]['sha256']
+    if archive_sha256 is not None and proof != archive_sha256:
+        raise HTTPException(409, '该日龙虎榜留存已更新，请刷新榜单后重试')
+
+    seat_matches = _matching_seats(record['seats'], term)
+    matches = {}
+    for board, source in record['boards'].items():
+        rows = (
+            ((row, group['name'].strip() or None) for group in source['items'] for row in group['rows'])
+            if board == 'hot_money' else ((row, None) for row in source['items'])
+        )
+        board_matches = []
+        for row, label in rows:
+            symbol, period = row.get('instrument_id'), row.get('range_days')
+            if (row.get('identity_state') != 'verified' or not isinstance(symbol, str)
+                    or not re.fullmatch(r'\d{6}\.(SH|SZ|BJ)', symbol) or period not in (1, 3)):
+                continue
+            stock = identity_match(term, row.get('name') or '', symbol, row.get('code'))
+            seats = seat_matches.get((symbol, period), [])
+            concepts = [label, *(item.get('name') for item in row.get('source_concepts', []))]
+            if stock or seats or any(isinstance(name, str) and term in normalized(name) for name in concepts):
+                board_matches.append({'instrument_id': symbol, 'range_days': period, 'label_name': label,
+                                      'stock_match': stock[1] if stock else None, 'seat_matches': seats})
+        matches[board] = board_matches
+    return {**base, 'day_record_sha256': proof, 'available': True, 'matches': matches}
 
 
 def read_seats(symbol,day=None,range_days=1, *, market=None):

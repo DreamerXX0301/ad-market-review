@@ -10,6 +10,30 @@
   border-radius: 9px;
   padding: 4px;
 }
+.instrument-search-popover.is-recent {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.instrument-search-popover.is-recent .search-recent-heading {
+  flex: none;
+}
+.search-recent-list {
+  --search-recent-row-height: 44px;
+  min-height: 0;
+  max-height: calc(var(--search-recent-row-height) * 3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.search-recent-list .instrument-search-result {
+  height: var(--search-recent-row-height);
+}
+.search-recent-list .instrument-search-choose > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .instrument-search-result {
   display: flex;
   align-items: center;

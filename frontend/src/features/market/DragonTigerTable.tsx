@@ -147,6 +147,19 @@ export default function DragonTigerTable({
                     />
                     {row.label_name && <small>{row.label_name}</small>}
                   </div>
+                  {row.search_match?.stock_match?.is_suggestion && (
+                    <small className="dragon-tiger-search-match">
+                      {row.search_match.stock_match.match_label}
+                    </small>
+                  )}
+                  {row.search_match?.seat_matches.map((seat) => (
+                    <small
+                      className="dragon-tiger-search-match"
+                      key={seat.side}
+                    >
+                      {seat.side === "buy" ? "买方" : "卖方"}席位 · {seat.name}
+                    </small>
+                  ))}
                   {row.source_concepts.length > 0 && (
                     <div className="tags dragon-tiger-concepts">
                       {row.source_concepts.slice(0, 2).map((item, index) => (

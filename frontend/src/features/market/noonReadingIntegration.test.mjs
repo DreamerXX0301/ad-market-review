@@ -68,11 +68,13 @@ const output = await build({
     resolveId(source, importer) {
       if (source.includes("lib/api") && importer?.endsWith("/NoonReview.tsx")) return "\0fixture-noon-api";
       if (source === "react" && importer?.endsWith("/NoonReview.tsx")) return "\0fixture-noon-react";
+      if (source === "./useHistoricalPrefetch" && importer?.endsWith("/NoonReview.tsx")) return "\0fixture-noon-prefetch";
     },
     load(id) {
       if (id === "\0fixture-noon-react") return `import * as React from "react";
         export const useEffect=React.useEffect; export const useRef=React.useRef; export const lazy=React.lazy; export const Suspense=React.Suspense;
-        export const useState=(initial)=>React.useState(initial==='all' ? globalThis.__fixtureNoonBoard || initial : initial);`;
+        export const useState=(initial)=>React.useState(initial==='all' ? globalThis.__fixtureNoonBoard || initial : initial==='overview' ? globalThis.__fixtureNoonTab || initial : initial);`;
+      if (id === "\0fixture-noon-prefetch") return "export function useHistoricalPrefetch(...args){globalThis.__fixtureNoonPrefetch=args;}";
       if (id !== "\0fixture-noon-api") return;
       return `const fixture=${JSON.stringify(fixture)};
         export function useApi(path) { return {data:path.endsWith('/notes') ? {revision:0,body:''} : globalThis.__fixtureNoonView || fixture,loading:false,error:null,reload(){}}; }
@@ -93,7 +95,15 @@ const { default: NoonReview } = await import(pathToFileURL(modulePath).href);
 const fetchBefore = globalThis.fetch;
 globalThis.fetch = () => { throw Error("reading/navigation rendering must not fetch"); };
 try {
-  const html = renderToStaticMarkup(createElement(NoonReview, {date:day,onDate(){},onStock(){},chartDate:"2026-10-27"}));
+  const prefetchDates = ["2026-10-27", day];
+  const props = {date:day,latestDate:day,prefetchDates,onDate(){},onStock(){},chartDate:"2026-10-27"};
+  const html = renderToStaticMarkup(createElement(NoonReview, props));
+  assert.deepEqual(globalThis.__fixtureNoonPrefetch, [true, `/market/noon?date=${day}`, day, "fixture-noon-reading", prefetchDates]);
+  globalThis.__fixtureNoonTab = "close";
+  renderToStaticMarkup(createElement(NoonReview, props));
+  assert.equal(globalThis.__fixtureNoonPrefetch[0], false, "closing review does not trigger a full noon prefetch");
+  delete globalThis.__fixtureNoonTab;
+  delete globalThis.__fixtureNoonPrefetch;
   assert.equal((html.match(/保留 30 个自然日/g) || []).length, 2, "header and retention details use the same API policy");
   assert.ok(html.includes('aria-label="午评阅读导航"'));
   assert.match(html, /#ai\?ai_kind=market(?:&amp;|&)ai_day=2026-10-28(?:&amp;|&)ai_stage=noon/, "noon opens a dated AI context without sending or capturing");

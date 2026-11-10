@@ -59,6 +59,7 @@ import {
   adoptExistingNoonRun,
 } from "../../components/noonRunLock";
 import { noonTextParts } from "./noonRichText";
+import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 import {
   noonEnrichQuotes,
   noonEventLabels,
@@ -1011,6 +1012,8 @@ function NoonNotes({ snapshotId }: { snapshotId: string }) {
 
 export default function NoonReview({
   date,
+  latestDate,
+  prefetchDates,
   onDate,
   onDatesChanged,
   onStock: onNoonStock,
@@ -1020,6 +1023,8 @@ export default function NoonReview({
   onCloseSector,
 }: {
   date: string;
+  latestDate?: string;
+  prefetchDates?: string[];
   onDate: (value: string) => void;
   onDatesChanged?: () => void;
   onStock?: (id: string, snapshotId: string) => void;
@@ -1033,13 +1038,24 @@ export default function NoonReview({
   // A close-tab date change reads only its small API until the original noon is opened.
   const noonReadDate = useRef(date);
   if (tab !== "close") noonReadDate.current = date;
-  const result = useApi<Row>(
-    `/market/noon${noonReadDate.current ? `?date=${encodeURIComponent(noonReadDate.current)}` : ""}`,
-  );
+  const path = `/market/noon${noonReadDate.current ? `?date=${encodeURIComponent(noonReadDate.current)}` : ""}`;
+  const result = useApi<Row>(path);
   const view = result.data?.date === date || !date ? result.data : null;
   const retentionDays = view?.retention?.calendar_days;
   const selected = date || view?.date || "";
   const payload = noonPayload(view, selected);
+  useHistoricalPrefetch(
+    tab !== "close" &&
+      date === latestDate &&
+      !result.loading &&
+      !result.error &&
+      !!payload &&
+      !["queued", "running", "paused"].includes(view?.task?.status),
+    path,
+    date,
+    view?.snapshot?.snapshot_id,
+    prefetchDates,
+  );
   const [pendingDay, setPendingDay] = useState(""),
     [submitError, setSubmitError] = useState("");
   const [resuming, setResuming] = useState(false);

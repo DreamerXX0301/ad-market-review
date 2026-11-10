@@ -436,6 +436,8 @@ export default function App() {
           <NewsEvents
             key={date}
             date={date}
+            latestDate={latestDate}
+            prefetchDates={bootstrap.data?.market_dates}
             onStock={dates.includes(date) ? openStock : undefined}
           />
         );
@@ -443,6 +445,8 @@ export default function App() {
         return (
           <AuctionReview
             date={date}
+            latestDate={latestDate}
+            prefetchDates={bootstrap.data?.market_dates}
             onDate={resetDate}
             onDatesChanged={auctionDates.reload}
             onStock={openStock}
@@ -454,6 +458,8 @@ export default function App() {
           <IntradayObservation
             key={date}
             date={date}
+            latestDate={latestDate}
+            prefetchDates={bootstrap.data?.market_dates}
             today={today}
             dateFixed={dateChoice !== null}
             onResetDate={resetDate}
@@ -480,6 +486,8 @@ export default function App() {
         return (
           <NoonReview
             date={date}
+            latestDate={latestDate}
+            prefetchDates={bootstrap.data?.market_dates}
             onDate={resetDate}
             onDatesChanged={noonDates.reload}
             onStock={(id, noonSnapshotId) => {
@@ -549,15 +557,19 @@ export default function App() {
             route={key}
             date={date}
             latestDate={bootstrap.data?.data_date}
-            prefetchDates={
-              key === "gainers" ? bootstrap.data?.market_dates : undefined
-            }
+            prefetchDates={bootstrap.data?.market_dates}
             onStock={openStock}
           />
         );
       case "dragon-tiger":
         return (
-          <DragonTiger date={date} onStock={openStock} onNavigate={navigate} />
+          <DragonTiger
+            date={date}
+            latestDate={latestDate}
+            prefetchDates={bootstrap.data?.market_dates}
+            onStock={openStock}
+            onNavigate={navigate}
+          />
         );
       case "topics":
         return <Topics onStock={openStock} onNavigate={navigate} />;

@@ -23,21 +23,30 @@ type PendingRead = {
 };
 const pendingReads = new Map<string, PendingRead>();
 const retainedReadRecheckMs = 60_000;
-const gainersWarmTtlMs = 90_000;
-const gainersWarmMaxBytes = 512 * 1024;
-const gainersWarmReads = new Map<
+const historicalWarmTtlMs = 90_000;
+const historicalWarmMaxEntries = 4;
+const historicalWarmMaxBytes = 16 * 1024 * 1024;
+type HistoricalBody = { chunks: Uint8Array[]; bytes: number };
+const historicalWarmReads = new Map<
   string,
-  { proof: string; value: Row; expires: number }
+  {
+    proof: string;
+    body: HistoricalBody;
+    snapshotId: string;
+    heavy: boolean;
+    expires: number;
+  }
 >();
-let gainersWarmRevision = 0;
+let historicalWarmRevision = 0;
+let historicalPrefetchRunning = false;
 
 export function firstGainersReadPath(day: string) {
   return `/market/gainers?date=${day}&page=1&page_size=25&query=&sort_by=change_30d_pct&sort_order=desc&top_n=100`;
 }
 
-function clearGainersWarmReads() {
-  gainersWarmRevision += 1;
-  gainersWarmReads.clear();
+function clearHistoricalWarmReads() {
+  historicalWarmRevision += 1;
+  historicalWarmReads.clear();
 }
 
 export type ReadChange = {
@@ -57,7 +66,10 @@ const scopePaths: Record<string, RegExp> = {
   calendar: /^\/market\/(?:noon|auction)\/dates(?:\?|$)/,
   supplement:
     /^\/(?:bootstrap|data\/status|market\/(?:overview|emotion|broken-boards|ladder|sectors|gainers|intraday|noon))(?:[/?-]|$)/,
-  suspensions: /^\/market\/gainers(?:\?|$)/,
+  suspensions: /^\/market\/(?:gainers|overview|auction|noon|intraday)(?:\?|$)/,
+  historical_reference:
+    /^\/market\/(?:overview|emotion|ladder|sectors|abnormal|gainers|intraday|noon)(?:\?|$)/,
+  archive_controls: /^\/market\/(?:auction|noon|intraday)(?:\?|$)/,
   dragon_tiger: /^\/market\/dragon-tiger(?:[/?-]|$)/,
   sector_charts:
     /^\/(?:market\/(?:sector-chart|sectors)|data\/status)(?:[/?]|$)/,
@@ -94,10 +106,24 @@ export function notifyReadChanges(changes: ReadChange[]) {
   if (!changes.length) return;
   if (
     changes.some(({ scope }) =>
-      ["market", "supplement", "suspensions", "topics"].includes(scope),
+      [
+        "market",
+        "supplement",
+        "suspensions",
+        "topics",
+        "historical_reference",
+        "archive_controls",
+        "dragon_tiger",
+        "auction",
+        "noon",
+        "intraday",
+        "news",
+        "calendar",
+        "tasks",
+      ].includes(scope),
     )
   )
-    clearGainersWarmReads();
+    clearHistoricalWarmReads();
   for (const path of pendingReads.keys())
     if (changes.some((change) => matchesReadChange(path, change)))
       pendingReads.delete(path);
@@ -236,10 +262,10 @@ function responseText(
   // no completed responses, policies or task states are cached here.
   const method = (options.method || "GET").toUpperCase();
   if (method !== "GET") {
-    clearGainersWarmReads();
+    clearHistoricalWarmReads();
     pendingReads.clear();
     return readResponse(path, options).finally(() => {
-      clearGainersWarmReads();
+      clearHistoricalWarmReads();
       pendingReads.clear();
     });
   }
@@ -345,23 +371,170 @@ export const post = <T = any>(path: string, data: unknown = {}) =>
 export const patch = <T = any>(path: string, data: unknown) =>
   api<T>(path, { method: "PATCH", body: JSON.stringify(data) });
 
-async function gainersReadProof(signal: AbortSignal) {
-  const receipt = await api<Row>("/tasks/activity", { signal });
+const KiB = 1024;
+const marketHistory = [
+  "supplement",
+  "suspensions",
+  "historical_reference",
+] as const;
+const archiveControls = ["tasks", "archive_controls"] as const;
+const historicalPlans = {
+  overview: { bytes: 512 * KiB, days: 2, domains: marketHistory },
+  indices: { bytes: 128 * KiB, days: 2, domains: [] },
+  gainers: { bytes: 4096 * KiB, days: 1, domains: marketHistory },
+  emotion: { bytes: 1024 * KiB, days: 1, domains: marketHistory },
+  ladder: { bytes: 2048 * KiB, days: 1, domains: marketHistory },
+  sectors: { bytes: 5120 * KiB, days: 1, domains: marketHistory },
+  abnormal: { bytes: 128 * KiB, days: 2, domains: marketHistory },
+  "dragon-tiger": { bytes: 512 * KiB, days: 2, domains: ["dragon_tiger"] },
+  "news-events": { bytes: 512 * KiB, days: 2, domains: [], archive: "news" },
+  auction: {
+    bytes: 512 * KiB,
+    days: 2,
+    domains: ["suspensions", ...archiveControls],
+    archive: "auction",
+  },
+  noon: {
+    bytes: 10240 * KiB,
+    days: 1,
+    domains: [...marketHistory, ...archiveControls],
+    archive: "noon",
+  },
+  intraday: {
+    bytes: 12288 * KiB,
+    days: 1,
+    domains: [...marketHistory, ...archiveControls],
+    archive: "intraday",
+  },
+} as const;
+
+type HistoricalKind = keyof typeof historicalPlans;
+type HistoricalTarget = { day: string; kind: HistoricalKind };
+
+function historicalPath({ day, kind }: HistoricalTarget) {
+  if (kind === "gainers") return firstGainersReadPath(day);
+  if (kind === "abnormal")
+    return `/market/abnormal?monitor_scope=historical&limit=1000&date=${day}`;
+  const limit = ["emotion", "ladder", "sectors"].includes(kind)
+    ? "&limit=1000"
+    : "";
+  return `/market/${kind}?date=${day}${limit}`;
+}
+
+function historicalTarget(path: string): HistoricalTarget | null {
+  const [endpoint, query] = path.split("?");
+  const kind = endpoint.slice("/market/".length) as HistoricalKind;
+  if (!endpoint.startsWith("/market/") || !Object.hasOwn(historicalPlans, kind))
+    return null;
+  const day = new URLSearchParams(query).get("date");
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  return path === historicalPath({ day, kind }) ? { day, kind } : null;
+}
+
+async function historicalReadProof(
+  { day, kind }: HistoricalTarget,
+  signal: AbortSignal,
+) {
+  const plan = historicalPlans[kind];
+  const extra = plan.domains.some(
+    (scope) => scope === "historical_reference" || scope === "archive_controls",
+  );
+  const receipt = await api<Row>(
+    `/tasks/activity?date=${day}${extra ? "&historical=true" : ""}`,
+    { signal },
+  );
   const revision = receipt?.read_revisions;
-  const supplement = revision?.domains?.supplement;
-  const suspensions = revision?.domains?.suspensions;
   if (
     receipt?.active_count !== 0 ||
     revision?.market_locked !== false ||
     typeof revision.market !== "string" ||
-    (supplement !== null && typeof supplement !== "string") ||
-    (suspensions !== null && typeof suspensions !== "string")
+    typeof revision.today !== "string" ||
+    day >= revision.today
   )
     return null;
-  return JSON.stringify([revision.market, supplement, suspensions]);
+  const domains = plan.domains.map((scope) => revision.domains?.[scope]);
+  if (
+    domains.some((value, index) => {
+      const scope = plan.domains[index];
+      return (
+        typeof value !== "string" &&
+        (value !== null || !["supplement", "suspensions"].includes(scope))
+      );
+    })
+  )
+    return null;
+  const dateRevisions = revision.dates?.[day];
+  const archiveRevision =
+    "archive" in plan ? dateRevisions?.[plan.archive] : null;
+  if ("archive" in plan && typeof archiveRevision !== "string") return null;
+  const anchors =
+    kind === "intraday" ? [dateRevisions?.auction, dateRevisions?.noon] : [];
+  if (anchors.some((value) => value !== null && typeof value !== "string"))
+    return null;
+  return JSON.stringify([
+    revision.market,
+    revision.today,
+    ...domains,
+    archiveRevision,
+    ...anchors,
+  ]);
 }
 
-async function readGainersWarmBody(path: string, signal: AbortSignal) {
+function validHistoricalBody(
+  value: Row,
+  { day, kind }: HistoricalTarget,
+  snapshotId: string,
+) {
+  if (value?.date !== day || value.unavailable_reason) return false;
+  if (kind === "news-events")
+    return (
+      Array.isArray(value.stages) &&
+      value.stages.some(
+        (stage) =>
+          ["complete", "partial"].includes(stage?.status) &&
+          typeof stage.captured_at === "string",
+      )
+    );
+  if (kind === "auction" || kind === "noon")
+    return (
+      value.state === "available" &&
+      value.can_capture === false &&
+      !["queued", "running", "paused"].includes(value.task?.status) &&
+      value.snapshot?.date === day &&
+      typeof value.snapshot.snapshot_id === "string"
+    );
+  if (kind === "intraday")
+    return (
+      value.state === "available" &&
+      value.can_capture === false &&
+      !value.current_slot &&
+      !["queued", "running", "paused"].includes(value.latest_job?.status) &&
+      Array.isArray(value.snapshots) &&
+      value.snapshots.some(
+        (snapshot) => snapshot?.date === day && typeof snapshot.id === "string",
+      )
+    );
+  if (value.snapshot_id !== snapshotId) return false;
+  if (kind === "dragon-tiger")
+    return (
+      value.availability?.available === true &&
+      typeof value.collection_snapshot_id === "string"
+    );
+  if (kind === "abnormal")
+    return (
+      value.monitor_scope === "historical" &&
+      value.data_coverage?.selected_date_available === true
+    );
+  if (kind === "overview" || kind === "indices")
+    return Array.isArray(value.indices);
+  return Array.isArray(value.items);
+}
+
+async function readHistoricalWarmBody(
+  path: string,
+  cap: number,
+  signal: AbortSignal,
+) {
   const response = await fetch("/api/v1" + path, {
     signal,
     priority: "low",
@@ -373,79 +546,148 @@ async function readGainersWarmBody(path: string, signal: AbortSignal) {
   }
   if (!response.body) return null;
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let content = "";
+  const body: HistoricalBody = { chunks: [], bytes: 0 };
   try {
     while (true) {
       const chunk = await reader.read();
-      if (chunk.done) return JSON.parse(content + decoder.decode()) as Row;
-      size += chunk.value.byteLength;
-      if (size > gainersWarmMaxBytes) {
+      if (chunk.done) return body.bytes ? body : null;
+      body.bytes += chunk.value.byteLength;
+      if (body.bytes > cap) {
         await reader.cancel();
         return null;
       }
-      content += decoder.decode(chunk.value, { stream: true });
+      body.chunks.push(chunk.value);
     }
   } finally {
     reader.releaseLock();
   }
 }
 
-export async function prefetchGainersReads(
+function saveHistoricalRead(
+  path: string,
+  proof: string,
+  body: HistoricalBody,
+  snapshotId: string,
+  heavy: boolean,
+) {
+  for (const [key, entry] of historicalWarmReads)
+    if (entry.expires <= performance.now()) historicalWarmReads.delete(key);
+  historicalWarmReads.delete(path);
+  historicalWarmReads.set(path, {
+    proof,
+    body,
+    snapshotId,
+    heavy,
+    expires: performance.now() + historicalWarmTtlMs,
+  });
+  const totalBytes = () =>
+    [...historicalWarmReads.values()].reduce(
+      (size, entry) => size + entry.body.bytes,
+      0,
+    );
+  while (
+    historicalWarmReads.size > historicalWarmMaxEntries ||
+    totalBytes() > historicalWarmMaxBytes
+  )
+    historicalWarmReads.delete(historicalWarmReads.keys().next().value!);
+}
+
+export async function prefetchHistoricalReads(
+  path: string,
   days: string[],
   snapshotId: string,
   signal: AbortSignal,
   canContinue: () => boolean,
 ) {
-  if (signal.aborted || !canContinue()) return;
-  const revision = gainersWarmRevision;
-  const proof = await gainersReadProof(signal);
-  if (!proof) return;
-  for (const day of days.slice(0, 2)) {
-    if (signal.aborted || revision !== gainersWarmRevision || !canContinue())
-      return;
-    const path = firstGainersReadPath(day);
-    const saved = gainersWarmReads.get(path);
-    if (saved?.proof === proof && saved.expires > performance.now()) continue;
-    const value = await readGainersWarmBody(path, signal);
-    if (signal.aborted || revision !== gainersWarmRevision || !canContinue())
-      return;
-    if (
-      value?.date !== day ||
-      value.snapshot_id !== snapshotId ||
-      !Array.isArray(value.items)
-    )
-      continue;
-    gainersWarmReads.set(path, {
-      proof,
-      value,
-      expires: performance.now() + gainersWarmTtlMs,
-    });
-    while (gainersWarmReads.size > 2)
-      gainersWarmReads.delete(gainersWarmReads.keys().next().value!);
+  const source = historicalTarget(path);
+  if (!source || historicalPrefetchRunning) return;
+  const plan = historicalPlans[source.kind];
+  const revision = historicalWarmRevision;
+  const stillValid = () =>
+    !signal.aborted && revision === historicalWarmRevision && canContinue();
+  const mayStart = () => stillValid() && !foregroundMarketReadPending();
+  if (!mayStart()) return;
+  historicalPrefetchRunning = true;
+  try {
+    for (const day of days.slice(0, plan.days)) {
+      if (!mayStart()) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day >= source.day) continue;
+      const target = { day, kind: source.kind };
+      const targetPath = historicalPath(target);
+      const proof = await historicalReadProof(target, signal);
+      if (!mayStart()) return;
+      if (!proof) continue;
+      const saved = historicalWarmReads.get(targetPath);
+      if (saved?.proof === proof && saved.expires > performance.now()) continue;
+      if (plan.days === 1)
+        for (const [key, entry] of historicalWarmReads)
+          if (entry.heavy) historicalWarmReads.delete(key);
+      const body = await readHistoricalWarmBody(targetPath, plan.bytes, signal);
+      if (!stillValid()) return;
+      if (body)
+        saveHistoricalRead(
+          targetPath,
+          proof,
+          body,
+          snapshotId,
+          plan.days === 1,
+        );
+    }
+  } finally {
+    historicalPrefetchRunning = false;
   }
 }
 
+function foregroundMarketReadPending() {
+  return [...pendingReads.keys()].some(
+    (path) =>
+      /^\/(?:market|instruments|sectors)\//.test(path) &&
+      !/\/(?:automation|dates)(?:\?|$)/.test(path),
+  );
+}
+
+export function historicalPrefetchBusy() {
+  return historicalPrefetchRunning || foregroundMarketReadPending();
+}
+
 async function readRetainedPage<T>(path: string, signal: AbortSignal) {
-  const saved = gainersWarmReads.get(path);
+  const saved = historicalWarmReads.get(path);
   if (saved) {
-    gainersWarmReads.delete(path);
-    if (saved.expires > performance.now()) {
-      const revision = gainersWarmRevision;
-      let proof: string | null = null;
+    const discard = () => {
+      if (historicalWarmReads.get(path) === saved)
+        historicalWarmReads.delete(path);
+    };
+    const target = historicalTarget(path);
+    if (target && saved.expires > performance.now()) {
+      const revision = historicalWarmRevision;
       try {
-        proof = await gainersReadProof(signal);
+        const proof = await historicalReadProof(target, signal);
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+        if (
+          historicalWarmReads.get(path) === saved &&
+          saved.expires > performance.now() &&
+          revision === historicalWarmRevision &&
+          proof === saved.proof
+        ) {
+          discard();
+          const decoder = new TextDecoder();
+          let text = "";
+          for (const chunk of saved.body.chunks)
+            text += decoder.decode(chunk, { stream: true });
+          const value = JSON.parse(text + decoder.decode());
+          if (validHistoricalBody(value, target, saved.snapshotId))
+            return decodeChartColumns(value) as T;
+        }
       } catch (cause: any) {
-        if (signal.aborted || cause?.incrementLocked) throw cause;
+        // An unmounted reader has not consumed this verified-date candidate.
+        if (signal.aborted) throw cause;
+        if (cause?.incrementLocked) {
+          discard();
+          throw cause;
+        }
       }
-      if (
-        !signal.aborted &&
-        revision === gainersWarmRevision &&
-        proof === saved.proof
-      )
-        return saved.value as T;
     }
+    discard();
   }
   return api<T>(path, { signal });
 }
@@ -475,7 +717,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     background.current = false;
     if (path) {
       pendingReads.delete(path);
-      gainersWarmReads.delete(path);
+      historicalWarmReads.delete(path);
     }
     setKey((x) => x + 1);
   }, [path]);
@@ -483,7 +725,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     controller.current?.abort();
     if (path) {
       pendingReads.delete(path);
-      gainersWarmReads.delete(path);
+      historicalWarmReads.delete(path);
     }
     background.current = true;
     setKey((x) => x + 1);

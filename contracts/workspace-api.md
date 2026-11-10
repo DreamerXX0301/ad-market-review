@@ -269,6 +269,8 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 活动摘要附带 `read_revisions`，包含北京时间 `today`、正式行情指纹 `market`、读取锁标记 `market_locked`、按日归档指纹 `dates` 和工作区指纹 `domains`。可用 `?date=YYYY-MM-DD` 加查一个指定日，与当前自然日和已发布业务日合并去重。日期项包含竞价、盘中、午评和消息的已保存版本。工作区项包含已保存任务结果和独立发布模块的版本。值为不透明指纹或 `null`，不替代业务查询、价格数据或任务回执。客户端首次建立基线，版本变化时仅使相关读取失效。盘后读取锁内保持原 API 约束，确认解锁后比较正式发布版本。
 
+历史预读和切日复用可传 `?date=YYYY-MM-DD&historical=true`。当指定日早于北京时间今天、没有盘后读取锁且没有活动任务时，`domains` 额外返回历史参考目录与清理状态指纹 `historical_reference`，以及竞价、盘中、午评的计划与归档控制指纹 `archive_controls`。盘中归档指纹也随已保存简报的模型补全而变化。历史参考目录或文件元数据超出核验预算、缺失时返回 `null`。预读响应只在选定日、相关归档与正式发布指纹均匹配时使用。常规轮询不查询额外历史指纹。
+
 
 已明确开启的自动竞价在原job暂时`failed`、同日自动日回执为`waiting_retry`且`automatic_control=true`时，仍计入活动任务与`active_count`，不同时出现在最近终态列表。其轻量摘要附`automatic,automatic_control,automation_state,retry_after_at_ms,attempts,max_attempts`，不展开原始响应或完整配置。前端据此持续显示原任务的全局进度门；最终结束、显式暂停/取消或自动授权停止才释放，读取活动摘要不会创建或重试任务。
 

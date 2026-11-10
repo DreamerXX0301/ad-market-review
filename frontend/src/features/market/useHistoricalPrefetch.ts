@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
-import { prefetchGainersReads, usePageActive } from "../../lib/api";
+import {
+  historicalPrefetchBusy,
+  prefetchHistoricalReads,
+  usePageActive,
+} from "../../lib/api";
 
 const quietMs = 1_800;
 const retryMs = 90_000;
@@ -13,7 +17,7 @@ const activity = [
   "change",
 ] as const;
 
-export function previousGainersDays(date: string, published?: string[]) {
+export function previousPublishedDays(date: string, published?: string[]) {
   if (!Array.isArray(published) || !published.includes(date)) return [];
   return [...new Set(published)]
     .filter(
@@ -49,22 +53,29 @@ function availableIdleInput() {
   );
 }
 
-export function useGainersPrefetch(
+export function useHistoricalPrefetch(
   ready: boolean,
+  path: string | null,
   date: string,
   snapshotId: unknown,
   published?: string[],
 ) {
   const active = usePageActive();
   const days = useMemo(
-    () => (ready ? previousGainersDays(date, published).join(",") : ""),
+    () => (ready ? previousPublishedDays(date, published).join(",") : ""),
     [ready, date, published],
   );
   const lastAttempt = useRef<{ key: string; expires: number } | null>(null);
   useEffect(() => {
-    if (!active || !days || typeof snapshotId !== "string" || !snapshotId)
+    if (
+      !active ||
+      !path ||
+      !days ||
+      typeof snapshotId !== "string" ||
+      !snapshotId
+    )
       return;
-    const key = `${snapshotId}:${date}:${days}`;
+    const key = `${snapshotId}:${path}:${days}`;
     if (
       lastAttempt.current?.key === key &&
       lastAttempt.current.expires > performance.now()
@@ -74,15 +85,21 @@ export function useGainersPrefetch(
     let timer: number | undefined;
     let idle: number | undefined;
     let work: AbortController | undefined;
+    let deferrals = 0;
     const cancelScheduled = () => {
       window.clearTimeout(timer);
       if (idle !== undefined) window.cancelIdleCallback(idle);
     };
     const run = () => {
       if (!availableIdleInput()) return;
+      if (historicalPrefetchBusy()) {
+        if (deferrals++ < 3) schedule();
+        return;
+      }
       work = new AbortController();
       lastAttempt.current = { key, expires: performance.now() + retryMs };
-      void prefetchGainersReads(
+      void prefetchHistoricalReads(
+        path,
         days.split(","),
         snapshotId,
         work.signal,
@@ -118,5 +135,5 @@ export function useGainersPrefetch(
         document.removeEventListener(event, schedule, true);
       document.removeEventListener("visibilitychange", schedule);
     };
-  }, [active, date, days, snapshotId]);
+  }, [active, path, days, snapshotId]);
 }

@@ -16,6 +16,7 @@ import {
   newsFilters,
   selectFeaturedNews,
 } from "./newsPresentation";
+import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 import "./NewsEvents.css";
 
 const eventStatuses = {
@@ -39,6 +40,7 @@ type Message = Source & {
 type Stage = {
   status:
     "pending" | "missing" | "expired" | "complete" | "partial" | "unavailable";
+  captured_at: string | null;
   items: Message[];
 };
 type NewsView = { date: string; retention_days: number; stages: Stage[] };
@@ -159,9 +161,13 @@ function NewsLabels({ category }: { category: TimelineEntry["category"] }) {
 
 export default function NewsEvents({
   date,
+  latestDate,
+  prefetchDates,
   onStock,
 }: {
   date: string;
+  latestDate?: string;
+  prefetchDates?: string[];
   onStock?: (id: string) => void;
 }) {
   const [tab, setTab] = useState<"news" | "calendar">("news");
@@ -171,7 +177,23 @@ export default function NewsEvents({
   const [selectedMessageKey, setSelectedMessageKey] = useState<string>();
   const [days, setDays] = useState<7 | 30>(30);
   const [eventId, setEventId] = useState<string>();
-  const news = useApi<NewsView>(`/market/news-events?date=${date}`);
+  const newsPath = `/market/news-events?date=${date}`;
+  const news = useApi<NewsView>(newsPath);
+  useHistoricalPrefetch(
+    tab === "news" &&
+      date === latestDate &&
+      !news.loading &&
+      !news.error &&
+      news.data?.date === date &&
+      news.data.stages.some(
+        ({ status, captured_at }) =>
+          (status === "complete" || status === "partial") && !!captured_at,
+      ),
+    newsPath,
+    date,
+    news.data?.date,
+    prefetchDates,
+  );
   const calendar = useApi<CalendarView>(
     tab === "calendar"
       ? `/market/news-events/calendar?date=${date}&days=${days}`

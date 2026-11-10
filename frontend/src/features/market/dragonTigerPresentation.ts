@@ -7,6 +7,13 @@ export type DragonTigerSort = {
   key: DragonTigerSortKey;
   order: "asc" | "desc";
 };
+export type DragonTigerSearchMatch = {
+  instrument_id: string;
+  range_days: DragonTigerPeriod;
+  label_name: string | null;
+  stock_match: { match_label: string; is_suggestion: boolean } | null;
+  seat_matches: { side: "buy" | "sell"; name: string; record_id: string }[];
+};
 type SourceRow = Record<string, any>;
 export type DragonTigerRow = SourceRow & {
   key: string;
@@ -22,6 +29,7 @@ export type DragonTigerRow = SourceRow & {
   sell_value: number | null;
   org_net_value: number | null;
   label_net_value: number | null;
+  search_match?: DragonTigerSearchMatch;
 };
 const records = (value: unknown): SourceRow[] =>
   Array.isArray(value)
@@ -146,27 +154,23 @@ export function dragonTigerRows(
 export function filterDragonTigerRows(
   rows: DragonTigerRow[],
   period: DragonTigerPeriod,
-  query: string,
   label: string | null,
+  matches?: DragonTigerSearchMatch[],
 ) {
-  const needle = query.trim().toLocaleLowerCase();
-  return rows.filter(
+  const scoped = rows.filter(
     (row) =>
       row.instrument_id &&
       row.range_days === period &&
-      (!label || row.label_name === label) &&
-      (!needle ||
-        [
-          row.name,
-          row.code,
-          row.label_name,
-          ...row.source_concepts.map((item) => item.name),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase()
-          .includes(needle)),
+      (!label || row.label_name === label),
   );
+  if (!matches) return scoped;
+  const key = (row: DragonTigerRow | DragonTigerSearchMatch) =>
+    JSON.stringify([row.instrument_id, row.range_days, row.label_name]);
+  const byRow = new Map(matches.map((match) => [key(match), match]));
+  return scoped.flatMap((row) => {
+    const search_match = byRow.get(key(row));
+    return search_match ? [{ ...row, search_match }] : [];
+  });
 }
 
 export function dragonTigerNetField(board: DragonTigerBoard) {

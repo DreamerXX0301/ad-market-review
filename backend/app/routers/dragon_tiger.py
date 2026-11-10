@@ -16,6 +16,11 @@ def day_view(date:str|None=None):
 def create(payload:dict=Body(...)):
     return json_clean(dragon_tiger.create_job(payload))
 
+@router.get('/search')
+def search(query:str=Query(...,min_length=1,max_length=100),date:str|None=None,
+           archive_sha256:str|None=Query(None,pattern=r'^[0-9a-f]{64}$')):
+    return JSONResponse(json_clean(dragon_tiger.search_day(query,date,archive_sha256)))
+
 @router.get('/{instrument_id}')
 def seats(instrument_id:str,date:str|None=None,range_days:int=Query(1,ge=1,le=3)):
     if range_days not in (1,3):

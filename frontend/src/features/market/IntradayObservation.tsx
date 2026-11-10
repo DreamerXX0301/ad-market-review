@@ -39,6 +39,7 @@ import type { MarketSort } from "./marketPresentation";
 import IntradayAutomation from "./IntradayAutomation";
 import AuctionHeightReference from "./AuctionHeightReference";
 import { isStructuralLadderTopic } from "./ladderBoardPresentation";
+import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 import "./IntradayObservation.css";
 
 const activeStatus = (value: unknown) =>
@@ -3311,22 +3312,41 @@ function partialSnapshotNote(snapshot?: Row) {
 
 export default function IntradayObservation({
   date,
+  latestDate,
+  prefetchDates,
   today,
   dateFixed,
   onResetDate,
   onStock,
 }: {
   date: string;
+  latestDate?: string;
+  prefetchDates?: string[];
   today: string;
   dateFixed: boolean;
   onResetDate: () => void;
   onStock?: OpenStock;
 }) {
   const active = usePageActive();
-  const result = useApi<Row>(
-    date ? `/market/intraday?date=${encodeURIComponent(date)}` : null,
-  );
+  const path = date
+    ? `/market/intraday?date=${encodeURIComponent(date)}`
+    : null;
+  const result = useApi<Row>(path);
   const view = result.data?.date === date ? result.data : null;
+  const lastCapture = view?.snapshots?.at(-1);
+  useHistoricalPrefetch(
+    date === latestDate &&
+      !result.loading &&
+      !result.error &&
+      view?.state === "available" &&
+      !view.current_slot &&
+      !["queued", "running", "paused"].includes(view.latest_job?.status) &&
+      (lastCapture?.date ?? lastCapture?.trade_date) === date,
+    path,
+    date,
+    lastCapture?.id,
+    prefetchDates,
+  );
   const anchors: Row[] = view?.anchors || [];
   const slots = useMemo(() => (view ? timelineSlots(view) : []), [view]);
   const samples = useMemo(

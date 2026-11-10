@@ -3,7 +3,7 @@ import AbnormalMonitor from "./AbnormalMonitor";
 import { useEffect, useState } from "react";
 import { ChevronRight, RefreshCw, Search } from "lucide-react";
 import { firstGainersReadPath, list, useApi, usePageActive } from "../../lib/api";
-import { useGainersPrefetch } from "./useGainersPrefetch";
+import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 import IntradayPageNavigation from "./IntradayPageNavigation";
 import { intradayReadingProps } from "./intradayReadingNavigation";
 import type { Row } from "../../lib/api";
@@ -267,12 +267,16 @@ export function MarketOverview({
 }) {
   const pageActive = usePageActive();
   const [selected, setSelected] = useState("000001.SH");
-  const result = useApi<Row>(
-    date
-      ? `/market/${indicesOnly ? "indices" : "overview"}?date=${date}`
-      : null,
-  );
+  const path = date ? `/market/${indicesOnly ? "indices" : "overview"}?date=${date}` : null;
+  const result = useApi<Row>(path);
   const data = result.data;
+  useHistoricalPrefetch(
+    !result.loading && !result.error && date === bootstrap?.data_date && data?.date === date,
+    path,
+    date,
+    data?.snapshot_id,
+    bootstrap?.market_dates,
+  );
   const indices =
     data?.indices ||
     (date === bootstrap?.data_date ? bootstrap?.indices || [] : []);
@@ -791,21 +795,21 @@ export function MarketPage({
     !gainerUnranked &&
     !gainerQuery &&
     !columnSort;
-  const result = useApi<Row>(
-    date && firstGainersPage
+  const path = date && firstGainersPage
       ? firstGainersReadPath(date)
       : date && route !== "abnormal"
       ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
-      : null,
-  );
+      : null;
+  const result = useApi<Row>(path);
   const data = result.data;
-  useGainersPrefetch(
-    firstGainersPage &&
+  useHistoricalPrefetch(
+    (firstGainersPage || ["emotion", "ladder", "sectors"].includes(route)) &&
       !filter &&
       date === latestDate &&
       !result.loading &&
       !result.error &&
       data?.date === date,
+    path,
     date,
     data?.snapshot_id,
     prefetchDates,
@@ -969,7 +973,14 @@ export function MarketPage({
     )
     .slice(0, 6);
   if (route === "abnormal")
-    return <AbnormalMonitor date={date} onStock={onStock} />;
+    return (
+      <AbnormalMonitor
+        date={date}
+        latestDate={latestDate}
+        prefetchDates={prefetchDates}
+        onStock={onStock}
+      />
+    );
   if (route === "ladder")
     return (
       <LimitLadder
