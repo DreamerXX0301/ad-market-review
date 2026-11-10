@@ -335,10 +335,25 @@ def test_standard_backup_restore_preserves_tombstones_and_old_evidence(creation_
     monkeypatch.syspath_prepend(str(Path(__file__).parents[2]/'scripts'))
     from backup import perform_backup
     from restore import perform_restore
+    from app.services.market_node_topics import manual_topic, save_override
+
+    def table_contents(connection):
+        contents = {}
+        for table, without_rowid in connection.execute(
+            "SELECT name,wr FROM pragma_table_list WHERE schema='main' AND type='table' AND name<>'sqlite_schema' ORDER BY name"
+        ):
+            order = 'rowid'
+            if without_rowid:
+                keys = connection.execute('SELECT name FROM pragma_table_info(?) WHERE pk>0 ORDER BY pk', (table,))
+                order = ','.join(f'"{name}"' for name, in keys)
+            contents[table] = [tuple(row) for row in connection.execute(f'SELECT * FROM "{table}" ORDER BY {order}')]
+        return contents
+
     store_, payload = creation_context
     created = store_.create_backtest(payload)
     task_service.change_task(created['job_id'], 'cancel')
     deletion.delete_strategy(payload['strategy_id'])
+    save_override('2025-08-11', '600036.SH', manual_topic('备份恢复样本'), expected_revision=None)
     with core.connect() as connection:
         # Exercise revocation for both a verified enabled provider and an
         # already-disabled provider, without any credential or network call.
@@ -348,8 +363,8 @@ def test_standard_backup_restore_preserves_tombstones_and_old_evidence(creation_
             connection.execute('UPDATE ai_provider_config SET enabled=?,config_revision=?,credential_revision=3,'
                                'verification_json=?,models_json=?,updated_at_ms=123 WHERE provider_id=?',
                                (enabled,revision,json.dumps(verification),json.dumps(['fixture-discovered-model']),provider))
-        tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-        evidence = {table: [tuple(row) for row in connection.execute('SELECT * FROM '+table+' ORDER BY rowid')] for table in tables}
+        evidence = table_contents(connection)
+        assert len(evidence['market_node_topic_override']) == 1
         triggers = [tuple(row) for row in connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name")]
     bundle = tmp_path.parent/(tmp_path.name+'-backup')
     target = tmp_path.parent/(tmp_path.name+'-restored')
@@ -390,7 +405,7 @@ def test_standard_backup_restore_preserves_tombstones_and_old_evidence(creation_
         # Only the explicitly checked permission/version/time fields above
         # change; all tables (including AI history), tombstones and triggers
         # still participate in the original full restoration comparison.
-        assert {table: connection.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall() for table in tables} == evidence
+        assert table_contents(connection) == evidence
         assert connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall() == triggers
         assert connection.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
