@@ -183,7 +183,6 @@ export default function AuctionReview({
   const closeReview =
     closeResult.data?.date === selected ? closeResult.data : null;
   useAuctionCloseRefresh({
-    active,
     open: closeOpen,
     hasSnapshot: !!payload,
     reload: closeResult.reload,

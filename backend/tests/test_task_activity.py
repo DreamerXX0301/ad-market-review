@@ -65,6 +65,114 @@ def test_active_task_not_hidden_by_newer_terminal_history(isolated):
     assert result['active_count'] == 1 and len(result['items']) == 6
 
 
+def test_activity_revisions_follow_saved_snapshots_for_exact_days(isolated):
+    app = FastAPI(); app.include_router(router)
+    client = TestClient(app)
+    today, historical = '2026-10-20', '2026-10-16'
+    path = '/api/v1/tasks/activity?date=' + historical
+    assert client.get('/api/v1/tasks/activity?date=2026-02-30').status_code == 422
+
+    initial = client.get(path).json()['read_revisions']
+    assert initial['today'] == today
+    assert set(initial['dates']) == {today, historical}
+    assert initial['dates'][historical] == dict(auction=None, intraday=None, noon=None, news=None)
+
+    stamp = core.now_ms()
+    for slot in ('0935', '0945'):
+        task = tasks.create_task('source_check', {'operation': 'intraday_snapshot', 'slot': slot}, historical)
+        job_id = task['job_id']
+        with core.connect() as connection:
+            connection.execute('INSERT INTO market_intraday_capture(trade_date,slot,job_id) VALUES(?,?,?)',
+                               (historical, slot, job_id))
+        assert client.get(path).json()['read_revisions']['dates'] == initial['dates']
+        with core.connect() as connection:
+            connection.execute('''UPDATE market_intraday_capture SET snapshot_id=?,payload_json=?,content_sha256=?
+                WHERE job_id=?''', (f'archive-{slot}', '{}', core.digest(slot), job_id))
+        stored = client.get(path).json()['read_revisions']
+        assert stored['dates'][historical]['intraday'] != initial['dates'][historical]['intraday']
+        assert stored['dates'][today] == initial['dates'][today]
+        tasks.finish(job_id, 'partial')
+        assert client.get(path).json()['read_revisions']['dates'] == stored['dates']
+        initial = stored
+
+    job_id = 'fixture-auction'
+    with core.connect() as connection:
+        params = {'operation': 'auction_snapshot'}
+        connection.execute('''INSERT INTO job(job_id,request_key,logical_key,kind,target_date,
+            parameters_json,parameters_hash,status,created_at_ms) VALUES(?,?,?,'source_check',?,?,?,'queued',?)''',
+            (job_id, job_id, job_id, historical, core.dumps(params), core.digest(params), stamp))
+        connection.execute('INSERT INTO market_auction_capture VALUES(?,?,?,?)', (historical, job_id, job_id, stamp))
+        stamp_text = historical + 'T09:25:30+08:00'
+        payload = core.dumps({'date': historical, 'version': 'auction-snapshot-v1'})
+        connection.execute('INSERT INTO market_auction_snapshot VALUES(?,?,?,?,?,?,?,?,?)',
+                           ('auction-proof', historical, job_id, stamp_text, stamp_text, stamp,
+                            'partial', core.digest(payload), payload))
+    auction_only = client.get(path).json()['read_revisions']['dates'][historical]
+    assert auction_only['auction'] is not None
+    noon = tasks.create_task('source_check', {'operation': 'noon_snapshot'}, historical)
+    with core.connect() as connection:
+        payload = core.dumps({'date': historical, 'version': 'auction-discovery-v1', 'state': 'partial'})
+        connection.execute('INSERT INTO market_auction_discovery VALUES(?,?,?,?,?,?)',
+                           (historical, job_id, 'auction-proof', stamp, core.digest(payload), payload))
+        connection.execute('INSERT INTO market_news_snapshot VALUES(?,?,?,?,?,?,?,?,?)',
+                           (historical, 'auction', 'partial', stamp_text, None, stamp_text, None, '[]', core.digest([])))
+        noon_id = noon['job_id']
+        connection.execute('INSERT INTO market_noon_capture VALUES(?,?,?,?)', (historical, noon_id, noon_id, stamp))
+        payload = core.dumps({'date': historical, 'version': 'noon-snapshot-v1'})
+        stamp_text = historical + 'T12:05:00+08:00'
+        connection.execute('INSERT INTO market_noon_snapshot VALUES(?,?,?,?,?,?,?,?,?,?)',
+                           ('noon-proof', historical, noon_id, stamp_text, stamp_text, stamp,
+                            'complete', core.digest(payload), payload, '[]'))
+    final = client.get(path).json()['read_revisions']['dates'][historical]
+    assert final['auction'] != auction_only['auction']
+    assert final['news'] is not None
+    assert final['noon'] is not None
+    assert final['intraday'] == auction_only['intraday']
+
+
+def test_activity_revision_survives_terminal_window_and_separates_publication_heads(isolated):
+    from app.services.sync_progress import LOCK_VERSION
+
+    initial = tasks.task_activity()['read_revisions']
+    tracked = tasks.create_task('tracking_review', {})
+    tasks.finish(tracked['job_id'])
+    complete = tasks.task_activity()['read_revisions']
+    assert complete['domains']['tracking'] != initial['domains']['tracking']
+    for index in range(6):
+        job = tasks.create_task('research', {'index': index})
+        tasks.finish(job['job_id'])
+    activity = tasks.task_activity()
+    assert tracked['job_id'] not in {item['job_id'] for item in activity['items']}
+    assert activity['read_revisions']['domains']['tracking'] == complete['domains']['tracking']
+
+    for dirname, identifier, value in (('market-supplement', 'snapshot_id', 'market-test'),
+                                       ('dragon-tiger', 'record_ref', 'artifacts/test.json')):
+        head = core.published_dir() / dirname / 'head.json'
+        head.parent.mkdir(parents=True)
+        head.write_text(core.dumps({identifier: value, 'sha256': '1' * 64}))
+    receipts = tasks.task_activity()['read_revisions']
+    assert receipts['market'] == complete['market']
+    assert receipts['domains']['supplement'] and receipts['domains']['dragon_tiger']
+
+    publishing = tasks.create_task('initialise', {})
+    close_day = '2026-10-19'
+    fixture = core.published_dir() / 'calendar-fixture.json'
+    core.atomic_json(fixture, [close_day])
+    artifact = {'object_key': fixture.name, 'sha256': core.hash_file(fixture),
+                'byte_count': fixture.stat().st_size, 'row_count': 1}
+    calendar = core.publish_snapshot(module='calendar', job_id=publishing['job_id'],
+                                     start=close_day, end=close_day, artifacts=[artifact])
+    with core.connect() as connection:
+        connection.execute('INSERT INTO business_clock VALUES(1,?,?,?)', (close_day, calendar, core.now_ms()))
+    published = tasks.task_activity()['read_revisions']
+    assert published['market'] != receipts['market']
+    assert close_day in published['dates']
+
+    tasks.create_task('increment', {'increment_session_version': LOCK_VERSION})
+    locked = tasks.task_activity()['read_revisions']
+    assert locked == {'today': '2026-10-20', 'market': None, 'market_locked': True, 'dates': {}, 'domains': {}}
+
+
 def test_stock_conflict_names_actual_running_strategy_and_progress(ws):
     _, client = ws
     strategy = make_strategy(client)

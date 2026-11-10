@@ -22,6 +22,109 @@ type PendingRead = {
   settled: boolean;
 };
 const pendingReads = new Map<string, PendingRead>();
+const retainedReadRecheckMs = 60_000;
+
+export type ReadChange = {
+  scope: string;
+  date?: string;
+};
+
+const readChangeEvent = "workbench-read-changed";
+const revisionScopes = new Set<string>();
+const scopePaths: Record<string, RegExp> = {
+  market:
+    /^\/(?:bootstrap|market|instruments|watchlist|tracking|sector-tracking|strategies|sector-strategies|topics|topic-members|topic-hotspots|hot-universe|zodiac|data\/status)/,
+  auction: /^\/market\/(?:auction(?:[/?-]|$)|intraday\/auction-reference)/,
+  intraday: /^\/market\/intraday(?:[/?]|$)/,
+  noon: /^\/market\/(?:noon(?:[/?-]|$)|intraday(?:[/?]|$))/,
+  news: /^\/market\/news-events(?:[/?-]|$)/,
+  calendar: /^\/market\/(?:noon|auction)\/dates(?:\?|$)/,
+  supplement:
+    /^\/(?:bootstrap|data\/status|market\/(?:overview|emotion|broken-boards|ladder|sectors|gainers|intraday|noon))(?:[/?-]|$)/,
+  dragon_tiger: /^\/market\/dragon-tiger(?:[/?-]|$)/,
+  sector_charts:
+    /^\/(?:market\/(?:sector-chart|sectors)|data\/status)(?:[/?]|$)/,
+  news_calendar: /^\/market\/news-events\/calendar(?:\?|$)/,
+  strategy:
+    /^\/(?:strateg(?:ies|y-runs|y-batches)|sector-strateg(?:ies|y-runs))(?:[/?]|$)/,
+  tracking:
+    /^\/(?:tracking(?:-rounds|-events)?|sector-tracking(?:-rounds|-events)?|strategies|sector-strategies)(?:[/?]|$)/,
+  research: /^\/research\/jobs(?:[/?]|$)/,
+  backtest: /^\/backtests(?:[/?]|$)/,
+  tasks: /^\/tasks(?:[/?]|$)/,
+  topics:
+    /^\/(?:topics|topic-members|stock-topic-memberships|topic-hotspots|hot-universe|watchlist|tracking|sector-tracking|market\/(?:overview|sectors|ladder|gainers))(?:[/?-]|$)/,
+  sources: /^\/(?:sources|data\/status)(?:[/?]|$)/,
+  zodiac: /^\/zodiac(?:[/?-]|$)/,
+};
+
+function matchesReadChange(path: string, { scope, date }: ReadChange) {
+  if (!scopePaths[scope]?.test(path)) return false;
+  const query = new URLSearchParams(path.split("?")[1]);
+  const readDate = query.get("date") || query.get("as_of");
+  return !date || !readDate || readDate === date;
+}
+
+export function observeReadScopes(scopes: string[]) {
+  scopes.forEach((scope) => revisionScopes.add(scope));
+}
+
+function hasReadRevision(scope: string) {
+  return revisionScopes.has(scope);
+}
+
+export function notifyReadChanges(changes: ReadChange[]) {
+  if (!changes.length) return;
+  for (const path of pendingReads.keys())
+    if (changes.some((change) => matchesReadChange(path, change)))
+      pendingReads.delete(path);
+  if (typeof window !== "undefined")
+    window.dispatchEvent(new CustomEvent(readChangeEvent, { detail: changes }));
+}
+
+export function subscribeReadChanges(
+  listener: (changes: ReadChange[]) => void,
+) {
+  const receive = (event: Event) => listener((event as CustomEvent).detail);
+  window.addEventListener(readChangeEvent, receive);
+  return () => window.removeEventListener(readChangeEvent, receive);
+}
+
+function revisionCoversPath(path: string) {
+  return (
+    hasReadRevision("market") &&
+    /^\/market\/(?:overview|indices|emotion|broken-boards|sectors|ladder|gainers|abnormal|dragon-tiger|auction|intraday|noon|news-events)(?:\?|$)/.test(
+      path,
+    )
+  );
+}
+
+function savedMutationScope(path: string, method: string | undefined) {
+  if (!method || method === "GET") return;
+  const endpoint = path.split("?")[0];
+  if (
+    /^\/(?:sector-)?strategies(?:\/[^/]+(?:\/restore)?|\/bootstrap)?$/.test(
+      endpoint,
+    )
+  )
+    return "strategy";
+  if (
+    /^\/(?:sector-)?tracking-rounds(?:\/[^/]+\/(?:policy|remove))?$/.test(
+      endpoint,
+    )
+  )
+    return "tracking";
+  if (/^\/backtests\/[^/]+(?:\/restore)?$/.test(endpoint)) return "backtest";
+  if (/^\/sources\/[^/]+\/(?:configure|verify)$/.test(endpoint))
+    return "sources";
+  if (
+    /^\/zodiac-(?:pools\/\d+\/members|pool-members\/[^/]+(?:\/end)?)$/.test(
+      endpoint,
+    )
+  )
+    return "zodiac";
+}
+
 export function decodeChartColumns(value: any): any {
   if (
     !value ||
@@ -111,7 +214,9 @@ function responseText(
   const method = (options.method || "GET").toUpperCase();
   if (method !== "GET") {
     pendingReads.clear();
-    return readResponse(path, options).finally(() => pendingReads.clear());
+    return readResponse(path, options).finally(() => {
+      pendingReads.clear();
+    });
   }
   if (
     Object.keys(options).some((key) => key !== "signal") ||
@@ -206,6 +311,8 @@ export async function api<T = any>(
       { status: response.status, incrementLocked: !!d?.increment_session },
     );
   }
+  const scope = savedMutationScope(path, options.method?.toUpperCase());
+  if (scope) notifyReadChanges([{ scope }]);
   return data;
 }
 export const post = <T = any>(path: string, data: unknown = {}) =>
@@ -215,6 +322,7 @@ export const patch = <T = any>(path: string, data: unknown) =>
 export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
   const pageActivity = useContext(ApiPageActivity);
   const active = pageActivity !== false;
+  const reuseOnReturn = pageActivity !== null;
   const [data, setData] = useState<T | null>(null),
     [loading, setLoading] = useState(false),
     [error, setError] = useState(""),
@@ -223,8 +331,24 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
   const previousPath = useRef<string | null>(null);
   const resolvedPath = useRef<string | null>(null);
   const incrementBlocked = useRef(false);
+  const lastRead = useRef<{
+    path: string;
+    key: number;
+    deps: unknown[];
+    completedAt: number;
+  } | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  const background = useRef(false);
   const reload = useCallback(() => {
+    controller.current?.abort();
+    background.current = false;
     if (path) pendingReads.delete(path);
+    setKey((x) => x + 1);
+  }, [path]);
+  const invalidate = useCallback(() => {
+    controller.current?.abort();
+    if (path) pendingReads.delete(path);
+    background.current = true;
     setKey((x) => x + 1);
   }, [path]);
   useEffect(() => {
@@ -233,14 +357,32 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
       return;
     }
     if (!path) {
+      lastRead.current = null;
       setData(null);
       setLoading(false);
       setError("");
       setErrorStatus(undefined);
       return;
     }
+    const previous = lastRead.current;
+    const sameRead =
+      reuseOnReturn &&
+      previous?.path === path &&
+      previous.key === key &&
+      previous.deps.length === deps.length &&
+      previous.deps.every((value, index) => Object.is(value, deps[index]));
+    if (
+      sameRead &&
+      (revisionCoversPath(path) ||
+        performance.now() - previous.completedAt < retainedReadRecheckMs)
+    )
+      return;
     const abort = new AbortController();
-    setLoading(true);
+    controller.current = abort;
+    setLoading(
+      !(sameRead || (background.current && resolvedPath.current === path)),
+    );
+    background.current = false;
     setError("");
     setErrorStatus(undefined);
     if (previousPath.current !== path) setData(null);
@@ -250,11 +392,16 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
         if (!abort.signal.aborted) {
           incrementBlocked.current = false;
           resolvedPath.current = path;
+          lastRead.current =
+            value != null
+              ? { path, key, deps: [...deps], completedAt: performance.now() }
+              : null;
           setData(value);
         }
       })
       .catch((e) => {
         if (!abort.signal.aborted && e.name !== "AbortError") {
+          lastRead.current = null;
           if (e.incrementLocked) incrementBlocked.current = true;
           setError(e.message);
           setErrorStatus(e.status);
@@ -264,7 +411,7 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
         if (!abort.signal.aborted) setLoading(false);
       });
     return () => abort.abort();
-  }, [path, key, active, ...deps]);
+  }, [path, key, active, reuseOnReturn, ...deps]);
   useEffect(() => {
     const prefixes: Record<string, string[]> = {
       topics: ["/topics", "/topic-members", "/bootstrap"],
@@ -283,40 +430,22 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
       research: ["/research"],
     };
     const onRoute = (event: Event) => {
-      if (!active) return;
-      // Activation already starts a fresh read. Keep route notifications for
-      // task completion/unlock, without aborting and restarting that read.
-      if (
-        pageActivity !== null &&
-        (event as Event & { navigation?: boolean }).navigation
-      )
-        return;
+      if ((event as Event & { navigation?: boolean }).navigation) return;
       const route = (event as CustomEvent).detail;
       if (path && prefixes[route]?.some((prefix) => path.startsWith(prefix)))
-        reload();
+        invalidate();
     };
     window.addEventListener("workbench-route", onRoute);
     const onTopicsChanged = () => {
-      if (
-        active &&
-        path &&
-        [
-          "/topics",
-          "/topic-members",
-          "/stock-topic-memberships",
-          "/topic-hotspots",
-          "/bootstrap",
-          "/watchlist",
-          "/tracking",
-        ].some((prefix) => path.startsWith(prefix))
-      )
-        reload();
+      if (path && matchesReadChange(path, { scope: "topics" })) invalidate();
     };
+    const stopReadChanges = subscribeReadChanges((changes) => {
+      if (path && changes.some((change) => matchesReadChange(path, change)))
+        invalidate();
+    });
     const onIncrementUnlocked = () => {
-      if (incrementBlocked.current) {
-        incrementBlocked.current = false;
-        if (active) reload();
-      }
+      if (incrementBlocked.current) invalidate();
+      incrementBlocked.current = false;
     };
     window.addEventListener(
       "workbench-increment-unlocked",
@@ -325,13 +454,14 @@ export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
     window.addEventListener("workbench-topics-changed", onTopicsChanged);
     return () => {
       window.removeEventListener("workbench-route", onRoute);
+      stopReadChanges();
       window.removeEventListener("workbench-topics-changed", onTopicsChanged);
       window.removeEventListener(
         "workbench-increment-unlocked",
         onIncrementUnlocked,
       );
     };
-  }, [path, reload, active, pageActivity]);
+  }, [path, invalidate]);
   // A changed URL must never render the old date/security response for even one frame.
   return {
     data: resolvedPath.current === path ? data : null,

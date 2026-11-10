@@ -25,6 +25,7 @@ export default function useSavedStrategyRun(
     context: string;
     id: string;
     nonce: number;
+    pinned?: boolean;
   } | null>(null);
   const [verified, setVerified] = useState<{
     context: string;
@@ -61,6 +62,7 @@ export default function useSavedStrategyRun(
     setManual((old) => ({
       context: current.current.context,
       id,
+      pinned: true,
       nonce: (old?.nonce || 0) + 1,
     }));
   }, []);
@@ -147,6 +149,16 @@ export default function useSavedStrategyRun(
           scope,
           latest: value.latest_run?.run_id,
         });
+        // A locally submitted result follows the latest saved run. A run
+        // explicitly picked from history stays selected across other runs.
+        setManual((old) =>
+          old?.context === context &&
+          !old.pinned &&
+          value.latest_run?.run_id &&
+          old.id !== value.latest_run.run_id
+            ? null
+            : old,
+        );
         if (!value.latest_run?.run_id && !chosenManual) {
           setStored(null);
           setRestoring(false);

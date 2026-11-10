@@ -150,7 +150,8 @@ export function createBatchFeed({
   let active = false,
     controller: AbortController | null = null,
     timer: any = null,
-    refreshAgain = false;
+    refreshAgain = false,
+    needsRead = true;
   const completed = new Map<string, number>();
   function stopTimer() {
     if (timer !== null) cancel(timer);
@@ -158,7 +159,10 @@ export function createBatchFeed({
   }
   async function refresh() {
     stopTimer();
-    if (!active) return;
+    if (!active) {
+      needsRead = true;
+      return;
+    }
     if (controller) {
       refreshAgain = true;
       return;
@@ -172,6 +176,7 @@ export function createBatchFeed({
       onData(batches);
       onError("");
       keepPolling = batchPolling(batches);
+      needsRead = keepPolling;
       let changed = false;
       for (const batch of batches) {
         const count = Number.isInteger(batch.completed_count)
@@ -187,6 +192,7 @@ export function createBatchFeed({
     } catch (error: any) {
       if (active && !request.signal.aborted) {
         onError(error.message);
+        needsRead = true;
         keepPolling = true;
       }
     } finally {
@@ -206,9 +212,10 @@ export function createBatchFeed({
       active = next;
       stopTimer();
       if (!next) {
+        needsRead ||= !!controller;
         refreshAgain = false;
         controller?.abort();
-      } else void refresh();
+      } else if (needsRead) void refresh();
     },
     dispose() {
       active = false;

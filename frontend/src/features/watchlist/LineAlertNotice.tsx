@@ -18,29 +18,15 @@ export default function LineAlertNotice({
   onNavigate: (route: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [visible, setVisible] = useState(
-    () => typeof document === "undefined" || !document.hidden,
-  );
   const root = useRef<HTMLDivElement>(null);
-  const result = useApi<Row>(
-    visible ? "/watchlist/line-alerts/summary" : null,
-    [businessDate],
-  );
+  const result = useApi<Row>("/watchlist/line-alerts/summary", [businessDate]);
   useEffect(() => {
-    const refresh = () => {
-      if (!document.hidden) result.reload();
-    };
-    const visibility = () => {
-      setVisible(!document.hidden);
-      if (!document.hidden) refresh();
-    };
+    const refresh = () => result.reload();
     window.addEventListener(LINE_ALERT_CHECK_FINISHED, refresh);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("chart-annotations-changed", refresh);
     return () => {
       window.removeEventListener(LINE_ALERT_CHECK_FINISHED, refresh);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("chart-annotations-changed", refresh);
     };
   }, [result.reload]);
   useEffect(() => {

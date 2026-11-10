@@ -54,7 +54,7 @@ const react = encode(
   "export const useEffect=(fn)=>fn();export const useSyncExternalStore=(subscribe,get)=>{globalThis.__memberSubscriptions.push(subscribe);return get();};",
 );
 const api = encode(
-  "export const api=globalThis.__memberGet;export const post=()=>{throw Error('no mutations in store integration')};",
+  "export const api=globalThis.__memberGet;export const post=()=>{throw Error('no mutations in store integration')};export function observeReadScopes(){};export function notifyReadChanges(){};",
 );
 const events = encode(await compiled("../../lib/workbenchEvents.ts"));
 const presentation = encode(

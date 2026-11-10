@@ -398,10 +398,8 @@ function linkedTaskId() {
 }
 
 export default function DataCenter({
-  onPublished,
   initialTaskId,
 }: {
-  onPublished?: () => void;
   initialTaskId?: string;
 }) {
   const result = useApi<Row>("/data/status"),
@@ -521,7 +519,6 @@ export default function DataCenter({
     );
     if (publishedElsewhere) {
       result.reload();
-      onPublished?.();
     }
   }, [history.data]);
   useEffect(() => {
@@ -533,7 +530,6 @@ export default function DataCenter({
     ) {
       result.reload();
       history.reload();
-      onPublished?.();
     }
   }, [task.data?.status, selectedId]);
   async function start(mode: string) {

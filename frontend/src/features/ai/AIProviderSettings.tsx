@@ -20,6 +20,7 @@ import {
 } from "../../components/UI";
 import { aiWrite, useAITask } from "./aiApi";
 import { publishAIChange, subscribeAIChanges } from "./aiTabSync";
+import type { AIChange } from "./aiTabSync";
 import {
   aiReason,
   plainText,
@@ -325,20 +326,19 @@ export default function AIProviderSettings() {
       setError(aiReason(task.data.reason_code));
   }, [taskId, task.data, providers.reload]);
   const active = usePageActive();
-  useEffect(() => {
-    if (!active) return;
-    return subscribeAIChanges(
-      (change) => {
-        if (change.scope === "providers") providers.reload();
-        if (change.scope === "task" && change.id === taskId) task.reload();
-      },
-      () => {
-        providers.reload();
-        if (taskId) task.reload();
-      },
-      providers.reload,
-    );
-  }, [active, taskId, providers.reload, task.reload]);
+  const onTabChange = useRef<(change: AIChange) => void>(null!);
+  onTabChange.current = (change) => {
+    if (
+      change.scope === "providers" ||
+      (change.scope === "session" && change.usageChanged)
+    )
+      providers.reload();
+    if (change.scope === "task" && change.id === taskId) task.reload();
+  };
+  useEffect(
+    () => subscribeAIChanges((change) => onTabChange.current(change)),
+    [],
+  );
   useEffect(() => {
     if (!active) {
       setEditing(null);

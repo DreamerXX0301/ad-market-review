@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
-import { api } from "../lib/api";
-import type { Row } from "../lib/api";
+import { api, notifyReadChanges, observeReadScopes } from "../lib/api";
+import type { ReadChange, Row } from "../lib/api";
 import {
   LINE_ALERT_CHECK_FINISHED,
   MARKET_INCREMENT_FINISHED,
@@ -29,6 +29,48 @@ const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let controller: AbortController | null = null;
 let refreshAgain = false;
+let reviewDate = "";
+const revisions = new Map<string, string | null>();
+const dateRevisions = new Map<string, Record<string, string | null>>();
+
+function updateReadRevisions(data: Row) {
+  const current = data.read_revisions;
+  if (!current || typeof current !== "object" || current.market_locked) return;
+  const changes: ReadChange[] = [];
+  for (const [scope, value] of Object.entries({
+    ...(current.domains || {}),
+    market: current.market,
+    calendar: current.today,
+  })) {
+    if (value !== null && typeof value !== "string") continue;
+    if (revisions.has(scope) && revisions.get(scope) !== value)
+      changes.push({ scope });
+    revisions.set(scope, value);
+  }
+  for (const [date, raw] of Object.entries(current.dates || {})) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !raw || typeof raw !== "object")
+      continue;
+    const previous = dateRevisions.get(date);
+    const next: Record<string, string | null> = {};
+    for (const [scope, value] of Object.entries(raw)) {
+      if (value !== null && typeof value !== "string") continue;
+      if (
+        previous &&
+        Object.hasOwn(previous, scope) &&
+        previous[scope] !== value
+      )
+        changes.push({ scope, date });
+      next[scope] = value;
+    }
+    dateRevisions.delete(date);
+    dateRevisions.set(date, next);
+  }
+  while (dateRevisions.size > 32)
+    dateRevisions.delete(dateRevisions.keys().next().value!);
+  observeReadScopes([...revisions.keys()]);
+  notifyReadChanges(changes);
+}
+
 const notifiedLineChecks = new Set<string>();
 const notifiedIncrements = new Set<string>();
 let hasIncrementBaseline = false;
@@ -73,7 +115,10 @@ async function poll() {
   const request = new AbortController();
   controller = request;
   try {
-    const data = await api<Row>("/tasks/activity", { signal: request.signal });
+    const path =
+      "/tasks/activity" +
+      (reviewDate ? "?date=" + encodeURIComponent(reviewDate) : "");
+    const data = await api<Row>(path, { signal: request.signal });
     if (request.signal.aborted) return;
     const items: Row[] = Array.isArray(data.items) ? data.items : [];
     const observedAtMs =
@@ -81,18 +126,20 @@ async function poll() {
       Number.isFinite(data.observed_at_ms)
         ? data.observed_at_ms
         : Date.now();
-    const finishedSelection = items.some((task) => {
-      if (task.kind !== "selection" || task.status !== "succeeded")
-        return false;
-      const previous = snapshot.tasks.find(
-        (item) => item.job_id === task.job_id,
-      );
-      return previous
-        ? activeTaskStatuses.has(previous.status)
-        : typeof task.finished_at_ms === "number" &&
-            observedAtMs - task.finished_at_ms >= 0 &&
-            observedAtMs - task.finished_at_ms < 15000;
-    });
+    const finishedSelection =
+      !data.read_revisions?.domains &&
+      items.some((task) => {
+        if (task.kind !== "selection" || task.status !== "succeeded")
+          return false;
+        const previous = snapshot.tasks.find(
+          (item) => item.job_id === task.job_id,
+        );
+        return previous
+          ? activeTaskStatuses.has(previous.status)
+          : typeof task.finished_at_ms === "number" &&
+              observedAtMs - task.finished_at_ms >= 0 &&
+              observedAtMs - task.finished_at_ms < 15000;
+      });
     const lineCompletions: string[] = [];
     const previousLineKeys = new Set(
       snapshot.tasks
@@ -172,6 +219,7 @@ async function poll() {
         receivedMonotonicMs: performance.now(),
       },
     };
+    updateReadRevisions(data);
     emit();
     // A refreshed browser may have lost the original POST response. Re-read
     // saved metadata when the existing server task finishes; never re-run it.
@@ -226,6 +274,11 @@ function subscribe(listener: () => void) {
 }
 export function useTaskActivity() {
   return useSyncExternalStore(subscribe, () => snapshot);
+}
+export function setTaskActivityReviewDate(date: string) {
+  if (date === reviewDate) return;
+  reviewDate = date;
+  schedule(0);
 }
 export function refreshTaskActivity() {
   schedule(0);

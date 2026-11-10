@@ -267,6 +267,9 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 `GET /tasks/activity` 为全局任务提示提供轻量只读摘要：当前 running/queued（最多200项，`active_count` 为实际总数）及最近5个非活动任务；不返回完整日志或任务参数。行含 job_id/request_key、kind/title、target_type、strategy_id/strategy_name、status/stage、progress、实际批次数、日期和结束时间。刚开始且未回报测量时 progress=null，真实0%保留，完成为100%，失败不伪装完成。个股与板块选股因已有运行任务冲突返回409 `{detail:{message,active_task}}`，message包含当前任务与策略名称。
 
+活动摘要附带 `read_revisions`，包含北京时间 `today`、正式行情指纹 `market`、读取锁标记 `market_locked`、按日归档指纹 `dates` 和工作区指纹 `domains`。可用 `?date=YYYY-MM-DD` 加查一个指定日，与当前自然日和已发布业务日合并去重。日期项包含竞价、盘中、午评和消息的已保存版本。工作区项包含已保存任务结果和独立发布模块的版本。值为不透明指纹或 `null`，不替代业务查询、价格数据或任务回执。客户端首次建立基线，版本变化时仅使相关读取失效。盘后读取锁内保持原 API 约束，确认解锁后比较正式发布版本。
+
+
 已明确开启的自动竞价在原job暂时`failed`、同日自动日回执为`waiting_retry`且`automatic_control=true`时，仍计入活动任务与`active_count`，不同时出现在最近终态列表。其轻量摘要附`automatic,automatic_control,automation_state,retry_after_at_ms,attempts,max_attempts`，不展开原始响应或完整配置。前端据此持续显示原任务的全局进度门；最终结束、显式暂停/取消或自动授权停止才释放，读取活动摘要不会创建或重试任务。
 
 `GET /tasks?limit=200&summary=true`供数据中心历史轮询，最多200条小回执，单个SQLite只读事务完成。兼容的默认`GET /tasks`及服务`list_tasks()`仍返回原完整内容；选中某任务继续`GET /tasks/{id}`读取完整日志，不删除或截断审计事实。summary行保留身份、状态、真实进度、日期、duration_ms、摘要和显示用parameters白名单（operation/mode/target_type/strategy_id/window/data_chain_version、明确链标记、来源/板块代码、单板块名称等标量；不含任务冻结大计划、成员或SHA全集）。logs只带chain_authorized/followup_queued/chain_blocked每种最新一条，按真实seq排序，details仅next_task_id/原因；足够恢复待排队/已排队/阻断状态，不能把缺失后续误显示完成。不存在的记录数保持null。完整批次子项不在历史列表展开，精细进度仍从activity与选中详情读取。

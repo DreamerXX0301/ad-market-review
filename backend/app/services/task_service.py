@@ -334,15 +334,19 @@ def _summary_task_view(connection,row,observed):
     return receipt
 
 
-def task_activity():
+def task_activity(observation_date=None):
     """Active work is never hidden behind a history page; recent terminals are bounded."""
+    from .read_revisions import observation_day, read_revisions
+    day = observation_day(observation_date)
     with connect() as connection:
+        connection.execute('BEGIN')
         auction_waiting = "status='failed' AND EXISTS(SELECT 1 FROM market_auction_automation_run ar WHERE ar.job_id=job.job_id AND ar.state='waiting_retry' AND ar.automatic_control=1)"
         active_filter = "(status IN ('running','queued') OR ("+auction_waiting+")) AND NOT (status='queued' AND coalesce(json_extract(parameters_json,'$.operation'),'') IN ('strategy_batch_item','strategy_batch_tracking'))"
         active = connection.execute('SELECT * FROM job WHERE '+active_filter+" ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END,created_at_ms LIMIT 200").fetchall()
         recent = connection.execute("SELECT * FROM job WHERE status NOT IN ('running','queued') AND NOT ("+auction_waiting+") ORDER BY coalesce(finished_at_ms,created_at_ms) DESC,created_at_ms DESC,rowid DESC LIMIT 5").fetchall()
         return {'items': [_activity_view(connection, row) for row in active+recent],
                 'active_count': connection.execute('SELECT count(*) FROM job WHERE '+active_filter).fetchone()[0],
+                'read_revisions': read_revisions(connection, day),
                 'observed_at_ms': now_ms()}
 
 

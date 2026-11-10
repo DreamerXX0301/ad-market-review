@@ -41,11 +41,13 @@ globalThis.CustomEvent = class {
 };
 globalThis.__activityRequests = requests;
 globalThis.__activityPending = pending;
+const readChanges = [];
+globalThis.__readChanges = readChanges;
 const react = encode(
   "export function useSyncExternalStore(subscribe,get){globalThis.__subscribeActivity=subscribe;return get();}",
 );
 const api = encode(
-  "export function api(path, options){globalThis.__activityRequests.push({path,options});return new Promise((resolve,reject)=>{const accept=value=>resolve(value);accept.reject=reject;globalThis.__activityPending.push(accept);});}",
+  "export function api(path, options){globalThis.__activityRequests.push({path,options});return new Promise((resolve,reject)=>{const accept=value=>resolve(value);accept.reject=reject;globalThis.__activityPending.push(accept);});} export function notifyReadChanges(changes){globalThis.__readChanges.push(...changes)} export function observeReadScopes(){}",
 );
 const presentation = encode(await compiledAt("./taskActivityPresentation.ts"));
 const workbenchEvents = encode(await compiledAt("../lib/workbenchEvents.ts"));
@@ -67,8 +69,8 @@ const tick = async () => {
   await Promise.resolve();
   return timer.delay;
 };
-const resolve = async (items, active_count, observed_at_ms = Date.now()) => {
-  pending.shift()({ items, active_count, observed_at_ms });
+const resolve = async (items, active_count, observed_at_ms = Date.now(), read_revisions) => {
+  pending.shift()({ items, active_count, observed_at_ms, read_revisions });
   await Promise.resolve();
   await Promise.resolve();
 };
@@ -157,6 +159,31 @@ assert.equal(
   true,
   "poller only performs read requests",
 );
+
+const revision = (strategy, intraday, extra = {}) => ({
+  today: "2026-11-10",
+  market: "old-market",
+  domains: { strategy, tasks: "tasks" },
+  dates: { "2026-11-10": { intraday } },
+  ...extra,
+});
+const probe = async (revisions) => {
+  activity.refreshTaskActivity();
+  await tick();
+  await resolve([], 0, 1000000, revisions);
+};
+await probe(revision(null, null));
+assert.deepEqual(readChanges, [], "first revision observation is a baseline");
+await probe(revision("run-2", "09:45", { market_locked: true, market: "staging" }));
+assert.deepEqual(readChanges, [], "locked publication is ignored");
+await probe(revision("run-2", "09:45", { market: "published" }));
+assert.deepEqual(readChanges, [
+  { scope: "strategy" },
+  { scope: "market" },
+  { scope: "intraday", date: "2026-11-10" },
+], "durable revisions refresh saved results even after recent receipts aged out");
+await probe(revision("run-2", "09:45", { market: "published" }));
+assert.equal(readChanges.length, 3, "identical revision does not trigger a second read");
 
 const incrementEvents = () => events.filter(event => event.type === MARKET_INCREMENT_FINISHED);
 const increment = (job_id, status = "succeeded", finished_at_ms = 900000, target_date = null) => ({

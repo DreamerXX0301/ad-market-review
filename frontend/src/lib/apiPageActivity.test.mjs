@@ -8,6 +8,9 @@ const state = [],
   effects = [],
   requests = [],
   listeners = new Map();
+let now = 1000;
+const savedPerformance = globalThis.performance;
+globalThis.performance = { now: () => now };
 let cursor = 0,
   pending = [],
   path = "/tracking-rounds?status=tracking";
@@ -88,7 +91,7 @@ source = source
     '"../components/incrementSession"',
     JSON.stringify(encode("export function restoreIncrementSession(){}")),
   );
-const { useApi, ApiPageActivity } = await import(encode(source));
+const { useApi, ApiPageActivity, notifyReadChanges, observeReadScopes } = await import(encode(source));
 ApiPageActivity.value = true;
 function render() {
   cursor = 0;
@@ -214,6 +217,91 @@ assert.equal(
 );
 await answer(requests.at(-1), { date: "2026-10-27" });
 
+path = "/market/ladder?date=2026-10-27";
+render();
+const knownLadder = { date: "2026-10-27", total: 23 };
+await answer(requests.at(-1), knownLadder);
+const beforeTabSwitch = requests.length;
+ApiPageActivity.value = false;
+render();
+ApiPageActivity.value = true;
+render();
+assert.equal(requests.length, beforeTabSwitch, "quick tab return reuses the same saved ladder");
+assert.deepEqual(render().data, knownLadder);
+assert.equal(render().loading, false);
+ApiPageActivity.value = false;
+render();
+now += 61000;
+ApiPageActivity.value = true;
+render();
+assert.equal(requests.length, beforeTabSwitch + 1);
+assert.deepEqual(render().data, knownLadder, "background check keeps the same-date view on screen");
+assert.equal(render().loading, false);
+await answer(requests.at(-1), { ...knownLadder, total: 24 });
+assert.equal(render().data.total, 24);
+ApiPageActivity.value = false;
+render();
+notifyReadChanges([{ scope: "market" }]);
+render();
+assert.equal(requests.length, beforeTabSwitch + 1, "hidden published reader invalidates without fetching");
+ApiPageActivity.value = true;
+render();
+assert.equal(requests.length, beforeTabSwitch + 2, "publication bypasses the recent-read window");
+await answer(requests.at(-1), knownLadder);
+const beforeExplicit = requests.length;
+render().reload();
+render();
+assert.equal(requests.length, beforeExplicit + 1, "manual refresh bypasses reuse");
+await answer(requests.at(-1), knownLadder);
+
+observeReadScopes(["market"]);
+const beforeUnchanged = requests.length;
+ApiPageActivity.value = false;
+render();
+now += 300000;
+ApiPageActivity.value = true;
+render();
+assert.equal(requests.length, beforeUnchanged, "unchanged published ladder needs no revalidation");
+notifyReadChanges([{ scope: "intraday", date: "2026-10-27" }]);
+render();
+assert.equal(requests.length, beforeUnchanged, "an intraday slot cannot reload a ladder");
+notifyReadChanges([{ scope: "market" }]);
+render();
+assert.equal(requests.length, beforeUnchanged + 1);
+assert.deepEqual(render().data, knownLadder);
+assert.equal(render().loading, false);
+await answer(requests.at(-1), knownLadder);
+
+path = "/market/intraday?date=2026-10-27";
+render();
+await answer(requests.at(-1), { slots: ["09:35"] });
+const beforeSlot = requests.length;
+notifyReadChanges([{ scope: "intraday", date: "2026-10-28" }]);
+render();
+assert.equal(requests.length, beforeSlot, "only the observed date needs another request");
+notifyReadChanges([{ scope: "intraday", date: "2026-10-27" }]);
+render();
+assert.equal(requests.length, beforeSlot + 1);
+assert.deepEqual(render().data.slots, ["09:35"]);
+await answer(requests.at(-1), { slots: ["09:35", "09:45"] });
+assert.deepEqual(render().data.slots, ["09:35", "09:45"]);
+
+path = "/strategy-runs?strategy_id=s";
+render();
+await answer(requests.at(-1), { items: ["run-1"] });
+ApiPageActivity.value = false;
+render();
+const beforeHiddenRun = requests.length;
+notifyReadChanges([{ scope: "strategy" }]);
+render();
+assert.equal(requests.length, beforeHiddenRun, "hidden strategy is marked stale without fetching");
+ApiPageActivity.value = true;
+render();
+assert.equal(requests.length, beforeHiddenRun + 1);
+assert.deepEqual(render().data.items, ["run-1"]);
+await answer(requests.at(-1), { items: ["run-2", "run-1"] });
+assert.equal(render().data.items[0], "run-2");
+
 ApiPageActivity.value = null;
 path = "/bootstrap";
 render();
@@ -223,8 +311,8 @@ event("workbench-route", "topics", true);
 render();
 assert.equal(
   requests.length,
-  beforeGlobal + 1,
-  "application-level readers retain their existing explicit refresh semantics",
+  beforeGlobal,
+  "route navigation alone does not recheck the application bootstrap",
 );
 assert.ok(
   requests.every((request) => !request.options.method),
@@ -234,6 +322,7 @@ effects.forEach((effect) => effect?.cleanup?.());
 delete globalThis.__pageHooks;
 delete globalThis.window;
 delete globalThis.fetch;
+globalThis.performance = savedPerformance;
 console.log(
   "retained-page reads: cancel, fresh activation, date isolation, edit and unlock invalidation passed",
 );

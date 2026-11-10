@@ -90,11 +90,14 @@ const packets = {
 };
 const reloads = [],
   callbacks = new Map();
+let bootstrapRefreshing = false;
 globalThis.__dateApi = (path) => {
   if (!callbacks.has(path)) callbacks.set(path, () => reloads.push(path));
   return {
     data: packets[path] || null,
-    loading: !!path && !packets[path],
+    loading:
+      (!!path && !packets[path]) ||
+      (path === "/bootstrap?scope=navigation" && bootstrapRefreshing),
     error: "",
     reload: callbacks.get(path),
   };
@@ -113,6 +116,8 @@ const routes = [
   "gainers",
   "abnormal",
 ];
+let statusProbes = 0;
+globalThis.__dateStatusProbe = () => statusProbes++;
 const replacements = {
   react: encode(
     "export const {memo,useState,useEffect,useCallback}=globalThis.__dateHooks;",
@@ -127,6 +132,7 @@ const replacements = {
     `export default 'shell';export const marketRoutes=new Set(${JSON.stringify(routes)});export const routeTitles=Object.fromEntries(${JSON.stringify([...routes, "topics", "strategy", "tracking", "data", "sources", "research", "backtest", "zodiac", "watchlist"])}.map(key=>[key,key]));`,
   ),
   "./components/LazyView": encode("export const lazyView=()=> 'page';"),
+  "./components/taskActivity": encode("export function refreshTaskActivity(){globalThis.__dateStatusProbe()};export function setTaskActivityReviewDate(){};"),
   "./components/IncrementProgressDialog": encode("export default 'progress';"),
   "./components/ReadonlyPreviewBanner": encode("export default 'preview';"),
 };
@@ -233,6 +239,7 @@ render();
 const tungsten = { kind: "industry", topic_code: "884282.TI", name: "钨" };
 const sectorDialog = () =>
   elements(tree).find((node) => node.props.topic?.name === tungsten.name).props;
+const beforeMarketNavigation = reloads.length;
 for (const route of ["auction", "intraday"]) {
   assert.equal(navigate(route).date, "2026-10-30");
   shell().onSector(tungsten);
@@ -254,6 +261,16 @@ for (const route of ["auction", "intraday"]) {
   sectorDialog().onClose();
   render();
 }
+assert.equal(reloads.length, beforeMarketNavigation, "switching market pages does not reread bootstrap");
+navigate("intraday");
+bootstrapRefreshing = true;
+render();
+assert.ok(
+  elements(tree).some((node) => node.type === "page" && node.props.date === "2026-10-30"),
+  "refreshing an already valid publication does not replace the active page",
+);
+bootstrapRefreshing = false;
+render();
 assert.equal(navigate("market").date, "2026-10-29");
 assert.equal(navigate("auction").date, "2026-10-30");
 shell().onDate("2026-10-28");
@@ -397,13 +414,13 @@ const publishedToday = {
 };
 beforePublication();
 assert.match(currentNotice(), /最新已发布行情（非今日）/);
-const beforeAcknowledgement = reloads.length;
+const beforeAcknowledgement = statusProbes;
 progress().onFinished();
 render();
 assert.equal(
-  reloads.slice(beforeAcknowledgement).filter((path) => path === "/bootstrap?scope=navigation").length,
+  statusProbes - beforeAcknowledgement,
   1,
-  "acknowledging an increment triggers one bootstrap reread",
+  "acknowledging an increment immediately checks the published revision",
 );
 assert.equal(shell().date, "2026-10-29");
 assert.match(currentNotice(), /非今日/,

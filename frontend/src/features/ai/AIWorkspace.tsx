@@ -22,6 +22,7 @@ import { AIMessageView } from "./AIContent";
 import { aiWrite, useAITask } from "./aiApi";
 import { useAIStream } from "./useAIStream";
 import { publishAIChange, subscribeAIChanges } from "./aiTabSync";
+import type { AIChange } from "./aiTabSync";
 import { useAIChatFollow } from "./useAIChatFollow";
 import { chatLocation, readChatLocation } from "./aiChatLocation";
 import {
@@ -285,44 +286,25 @@ export default function AIWorkspace({
     setCursor("");
     history.reload();
   }
-  useEffect(() => {
-    if (!active) return;
-    return subscribeAIChanges(
-      (change) => {
-        if (change.scope === "providers") {
-          providers.reload();
-          detail.reload();
-        } else if (change.scope === "session") {
-          reloadHistory();
-          if (change.id === sessionId) detail.reload();
-        } else if (change.id === taskId) {
-          task.reload();
-        }
-      },
-      () => {
-        providers.reload();
-        if (!cursor) history.reload();
-        detail.reload();
-        if (taskId) task.reload();
-      },
-      () => {
-        providers.reload();
-        if (!cursor) history.reload();
-        if (sessionId) detail.reload();
-        if (taskId && task.error) task.reload();
-      },
-    );
-  }, [
-    active,
-    sessionId,
-    taskId,
-    cursor,
-    providers.reload,
-    history.reload,
-    detail.reload,
-    task.reload,
-    task.error,
-  ]);
+  const onTabChange = useRef<(change: AIChange) => void>(null!);
+  onTabChange.current = (change) => {
+    if (change.scope === "providers") {
+      providers.reload();
+      if (sessionId) detail.reload();
+    } else if (change.scope === "session") {
+      reloadHistory();
+      if (change.id === sessionId) detail.reload();
+      if (change.usageChanged) providers.reload();
+    } else if (change.id === taskId) {
+      task.reload();
+    }
+  };
+  // Retained pages mark changed reads stale while hidden. useApi waits until
+  // the page is active before making the corresponding requests.
+  useEffect(
+    () => subscribeAIChanges((change) => onTabChange.current(change)),
+    [],
+  );
   const verifying = providers.data?.items.some(
     (item) => item.verification?.state === "verifying",
   );
@@ -343,7 +325,8 @@ export default function AIWorkspace({
     detail.reload();
     reloadHistory();
     providers.reload();
-    if (sessionId) publishAIChange({ scope: "session", id: sessionId });
+    if (sessionId)
+      publishAIChange({ scope: "session", id: sessionId, usageChanged: true });
   }, [taskId, sessionId, terminal, detail.reload, providers.reload]);
   useEffect(() => {
     if (

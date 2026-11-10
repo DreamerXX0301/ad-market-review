@@ -60,6 +60,12 @@ assert.equal(
   "ready",
   "retained dates are not an empty installation",
 );
+const published = {
+  data_date: "2026-10-20",
+  market_dates: ["2026-10-19", "2026-10-20"],
+};
+assert.equal(state(published, true, ""), "ready");
+assert.equal(state(published, false, "API unreachable"), "ready");
 console.log(
   "fresh install: successful empty, loading, failed, malformed and published bootstrap states passed",
 );

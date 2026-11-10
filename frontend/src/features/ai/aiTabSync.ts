@@ -2,7 +2,7 @@ const channelName = "ad-market-review:ai-changes:v1";
 
 export type AIChange =
   | { scope: "providers" }
-  | { scope: "session"; id: string }
+  | { scope: "session"; id: string; usageChanged?: true }
   | { scope: "task"; id: string };
 
 function openChannel() {
@@ -10,14 +10,22 @@ function openChannel() {
   try {
     return new window.BroadcastChannel(channelName);
   } catch {
-    // Visibility and focus refresh remain available.
+    // Fall back to a same-origin storage notification.
   }
 }
 
 // Only identifiers travel between tabs. API reads resolve the actual state.
 export function publishAIChange(change: AIChange) {
   const channel = openChannel();
-  if (!channel) return;
+  if (!channel) {
+    try {
+      window.localStorage.setItem(channelName, JSON.stringify(change));
+      window.localStorage.removeItem(channelName);
+    } catch {
+      // Some browser profiles disable both notification transports.
+    }
+    return;
+  }
   try {
     channel.postMessage(change);
   } catch {
@@ -27,43 +35,42 @@ export function publishAIChange(change: AIChange) {
   }
 }
 
-export function subscribeAIChanges(
-  onChange: (change: AIChange) => void,
-  onReturn: () => void,
-  onPoll: () => void,
-) {
+export function subscribeAIChanges(onChange: (change: AIChange) => void) {
+  if (typeof window === "undefined") return () => {};
   const channel = openChannel();
-  function receive(event: MessageEvent) {
-    const value = event.data;
+  function receiveChange(value: any) {
     if (value?.scope === "providers") onChange({ scope: "providers" });
     if (
       (value?.scope === "session" || value?.scope === "task") &&
       typeof value.id === "string" &&
       value.id.length > 0 &&
       value.id.length <= 200
+    ) {
+      if (value.scope === "session" && value.usageChanged === true)
+        onChange({ scope: "session", id: value.id, usageChanged: true });
+      else onChange({ scope: value.scope, id: value.id });
+    }
+  }
+  if (channel) {
+    channel.addEventListener("message", (event) => receiveChange(event.data));
+    return () => channel.close();
+  }
+  function storage(event: StorageEvent) {
+    if (
+      event.key !== channelName ||
+      !event.newValue ||
+      event.newValue.length > 512
     )
-      onChange({ scope: value.scope, id: value.id });
+      return;
+    try {
+      receiveChange(JSON.parse(event.newValue));
+    } catch {
+      // Ignore unrelated or malformed storage writes.
+    }
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  function returned() {
-    if (document.visibilityState === "hidden" || timer !== undefined) return;
-    timer = setTimeout(() => {
-      timer = undefined;
-      onReturn();
-    }, 0);
-  }
-  const poll = setInterval(() => {
-    if (document.visibilityState === "visible") onPoll();
-  }, 10000);
-  channel?.addEventListener("message", receive);
-  window.addEventListener("focus", returned);
-  document.addEventListener("visibilitychange", returned);
+  window.addEventListener("storage", storage);
   return () => {
-    channel?.close();
-    window.removeEventListener("focus", returned);
-    document.removeEventListener("visibilitychange", returned);
-    clearTimeout(timer);
-    clearInterval(poll);
+    window.removeEventListener("storage", storage);
   };
 }
 

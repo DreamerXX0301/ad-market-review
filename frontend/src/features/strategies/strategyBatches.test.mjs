@@ -305,7 +305,7 @@ async function moduleUrl(path) {
       );
     else if (name.endsWith("/api"))
       target = encoded(
-        "export const api=()=>{};export const post=()=>globalThis.__batchPost();export const list=value=>Array.isArray(value)?value:value?.items||[];export const requestKey=()=>'';",
+        "export const api=()=>{};export const post=()=>globalThis.__batchPost();export const list=value=>Array.isArray(value)?value:value?.items||[];export const requestKey=()=>'';export const subscribeReadChanges=()=>()=>{};",
       );
     else if (name.startsWith(".")) {
       const local = new URL(name + ".ts", path);

@@ -586,7 +586,7 @@ assert.equal(
   ),
   false,
 );
-const { subscribeAIChanges } = await import(tabSyncUrl);
+const { publishAIChange, subscribeAIChanges } = await import(tabSyncUrl);
 const oldWindow = globalThis.window;
 const oldDocument = globalThis.document;
 globalThis.window = Object.assign(new EventTarget(), { BroadcastChannel });
@@ -598,15 +598,19 @@ let received;
 const nextNotice = new Promise((resolve) => {
   received = resolve;
 });
-const unsubscribe = subscribeAIChanges(
-  (change) => {
-    notifications.push(change);
-    received();
-  },
-  () => {},
-  () => {},
-);
+const originalInterval = globalThis.setInterval;
+let idlePolls = 0;
+globalThis.setInterval = (...args) => {
+  idlePolls++;
+  return originalInterval(...args);
+};
+const unsubscribe = subscribeAIChanges((change) => {
+  notifications.push(change);
+  received();
+});
 try {
+  globalThis.document.visibilityState = "hidden";
+  globalThis.document.dispatchEvent(new Event("visibilitychange"));
   await assert.rejects(
     aiWrite("/sessions/active/messages", { text: "未受理" }),
   );
@@ -628,11 +632,41 @@ try {
     ),
   ]);
   assert.deepEqual(notifications, [{ scope: "session", id: "active" }]);
+  globalThis.document.visibilityState = "visible";
+  globalThis.document.dispatchEvent(new Event("visibilitychange"));
+  globalThis.window.dispatchEvent(new Event("focus"));
+  assert.equal(idlePolls, 0);
+  assert.equal(notifications.length, 1);
 } finally {
   unsubscribe();
+  globalThis.setInterval = originalInterval;
   globalThis.window = oldWindow;
   globalThis.document = oldDocument;
   globalThis.fetch = originalFetch;
+}
+
+const fallbackWrites = [];
+globalThis.window = Object.assign(new EventTarget(), {
+  localStorage: {
+    setItem: (key, value) => fallbackWrites.push({ key, newValue: value }),
+    removeItem: (key) => fallbackWrites.push({ key, newValue: null }),
+  },
+});
+const fallbackNotices = [];
+const stopFallback = subscribeAIChanges((change) =>
+  fallbackNotices.push(change),
+);
+try {
+  publishAIChange({ scope: "session", id: "active", usageChanged: true });
+  assert.equal(fallbackWrites.length, 2);
+  for (const fields of fallbackWrites)
+    window.dispatchEvent(Object.assign(new Event("storage"), fields));
+  assert.deepEqual(fallbackNotices, [
+    { scope: "session", id: "active", usageChanged: true },
+  ]);
+} finally {
+  stopFallback();
+  globalThis.window = oldWindow;
 }
 console.log(
   "AI minimal chat, legacy reading, native citations, partial safety, numeric references and safe errors passed",

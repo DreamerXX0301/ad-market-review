@@ -59,12 +59,21 @@ export function useAITask(taskId: string) {
       !active ||
       !taskId ||
       task.loading ||
-      task.error ||
+      task.errorStatus === 404 ||
+      task.errorStatus === 410 ||
       terminalTask(task.data?.state)
     )
       return;
-    const timer = setTimeout(task.reload, 1500);
+    const timer = setTimeout(task.reload, task.error ? 10000 : 1500);
     return () => clearTimeout(timer);
-  }, [active, taskId, task.loading, task.error, task.data, task.reload]);
+  }, [
+    active,
+    taskId,
+    task.loading,
+    task.error,
+    task.errorStatus,
+    task.data,
+    task.reload,
+  ]);
   return { ...task, pending: !!taskId && !terminalTask(task.data?.state) };
 }

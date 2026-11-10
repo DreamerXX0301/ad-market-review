@@ -64,8 +64,11 @@ def test_order_results_read_recovery_and_request_idempotency(ws):
     # Reopening a browser only GETs persisted receipts, never creates more jobs.
     another = TestClient(client.app)
     assert another.get('/api/v1/strategy-batches?target_type=stock').json()['items'][0]['batch_id'] == batch['batch_id']
-    rest = drain(3)
-    assert [j['job_id'] for j in rest] == [batch['items'][1]['job_id'], batch['items'][1]['tracking_job_id'], batch['batch_id']]
+    rest = drain(2)
+    assert [j['job_id'] for j in rest] == [batch['items'][1]['job_id'], batch['items'][1]['tracking_job_id']]
+    before_parent = tasks.task_activity()['read_revisions']['domains']['strategy']
+    assert step()['job_id'] == batch['batch_id']
+    assert tasks.task_activity()['read_revisions']['domains']['strategy'] != before_parent
     result = batches.get_batch(batch['batch_id'])
     assert result['status'] == 'succeeded' and result['completed_count'] == 2 and result['progress'] == 100
     assert len({x['run_id'] for x in result['items']}) == 2

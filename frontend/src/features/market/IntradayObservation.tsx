@@ -3415,13 +3415,13 @@ export default function IntradayObservation({
     focusDirection();
   }, [selectedSlot, rotationBoard]);
   useEffect(() => {
-    if (!active || date !== view?.today) return;
+    if (!active || date !== view?.today || closingDate) return;
     const timer = window.setInterval(
       reload,
       running || submitted ? 2500 : 30000,
     );
     return () => window.clearInterval(timer);
-  }, [active, date, view?.today, running, submitted, reload]);
+  }, [active, date, view?.today, closingDate, running, submitted, reload]);
   useEffect(() => {
     if (!submitted) return;
     if (job?.job_id === submitted || !view?.can_capture) {

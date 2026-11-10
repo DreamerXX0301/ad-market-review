@@ -8,7 +8,13 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { api, list, post, requestKey } from "../../lib/api";
+import {
+  api,
+  list,
+  post,
+  requestKey,
+  subscribeReadChanges,
+} from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { ErrorBox, Spinner } from "../../components/UI";
 import {
@@ -164,11 +170,16 @@ export default function StrategyBatchToolbar({
           (location.hash.slice(1).split("?")[0] || "market") === "strategy",
       );
     visible();
+    const stop = subscribeReadChanges((changes) => {
+      if (changes.some(({ scope }) => scope === "strategy"))
+        void feed.refresh();
+    });
     window.addEventListener("hashchange", visible);
     document.addEventListener("visibilitychange", visible);
     return () => {
       mounted.current = false;
       feed.dispose();
+      stop();
       window.removeEventListener("hashchange", visible);
       document.removeEventListener("visibilitychange", visible);
     };

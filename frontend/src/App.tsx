@@ -1,3 +1,7 @@
+import {
+  refreshTaskActivity,
+  setTaskActivityReviewDate,
+} from "./components/taskActivity";
 import { memo, useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { CheckCircle2, X, XCircle } from "lucide-react";
@@ -149,12 +153,12 @@ export default function App() {
       null,
     );
   const noonDates = useApi<Row>(
-    marketRoutes.has(route) && route !== "auction" && visible
+    visited.some((page) => marketRoutes.has(page) && page !== "auction")
       ? "/market/noon/dates"
       : null,
   );
   const auctionDates = useApi<Row>(
-    route === "auction" && visible ? "/market/auction/dates" : null,
+    visited.includes("auction") ? "/market/auction/dates" : null,
   );
   const reviewDates = route === "auction" ? auctionDates : noonDates;
   const [knownToday, setKnownToday] = useState("");
@@ -186,10 +190,6 @@ export default function App() {
     noonSectorDay,
     noonSectorDay,
   );
-  const reloadBootstrap = bootstrap.reload;
-  useEffect(() => {
-    if (isIntradayReview(route) && visible) reloadBootstrap();
-  }, [route, visible, reloadBootstrap]);
   const setDate = useCallback((day: string) => {
     if (!isCalendarDate(day)) return;
     setDateChoice({ date: day, mode: "manual" });
@@ -203,8 +203,10 @@ export default function App() {
     if (hash !== location.hash)
       window.history.replaceState(window.history.state, "", hash);
   }, []);
-  // The small date directory also lets a direct base-market visit distinguish
-  // the latest published close from today, without a browser-local clock.
+  useEffect(() => {
+    if (marketRoutes.has(route)) setTaskActivityReviewDate(date);
+  }, [route, date]);
+  // The calendar's current day can advance before a new snapshot is saved.
   useEffect(() => {
     if (!visible || !marketRoutes.has(route)) return;
     const timer = window.setInterval(reviewDates.reload, 60000);
@@ -587,12 +589,7 @@ export default function App() {
           />
         );
       case "data":
-        return (
-          <DataCenter
-            onPublished={bootstrap.reload}
-            initialTaskId={context.data?.task_id}
-          />
-        );
+        return <DataCenter initialTaskId={context.data?.task_id} />;
       case "sources":
         return (
           <Sources
@@ -802,7 +799,7 @@ export default function App() {
           }}
           onFinished={() => {
             window.dispatchEvent(new Event("workbench-increment-unlocked"));
-            bootstrap.reload();
+            refreshTaskActivity();
             window.dispatchEvent(
               new CustomEvent("workbench-route", { detail: "data" }),
             );
