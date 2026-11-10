@@ -1,5 +1,6 @@
 """Small task receipts expose measured work without leaking task parameters."""
 import json
+from datetime import datetime
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -179,10 +180,10 @@ def test_activity_revision_survives_terminal_window_and_separates_publication_he
     assert locked == {'today': '2026-10-20', 'market': None, 'market_locked': True, 'dates': {}, 'domains': {}}
 
 
-def test_historical_proof_tracks_archive_controls_and_reference_visibility(isolated):
+@pytest.mark.parametrize('day', ['2026-10-19', '2026-10-20'])
+def test_historical_proof_tracks_archive_controls_and_reference_visibility(isolated, day):
     app = FastAPI(); app.include_router(router)
     client = TestClient(app)
-    day = '2026-10-19'
     path = f'/api/v1/tasks/activity?date={day}'
     archive_path = path + '&historical=true'
     job = tasks.create_task('initialise', {})
@@ -202,6 +203,7 @@ def test_historical_proof_tracks_archive_controls_and_reference_visibility(isola
     regular = client.get(path).json()['read_revisions']
     assert 'historical_reference' not in regular['domains']
     assert 'archive_controls' not in regular['domains']
+    assert 'current_windows' not in regular
     before = client.get(archive_path).json()['read_revisions']
     assert before['domains']['historical_reference']
     assert before['domains']['archive_controls']
@@ -225,6 +227,54 @@ def test_historical_proof_tracks_archive_controls_and_reference_visibility(isola
     busy = client.get(archive_path).json()
     assert busy['active_count'] == 1
     assert 'archive_controls' not in busy['read_revisions']['domains']
+    assert 'current_windows' not in busy['read_revisions']
+
+
+def test_today_prefetch_windows_are_bounded_and_track_exact_clock_boundaries(isolated, monkeypatch):
+    from app.services import sync_clock
+    from app.services.sync_progress import LOCK_VERSION
+
+    today = '2026-10-20'
+    current = datetime.fromisoformat(f'{today}T09:00:00+08:00')
+    monkeypatch.setattr(sync_clock, 'now_china', lambda: current)
+    app = FastAPI(); app.include_router(router)
+    client = TestClient(app)
+    base = '/api/v1/tasks/activity'
+
+    def read(day=None, historical=False):
+        params = {'historical': str(historical).lower()}
+        if day:
+            params['date'] = day
+        body = client.get(base, params=params).json()
+        return body['read_revisions']
+
+    assert 'current_windows' not in read(today)
+    assert 'current_windows' not in read(historical=True)
+    assert 'current_windows' not in read('2026-10-19', historical=True)
+    future = read('2026-10-21', historical=True)
+    assert 'current_windows' not in future and 'archive_controls' not in future['domains']
+
+    def windows_at(clock):
+        nonlocal current
+        current = datetime.fromisoformat(f'{today}T{clock}+08:00')
+        proof = read(today, historical=True)
+        assert not proof['market_locked']
+        assert 'historical_reference' in proof['domains'] and proof['domains']['archive_controls']
+        windows = proof['current_windows']
+        assert set(windows) == {'auction', 'noon', 'intraday', 'news'}
+        assert all(len(signature) == 64 for signature in windows.values())
+        return windows
+
+    assert windows_at('09:25:01') == windows_at('09:25:29.999999')
+    assert windows_at('09:25:29.999999')['auction'] != windows_at('09:25:30')['auction']
+    assert len({windows_at(clock)['auction'] for clock in ('09:24:59', '09:25:30', '09:30:00')}) == 3
+    assert len({windows_at(clock)['noon'] for clock in ('11:30:59', '11:31:00', '13:00:00')}) == 3
+    assert len({windows_at(clock)['intraday'] for clock in ('09:44:59', '09:45:00', '09:46:00')}) == 3
+    assert len({windows_at(clock)['news'] for clock in ('12:29:59', '12:30:00', '12:35:00')}) == 3
+
+    tasks.create_task('increment', {'increment_session_version': LOCK_VERSION})
+    locked = read(today, historical=True)
+    assert locked['market_locked'] and not locked['domains'] and 'current_windows' not in locked
 
 
 def test_stock_conflict_names_actual_running_strategy_and_progress(ws):

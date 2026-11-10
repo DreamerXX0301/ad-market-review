@@ -98,7 +98,7 @@ try {
   const prefetchDates = ["2026-10-27", day];
   const props = {date:day,latestDate:day,prefetchDates,onDate(){},onStock(){},chartDate:"2026-10-27"};
   const html = renderToStaticMarkup(createElement(NoonReview, props));
-  assert.deepEqual(globalThis.__fixtureNoonPrefetch, [true, `/market/noon?date=${day}`, day, "fixture-noon-reading", prefetchDates]);
+  assert.deepEqual(globalThis.__fixtureNoonPrefetch, [true, `/market/noon?date=${day}`, day, "fixture-noon-reading", prefetchDates, true]);
   globalThis.__fixtureNoonTab = "close";
   renderToStaticMarkup(createElement(NoonReview, props));
   assert.equal(globalThis.__fixtureNoonPrefetch[0], false, "closing review does not trigger a full noon prefetch");

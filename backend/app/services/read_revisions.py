@@ -1,5 +1,5 @@
 """Small receipts for revalidating retained pages without reading their contents."""
-from datetime import date
+from datetime import date, datetime
 import json
 
 from fastapi import HTTPException
@@ -105,10 +105,31 @@ def _archive_controls(connection, day):
                    noon_background, tasks))
 
 
+def _current_windows(connection, day, now):
+    from . import auction_service, intraday_service, news_events, noon_service
+
+    def capture_receipt(capture_window):
+        window = capture_window(day, now)
+        # A response collected inside the window must not pass a proof taken
+        # before it and reused after it, even if both outside states look alike.
+        return digest((now < datetime.fromisoformat(window['start_at']), window))
+
+    minute = now.strftime('%H:%M')
+    started_slots = sum(slot['start'] <= minute for slot in intraday_service.SLOTS)
+    return {
+        'auction': capture_receipt(auction_service.capture_window),
+        'noon': capture_receipt(noon_service.capture_window),
+        'intraday': digest((started_slots, intraday_service.slot_for(day, now, creation=True),
+                            intraday_service.planned_slots_for_day(connection, day, now=now))),
+        'news': digest([news_events._missing_stage(stage, now.date(), now) for stage in news_events.STAGES]),
+    }
+
+
 def read_revisions(connection, observation_date, *, historical=False):
     # The caller's read transaction keeps the lock and the publication heads in
     # the same SQLite snapshot, even when a worker is publishing concurrently.
-    today = sync_clock.now_china().date().isoformat()
+    now = sync_clock.now_china()
+    today = now.date().isoformat()
     if lock_record(connection):
         return {'today': today, 'market': None, 'market_locked': True, 'dates': {}, 'domains': {}}
 
@@ -148,7 +169,10 @@ def read_revisions(connection, observation_date, *, historical=False):
     domains['suspensions'] = digest(suspension) if suspension else None
     domains['news_calendar'] = _receipt(connection, '''SELECT source,captured_at,content_sha256
         FROM market_news_calendar_archive ORDER BY rowid DESC LIMIT 1''')
-    if historical and observation_date and observation_date < today:
+    result = {'today': today, 'market': market, 'market_locked': False, 'dates': dates, 'domains': domains}
+    if historical and observation_date and observation_date <= today:
         domains['historical_reference'] = _historical_reference(connection, root.resolve())
         domains['archive_controls'] = _archive_controls(connection, observation_date)
-    return {'today': today, 'market': market, 'market_locked': False, 'dates': dates, 'domains': domains}
+        if observation_date == today:
+            result['current_windows'] = _current_windows(connection, observation_date, now)
+    return result

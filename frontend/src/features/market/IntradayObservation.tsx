@@ -3334,18 +3334,22 @@ export default function IntradayObservation({
   const result = useApi<Row>(path);
   const view = result.data?.date === date ? result.data : null;
   const lastCapture = view?.snapshots?.at(-1);
+  const primarySettled =
+    !result.loading &&
+    !result.error &&
+    view?.date === date &&
+    !view.current_slot &&
+    !["queued", "running", "paused"].includes(view.latest_job?.status);
   useHistoricalPrefetch(
     date === latestDate &&
-      !result.loading &&
-      !result.error &&
+      primarySettled &&
       view?.state === "available" &&
-      !view.current_slot &&
-      !["queued", "running", "paused"].includes(view.latest_job?.status) &&
       (lastCapture?.date ?? lastCapture?.trade_date) === date,
     path,
     date,
     lastCapture?.id,
     prefetchDates,
+    primarySettled,
   );
   const anchors: Row[] = view?.anchors || [];
   const slots = useMemo(() => (view ? timelineSlots(view) : []), [view]);

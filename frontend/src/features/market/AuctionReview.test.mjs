@@ -60,7 +60,10 @@ const payload={date:day,version:'auction-snapshot-v1',previous_date:'2026-10-28'
 const retained={...view,state:'available',snapshot:{date:day,quality:'partial',payload,recorded_at_ms:Date.parse(day+'T09:25:20+08:00'),collected_start_at:payload.collected_start_at,collected_end_at:day+'T09:25:20+08:00'}};
 const retainedAnchor = { ...retained, snapshot: { ...retained.snapshot, snapshot_id: "saved-auction" }, task: { status: "succeeded" } };
 renderPrefetch(retainedAnchor);
-assert.deepEqual(prefetch.last, [true, `/market/auction?date=${day}`, day, "saved-auction", ["2026-10-28", day]]);
+assert.deepEqual(prefetch.last, [true, `/market/auction?date=${day}`, day, "saved-auction", ["2026-10-28", day], true]);
+renderPrefetch(view);
+assert.equal(prefetch.last[0], false, "no archive means no older-day prefetch");
+assert.equal(prefetch.last[5], true, "an available empty view still releases the same-day queue");
 renderPrefetch({ ...retainedAnchor, task: { status: "running" } });
 assert.equal(prefetch.last[0], false, "an unfinished collection cannot start prefetch");
 html=render(retained);

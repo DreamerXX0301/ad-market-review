@@ -24,8 +24,8 @@ type PendingRead = {
 const pendingReads = new Map<string, PendingRead>();
 const retainedReadRecheckMs = 60_000;
 const historicalWarmTtlMs = 90_000;
-const historicalWarmMaxEntries = 4;
-const historicalWarmMaxBytes = 16 * 1024 * 1024;
+const historicalWarmMaxEntries = 12;
+const historicalWarmMaxBytes = 32 * 1024 * 1024;
 type HistoricalBody = { chunks: Uint8Array[]; bytes: number };
 const historicalWarmReads = new Map<
   string,
@@ -34,9 +34,11 @@ const historicalWarmReads = new Map<
     body: HistoricalBody;
     snapshotId: string;
     heavy: boolean;
+    sameDay: boolean;
     expires: number;
   }
 >();
+const sameDayAttempts = new Map<string, { proof: string; expires: number }>();
 let historicalWarmRevision = 0;
 let historicalPrefetchRunning = false;
 
@@ -47,6 +49,7 @@ export function firstGainersReadPath(day: string) {
 function clearHistoricalWarmReads() {
   historicalWarmRevision += 1;
   historicalWarmReads.clear();
+  sameDayAttempts.clear();
 }
 
 export type ReadChange = {
@@ -409,12 +412,16 @@ const historicalPlans = {
 } as const;
 
 type HistoricalKind = keyof typeof historicalPlans;
-type HistoricalTarget = { day: string; kind: HistoricalKind };
+type HistoricalTarget = {
+  day: string;
+  kind: HistoricalKind;
+  monitorScope?: "historical" | "latest";
+};
 
-function historicalPath({ day, kind }: HistoricalTarget) {
+function historicalPath({ day, kind, monitorScope }: HistoricalTarget) {
   if (kind === "gainers") return firstGainersReadPath(day);
   if (kind === "abnormal")
-    return `/market/abnormal?monitor_scope=historical&limit=1000&date=${day}`;
+    return `/market/abnormal?monitor_scope=${monitorScope || "historical"}&limit=1000&date=${day}`;
   const limit = ["emotion", "ladder", "sectors"].includes(kind)
     ? "&limit=1000"
     : "";
@@ -426,32 +433,21 @@ function historicalTarget(path: string): HistoricalTarget | null {
   const kind = endpoint.slice("/market/".length) as HistoricalKind;
   if (!endpoint.startsWith("/market/") || !Object.hasOwn(historicalPlans, kind))
     return null;
-  const day = new URLSearchParams(query).get("date");
+  const parameters = new URLSearchParams(query);
+  const day = parameters.get("date");
   if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
-  return path === historicalPath({ day, kind }) ? { day, kind } : null;
+  const monitorScope =
+    kind === "abnormal" && parameters.get("monitor_scope") === "latest"
+      ? "latest"
+      : undefined;
+  const target: HistoricalTarget = { day, kind, monitorScope };
+  return path === historicalPath(target) ? target : null;
 }
 
-async function historicalReadProof(
-  { day, kind }: HistoricalTarget,
-  signal: AbortSignal,
-) {
+function readMarketProof({ day, kind }: HistoricalTarget, receipt: Row) {
   const plan = historicalPlans[kind];
-  const extra = plan.domains.some(
-    (scope) => scope === "historical_reference" || scope === "archive_controls",
-  );
-  const receipt = await api<Row>(
-    `/tasks/activity?date=${day}${extra ? "&historical=true" : ""}`,
-    { signal },
-  );
   const revision = receipt?.read_revisions;
-  if (
-    receipt?.active_count !== 0 ||
-    revision?.market_locked !== false ||
-    typeof revision.market !== "string" ||
-    typeof revision.today !== "string" ||
-    day >= revision.today
-  )
-    return null;
+  if (!marketReceiptReady(receipt, day)) return null;
   const domains = plan.domains.map((scope) => revision.domains?.[scope]);
   if (
     domains.some((value, index) => {
@@ -471,18 +467,61 @@ async function historicalReadProof(
     kind === "intraday" ? [dateRevisions?.auction, dateRevisions?.noon] : [];
   if (anchors.some((value) => value !== null && typeof value !== "string"))
     return null;
+  let clockBucket: number | null = null;
+  let currentWindow: string | null = null;
+  if (day === revision.today && "archive" in plan) {
+    if (!Number.isFinite(receipt.observed_at_ms) || receipt.observed_at_ms <= 0)
+      return null;
+    const window = revision.current_windows?.[plan.archive];
+    if (typeof window !== "string") return null;
+    currentWindow = window;
+    clockBucket = Math.floor(receipt.observed_at_ms / 60_000);
+  }
   return JSON.stringify([
     revision.market,
     revision.today,
     ...domains,
     archiveRevision,
     ...anchors,
+    currentWindow,
+    clockBucket,
   ]);
+}
+
+function marketReceiptReady(receipt: Row, day: string) {
+  const revision = receipt?.read_revisions;
+  return (
+    receipt?.active_count === 0 &&
+    revision?.market_locked === false &&
+    typeof revision.market === "string" &&
+    revision.market.length > 0 &&
+    typeof revision.today === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(revision.today) &&
+    day <= revision.today
+  );
+}
+
+async function historicalReadProof(
+  target: HistoricalTarget,
+  signal: AbortSignal,
+  sameDay = false,
+) {
+  const extra =
+    sameDay ||
+    historicalPlans[target.kind].domains.some(
+      (scope) =>
+        scope === "historical_reference" || scope === "archive_controls",
+    );
+  const receipt = await api<Row>(
+    `/tasks/activity?date=${target.day}${extra ? "&historical=true" : ""}`,
+    { signal },
+  );
+  return readMarketProof(target, receipt);
 }
 
 function validHistoricalBody(
   value: Row,
-  { day, kind }: HistoricalTarget,
+  { day, kind, monitorScope }: HistoricalTarget,
   snapshotId: string,
 ) {
   if (value?.date !== day || value.unavailable_reason) return false;
@@ -522,7 +561,8 @@ function validHistoricalBody(
     );
   if (kind === "abnormal")
     return (
-      value.monitor_scope === "historical" &&
+      value.monitor_scope === (monitorScope || "historical") &&
+      (monitorScope !== "latest" || value.requested_date === day) &&
       value.data_coverage?.selected_date_available === true
     );
   if (kind === "overview" || kind === "indices")
@@ -563,79 +603,144 @@ async function readHistoricalWarmBody(
   }
 }
 
-function saveHistoricalRead(
+function reserveWarmBytes(
   path: string,
-  proof: string,
-  body: HistoricalBody,
-  snapshotId: string,
+  requested: number,
+  sameDay: boolean,
   heavy: boolean,
 ) {
-  for (const [key, entry] of historicalWarmReads)
-    if (entry.expires <= performance.now()) historicalWarmReads.delete(key);
   historicalWarmReads.delete(path);
-  historicalWarmReads.set(path, {
-    proof,
-    body,
-    snapshotId,
-    heavy,
-    expires: performance.now() + historicalWarmTtlMs,
-  });
-  const totalBytes = () =>
-    [...historicalWarmReads.values()].reduce(
-      (size, entry) => size + entry.body.bytes,
-      0,
-    );
-  while (
-    historicalWarmReads.size > historicalWarmMaxEntries ||
-    totalBytes() > historicalWarmMaxBytes
-  )
-    historicalWarmReads.delete(historicalWarmReads.keys().next().value!);
+  for (const [key, entry] of historicalWarmReads) {
+    if (
+      entry.expires <= performance.now() ||
+      (!sameDay && heavy && entry.heavy && !entry.sameDay)
+    )
+      historicalWarmReads.delete(key);
+  }
+  let storedBytes = [...historicalWarmReads.values()].reduce(
+    (size, entry) => size + entry.body.bytes,
+    0,
+  );
+  for (const [key, entry] of historicalWarmReads) {
+    if (
+      historicalWarmReads.size < historicalWarmMaxEntries &&
+      historicalWarmMaxBytes - storedBytes >= requested
+    )
+      break;
+    if (entry.sameDay) continue;
+    historicalWarmReads.delete(key);
+    storedBytes -= entry.body.bytes;
+  }
+  return historicalWarmReads.size < historicalWarmMaxEntries
+    ? Math.min(requested, historicalWarmMaxBytes - storedBytes)
+    : 0;
 }
 
-export async function prefetchHistoricalReads(
+function rememberSameDayAttempt(path: string, proof: string) {
+  sameDayAttempts.delete(path);
+  sameDayAttempts.set(path, {
+    proof,
+    expires: performance.now() + historicalWarmTtlMs,
+  });
+  while (sameDayAttempts.size > 2 * historicalWarmMaxEntries)
+    sameDayAttempts.delete(sameDayAttempts.keys().next().value!);
+}
+
+export async function prefetchMarketReads(
+  sourcePath: string,
+  currentPaths: string[],
+  historicalDays: string[],
+  snapshotId: string,
+  signal: AbortSignal,
+  canContinue: () => boolean,
+) {
+  const source = historicalTarget(sourcePath);
+  if (!source || historicalPrefetchRunning) return false;
+  const revision = historicalWarmRevision;
+  const stillValid = () =>
+    !signal.aborted && revision === historicalWarmRevision && canContinue();
+  const mayStart = () => stillValid() && !foregroundMarketReadPending();
+  if (!mayStart()) return false;
+
+  const current = [...new Set(currentPaths)]
+    .filter((path) => path !== sourcePath)
+    .map((path) => ({ path, target: historicalTarget(path) }))
+    .filter((item) => item.target?.day === source.day)
+    .slice(0, historicalWarmMaxEntries);
+  const older = historicalDays
+    .slice(0, historicalPlans[source.kind].days)
+    .filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day) && day < source.day)
+    .map((day) => ({
+      path: historicalPath({ day, kind: source.kind }),
+      target: { day, kind: source.kind },
+    }));
+
+  historicalPrefetchRunning = true;
+  try {
+    const currentReceipt = current.length
+      ? await api<Row>(`/tasks/activity?date=${source.day}&historical=true`, {
+          signal,
+        })
+      : null;
+    if (
+      current.length &&
+      (!currentReceipt || !marketReceiptReady(currentReceipt, source.day))
+    )
+      return false;
+    if (currentReceipt && stillValid()) {
+      const sourceProof = readMarketProof(source, currentReceipt);
+      if (sourceProof) rememberSameDayAttempt(sourcePath, sourceProof);
+    }
+    for (const { path, target } of [...current, ...older]) {
+      if (!mayStart()) return false;
+      if (!target) continue;
+      const sameDay = target.day === source.day;
+      const proof =
+        sameDay && currentReceipt
+          ? readMarketProof(target, currentReceipt)
+          : await historicalReadProof(target, signal);
+      if (!mayStart()) return false;
+      if (!proof) continue;
+
+      const existing = historicalWarmReads.get(path);
+      if (existing?.proof === proof && existing.expires > performance.now()) {
+        if (sameDay) existing.sameDay = true;
+        continue;
+      }
+      const attempted = sameDay ? sameDayAttempts.get(path) : null;
+      if (attempted?.proof === proof && attempted.expires > performance.now())
+        continue;
+      const plan = historicalPlans[target.kind];
+      const heavy = plan.days === 1;
+      const cap = reserveWarmBytes(path, plan.bytes, sameDay, heavy);
+      if (cap <= 0) continue;
+      const body = await readHistoricalWarmBody(path, cap, signal);
+      if (!stillValid()) return false;
+      if (sameDay) rememberSameDayAttempt(path, proof);
+      if (body)
+        historicalWarmReads.set(path, {
+          proof,
+          body,
+          snapshotId,
+          heavy,
+          sameDay,
+          expires: performance.now() + historicalWarmTtlMs,
+        });
+    }
+    return true;
+  } finally {
+    historicalPrefetchRunning = false;
+  }
+}
+
+export function prefetchHistoricalReads(
   path: string,
   days: string[],
   snapshotId: string,
   signal: AbortSignal,
   canContinue: () => boolean,
 ) {
-  const source = historicalTarget(path);
-  if (!source || historicalPrefetchRunning) return;
-  const plan = historicalPlans[source.kind];
-  const revision = historicalWarmRevision;
-  const stillValid = () =>
-    !signal.aborted && revision === historicalWarmRevision && canContinue();
-  const mayStart = () => stillValid() && !foregroundMarketReadPending();
-  if (!mayStart()) return;
-  historicalPrefetchRunning = true;
-  try {
-    for (const day of days.slice(0, plan.days)) {
-      if (!mayStart()) return;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day >= source.day) continue;
-      const target = { day, kind: source.kind };
-      const targetPath = historicalPath(target);
-      const proof = await historicalReadProof(target, signal);
-      if (!mayStart()) return;
-      if (!proof) continue;
-      const saved = historicalWarmReads.get(targetPath);
-      if (saved?.proof === proof && saved.expires > performance.now()) continue;
-      if (plan.days === 1)
-        for (const [key, entry] of historicalWarmReads)
-          if (entry.heavy) historicalWarmReads.delete(key);
-      const body = await readHistoricalWarmBody(targetPath, plan.bytes, signal);
-      if (!stillValid()) return;
-      if (body)
-        saveHistoricalRead(
-          targetPath,
-          proof,
-          body,
-          snapshotId,
-          plan.days === 1,
-        );
-    }
-  } finally {
-    historicalPrefetchRunning = false;
-  }
+  return prefetchMarketReads(path, [], days, snapshotId, signal, canContinue);
 }
 
 function foregroundMarketReadPending() {
@@ -661,7 +766,7 @@ async function readRetainedPage<T>(path: string, signal: AbortSignal) {
     if (target && saved.expires > performance.now()) {
       const revision = historicalWarmRevision;
       try {
-        const proof = await historicalReadProof(target, signal);
+        const proof = await historicalReadProof(target, signal, saved.sameDay);
         if (signal.aborted) throw new DOMException("Aborted", "AbortError");
         if (
           historicalWarmReads.get(path) === saved &&

@@ -141,10 +141,11 @@ export default function DragonTiger({
     : null;
   const result = useApi<Row>(path);
   const data = result.data?.date === date ? result.data : null;
+  const primarySettled =
+    !result.loading && !result.error && data?.date === date;
   useHistoricalPrefetch(
     date === latestDate &&
-      !result.loading &&
-      !result.error &&
+      primarySettled &&
       data?.availability?.available === true &&
       typeof data.collection_snapshot_id === "string" &&
       !!data.collection_snapshot_id,
@@ -152,6 +153,7 @@ export default function DragonTiger({
     date,
     data?.snapshot_id,
     prefetchDates,
+    primarySettled,
   );
   const [board, setBoard] = useState<DragonTigerBoard>("all"),
     [period, setPeriod] = useState<DragonTigerPeriod>(1);

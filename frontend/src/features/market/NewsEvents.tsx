@@ -179,13 +179,12 @@ export default function NewsEvents({
   const [eventId, setEventId] = useState<string>();
   const newsPath = `/market/news-events?date=${date}`;
   const news = useApi<NewsView>(newsPath);
+  const primarySettled =
+    tab === "news" && !news.loading && !news.error && news.data?.date === date;
   useHistoricalPrefetch(
-    tab === "news" &&
+    primarySettled &&
       date === latestDate &&
-      !news.loading &&
-      !news.error &&
-      news.data?.date === date &&
-      news.data.stages.some(
+      !!news.data?.stages.some(
         ({ status, captured_at }) =>
           (status === "complete" || status === "partial") && !!captured_at,
       ),
@@ -193,6 +192,7 @@ export default function NewsEvents({
     date,
     news.data?.date,
     prefetchDates,
+    primarySettled,
   );
   const calendar = useApi<CalendarView>(
     tab === "calendar"

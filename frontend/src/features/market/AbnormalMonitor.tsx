@@ -46,20 +46,22 @@ export default function AbnormalMonitor({
 }) {
   const [scope, setScope] = useState<MonitorScope>("latest");
   const [filter, setFilter] = useState("");
-  const result = useApi<Row>(monitorRequest(date, scope));
+  const path = monitorRequest(date, scope);
+  const result = useApi<Row>(path);
   const scopeMismatch =
     result.data != null && result.data.monitor_scope !== scope;
   const data = scopeMismatch ? null : result.data;
+  const primarySettled =
+    !result.loading && !result.error && data?.date === date;
   useHistoricalPrefetch(
     date === latestDate &&
-      !result.loading &&
-      !result.error &&
-      data?.date === date &&
-      data.data_coverage?.selected_date_available === true,
-    monitorRequest(date, "historical"),
+      primarySettled &&
+      data?.data_coverage?.selected_date_available === true,
+    path,
     date,
     data?.snapshot_id,
     prefetchDates,
+    primarySettled,
   );
   const rows = list(data).filter((row) =>
     [row.name, row.code, row.instrument_id, row.event_type]

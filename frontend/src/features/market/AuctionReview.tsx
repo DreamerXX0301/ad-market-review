@@ -178,16 +178,18 @@ export default function AuctionReview({
   const automaticToday =
     auctionAutomaticToday(automation) && selected === automation?.today;
   const payload = auctionPayload(view, selected);
+  const primarySettled =
+    !result.loading &&
+    !result.error &&
+    view?.date === date &&
+    !["queued", "running", "paused"].includes(view?.task?.status);
   useHistoricalPrefetch(
-    date === latestDate &&
-      !result.loading &&
-      !result.error &&
-      !!payload &&
-      !["queued", "running", "paused"].includes(view?.task?.status),
+    date === latestDate && primarySettled && !!payload,
     path,
     date,
     view?.snapshot?.snapshot_id,
     prefetchDates,
+    primarySettled,
   );
   const [closeOpen, setCloseOpen] = useState(false);
   const closeResult = useApi<Row>(

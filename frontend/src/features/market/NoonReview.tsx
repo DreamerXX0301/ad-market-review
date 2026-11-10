@@ -1044,17 +1044,19 @@ export default function NoonReview({
   const retentionDays = view?.retention?.calendar_days;
   const selected = date || view?.date || "";
   const payload = noonPayload(view, selected);
-  useHistoricalPrefetch(
+  const primarySettled =
     tab !== "close" &&
-      date === latestDate &&
-      !result.loading &&
-      !result.error &&
-      !!payload &&
-      !["queued", "running", "paused"].includes(view?.task?.status),
+    !result.loading &&
+    !result.error &&
+    view?.date === date &&
+    !["queued", "running", "paused"].includes(view?.task?.status);
+  useHistoricalPrefetch(
+    date === latestDate && primarySettled && !!payload,
     path,
     date,
     view?.snapshot?.snapshot_id,
     prefetchDates,
+    primarySettled,
   );
   const [pendingDay, setPendingDay] = useState(""),
     [submitError, setSubmitError] = useState("");

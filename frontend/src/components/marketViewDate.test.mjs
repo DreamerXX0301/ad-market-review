@@ -25,6 +25,11 @@ const hooks = {
     if (!slots[i] || !same(slots[i].deps, deps)) slots[i] = { value: fn, deps };
     return slots[i].value;
   },
+  useMemo(fn, deps) {
+    const i = cursor++;
+    if (!slots[i] || !same(slots[i].deps, deps)) slots[i] = { value: fn(), deps };
+    return slots[i].value;
+  },
   useState(initial) {
     const i = cursor++;
     if (!(i in slots))
@@ -120,7 +125,7 @@ let statusProbes = 0;
 globalThis.__dateStatusProbe = () => statusProbes++;
 const replacements = {
   react: encode(
-    "export const {memo,useState,useEffect,useCallback}=globalThis.__dateHooks;",
+    "export const {memo,useState,useEffect,useCallback,useMemo}=globalThis.__dateHooks;",
   ),
   "./lib/api": encode(
     "export const useApi=globalThis.__dateApi;export const ApiPageActivity={Provider:'activity'};",
@@ -135,6 +140,9 @@ const replacements = {
   "./components/taskActivity": encode("export function refreshTaskActivity(){globalThis.__dateStatusProbe()};export function setTaskActivityReviewDate(){};"),
   "./components/IncrementProgressDialog": encode("export default 'progress';"),
   "./components/ReadonlyPreviewBanner": encode("export default 'preview';"),
+  "./features/market/useHistoricalPrefetch": encode(
+    "export const MarketPrefetchContext={Provider:'market-prefetch'};export const marketPrimaryReadPath=()=>null;export const sameDayMarketPaths=()=>[];",
+  ),
 };
 const cache = new Map();
 async function moduleUrl(url, overrides = replacements) {

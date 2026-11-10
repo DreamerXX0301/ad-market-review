@@ -99,6 +99,7 @@ const {
   observeReadScopes,
   firstGainersReadPath,
   prefetchHistoricalReads,
+  prefetchMarketReads,
 } = await import(encode(source));
 ApiPageActivity.value = true;
 function render() {
@@ -437,8 +438,8 @@ assert.equal(requests.at(-1).url, "/api/v1" + sectorPath, "catalog visibility ch
 await answer(requests.at(-1), { date: sectorDay, items: ["updated"] });
 
 const beforeUnsafePath = requests.length;
-await prefetchHistoricalReads("/market/abnormal?monitor_scope=latest&limit=1000&date=2026-10-27", [sectorDay], "snapshot-1", eligible.signal, () => true);
-assert.equal(requests.length, beforeUnsafePath, "latest monitoring is not an archived read");
+await prefetchHistoricalReads("/market/abnormal?monitor_scope=latest&limit=1000&date=2026-10-27&extra=1", [sectorDay], "snapshot-1", eligible.signal, () => true);
+assert.equal(requests.length, beforeUnsafePath, "prefetch still requires a canonical request");
 
 const indexDay = "2026-10-15";
 const warmedIndex = prefetchHistoricalReads("/market/indices?date=2026-10-27", [indexDay], "snapshot-1", eligible.signal, () => true);
@@ -450,6 +451,72 @@ render();
 await answer(requests.at(-1), proof());
 assert.equal(requests.at(-1).url, "/api/v1" + path, "a malformed raw candidate falls back only when consumed");
 await answer(requests.at(-1), { date: indexDay, indices: [] });
+
+const today = "2026-10-28";
+const recentDay = "2026-10-27";
+const sourceToday = `/market/overview?date=${today}`;
+const indexToday = `/market/indices?date=${today}`;
+const newsToday = `/market/news-events?date=${today}`;
+const monitorToday = `/market/abnormal?monitor_scope=latest&limit=1000&date=${today}`;
+const nowProof = {
+  ...proof("published-1", { [today]: { news: "archive-news" } }),
+  observed_at_ms: 1793174400000,
+};
+nowProof.read_revisions.current_windows = { news: "news-window-1" };
+const queue = prefetchMarketReads(sourceToday, [sourceToday, indexToday, newsToday, monitorToday], [recentDay], "snapshot-1", eligible.signal, () => true);
+const queuedFrom = requests.length - 1;
+await answer(requests.at(-1), nowProof);
+for (const [target, value] of [
+  [indexToday, { date: today, snapshot_id: "snapshot-1", indices: [] }],
+  [newsToday, { date: today, stages: [{ status: "complete", captured_at: today + "T09:00:01+08:00" }] }],
+  [monitorToday, { date: today, requested_date: today, snapshot_id: "snapshot-1", monitor_scope: "latest", data_coverage: { selected_date_available: true } }],
+]) {
+  assert.equal(requests.at(-1).url, "/api/v1" + target);
+  requests.at(-1).resolve(new Response(JSON.stringify(value)));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+assert.equal(requests.at(-1).url, `/api/v1/tasks/activity?date=${recentDay}&historical=true`);
+await answer(requests.at(-1), proof());
+requests.at(-1).resolve(new Response(JSON.stringify({ date: recentDay, snapshot_id: "snapshot-1", indices: [] })));
+await queue;
+assert.deepEqual(requests.slice(queuedFrom).map(({url}) => url), [
+  `/api/v1/tasks/activity?date=${today}&historical=true`,
+  "/api/v1" + indexToday, "/api/v1" + newsToday, "/api/v1" + monitorToday,
+  `/api/v1/tasks/activity?date=${recentDay}&historical=true`,
+  `/api/v1/market/overview?date=${recentDay}`,
+]);
+
+path = indexToday;
+const beforeSameDay = requests.length;
+render();
+await answer(requests.at(-1), nowProof);
+assert.equal(requests.length, beforeSameDay + 1, "current-day data survives later historical work and only needs a proof GET");
+assert.deepEqual(render().data.indices, []);
+
+const resequence = prefetchMarketReads(indexToday, [sourceToday, newsToday, monitorToday], [], "snapshot-1", eligible.signal, () => true);
+const beforeCurrentCooldown = requests.length;
+await answer(requests.at(-1), nowProof);
+await resequence;
+assert.equal(requests.length, beforeCurrentCooldown, "completed current-day entries and the displayed source are not requested again");
+
+path = newsToday;
+render();
+await answer(requests.at(-1), { ...nowProof, observed_at_ms: nowProof.observed_at_ms + 60_000 });
+assert.equal(requests.at(-1).url, "/api/v1" + newsToday, "a current-day archive crossing the server minute is re-read");
+await answer(requests.at(-1), { date: today, stages: [] });
+
+path = monitorToday;
+const beforeLatestMonitor = requests.length;
+render();
+await answer(requests.at(-1), nowProof);
+assert.equal(requests.length, beforeLatestMonitor + 1, "matching latest-monitoring scope consumes the current-day warm body");
+assert.equal(render().data.monitor_scope, "latest");
+
+const blockedQueue = prefetchMarketReads(sourceToday, [indexToday], [recentDay], "snapshot-1", eligible.signal, () => true);
+const beforeBlockedQueue = requests.length;
+await answer(requests.at(-1), { ...nowProof, active_count: 1 });
+assert.equal(await blockedQueue, false);
+assert.equal(requests.length, beforeBlockedQueue, "a busy same-day proof prevents historical fallback work");
 assert.ok(
   requests.every((request) => !request.options.method),
   "visibility only rereads GETs",

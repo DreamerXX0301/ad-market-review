@@ -2,7 +2,7 @@ import {
   refreshTaskActivity,
   setTaskActivityReviewDate,
 } from "./components/taskActivity";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { CheckCircle2, X, XCircle } from "lucide-react";
 import { ApiPageActivity, useApi } from "./lib/api";
@@ -55,6 +55,11 @@ import {
   noonCloseChartDate,
   noonCloseSectorSelection,
 } from "./features/market/noonCloseNavigation";
+import {
+  MarketPrefetchContext,
+  marketPrimaryReadPath,
+  sameDayMarketPaths,
+} from "./features/market/useHistoricalPrefetch";
 const Topics = lazyView(() => import("./features/topics/Topics"));
 const Strategies = lazyView(() => import("./features/strategies/Strategies"));
 const Tracking = lazyView(() => import("./features/tracking/Tracking"));
@@ -183,6 +188,34 @@ export default function App() {
   const dates = [...(bootstrap.data?.market_dates || [])].sort();
   const latestDate = bootstrap.data?.data_date || dates.at(-1) || "";
   const date = marketViewDate(route, dateChoice, latestDate, today);
+  const marketSnapshotId = bootstrap.data?.market_snapshot_id;
+  const marketPrefetch = useMemo(() => {
+    if (
+      !today ||
+      !date ||
+      (date !== today && date !== latestDate) ||
+      typeof marketSnapshotId !== "string" ||
+      !marketSnapshotId
+    )
+      return null;
+    const sourcePath = marketPrimaryReadPath(route, date);
+    if (!sourcePath) return null;
+    const currentPaths = sameDayMarketPaths(
+      marketRoutes,
+      route,
+      date,
+      (target) => {
+        if (
+          date !== latestDate &&
+          !isIntradayReview(target) &&
+          target !== "news-events"
+        )
+          return "";
+        return marketViewDate(target, dateChoice, latestDate, today);
+      },
+    );
+    return { date, sourcePath, currentPaths, marketSnapshotId };
+  }, [route, date, dateChoice, latestDate, today, marketSnapshotId]);
   const noonPublishedClose = noonCloseChartDate(dates, date, date);
   const noonSectorDay = sector?.topic.noon_snapshot_date ?? "";
   const noonSectorPublishedClose = noonCloseChartDate(
@@ -685,7 +718,13 @@ export default function App() {
               <ApiPageActivity.Provider
                 value={key === route && visible && !incrementBlocked}
               >
-                <RetainedPage active={key === route}>{page(key)}</RetainedPage>
+                <MarketPrefetchContext.Provider
+                  value={key === route ? marketPrefetch : null}
+                >
+                  <RetainedPage active={key === route}>
+                    {page(key)}
+                  </RetainedPage>
+                </MarketPrefetchContext.Provider>
               </ApiPageActivity.Provider>
             </div>
           ))}

@@ -1,9 +1,57 @@
-import { useEffect, useMemo, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import {
+  firstGainersReadPath,
   historicalPrefetchBusy,
-  prefetchHistoricalReads,
+  prefetchMarketReads,
+  subscribeReadChanges,
   usePageActive,
 } from "../../lib/api";
+
+type MarketPrefetch = {
+  date: string;
+  sourcePath: string;
+  currentPaths: string[];
+  marketSnapshotId: string;
+};
+
+export const MarketPrefetchContext = createContext<MarketPrefetch | null>(null);
+
+export function marketPrimaryReadPath(route: string, date: string) {
+  switch (route) {
+    case "market":
+      return `/market/overview?date=${date}`;
+    case "gainers":
+      return firstGainersReadPath(date);
+    case "abnormal":
+      return `/market/abnormal?monitor_scope=latest&limit=1000&date=${date}`;
+    case "emotion":
+    case "sectors":
+    case "ladder":
+      return `/market/${route}?date=${date}&limit=1000`;
+    case "auction":
+    case "intraday":
+    case "noon":
+    case "news-events":
+    case "indices":
+    case "dragon-tiger":
+      return `/market/${route}?date=${date}`;
+    default:
+      return null;
+  }
+}
+
+export function sameDayMarketPaths(
+  routes: Iterable<string>,
+  sourceRoute: string,
+  date: string,
+  viewDate: (route: string) => string,
+) {
+  return [...routes].flatMap((route) => {
+    if (route === sourceRoute || viewDate(route) !== date) return [];
+    const path = marketPrimaryReadPath(route, date);
+    return path ? [path] : [];
+  });
+}
 
 const quietMs = 1_800;
 const retryMs = 90_000;
@@ -15,7 +63,17 @@ const activity = [
   "click",
   "input",
   "change",
+  "focusin",
+  "focusout",
 ] as const;
+const captureScopes = new Set([
+  "market",
+  "calendar",
+  "tasks",
+  "auction",
+  "noon",
+  "intraday",
+]);
 
 export function previousPublishedDays(date: string, published?: string[]) {
   if (!Array.isArray(published) || !published.includes(date)) return [];
@@ -59,10 +117,12 @@ export function useHistoricalPrefetch(
   date: string,
   snapshotId: unknown,
   published?: string[],
+  foregroundSettled = ready,
 ) {
   const active = usePageActive();
+  const plan = useContext(MarketPrefetchContext);
   const days = useMemo(
-    () => (ready ? previousPublishedDays(date, published).join(",") : ""),
+    () => (ready ? previousPublishedDays(date, published) : []),
     [ready, date, published],
   );
   const lastAttempt = useRef<{ key: string; expires: number } | null>(null);
@@ -70,17 +130,23 @@ export function useHistoricalPrefetch(
     if (
       !active ||
       !path ||
-      !days ||
-      typeof snapshotId !== "string" ||
-      !snapshotId
+      !foregroundSettled ||
+      !plan ||
+      plan.date !== date ||
+      plan.sourcePath !== path ||
+      (!plan.currentPaths.length && !days.length)
     )
       return;
-    const key = `${snapshotId}:${path}:${days}`;
-    if (
+    const key = JSON.stringify([
+      plan.marketSnapshotId,
+      path,
+      snapshotId,
+      days,
+      plan.currentPaths,
+    ]);
+    const coolingDown = () =>
       lastAttempt.current?.key === key &&
-      lastAttempt.current.expires > performance.now()
-    )
-      return;
+      lastAttempt.current.expires > performance.now();
 
     let timer: number | undefined;
     let idle: number | undefined;
@@ -91,49 +157,69 @@ export function useHistoricalPrefetch(
       if (idle !== undefined) window.cancelIdleCallback(idle);
     };
     const run = () => {
-      if (!availableIdleInput()) return;
+      if (coolingDown() || !availableIdleInput()) return;
       if (historicalPrefetchBusy()) {
         if (deferrals++ < 3) schedule();
         return;
       }
-      work = new AbortController();
-      lastAttempt.current = { key, expires: performance.now() + retryMs };
-      void prefetchHistoricalReads(
+      const attempt = new AbortController();
+      work = attempt;
+      void prefetchMarketReads(
         path,
-        days.split(","),
-        snapshotId,
-        work.signal,
+        plan.currentPaths,
+        days,
+        plan.marketSnapshotId,
+        attempt.signal,
         availableIdleInput,
-      ).catch(() => {
-        /* An unused prefetch can always fall back to a normal page read. */
-      });
+      )
+        .then((completed) => {
+          if (attempt.signal.aborted) return;
+          if (completed)
+            lastAttempt.current = { key, expires: performance.now() + retryMs };
+          else if (historicalPrefetchBusy() && deferrals++ < 3) schedule();
+        })
+        .catch(() => {
+          /* An unused prefetch can always fall back to a normal page read. */
+        })
+        .finally(() => {
+          if (work === attempt) work = undefined;
+        });
     };
     const schedule = () => {
       cancelScheduled();
-      if (work) {
-        work.abort();
-        return;
-      }
+      work?.abort();
+      if (document.hidden) return;
       timer = window.setTimeout(() => {
         if (typeof window.requestIdleCallback === "function")
           idle = window.requestIdleCallback(run);
         else run();
       }, quietMs);
     };
+    const reschedule = () => {
+      deferrals = 0;
+      schedule();
+    };
 
+    const unsubscribe = subscribeReadChanges((changes) => {
+      if (changes.some(({ scope }) => captureScopes.has(scope))) {
+        lastAttempt.current = null;
+        reschedule();
+      }
+    });
     for (const event of activity)
-      document.addEventListener(event, schedule, {
+      document.addEventListener(event, reschedule, {
         capture: true,
         passive: true,
       });
-    document.addEventListener("visibilitychange", schedule);
+    document.addEventListener("visibilitychange", reschedule);
     schedule();
     return () => {
       cancelScheduled();
       work?.abort();
+      unsubscribe();
       for (const event of activity)
-        document.removeEventListener(event, schedule, true);
-      document.removeEventListener("visibilitychange", schedule);
+        document.removeEventListener(event, reschedule, true);
+      document.removeEventListener("visibilitychange", reschedule);
     };
-  }, [active, path, days, snapshotId]);
+  }, [active, path, date, days, snapshotId, foregroundSettled, plan]);
 }

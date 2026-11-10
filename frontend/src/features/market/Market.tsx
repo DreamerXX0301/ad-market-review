@@ -2,7 +2,12 @@ import { StockEventBadges } from "./BoardTags";
 import AbnormalMonitor from "./AbnormalMonitor";
 import { useEffect, useState } from "react";
 import { ChevronRight, RefreshCw, Search } from "lucide-react";
-import { firstGainersReadPath, list, useApi, usePageActive } from "../../lib/api";
+import {
+  firstGainersReadPath,
+  list,
+  useApi,
+  usePageActive,
+} from "../../lib/api";
 import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 import IntradayPageNavigation from "./IntradayPageNavigation";
 import { intradayReadingProps } from "./intradayReadingNavigation";
@@ -267,15 +272,20 @@ export function MarketOverview({
 }) {
   const pageActive = usePageActive();
   const [selected, setSelected] = useState("000001.SH");
-  const path = date ? `/market/${indicesOnly ? "indices" : "overview"}?date=${date}` : null;
+  const path = date
+    ? `/market/${indicesOnly ? "indices" : "overview"}?date=${date}`
+    : null;
   const result = useApi<Row>(path);
   const data = result.data;
+  const primarySettled =
+    !result.loading && !result.error && data?.date === date;
   useHistoricalPrefetch(
-    !result.loading && !result.error && date === bootstrap?.data_date && data?.date === date,
+    primarySettled && date === bootstrap?.data_date,
     path,
     date,
     data?.snapshot_id,
     bootstrap?.market_dates,
+    primarySettled,
   );
   const indices =
     data?.indices ||
@@ -795,24 +805,27 @@ export function MarketPage({
     !gainerUnranked &&
     !gainerQuery &&
     !columnSort;
-  const path = date && firstGainersPage
+  const path =
+    date && firstGainersPage
       ? firstGainersReadPath(date)
       : date && route !== "abnormal"
-      ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
-      : null;
+        ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
+        : null;
   const result = useApi<Row>(path);
   const data = result.data;
-  useHistoricalPrefetch(
+  const primarySettled =
     (firstGainersPage || ["emotion", "ladder", "sectors"].includes(route)) &&
-      !filter &&
-      date === latestDate &&
-      !result.loading &&
-      !result.error &&
-      data?.date === date,
+    !filter &&
+    !result.loading &&
+    !result.error &&
+    data?.date === date;
+  useHistoricalPrefetch(
+    primarySettled && date === latestDate,
     path,
     date,
     data?.snapshot_id,
     prefetchDates,
+    primarySettled,
   );
   const sectorResult = useApi<Row>(
     route === "flow" && kind === "concept" && date

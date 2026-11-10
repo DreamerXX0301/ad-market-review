@@ -186,10 +186,11 @@ renderToStaticMarkup(
 assert.equal(requests[0], monitorRequest(props.date, "latest"));
 assert.deepEqual(prefetch.last, [
   true,
-  monitorRequest(props.date, "historical"),
+  monitorRequest(props.date, "latest"),
   props.date,
   "latest-market",
   prefetchDates,
+  true,
 ]);
 
 setScope("latest");
