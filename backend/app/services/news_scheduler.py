@@ -11,6 +11,7 @@ import sys
 import time as runtime
 
 from app.core import connect
+from app.infrastructure.database import EVENT_CALENDAR_INSTALL_DEFAULT
 from app.services.sync_clock import CHINA, local_now
 
 AUCTION_START = time(9)
@@ -115,7 +116,8 @@ def _collect(kind, *arguments):
         # anonymous pipe. The CLS and event calendar children receive no key.
         input_args = {'input': key.encode()}
     result = subprocess.run(
-        [sys.executable, '-B', '-m', 'app.services.news_fetch', kind, *arguments],
+        [sys.executable, '-B', '-c', 'from app.services.news_fetch import main; main()',
+         kind, *arguments],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=CHILD_TIMEOUT_SECONDS,
         check=True, env=environment, **input_args,
     )
@@ -127,7 +129,8 @@ class NewsScheduler:
         self.clock = clock
         self.collector = collector
         self.flash_enabled = os.environ.get('SHIXU_NEWS_CLS_LOCAL_AUTHORIZED') == '1'
-        self.calendar_enabled = os.environ.get('SHIXU_EVENT_CALENDAR_ENABLED') == '1'
+        calendar_override = os.environ.get('SHIXU_EVENT_CALENDAR_ENABLED')
+        self.calendar_enabled = calendar_override == '1' if calendar_override else None
         self.next_check = 0.0
         self.today = None
         self.attempts = set()
@@ -147,12 +150,21 @@ class NewsScheduler:
         slot = capture_slot(observed)
         should_prune = observed.time() >= NOON_START and not self.pruned
         flash_wanted = slot is not None and self.flash_enabled and ('flash', slot) not in self.attempts
-        calendar_wanted = slot is not None and self.calendar_enabled and ('calendar', _calendar_slot(slot)) not in self.attempts
+        calendar_wanted = (slot is not None and self.calendar_enabled is not False
+                           and ('calendar', _calendar_slot(slot)) not in self.attempts)
         if not (should_prune or flash_wanted or calendar_wanted):
             return
         with connect() as connection:
             if _active_auction(connection, day) or _busy(connection):
                 return
+            if calendar_wanted and self.calendar_enabled is None:
+                # Resolve installation policy only in an eligible idle tick,
+                # after the existing capture and auction protections.
+                self.calendar_enabled = connection.execute(
+                    "SELECT 1 FROM platform_setting WHERE key=? AND value_json='true'",
+                    (EVENT_CALENDAR_INSTALL_DEFAULT,),
+                ).fetchone() is not None
+                calendar_wanted = self.calendar_enabled
             close_ready = slot == 'after_close' and _published_increment(connection, day)
             slot_ready = slot is not None and (slot != 'after_close' or close_ready)
             flash_possible = flash_wanted and slot_ready and (close_ready or observed.weekday() < 5)

@@ -2,7 +2,7 @@
 # Version tag is a convenience; use SHIXU_IMAGE_REF=repository@sha256:digest to pin.
 name: ad-market-review
 x-runtime: &runtime
-  image: ${SHIXU_IMAGE_REF:-ghcr.io/dreamerxx0301/ad-market-review:v0.1.27}
+  image: ${SHIXU_IMAGE_REF:-ghcr.io/dreamerxx0301/ad-market-review:v0.1.28}
   environment: &environment
     SHIXU_DATA_DIR: /var/lib/shixu
     SHIXU_SQLITE_PATH: /var/lib/shixu/business/app.sqlite3
@@ -55,7 +55,7 @@ services:
     environment:
       <<: *environment
       SQLITE_TMPDIR: /var/lib/shixu/work
-      SHIXU_EVENT_CALENDAR_ENABLED: ${SHIXU_EVENT_CALENDAR_ENABLED:-0}
+      SHIXU_EVENT_CALENDAR_ENABLED: ${SHIXU_EVENT_CALENDAR_ENABLED-}
       SHIXU_NEWS_CLS_LOCAL_AUTHORIZED: ${SHIXU_NEWS_CLS_LOCAL_AUTHORIZED:-0}
     # Explicit opt-in prevents a candidate `up -d` from starting a worker.
     profiles: [worker]

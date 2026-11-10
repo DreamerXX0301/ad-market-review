@@ -14,6 +14,7 @@ CONFIG = 'automatic-review-config-v1'
 STATE = 'automatic-review-state-v1'
 CALENDAR = 'automatic-review-calendar-v1'
 DISCOVERY = 'auction-discovery-automation-v1'
+EVENT_CALENDAR_DEFAULT = 'official-event-calendar-install-default-v1'
 
 
 def _settings(connection):
@@ -22,6 +23,22 @@ def _settings(connection):
 
 def _bundle_sha(bundle):
     return {path.relative_to(bundle).as_posix(): sha(path) for path in bundle.rglob('*') if path.is_file()}
+
+
+def test_restore_turns_off_fresh_install_calendar_without_removing_its_receipt(source, tmp_path):
+    receipt = 'official-event-calendar-collection-v1'
+    with connect_sqlite(source / 'business/app.sqlite3') as connection:
+        connection.executescript((ROOT / 'backend/app/migrations/003_platform.sql').read_text())
+        connection.execute('INSERT INTO platform_setting VALUES(?,?,1)', (EVENT_CALENDAR_DEFAULT, 'true'))
+        connection.execute('INSERT INTO platform_setting VALUES(?,?,1)', (receipt, '{"ready":true}'))
+    bundle = tmp_path / 'calendar-bundle'
+    perform_backup(source, bundle)
+    target = tmp_path / 'calendar-restore'
+    assert perform_restore(bundle, target)['event_calendar_default_disabled'] is True
+    with connect_sqlite(target / 'business/app.sqlite3', 'ro') as connection:
+        assert _settings(connection) == {EVENT_CALENDAR_DEFAULT: 'false', receipt: '{"ready":true}'}
+    with connect_sqlite(bundle / 'business/app.sqlite3', 'ro') as connection:
+        assert _settings(connection) == {EVENT_CALENDAR_DEFAULT: 'true', receipt: '{"ready":true}'}
 
 
 @pytest.mark.parametrize('switches', [(True, True), (True, False), (False, True), (False, False)])

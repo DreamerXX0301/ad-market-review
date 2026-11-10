@@ -9,6 +9,7 @@ from typing import Iterator
 from .config import data_dir, sqlite_path, published_dir, raw_dir, work_dir
 from .storage import hash_file, now_ms
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
+EVENT_CALENDAR_INSTALL_DEFAULT = "official-event-calendar-install-default-v1"
 _ready = {}
 _ready_lock = threading.RLock()
 
@@ -63,8 +64,14 @@ def ensure_ready() -> None:
                     lines = file.read_text(encoding="utf-8").splitlines()
                     body = "\n".join(line for line in lines if not line.strip().upper().startswith("PRAGMA ") and line.strip().upper() not in ("BEGIN IMMEDIATE;", "BEGIN;", "COMMIT;"))
                     version = max(connection.execute("PRAGMA user_version").fetchone()[0], int(file.name.split("_", 1)[0]))
+                    stamp = now_ms()
+                    if file.name == "003_platform.sql":
+                        # Every released database already has this table. Seed
+                        # a fresh install in its creation transaction only.
+                        body += (f"\nINSERT INTO platform_setting VALUES "
+                                 f"('{EVENT_CALENDAR_INSTALL_DEFAULT}','true',{stamp});")
                     # File names and SHA are controlled repository data, never request input.
-                    script = "BEGIN IMMEDIATE;\n" + body + f"\nINSERT INTO _schema_migration VALUES ('{file.name}','{sha}',{now_ms()});\nPRAGMA user_version={version};\nCOMMIT;"
+                    script = "BEGIN IMMEDIATE;\n" + body + f"\nINSERT INTO _schema_migration VALUES ('{file.name}','{sha}',{stamp});\nPRAGMA user_version={version};\nCOMMIT;"
                     try:
                         connection.executescript(script)
                     except BaseException:

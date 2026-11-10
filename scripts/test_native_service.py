@@ -410,6 +410,29 @@ def test_environment_discards_unrelated_provider_credentials(installation, monke
     assert service.environment['SHIXU_SQLITE_PATH'] == str(installation['database'])
 
 
+def test_native_calendar_control_explicitly_disables_the_new_install_default(installation):
+    with sqlite3.connect(installation['database']) as connection:
+        connection.execute('PRAGMA foreign_keys=ON')
+        connection.execute('PRAGMA recursive_triggers=ON')
+        connection.execute('PRAGMA busy_timeout=2000')
+        connection.execute('CREATE TABLE platform_setting (key TEXT PRIMARY KEY, value_json TEXT)')
+        connection.execute("INSERT INTO platform_setting VALUES ('official-event-calendar-install-default-v1','true')")
+    flag = 'SHIXU_EVENT_CALENDAR_ENABLED'
+    service = installation['service']()
+    service.load()
+    assert flag not in service.process_environment('worker')
+    installation['value']['event_calendar_enabled'] = False
+    installation['freeze']()
+    service = installation['service']()
+    service.load()
+    environment = service.process_environment('worker')
+    assert environment[flag] == '0' and flag not in service.process_environment('api')
+    process = native.Process(55, [str(service.python), *service.arguments('worker')], service.backend, environment.copy(), 'token')
+    assert service.matches(process, 'worker')
+    del process.environment[flag]
+    assert not service.matches(process, 'worker')
+
+
 @pytest.mark.parametrize('enabled', [False, True])
 def test_ai_proxy_control_applies_to_child_identity(installation, monkeypatch, enabled):
     item = installation

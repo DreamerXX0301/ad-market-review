@@ -59,7 +59,7 @@ services:
     environment:
       <<: *environment
       SQLITE_TMPDIR: /var/lib/shixu/work
-      SHIXU_EVENT_CALENDAR_ENABLED: ${SHIXU_EVENT_CALENDAR_ENABLED:-0}
+      SHIXU_EVENT_CALENDAR_ENABLED: ${SHIXU_EVENT_CALENDAR_ENABLED-}
       SHIXU_NEWS_CLS_LOCAL_AUTHORIZED: ${SHIXU_NEWS_CLS_LOCAL_AUTHORIZED:-0}
     command: [python, -m, app.worker]
     restart: unless-stopped

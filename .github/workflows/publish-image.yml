@@ -6,7 +6,7 @@ on:
       version:
         description: Version from VERSION (without v)
         required: true
-        default: 0.1.27
+        default: 0.1.28
         type: string
       confirm:
         description: Authorize GHCR upload after checks; does not deploy

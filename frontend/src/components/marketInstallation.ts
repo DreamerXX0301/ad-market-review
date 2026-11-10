@@ -24,7 +24,6 @@ export function marketInstallationState(
     return unresolved;
   if (data.market_dates.some((date: unknown) => !validDate(date)))
     return unresolved;
-  if (validDate(data.data_date) || data.market_dates.length > 0)
-    return "ready";
+  if (validDate(data.data_date) || data.market_dates.length > 0) return "ready";
   return error || loading ? unresolved : "empty";
 }

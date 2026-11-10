@@ -161,6 +161,11 @@ def perform_restore(bundle,target):
             automatic_review_disabled=disable_automatic_review(c,now)
             intraday_automation_disabled=disable_intraday_automation(c,now)
             auction_discovery_disabled=disable_switch_automation(c,now,'auction-discovery-automation-v1')
+            event_calendar_default_disabled=False
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='platform_setting'").fetchone():
+                event_calendar_default_disabled=bool(c.execute("""UPDATE platform_setting
+                    SET value_json='false',updated_at_ms=?
+                    WHERE key='official-event-calendar-install-default-v1' AND value_json='true'""",(now,)).rowcount)
             ai=disable_ai(c,now)
             automation_disabled=False
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_auction_automation'").fetchone():
@@ -181,6 +186,8 @@ def perform_restore(bundle,target):
             result['intraday_automation_disabled'] = True
         if auction_discovery_disabled:
             result['auction_discovery_disabled'] = True
+        if event_calendar_default_disabled:
+            result['event_calendar_default_disabled'] = True
         (stage/'restore-report.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
         os.replace(stage,target)
         return {**result,'target':str(target)}

@@ -25,7 +25,7 @@
 | -------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------ |
 | 在同一观察日查看指数、市场广度、行业题材和涨停梯队 | 个股与板块分别配置日 / 周 / 月规则，组合历史事件与今日条件 | 把候选加入跟踪或自选，复查触发事件、加入基准和后续涨幅 |
 
-> **v0.1.27／schema41**。新增消息与事件归档，补全按所选日期的 AI 盘面复盘材料，改进长回答流式传输与盘面缓存。安装前核对配套源码、`release-image.json` 与镜像摘要。[版本记录](CHANGELOG.md) · [升级与回滚](docs/版本升级与回滚.md) · [源码标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.27) · [发行附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.27)
+> **v0.1.28／schema41**。同日盘面优先预读，龙虎榜支持股票和买卖席位搜索，并直接显示单日榜与三日榜的匹配数。安装前核对配套源码、`release-image.json` 与镜像摘要。[版本记录](CHANGELOG.md) · [升级与回滚](docs/版本升级与回滚.md) · [源码标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.28) · [发行附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.28)
 
 线上公开版提供已发布行情与快照的浏览，关闭数据源模块及相关管理接口。需要接入自己的数据源、初始化行情或安排采集计划时，可安装完整 Docker 版或运行完整源码。[Docker 安装](#docker-安装)
 
@@ -33,11 +33,13 @@
 
 ## 近期新增与改进
 
+0.1.28 先显示当前页，再按侧栏顺序预读同一观察日的其他盘面页，随后预读当前页较近的历史交易日。使用预读前核对日期、行情与归档版本，当天快照还核对采集窗口。资料有变化或预读未命中时，直接读取原接口。[盘面预读与数据核验](docs/盘面使用与数据核验.md#盘面自动加载与历史回看)
+
 0.1.26 在进入盘面菜单或切换观察日时自动读取可用内容，市场情绪直接显示炸板分析、连板反馈和广度历史。缓存缺失、过期或来源发生变化时，从该观察日的正式来源读取并重算，源数据也缺档时保留具体原因。[盘面使用与数据核验](docs/盘面使用与数据核验.md#盘面自动加载与历史回看)
 
 0.1.21 起支持在「AI助手」自然提问、逐段流式阅读和继续追问，模型按问题读取站内资料。近 30 日涨幅榜按固定原始前 1000 样本统计题材和行业 Top 5，页面与 AI 使用同一口径。0.1.23 首次达到 schema39，0.1.26 在保留旧迁移的基础上执行 040，升级至 schema40。[版本记录](CHANGELOG.md)
 
-此前0.1.18的生肖年度跟踪、搜索多选与粘贴名单、统一搜索、全池排序、滚动表头、概念浮层、午评联动和性能优化继续保留。0.1.18终点为schema34；从0.1.15/schema32升级时的033生肖表和034策略索引及其迁移SHA仍需完整保留。新安装自动计划默认关闭，已有自定义时间不覆盖；恢复副本关闭自动开关，验收后仅在唯一正式实例按明确授权开启。源码、镜像发行和实例部署分别留证。
+此前0.1.18的生肖年度跟踪、搜索多选与粘贴名单、统一搜索、全池排序、滚动表头、概念浮层、午评联动和性能优化继续保留。0.1.18终点为schema34；从0.1.15/schema32升级时的033生肖表和034策略索引及其迁移SHA仍需完整保留。新安装的行情自动计划默认关闭，已有自定义时间不覆盖；恢复副本关闭行情自动开关，验收后仅在唯一正式实例按明确授权开启。源码、镜像发行和实例部署分别留证。
 
 | 能力                     | 现在可以做什么                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -48,7 +50,7 @@
 | **盘中观察与题材轮动** | 09:35开盘观察后增加09:45早盘跟踪。按档查看板块强弱、封板、炸板和相关个股，累计简报串联竞价、盘中、午评和正式收盘。旧快照按原计划回看。 |
 | **午评与收盘回看**   | 午休手动或显式开启自动计划后采集，每天一次；冻结当时行情和观察，盘后追加同日收盘核验。午间/收盘涨幅分列，原关注支持板别、搜索与多条件排序；缺午评不补造。                                                                                |
 | **盘前竞价与昨日对照**   | 自动竞价于09:25:30至09:30前采集首批最多100只，超额优先覆盖已核验的昨日高标和连板股。可单独开启[今日竞价发现](docs/盘前竞价.md)，从市场异动中核对终态价量、查看相关题材及个股，并按已有盘中档位核对同股强弱变化。 |
-| **龙虎榜与买卖席位**     | 分开查看全部榜、机构榜和游资标签，区分单日与三日累计；点击整行展开并定位买卖前五席位，点击名称打开共用 K 线，代码单独复制。支持搜索清除、标签取消与完整结果排序；数据按30个市场交易日滚动留存。           |
+| **龙虎榜与买卖席位**     | 分开查看全部榜、机构榜和游资标签，区分单日与三日累计；点击整行展开并定位买卖前五席位，点击名称打开共用 K 线，代码单独复制。支持股票名称、代码、拼音、首字母和买卖席位搜索，分别显示单日及三日命中数；数据按30个市场交易日滚动留存。           |
 | **可组合的技术选股**     | BOLL 收口与突破可配合放量、MACD、KDJ，参数自行调整；直接比较上一日 / 完整周 / 完整月的成交量。普通条件支持逐条件周期与嵌套组合，历史事件可绑定同一次事件的参照价；个股策略支持复制为新策略。              |
 | **明确的复权与证据**     | 个股策略保存原价或本地前复权口径，技术指标和事件参照价使用同一锚点；旧规则、历史运行与入池基准保持冻结。涨停事实、原始涨幅与量能分别核验。                                                                |
 | **市场情绪与反馈**       | 市场广度温度、阶段、指数环境和下一交易日条件计划集中呈现；区分趋势观察与短线接力。连板反馈概览包含已核验的昨日首板，完整明细保留昨日二板及以上。                                                          |
@@ -236,9 +238,9 @@ flowchart LR
 
 ## Docker 安装
 
-完整 Docker 版包含数据源配置、行情初始化与增量、自动采集计划和研究工作台。安装需要 Docker Engine 或 Docker Desktop，以及 Docker Compose。以下流程下载 v0.1.27 配套部署文件并拉取 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.27`。安装前核对对应发行附件、镜像摘要及源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
+完整 Docker 版包含数据源配置、行情初始化与增量、自动采集计划和研究工作台。安装需要 Docker Engine 或 Docker Desktop，以及 Docker Compose。以下流程下载 v0.1.28 配套部署文件并拉取 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.28`。安装前核对对应发行附件、镜像摘要及源码标签。已有安装请先看[升级与回滚](docs/版本升级与回滚.md)。
 
-源码仓库及已公开的Release附件可匿名下载，镜像也允许匿名拉取；不要求GitHub登录。以下使用 `curl` 获取配套[0.1.27 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.27)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.27 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
+源码仓库及已公开的Release附件可匿名下载，公开镜像可匿名拉取，无需 GitHub 登录。以下使用 `curl` 获取配套[0.1.28 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.28)，须先确认本版已正式发布。已持有配套源码时，也可复制其中的 `deploy/docker-compose.yml`。下载前检查同名文件，已有文件时先核对版本或使用新目录；已安装并配置GitHub CLI时，也可选用 `gh release download v0.1.28 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml` 作为便利下载方式。
 
 ```bash
 mkdir ad-market-review
@@ -246,18 +248,18 @@ cd ad-market-review
 
 test ! -e docker-compose.yml && test ! -L docker-compose.yml && \
   curl --fail --location --output docker-compose.yml \
-  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.27/docker-compose.yml'
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.27
+  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.28/docker-compose.yml'
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.28
 
 umask 077
 key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.27 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.28 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
-export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.27
+export SHIXU_IMAGE_REF=ghcr.io/dreamerxx0301/ad-market-review:v0.1.28
 export SHIXU_HTTP_PORT=8788
 
 docker compose -p ad-market-review -f docker-compose.yml pull
@@ -269,6 +271,8 @@ docker compose -p ad-market-review -f docker-compose.yml up -d api
 ```bash
 docker compose -p ad-market-review -f docker-compose.yml --profile worker up -d worker
 ```
+
+全新自建库默认由唯一 worker 在有效窗口归档国家统计局官方日程。可设 `SHIXU_EVENT_CALENDAR_ENABLED=0` 关闭。财联社快讯需取得来源使用许可，再单独启用。[消息与事件配置](docs/部署与运维.md)
 
 服务只绑定本机。若8788已有实例，请使用新的安装目录、项目名及空闲端口，不共享现用数据卷。主密钥单独保存，恢复旧凭据必须使用原主密钥。需要固定镜像摘要时可通过 `SHIXU_IMAGE_REF` 覆盖默认镜像；更新实例按 `compose.release.yaml` 的摘要流程进行。完整安装和配置见[Docker部署](docs/Docker部署.md)，备份与进程管理见[部署与运维](docs/部署与运维.md)。
 
@@ -304,7 +308,7 @@ docker compose -p ad-market-review -f docker-compose.yml --profile worker up -d 
 | **盘面补充**                 | 新建并冻结当前政策的任务成功发布后按250个市场交易日滚动管理；当年统计、业务引用和恢复证据受保护，清理确定无引用的窗口外对象。                                |
 | **龙虎榜与买卖席位**         | 新建并冻结当前政策的初始化、增量或补齐任务采集，成功验收后按30个市场交易日滚动管理；失败不提前推进清理，必要来源与引用证据保留。                             |
 | **竞价、盘中观察与午评**     | 新建并冻结当前政策的任务保留 30 个自然日。竞价与午评按成功盘后增量的已核验交易日推进，盘中观察在成功留存新快照时推进。旧任务沿用冻结时的 28 日政策。 |
-| **消息与事件（开发版）**     | 消息三档为 09:00、12:30 和盘后增量发布后，简报保留 30 个自然日。日历浏览未来 7 天或 30 天。已留存内容复用盘面缓存。[查看契约](contracts/market-news-events.md) |
+| **消息与事件**     | 消息三档为 09:00、12:30 和盘后增量发布后，简报保留 30 个自然日。日历浏览未来 7 天或 30 天。已留存内容复用盘面缓存。[查看契约](contracts/market-news-events.md) |
 | **盘面派生缓存**             | 常规盘面缓存按最近 7 个已发布交易日管理，更早的观察日按需缓存 24 小时。到期或失效后重新读取实际来源。 |
 | **划线与关联提醒**           | 未触发线持续监控；首次实际提醒后继续60个市场交易日，再由新盘后增量清理到期线与关联提醒，重复提醒不延长。自选和策略跟踪保留。                   |
 | **运行与回滚资料**           | 已保存策略、运行、跟踪和手工资料不按行情窗口直接删除；新恢复集验收且压缩包独立解压、逐文件核验通过后，仅保留一套压缩完整恢复集，清理旧集和展开副本。 |

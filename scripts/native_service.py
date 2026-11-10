@@ -357,6 +357,16 @@ class NativeService:
             expected = {path.name: sha(path) for path in (self.backend / 'app/migrations').glob('[0-9]*.sql')}
             require(expected and actual == expected and max(int(name.split('_')[0]) for name in expected) == value['schema'],
                     '已执行迁移与发行源码不匹配，请先走独立升级流程')
+            if value.get('event_calendar_enabled') is False and connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='platform_setting'"
+            ).fetchone() and connection.execute(
+                """SELECT 1 FROM platform_setting
+                   WHERE key='official-event-calendar-install-default-v1' AND value_json='true'"""
+            ).fetchone():
+                # An explicit local opt-out overrides a new install's default.
+                # Existing disabled installations still match older workers
+                # whose process environment omitted the disabled flag.
+                self.worker_flags[WORKER_FEATURE_FLAGS['event_calendar_enabled']] = '0'
         finally:
             connection.close()
 

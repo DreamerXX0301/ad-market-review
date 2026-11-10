@@ -13,7 +13,8 @@ def run(image='validation',report=None):
         import base64,secrets
         secret.write_bytes(base64.urlsafe_b64encode(secrets.token_bytes(32)));secret.chmod(0o444)
         with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
-        env=os.environ|{'SHIXU_MASTER_KEY_FILE':str(secret),'SHIXU_IMAGE_TAG':image,'SHIXU_HTTP_PORT':str(port)}
+        env=os.environ|{'SHIXU_MASTER_KEY_FILE':str(secret),'SHIXU_IMAGE_TAG':image,'SHIXU_HTTP_PORT':str(port),
+                        'SHIXU_EVENT_CALENDAR_ENABLED':'0','SHIXU_NEWS_CLS_LOCAL_AUTHORIZED':'0'}
         base=['docker','compose','-p',project,'-f',str(ROOT/'deploy/compose.yaml')]
         def command(args):
             result=subprocess.run(args,env=env,cwd=ROOT,text=True,capture_output=True,timeout=120)

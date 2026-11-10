@@ -1,6 +1,6 @@
 [project]
 name = "ad-market-review-backend"
-version = "0.1.27"
+version = "0.1.28"
 description = "冒险的梦想家 A股盘面与策略研究工作台"
 requires-python = ">=3.13,<3.15"
 dependencies = [
