@@ -9,9 +9,29 @@ const encode = value => "data:text/javascript;base64," + Buffer.from(value).toSt
 const react = import.meta.resolve("react"), runtime = import.meta.resolve("react/jsx-runtime");
 const reactProbe = encode(`import * as React from ${JSON.stringify(react)};
 export * from ${JSON.stringify(react)};
-let cursor=0,states={};
+let cursor=0,states={},simulation=null,refIndex=0,effectIndex=0;
 export function setStates(value){cursor=0;states=value;}
-export function useState(initial){const index=cursor++;return React.useState(Object.hasOwn(states,index)?states[index]:initial);}`);
+export function useState(initial){
+  const index=cursor++;
+  const value=Object.hasOwn(states,index)?states[index]:initial;
+  if(!simulation)return React.useState(value);
+  return [value,next=>{states[index]=typeof next==="function"?next(value):next;}];
+}
+export function beginSimulation(value){setStates({...value});simulation={refs:[],effects:[],pending:[]};}
+export function beginRender(){cursor=0;refIndex=0;effectIndex=0;}
+export function useRef(initial){
+  return simulation?(simulation.refs[refIndex++]??={current:initial}):React.useRef(initial);
+}
+export function useMemo(read,deps){return simulation?read():React.useMemo(read,deps);}
+export function useLayoutEffect(effect,deps){if(!simulation)React.useLayoutEffect(effect,deps);}
+export function useEffect(effect,deps){
+  if(!simulation)return React.useEffect(effect,deps);
+  const index=effectIndex++,previous=simulation.effects[index];
+  if(previous && deps.length===previous.deps.length && deps.every((value,i)=>Object.is(value,previous.deps[i])))return;
+  simulation.pending.push(()=>{previous?.cleanup?.();simulation.effects[index]={deps,cleanup:effect()};});
+}
+export function flushEffects(){simulation.pending.splice(0).forEach(run=>run());}
+export function endSimulation(){simulation.effects.forEach(effect=>effect?.cleanup?.());simulation=null;}`);
 const apiProbe = encode(`let packet=null,search=null;export const requests=[];
 export function setData(value,matched){packet=value;search=matched;requests.length=0;}
 export const usePageActive=()=>true;
@@ -23,7 +43,7 @@ export const useToast=()=>()=>{};
 export const Badge=({children})=>jsx('span',{children});
 export const Status=({value})=>jsx('span',{children:value});
 export const Panel=({title,subtitle,children,actions})=>jsxs('section',{children:[jsx('h2',{children:title}),jsx('p',{children:subtitle}),children,actions]});
-export const Empty=({title,description})=>jsxs('div',{className:'empty-state',children:[jsx('h3',{children:title}),jsx('p',{children:description})]});
+export const Empty=({title,description,action})=>jsxs('div',{className:'empty-state',children:[jsx('h3',{children:title}),jsx('p',{children:description}),action]});
 export const ErrorBox=({message})=>jsx('p',{role:'alert',children:message});
 export const Loading=()=>jsx('p',{children:'读取中'});`);
 const prefetchProbe = encode("export let last; export function useHistoricalPrefetch(...args){last=args;}");
@@ -53,7 +73,8 @@ async function moduleUrl(url) {
   return job;
 }
 const { default: DragonTiger } = await import(await moduleUrl(new URL("./DragonTiger.tsx", import.meta.url)));
-const { setData, requests } = await import(apiProbe), { setStates } = await import(reactProbe);
+const { setData, requests } = await import(apiProbe);
+const { setStates, beginSimulation, beginRender, flushEffects, endSimulation } = await import(reactProbe);
 const prefetch = await import(prefetchProbe);
 const date = "2026-01-12";
 const proof = "a".repeat(64);
@@ -139,14 +160,56 @@ assert.deepEqual(requests.filter(Boolean), [
   `/market/dragon-tiger?date=${date}`,
   `/market/dragon-tiger/search?${new URLSearchParams({ date, query: seatQuery, archive_sha256: proof })}`,
 ], "one search call and no per-stock detail reads while filtering");
-assert.match(render(searchDay, { ...settled, 1: 1 }, {}, searchResult), /当前筛选无匹配记录/);
-assert.match(render(searchDay, { ...settled, 3: "合成标签B" }, {}, searchResult), /当前筛选无匹配记录/);
+const otherPeriod = render(searchDay, { ...settled, 1: 1 }, {}, searchResult);
+assert.match(otherPeriod, /aria-label="单日榜，0条匹配"/);
+assert.match(otherPeriod, /aria-label="三日榜，1条匹配"/);
+assert.match(otherPeriod, /三日榜有 1 条匹配记录/);
+assert.match(otherPeriod, /查看三日榜/);
+const otherLabel = render(searchDay, { ...settled, 1: 1, 3: "合成标签B" }, {}, searchResult);
+assert.match(otherLabel, /aria-label="三日榜，0条匹配"/);
+assert.doesNotMatch(otherLabel, /查看三日榜/);
 for (const wrong of [{ day_record_sha256: "b".repeat(64) }, { date: "2026-01-09" }, { query: "前一个词" }]) {
   const stale = render(searchDay, settled, {}, { ...searchResult, ...wrong });
   assert.match(stale, /正在搜索当日已留存的股票和买卖席位/);
   assert.match(stale, /已留存上榜A股<\/span><strong[^>]*>—/);
-  assert.doesNotMatch(stale, /0条当前筛选记录|合成上海营业部/);
+  assert.doesNotMatch(stale, /0条当前筛选记录|合成上海营业部|dragon-tiger-period-count|查看三日榜/);
 }
 render(searchDay, { ...settled, 14: true }, {}, searchResult);
 assert.deepEqual(requests.filter(Boolean), [`/market/dragon-tiger?date=${date}`], "IME composition does not issue an intermediate query");
-console.log("dragon tiger page: unverified source metadata, legacy actual observations, valid partial empty filters, retained empty and true unknown SSR passed");
+
+function periodButton(node, name) {
+  if (Array.isArray(node)) return node.map(child => periodButton(child, name)).find(Boolean);
+  if (!node?.props) return;
+  if (node.type === "button" && (node.props["aria-label"]?.startsWith(name + "，") || node.props.children?.[0] === name))
+    return node.props;
+  return periodButton(node.props.children, name);
+}
+function searchRender(response) {
+  setData(searchDay, response);
+  beginRender();
+  const view = DragonTiger({ date, onStock() {}, onNavigate() {} });
+  flushEffects();
+  return view;
+}
+const initialSearch = { 0: "hot_money", 2: seatQuery, 13: seatQuery };
+beginSimulation(initialSearch);
+try {
+  searchRender({ ...searchResult, day_record_sha256: "b".repeat(64) });
+  assert.equal(periodButton(searchRender(searchResult), "单日榜")["aria-pressed"], true, "an old archive does not switch before a verified response");
+  const switched = searchRender(searchResult);
+  assert.equal(periodButton(switched, "三日榜")["aria-pressed"], true, "the first verified response still has its opportunity to switch");
+  periodButton(switched, "单日榜").onClick();
+  assert.equal(periodButton(searchRender(searchResult), "单日榜")["aria-pressed"], true);
+  assert.equal(periodButton(searchRender(searchResult), "单日榜")["aria-pressed"], true, "a deliberate return to the empty period is respected on rerenders");
+} finally {
+  endSimulation();
+}
+beginSimulation(initialSearch);
+try {
+  periodButton(searchRender(null), "单日榜").onClick();
+  searchRender(searchResult);
+  assert.equal(periodButton(searchRender(searchResult), "单日榜")["aria-pressed"], true, "a manual period choice while waiting for results is respected");
+} finally {
+  endSimulation();
+}
+console.log("dragon tiger page: source observations, retained and unknown states, dated scoped search counts, one-time period switching and manual override passed");

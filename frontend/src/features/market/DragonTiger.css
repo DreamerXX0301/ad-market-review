@@ -24,6 +24,10 @@
   gap: 8px 12px;
   padding: 12px 16px;
 }
+.dragon-tiger-period-count {
+  margin-inline-start: 6px;
+  font-variant-numeric: tabular-nums;
+}
 .dragon-tiger-search {
   position: relative;
   flex: 1;

@@ -42,6 +42,7 @@ import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 import "./DragonTiger.css";
 
 const names = { all: "全部榜", org: "机构榜", hot_money: "游资榜" };
+const periodNames = { 1: "单日榜", 3: "三日榜" };
 type SearchResult = {
   date: string;
   query: string;
@@ -177,6 +178,10 @@ export default function DragonTiger({
     seatTitleRef = useRef<HTMLSpanElement>(null);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>()),
     completedJob = useRef("");
+  const periodChoice = useRef<{ scope: string | null; handled: boolean }>({
+    scope: null,
+    handled: false,
+  });
   const searchTerm = query.trim();
   useEffect(() => {
     if (!active || composing || !searchTerm) return;
@@ -208,24 +213,44 @@ export default function DragonTiger({
   const searchPending =
     !!searchTerm && boardAvailable && !searchReady && !searchError;
   const boardMatches = searchReady ? searchData.matches[board] : undefined;
+  const labelScope = board === "hot_money" ? label : null;
+  const searchScope =
+    searchTerm && !composing && archiveProof
+      ? JSON.stringify([date, archiveProof, searchTerm, board, labelScope])
+      : null;
   const sourceRows = useMemo(() => dragonTigerRows(data, board), [data, board]);
   const allLabels = useMemo(
     () => dragonTigerLabels(dragonTigerRows(data, "hot_money"), period),
     [data, period],
   );
+  const searchedRows = useMemo(() => {
+    if (!searchReady || !boardAvailable || searchError) return null;
+    const matches = boardMatches ?? [];
+    return {
+      1: filterDragonTigerRows(sourceRows, 1, labelScope, matches),
+      3: filterDragonTigerRows(sourceRows, 3, labelScope, matches),
+    };
+  }, [
+    searchReady,
+    boardAvailable,
+    searchError,
+    boardMatches,
+    sourceRows,
+    labelScope,
+  ]);
+  const otherPeriod = period === 1 ? 3 : 1;
+  const otherCount = searchedRows?.[otherPeriod].length ?? 0;
   const rows = useMemo(
     () =>
       sortDragonTigerRows(
-        filterDragonTigerRows(
-          sourceRows,
-          period,
-          board === "hot_money" ? label : null,
-          searchTerm ? (boardMatches ?? []) : undefined,
-        ),
+        searchedRows?.[period] ??
+          (searchTerm
+            ? []
+            : filterDragonTigerRows(sourceRows, period, labelScope)),
         sort,
         board,
       ),
-    [sourceRows, period, searchTerm, boardMatches, label, sort, board],
+    [searchedRows, sourceRows, period, searchTerm, labelScope, sort, board],
   );
   const selected = rows.find((row) => row.key === selectedKey) ?? null;
   const currentPage = Math.max(
@@ -238,7 +263,7 @@ export default function DragonTiger({
     rows,
     board,
     label,
-    boardAvailable && (!searchTerm || searchReady),
+    boardAvailable && (!searchTerm || !!searchedRows),
   );
   const seatRequest =
     seatOpen && selected?.instrument_id
@@ -281,6 +306,22 @@ export default function DragonTiger({
     setRecordId(null);
   }
   useEffect(() => {
+    if (periodChoice.current.scope !== searchScope)
+      periodChoice.current = { scope: searchScope, handled: false };
+    if (
+      !active ||
+      !searchScope ||
+      !searchedRows ||
+      periodChoice.current.handled
+    )
+      return;
+    periodChoice.current.handled = true;
+    if (searchedRows[period].length || !otherCount) return;
+    setPeriod(otherPeriod);
+    setPage(1);
+    clearSelection();
+  }, [active, searchScope, searchedRows, period, otherPeriod, otherCount]);
+  useEffect(() => {
     clearSelection();
     setPage(1);
   }, [date]);
@@ -321,6 +362,7 @@ export default function DragonTiger({
     clearSelection();
   }
   function changePeriod(value: DragonTigerPeriod) {
+    periodChoice.current = { scope: searchScope, handled: true };
     const replacement =
       selected &&
       sourceRows.find(
@@ -454,9 +496,19 @@ export default function DragonTiger({
                 key={value}
                 className={period === value ? "active" : ""}
                 aria-pressed={period === value}
+                aria-label={
+                  searchedRows
+                    ? `${periodNames[value]}，${integer(searchedRows[value].length)}条匹配`
+                    : undefined
+                }
                 onClick={() => changePeriod(value)}
               >
-                {value === 1 ? "单日榜" : "三日榜"}
+                {periodNames[value]}
+                {searchedRows && (
+                  <span className="dragon-tiger-period-count">
+                    {integer(searchedRows[value].length)}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -551,7 +603,7 @@ export default function DragonTiger({
           </div>
           <div className="dragon-tiger-grid">
             <Panel
-              title={`${names[board]} · ${period === 1 ? "单日榜" : "三日榜"}`}
+              title={`${names[board]} · ${periodNames[period]}`}
               subtitle={`${boardUnavailable ? "该日响应未留存" : searchError ? "搜索未完成" : searchPending ? "正在搜索" : `${rows.length}条当前筛选记录`} · ${board === "hot_money" ? label || "全部标签" : "当前筛选"}`}
             >
               {searchError ? (
@@ -598,7 +650,20 @@ export default function DragonTiger({
                       ? boardSource?.reason ||
                         data?.availability?.reason ||
                         "未取得或尚未留存的数据保持未知；可在最新行情日手动补齐。"
-                      : "可清除搜索或取消游资标签筛选。"
+                      : otherCount
+                        ? `${periodNames[otherPeriod]}有 ${integer(otherCount)} 条匹配记录。`
+                        : "可清除搜索或取消游资标签筛选。"
+                  }
+                  action={
+                    otherCount > 0 && (
+                      <button
+                        type="button"
+                        className="btn small"
+                        onClick={() => changePeriod(otherPeriod)}
+                      >
+                        查看{periodNames[otherPeriod]}
+                      </button>
+                    )
                   }
                 />
               )}
