@@ -40,10 +40,14 @@ export default function ChartPriceVolume({
   const levelLabel = (key: keyof typeof levelNames) =>
     key === "stop" && view.profile === "short_week_v1"
       ? "短线风险线"
-      : key === "breakout" &&
-          ["held", "retest"].includes(view.breakout?.state || "")
-        ? "原突破参考"
-        : levelNames[key];
+      : key === "support" && view.supportScope === "historical_120"
+        ? "历史结构支撑（120根）"
+        : key === "support" && view.supportScope === "recent_20"
+          ? "近20日结构支撑"
+          : key === "breakout" &&
+              ["held", "retest"].includes(view.breakout?.state || "")
+            ? "原突破参考"
+            : levelNames[key];
   const volumeLabel =
     {
       expanded: "放量",
@@ -128,7 +132,7 @@ export default function ChartPriceVolume({
       </div>
       <p className="chart-price-volume-scope">
         {view.profile === "short_week_v1"
-          ? `近20个完整交易日结构 · 风险线按本图收盘重算，距收盘最多 ${num(view.maxRiskPct)}%；已开启提醒使用设置中单独保存的跟踪基准。`
+          ? `优先近20个完整交易日结构，必要时查找120根内历史支撑 · 风险线按本图收盘重算，距收盘最多 ${num(view.maxRiskPct)}%；支撑类提醒以设置中已保存近端基准为准。`
           : "最近120根完整K线的历史结构观察；结构失效参考未绑定个人成本或持股期限。"}
       </p>
       <div className="chart-price-volume-levels">
@@ -151,9 +155,7 @@ export default function ChartPriceVolume({
               >
                 {noConfirmedLevel
                   ? key === "support"
-                    ? view.profile === "short_week_v1"
-                      ? "暂无近端支撑"
-                      : "暂无确认支撑"
+                    ? "暂无确认支撑"
                     : "暂无确认压力"
                   : price(level?.price ?? null)}
               </strong>
@@ -166,6 +168,15 @@ export default function ChartPriceVolume({
                     ? `距参考收盘 ${percent(level.distancePct)}`
                     : "暂无可核验价位"}
               </small>
+              {key === "support" &&
+                level &&
+                view.profile === "short_week_v1" && (
+                  <small>
+                    {view.supportDistanceState === "far"
+                      ? "距离较远，不能替代短线风险线"
+                      : "结构观察，不等于短线风险线"}
+                  </small>
+                )}
             </>
           );
           return key !== "resistance" && level ? (

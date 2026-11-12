@@ -397,6 +397,8 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 短线baseline另存有界单一 `risk_anchor`，保留实际抬高当日的原始价格、ATR、来源代际及primary_snapshot_id；baseline与事件pin同时覆盖当前来源及抬高原件，避免只保留今日来源而丢失跟踪依据。事件中的profile、max_risk_pct、实际algorithm与冻结基准不可变。图表默认5%的当日重算参考和已开启规则的只上移监控基准分别标明，逐股修改参数或已有跟踪线应以提醒设置中显示的冻结基准为准，不把两者当同一持仓止损。
 
+图表的 `display_support/display_scope/display_distance_state` 是独立的结构观察位置，可展示超过风险距离的真实支撑，也可明确标注同一严格可比段内最多120根的历史支撑。上述展示字段不作为自动提醒、风险线和信号的输入；已保存的近端提醒仍以 `latest_baseline.levels.support` 为依据，缺少该基准时保持unknown，不能因为画出了历史观察线就擅自扩展已授权的监控范围。
+
 PUT可额外传 `reset_monitoring:true` 显式重新设定已启用的一周短线规则。默认false；true只允许enabled=true且profile=short_week_v1，同值配置也递增revision、清除可替换基准并准备下一交易日监控，旧事件不删。失守状态的重新设定按钮使用该字段，不自动重设或回填保存当日的触发。
 
 模式为 `support_reclaim/close_breakout/support_breakdown/stop_breakdown`，只核验日K收盘。回踩要求前收>=事前支撑、当日low<=支撑<=收盘；突破要求前收<=事前突破参考<收盘；失守/止损跌破要求前收>=对应参考>收盘。前两类为triggered，后两类为invalidated风险提醒，不自动入自选。`require_volume=true` 只约束突破，要求当日成交量至少为此前20日均量1.5倍；风险提醒不被缺量过滤。原始价跨公司行动或覆盖未知、缺精确前一交易日报价、无事前完整基准或有效价位时保持unknown，不混用盘中快照或更早报价。

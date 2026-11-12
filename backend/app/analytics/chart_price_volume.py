@@ -255,6 +255,7 @@ def price_volume_levels(chart, calendar, *, expected_snapshot=None,
                       structure_lookback=SHORT_LOOKBACK, max_risk_pct=max_risk_pct,
                       risk_max_pct=max_risk_pct,
                       support_reason='暂无可核验的近端支撑',
+                      display_support=None, display_scope=None, display_distance_state=None,
                       breakout_reason='暂无可核验的近端突破参考',
                       notice='一周持股观察档位；结构取最近20根完整日K，ATR与量能沿用连续可比报价。参数未经最优性回测，风险边界不等同个人持仓止损')
         if period != 'D' or instrument.get('kind') != 'stock':
@@ -287,10 +288,21 @@ def price_volume_levels(chart, calendar, *, expected_snapshot=None,
             else:
                 reference = segment[-1]['close']
                 pivots = list(confirmed_pivots(segment, period, sessions))
+                display_pivots = pivots
                 if short:
                     cutoff = segment[-SHORT_LOOKBACK]['date'] if len(segment) >= SHORT_LOOKBACK else segment[0]['date']
                     pivots = [pivot for pivot in pivots if pivot['date'] >= cutoff]
                 support, resistance = (_active(pivots, segment, kind) for kind in ('support', 'resistance'))
+                if short:
+                    # A risk tolerance is not evidence that a real support
+                    # ceases to exist. Keep observation separate from the
+                    # original nearby monitoring and risk-line contract.
+                    display = support or _active(display_pivots, segment, 'support')
+                    if display:
+                        result['display_support'] = _level(display, reference)
+                        result['display_scope'] = 'recent_20' if support else 'historical_120'
+                        result['display_distance_state'] = ('far' if (reference - display['price']) / reference * 100 > max_risk_pct + TOLERANCE
+                                                            else 'within_risk_distance')
                 atr = _atr(segment)
                 result.update(reference_date=segment[-1]['date'], reference_price=reference,
                               state='ready', volume=_volume(segment, chart), atr=atr,

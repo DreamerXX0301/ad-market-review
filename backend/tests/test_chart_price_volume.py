@@ -208,6 +208,44 @@ def test_short_profile_rejects_far_support_without_moving_its_real_price():
     assert short['stop']['source'] == 'short_risk_boundary'
     assert short['stop']['price'] >= chart['bars'][-1]['close'] * .95
     assert '不代表真实支撑' in short['reason']
+    assert short['display_support'] == structure['support']
+    assert short['display_scope'] == 'recent_20'
+    assert short['display_distance_state'] == 'far'
+
+
+@pytest.mark.parametrize(('risk', 'original_sha'), [
+    (3, 'ae441cd747e4fedc7ae6bab2cc13bb87038ccce759a699689de0c42143e70fc9'),
+    (5, 'ca3677783a70db63c8609cd104ac277fa67128685407d0a96fe8fc1515e8f2b4'),
+    (8, 'fd9b42beaf8d0de926e1d8839a6f3ec505e7fabf2f7513dd93fb37efedc9b3ed'),
+    (20, '8ec3b5ccb8c3620bee6806ee2161b6dd81c451e59dea582fe2d59f95e2508c3e'),
+])
+def test_display_support_is_additive_without_changing_frozen_risk_or_monitoring(risk, original_sha):
+    chart, days = fixture()
+    result = price_volume_levels(chart, days, profile='short_week_v1', max_risk_pct=risk)
+    display = {key: result.pop(key) for key in ('display_support', 'display_scope', 'display_distance_state')}
+    assert display['display_support']['price'] == 9
+    assert display['display_support']['formed_at'] == days[28]
+    assert hashlib.sha256(json.dumps(result, sort_keys=True, ensure_ascii=False).encode()).hexdigest() == original_sha
+
+
+@pytest.mark.parametrize('bad_field', ['complete', 'noon_provisional'])
+def test_display_support_cannot_reach_across_an_incomplete_daily_segment(bad_field):
+    chart, days = fixture()
+    chart['bars'][-3][bad_field] = False if bad_field == 'complete' else True
+    result = price_volume_profiles(chart, days)['short_term']
+    assert result['display_support'] is None
+    assert result['display_scope'] is None
+    assert result['stop'] is None
+
+
+def test_display_support_stays_unknown_without_a_confirmed_pivot_or_current_quote():
+    chart, days = fixture()
+    for row in chart['bars']:
+        row.update(open=10, close=10, low=9, high=11)
+    assert price_volume_profiles(chart, days)['short_term']['display_support'] is None
+    chart, days = fixture()
+    chart['bars'][-1]['close'] = 0
+    assert price_volume_profiles(chart, days)['short_term']['display_support'] is None
 
 
 def test_short_profile_uses_recent_formed_pivots_without_old_structure_fallback():
@@ -223,6 +261,9 @@ def test_short_profile_uses_recent_formed_pivots_without_old_structure_fallback(
     assert '近20根' in short['support_reason'] and '近20根' in short['breakout_reason']
     assert short['stop'] is not None
     assert short['atr']['window_start'] == days[0]
+    assert short['display_support'] == structure['support']
+    assert short['display_scope'] == 'historical_120'
+    assert short['display_distance_state'] == 'far'
 
 
 def test_short_profile_keeps_genuine_near_support_and_its_confirmation_dates():

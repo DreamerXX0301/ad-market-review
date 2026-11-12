@@ -442,6 +442,7 @@ def test_short_stop_is_frozen_before_close_raises_only_and_stays_breached(automa
     assert initial['as_of'] == market.days[70]
     assert initial['algorithm'] == alerts.SHORT_VERSION
     assert initial['levels']['support'] is None  # A distant pivot is not a nearby support.
+    assert not {'display_support', 'display_scope', 'display_distance_state'} & initial['levels'].keys()
     assert initial_stop >= initial['levels']['reference_price'] * .95
     assert alerts.list_alerts()['total'] == 0  # Saving does not trigger retrospectively.
 

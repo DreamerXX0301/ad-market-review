@@ -249,6 +249,8 @@ def build_baseline(symbol, rows, day, calendar, snapshot, primary_snapshot=None,
     chart = {'instrument': {'instrument_id': symbol, 'kind': 'stock'}, 'period': 'D', 'as_of': day,
              'snapshot_id': snapshot, 'price_basis': 'none', 'bars': selected[-120:]}
     levels = price_volume_levels(chart, calendar, expected_snapshot=snapshot, profile=profile, max_risk_pct=max_risk_pct)
+    for key in ('display_support', 'display_scope', 'display_distance_state'):
+        levels.pop(key, None)
     return {'as_of': day, 'snapshot_id': snapshot, 'primary_snapshot_id': primary_snapshot,
             'algorithm': levels['algorithm'], 'profile': profile, 'max_risk_pct': max_risk_pct,
             'price_basis': 'none', 'levels': levels, 'monitoring_baseline': True}

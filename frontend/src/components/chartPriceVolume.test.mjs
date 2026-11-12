@@ -342,7 +342,7 @@ assert.equal(shortView.support, null);
 assert.equal(shortView.stop.price, 10);
 const shortHtml = render(shortView);
 assert.match(shortHtml, /短线风险线/);
-assert.match(shortHtml, /暂无近端支撑/);
+assert.match(shortHtml, /暂无确认支撑/);
 assert.match(shortHtml, /最近20日没有距离上限内的确认支撑/);
 assert.match(shortHtml, /近20个完整交易日结构/);
 assert.match(shortHtml, /公式基准/);
@@ -406,6 +406,133 @@ foreignKind.instrument.kind = "index";
 assert.equal(
   chartPriceVolume(foreignKind, id, "D", day, "short_week_v1"),
   null,
+);
+
+// Display real structural levels even when reminder eligibility excludes them.
+const displayChart = structuredClone(shortChart);
+displayChart.price_volume_levels.short_term.display_support = {
+  ...level(9),
+  distance_pct: -1, // The displayed distance is derived from verified prices.
+};
+displayChart.price_volume_levels.short_term.display_scope = "recent_20";
+displayChart.price_volume_levels.short_term.display_distance_state =
+  "within_risk_distance";
+displayChart.price_volume_levels.short_term.reason =
+  "暂无近端支撑；短线风险边界按波动与风险距离计算，不代表真实支撑";
+const displayBefore = structuredClone(displayChart);
+const displayView = chartPriceVolume(
+  displayChart,
+  id,
+  "D",
+  day,
+  "short_week_v1",
+);
+assert.equal(displayView.support.price, 9);
+assert.equal(displayView.support.distancePct, (9 / 10.5 - 1) * 100);
+assert.equal(displayView.supportScope, "recent_20");
+assert.equal(displayView.supportDistanceState, "far");
+assert.equal(displayView.stop.price, shortView.stop.price);
+assert.deepEqual(displayView.signal, shortView.signal);
+assert.equal(displayChart.price_volume_levels.short_term.support, null);
+assert.deepEqual(displayChart, displayBefore);
+const displayHtml = render(displayView);
+assert.match(displayHtml, /近20日结构支撑/);
+assert.match(displayHtml, /9\.00 元/);
+assert.match(displayHtml, /-14\.29%/);
+assert.match(displayHtml, /距离较远，不能替代短线风险线/);
+assert.match(displayHtml, /支撑类提醒以设置中已保存近端基准为准/);
+assert.doesNotMatch(displayHtml, /暂无近端支撑|暂无确认支撑/);
+const displayLine = priceVolumeLineLabels(displayView).find(
+  (line) => line.id === "price-volume:support",
+);
+assert.equal(displayLine.price, 9);
+assert.match(displayLine.detail, /近20日结构支撑/);
+assert.match(displayLine.detail, /距离较远/);
+const displayToggles = [];
+const displayPanel = Panel({
+  view: displayView,
+  visibleIds: new Set(),
+  onToggle: (...args) => displayToggles.push(args),
+});
+const supportButton = collectElements(displayPanel).find(
+  (node) =>
+    node.type === "button" &&
+    node.props["aria-label"]?.startsWith("近20日结构支撑"),
+);
+supportButton.props.onClick();
+assert.deepEqual(displayToggles, [["price-volume:support", true]]);
+
+const historicalDisplay = structuredClone(displayChart);
+historicalDisplay.price_volume_levels.short_term.display_scope =
+  "historical_120";
+const historicalDisplayView = chartPriceVolume(
+  historicalDisplay,
+  id,
+  "D",
+  day,
+  "short_week_v1",
+);
+assert.match(render(historicalDisplayView), /历史结构支撑（120根）/);
+assert.match(
+  priceVolumeLineLabels(historicalDisplayView).find(
+    (line) => line.id === "price-volume:support",
+  ).detail,
+  /历史结构支撑（120根）/,
+);
+const nearDisplay = structuredClone(displayChart);
+nearDisplay.price_volume_levels.short_term.display_support = level(10.2);
+const nearDisplayView = chartPriceVolume(
+  nearDisplay,
+  id,
+  "D",
+  day,
+  "short_week_v1",
+);
+assert.equal(nearDisplayView.supportDistanceState, "within_risk_distance");
+assert.match(render(nearDisplayView), /结构观察，不等于短线风险线/);
+assert.doesNotMatch(render(nearDisplayView), /距离较远/);
+
+for (const invalidLevel of [
+  { ...level(9), formed_at: "2026-11-11" },
+  { ...level(9), confirmed_on: "2026-11-11" },
+  { ...level(9), confirmed_on: "2026-11-02" },
+  level(11),
+  level(9, "short_risk_boundary"),
+  null,
+]) {
+  const invalid = structuredClone(displayChart);
+  invalid.price_volume_levels.short_term.support = level(10.2);
+  invalid.price_volume_levels.short_term.display_support = invalidLevel;
+  const invalidView = chartPriceVolume(invalid, id, "D", day, "short_week_v1");
+  assert.equal(invalidView.support, null);
+  assert.equal(invalidView.stop.price, shortView.stop.price);
+  assert.equal(invalidView.supportScope, null);
+  assert.equal(
+    priceVolumeLineLabels(invalidView).some(
+      (line) => line.id === "price-volume:support",
+    ),
+    false,
+  );
+}
+const invalidDisplayScope = structuredClone(displayChart);
+invalidDisplayScope.price_volume_levels.short_term.display_scope = "guessed";
+assert.equal(
+  chartPriceVolume(invalidDisplayScope, id, "D", day, "short_week_v1").support,
+  null,
+);
+const foreignDisplay = structuredClone(displayChart);
+foreignDisplay.price_volume_levels.short_term.instrument_id = "000678.SZ";
+assert.equal(
+  chartPriceVolume(foreignDisplay, id, "D", day, "short_week_v1"),
+  null,
+  "display-only support cannot bypass chart identity checks",
+);
+const legacyShort = structuredClone(shortChart);
+legacyShort.price_volume_levels.short_term.support = level(10.2);
+assert.equal(
+  chartPriceVolume(legacyShort, id, "D", day, "short_week_v1").support.price,
+  10.2,
+  "servers without display fields retain their original support compatibility",
 );
 
 console.log(

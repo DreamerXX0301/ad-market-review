@@ -22,6 +22,8 @@ export type PriceVolumeView = {
   profile: PriceVolumeProfile;
   maxRiskPct: number | null;
   supportReason: string;
+  supportScope: "recent_20" | "historical_120" | null;
+  supportDistanceState: "far" | "within_risk_distance" | null;
   notice: string;
   referenceDate: string | null;
   referencePrice: number | null;
@@ -180,10 +182,46 @@ export function chartPriceVolume(
     knownDate(atr.window_end) &&
     atr.window_start <= atr.window_end &&
     atr.window_end === referenceDate;
+  // A display-only structure never substitutes for the saved reminder basis.
+  // Explicit null/invalid display data must not fall back to a different level.
+  const hasDisplaySupport = short && Object.hasOwn(source, "display_support");
+  const displaySupport = hasDisplaySupport
+    ? level(source.display_support)
+    : null;
+  const validDisplayScope = ["recent_20", "historical_120"].includes(
+    source.display_scope,
+  );
+  const support = hasDisplaySupport
+    ? displaySupport &&
+      validDisplayScope &&
+      displaySupport.source === "confirmed_pivot_low" &&
+      displaySupport.price <= source.reference_price
+      ? {
+          ...displaySupport,
+          distancePct:
+            (displaySupport.price / source.reference_price - 1) * 100,
+        }
+      : null
+    : level(source.support);
+  const supportScope =
+    hasDisplaySupport && support
+      ? (source.display_scope as "recent_20" | "historical_120")
+      : null;
+  const supportDistanceState =
+    short && support?.distancePct != null
+      ? -support.distancePct > source.max_risk_pct + 1e-9
+        ? "far"
+        : "within_risk_distance"
+      : null;
   return {
     profile,
     maxRiskPct: short ? source.max_risk_pct : null,
-    supportReason: text(source.support_reason),
+    supportReason:
+      supportScope && support
+        ? `${supportScope === "historical_120" ? "历史结构支撑（120根）" : "近20日结构支撑"}；${supportDistanceState === "far" ? "距离较远，不能替代短线风险线" : "结构观察，不等于短线风险线"}`
+        : text(source.support_reason),
+    supportScope,
+    supportDistanceState,
     notice: text(source.notice),
     referenceDate: hasReference ? referenceDate : null,
     referencePrice: hasReference ? source.reference_price : null,
@@ -192,8 +230,11 @@ export function chartPriceVolume(
         ? "点"
         : "元",
     cycle: period === "D" ? "日" : period === "W" ? "周" : "月",
-    reason: text(source.reason),
-    support: level(source.support),
+    reason:
+      supportScope && text(source.reason).startsWith("暂无近端支撑")
+        ? "已显示真实结构支撑；短线风险线和提醒基准分别计算。"
+        : text(source.reason),
+    support,
     resistance: level(source.resistance),
     stop:
       short && source.stop?.source !== "short_risk_boundary"
@@ -249,6 +290,12 @@ export function priceVolumeLineLabels(
   ).flatMap(([key, label, shortLabel, kind, color]) => {
     const level = view[key];
     if (!level) return [];
+    const supportTitle =
+      view.supportScope === "historical_120"
+        ? "历史结构支撑（120根）"
+        : view.supportScope === "recent_20"
+          ? "近20日结构支撑"
+          : label;
     return [
       {
         id: `price-volume:${key}`,
@@ -261,7 +308,7 @@ export function priceVolumeLineLabels(
           key === "stop" && view.profile === "short_week_v1"
             ? "短险"
             : shortLabel,
-        detail: `${key === "stop" ? (view.profile === "short_week_v1" ? "短线风险线" : "结构失效参考") : key === "breakout" && ["held", "retest"].includes(level.state) ? "原突破参考" : label} ${level.price} ${view.unit} · ${view.referenceDate} 完整${view.cycle}K · ${level.source === "short_risk_boundary" ? `风险公式基准 ${level.formedAt}，不代表确认支撑` : `拐点 ${level.formedAt} · 确认 ${level.confirmedOn}`}`,
+        detail: `${key === "stop" ? (view.profile === "short_week_v1" ? "短线风险线" : "结构失效参考") : key === "support" ? supportTitle : key === "breakout" && ["held", "retest"].includes(level.state) ? "原突破参考" : label} ${level.price} ${view.unit} · ${view.referenceDate} 完整${view.cycle}K · ${level.source === "short_risk_boundary" ? `风险公式基准 ${level.formedAt}，不代表确认支撑` : `拐点 ${level.formedAt} · 确认 ${level.confirmedOn}`}${key === "support" && view.supportDistanceState === "far" ? " · 距离较远，不能替代短线风险线" : ""}`,
       },
     ];
   });
