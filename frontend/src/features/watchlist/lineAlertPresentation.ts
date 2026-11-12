@@ -4,10 +4,17 @@ export const lineRuleLabels: Record<string, string> = {
   support_breakdown: "收盘失守",
   pressure_close_breakout: "收盘突破",
   pressure_touch: "盘中触碰",
+  close_breakout: "收盘突破",
+  stop_breakdown: "止损位跌破",
 };
+export const isAutomaticPriceAlert = (event: Row) =>
+  event.source_kind === "automatic_price_volume";
+export const lineAlertSource = (event: Row) =>
+  isAutomaticPriceAlert(event) ? "自动量价" : "手动画线";
 export function lineAlertView(event: Row) {
   const invalidated =
-    event.state === "invalidated" || event.rule === "support_breakdown";
+    event.state === "invalidated" ||
+    ["support_breakdown", "stop_breakdown"].includes(event.rule);
   return {
     title: lineRuleLabels[event.rule] || event.title || "划线提醒",
     invalidated,
@@ -16,7 +23,11 @@ export function lineAlertView(event: Row) {
       : event.rule === "pressure_touch"
         ? "touch"
         : "triggered",
-    stateLabel: invalidated ? "支撑失守" : "已触发",
+    stateLabel: invalidated
+      ? event.rule === "stop_breakdown"
+        ? "止损位跌破"
+        : "支撑失守"
+      : "已触发",
   };
 }
 export function lineAlertInScope(event: Row | null, asOf?: string) {
@@ -48,6 +59,7 @@ export function filterLineAlerts(
           event.title,
           event.reason,
           lineAlertView(event).title,
+          lineAlertSource(event),
         ]
           .filter(Boolean)
           .join(" ")
@@ -56,6 +68,7 @@ export function filterLineAlerts(
   );
 }
 export function lineAlertWatchlistState(event: Row) {
+  if (isAutomaticPriceAlert(event)) return "仅提醒 · 不自动入池";
   const labels: Record<string, string> = {
     added: "触发后已加入自选",
     already_present: "已在自选 · 保留原基准",
@@ -89,10 +102,31 @@ export function lineAlertPrice(event: Row): number | null {
 }
 export function isLineCheck(task: Row) {
   return (
-    task.kind === "line_alert_check" ||
-    task.operation === "line_alert_check" ||
-    task.parameters?.operation === "line_alert_check"
+    ["line_alert_check", "automatic_price_alert_check"].includes(task.kind) ||
+    ["line_alert_check", "automatic_price_alert_check"].includes(
+      task.operation,
+    ) ||
+    ["line_alert_check", "automatic_price_alert_check"].includes(
+      task.parameters?.operation,
+    )
   );
+}
+
+/** A manual check never stands in for a separately configured automatic check. */
+export function lineAlertChecks(data: Row | null | undefined) {
+  const checks = data?.latest_checks;
+  if (checks && typeof checks === "object")
+    return [
+      { source: "manual_line", label: "手动画线", check: checks.manual_line },
+      {
+        source: "automatic_price_volume",
+        label: "自动量价",
+        check: checks.automatic_price_volume,
+      },
+    ].filter((item) => item.check && typeof item.check === "object");
+  return data?.latest_check
+    ? [{ source: "manual_line", label: "手动画线", check: data.latest_check }]
+    : [];
 }
 
 /** GET notifications are scoped to their captured day; no read can launch evaluation. */

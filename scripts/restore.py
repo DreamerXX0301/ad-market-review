@@ -54,6 +54,22 @@ def disable_intraday_automation(connection, now):
     return disable_switch_automation(connection, now, 'intraday-automation-v1')
 
 
+def disable_automatic_price_alerts(connection, now):
+    """A restored copy retains receipts, not permission to monitor new closes.
+
+    The replaceable next-session basis and only its dedicated source pins can
+    be dropped. Immutable alert/evaluation history and event pins stay intact.
+    """
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'automatic_price_alert_rule' not in tables:
+        return None
+    disabled = connection.execute('''UPDATE automatic_price_alert_rule
+        SET enabled=0,revision=revision+1,updated_at_ms=? WHERE enabled=1''', (now,)).rowcount
+    baselines = connection.execute('DELETE FROM automatic_price_alert_baseline').rowcount if 'automatic_price_alert_baseline' in tables else 0
+    pins = connection.execute("DELETE FROM retention_pin WHERE owner_kind='manual' AND owner_id LIKE 'auto-price-baseline:%'").rowcount if 'retention_pin' in tables else 0
+    return {'disabled_rules': disabled, 'removed_baselines': baselines, 'removed_baseline_pins': pins}
+
+
 def disable_ai(connection, now):
     """Restore local history, never permission to send another model request.
 
@@ -160,6 +176,7 @@ def perform_restore(bundle,target):
             c.execute("DELETE FROM retention_pin WHERE owner_kind='request' OR (owner_kind='backup' AND owner_id=?)",(manifest['backup_id'],))
             automatic_review_disabled=disable_automatic_review(c,now)
             intraday_automation_disabled=disable_intraday_automation(c,now)
+            automatic_price_alerts_disabled=disable_automatic_price_alerts(c,now)
             auction_discovery_disabled=disable_switch_automation(c,now,'auction-discovery-automation-v1')
             event_calendar_default_disabled=False
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='platform_setting'").fetchone():
@@ -184,6 +201,9 @@ def perform_restore(bundle,target):
         result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts')),'auction_automation_disabled':automation_disabled,'automatic_review_disabled':automatic_review_disabled,'ai_disabled':ai['disabled'],'ai_interrupted_tasks':ai['interrupted_tasks'],'ai_cancelled_tasks':ai['cancelled_tasks']}
         if intraday_automation_disabled:
             result['intraday_automation_disabled'] = True
+        if automatic_price_alerts_disabled is not None:
+            result['automatic_price_alerts_disabled'] = True
+            result['automatic_price_alert_reset'] = automatic_price_alerts_disabled
         if auction_discovery_disabled:
             result['auction_discovery_disabled'] = True
         if event_calendar_default_disabled:

@@ -34,6 +34,13 @@ def test_instrument_route_hits_after_first_open_and_rebuilds_after_publish(retai
     with TestClient(app) as client:
         first = client.get(url)
         assert first.status_code == 200
+        reference = first.json()['price_volume_levels']
+        assert reference['algorithm'] == 'structure-volume-levels-v1'
+        assert reference['instrument_id'] == first.json()['instrument'].get('instrument_id')
+        assert reference['as_of'] == days[-1]
+        assert reference['snapshot_id'] == first.json()['snapshot_id']
+        columnar = client.get(url, params={'encoding': 'columns-v1'}).json()
+        assert columnar['price_volume_levels'] == reference
         with monkeypatch.context() as guard:
             def no_reverify():
                 pytest.fail('unchanged chart source should reuse the prior SHA check')

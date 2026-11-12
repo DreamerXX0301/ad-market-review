@@ -4,6 +4,7 @@ GETs read SQLite only. User saves, manual checks and newly authorized syncs may
 queue checks; no scheduler, remote requests or historical strategy backfills.
 """
 from datetime import date
+from contextlib import nullcontext
 import json
 import logging
 import math
@@ -279,10 +280,11 @@ def execute_check(job):
         raise
 
 
-def list_alerts(as_of=None,limit=100,scope='all'):
+def list_alerts(as_of=None,limit=100,scope='all',*,_connection=None):
     if not isinstance(limit,int) or isinstance(limit,bool) or not 1<=limit<=1000:raise HTTPException(422,'提醒条数需1至1000')
     if scope not in ('all','today','history'):raise HTTPException(422,'提醒范围需为today、history或all')
-    with connect() as connection:
+    with nullcontext(_connection) if _connection is not None else connect() as connection:
+        if not connection.in_transaction:connection.execute('BEGIN')
         clock=connection.execute('SELECT business_date FROM business_clock WHERE singleton=1').fetchone();day=clock[0] if clock else None
         if as_of is not None and (not _date(as_of) or not day or as_of>day):raise HTTPException(422,'提醒观察日期需要是不晚于业务日的有效日期')
         observed=as_of or day
@@ -312,9 +314,10 @@ def list_alerts(as_of=None,limit=100,scope='all'):
                 'latest_check':latest_view,'unknowns':unknowns}
 
 
-def alert_summary():
+def alert_summary(*,_connection=None):
     """Bounded SQLite-only header badge; never evaluates rules or reads行情."""
-    with connect() as connection:
+    with nullcontext(_connection) if _connection is not None else connect() as connection:
+        if not connection.in_transaction:connection.execute('BEGIN')
         clock=connection.execute('SELECT business_date FROM business_clock WHERE singleton=1').fetchone()
         day=clock[0] if clock else None
         total=connection.execute('SELECT count(*) FROM line_alert_event WHERE trade_date=?',(day or '',)).fetchone()[0]

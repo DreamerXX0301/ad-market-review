@@ -387,6 +387,22 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 新线未实际提醒时持续监控。首次triggered或invalidated事件日为第0日，之后第1至60个市场交易日继续监控，超过60日停止新提醒。重复提醒或修改线不重置最早日期。新增盘后increment冻结 `line_alert_retention_version=first-alert-plus-60-sessions-v1`，仅其成功/部分成功/无变更后的授权source_check子任务可在短事务中删除到期线、全部版本的关联事件与核验记录，并解除这些事件自有pin；不删除自选或跟踪。旧冻结任务、初始化、GET及普通手动核验不清理。日历不能证明首次提醒日期时保留未知；已有孤立提醒同样到期清理。只保留任务清理计数和检查点，`latest_check.cleanup`可返回累计数与complete。026守卫默认拒绝事件删除，仅worker当前连接的本批精确ID可通过；UPDATE仍拒绝。每批至多100条线，校验head、规则clock与lease并原子记录续跑检查点；人工修改后不续旧任务。详见[保留与恢复边界](../docs/划线提醒到期清理.md)。
 
+## 自动量价收盘提醒
+
+自动规则与 `chart_annotation`、手动规则 clock 和手动提醒保留政策独立。043迁移不为旧股票自动启用规则。`GET /instruments/{id}/automatic-price-alerts` 只查SQLite，返回 `instrument_id/rule/latest_evaluation/latest_baseline`；未配置返回disabled、revision=0、rule_id=null，不取行情或排队。`PUT` 接受完整 `{enabled,modes,require_volume,expected_revision}`，版本冲突409；只支持已留存个股，默认关闭，启用至少选一项。修改后从保存时已发布业务日之后生效，不追溯产生旧触发。响应另含 `task`，配置保存和基准准备任务排队在同一短事务，唯一worker在事务外读取行情。
+
+模式为 `support_reclaim/close_breakout/support_breakdown/stop_breakdown`，只核验日K收盘。回踩要求前收>=事前支撑、当日low<=支撑<=收盘；突破要求前收<=事前突破参考<收盘；失守/止损跌破要求前收>=对应参考>收盘。前两类为triggered，后两类为invalidated风险提醒，不自动入自选。`require_volume=true` 只约束突破，要求当日成交量至少为此前20日均量1.5倍；风险提醒不被缺量过滤。原始价跨公司行动或覆盖未知、缺精确前一交易日报价、无事前完整基准或有效价位时保持unknown，不混用盘中快照或更早报价。
+
+每日先以已保存、同规则版本且日期严格为前一市场交易日的监控基准检查当天，再准备当前完整K线的新基准供下一日使用。支撑压力随新拐点确认、失效或窗口移出而变，ATR缓冲可每日变化；缺前一日监控基准时不事后重构触发，只准备后续基准。每股票规则只保留一份当前baseline；事件固定保存旧价位、日期、算法、量能及来源引用，不被下一次重算覆盖。自动事件不参与手动画线首次提醒后60交易日的删线政策。
+
+`POST /watchlist/automatic-price-alerts/evaluate {request_key?}` 显式排队 `operation=automatic_price_alert_check`。新同步冻结 `automatic_price_alert_check_version=automatic-price-alert-v1`，在完整数据链和已授权策略/跟踪之后接续；无启用规则不创建任务，旧冻结任务不扩大范围。冻结head、业务日和自动配置clock，提交前重验lease，rule_id/revision/mode/trade_date去重；暂停取消不自动继续。读取不联网，不修改手动画线。
+
+原 `/watchlist/line-alerts`、`/summary` 与自选 `latest_line_alert` 合并两类独立事件，增加 `source_kind=manual_line|automatic_price_volume`。按事件日排序后有界截断，持久计数相加；摘要仍只读当日总数和最近5条。列表另含 `latest_checks:{manual_line,automatic_price_volume}`，不把手动完成当成自动已检查。`latest_check` 保留手动兼容值，无手动检查时取自动检查。自动事件兼容证券、日期、rule/state、价格和OHLC字段，另含 `level_date/level_evidence/volume_evidence/algorithm`；界面分别展示算法基准与手动画线依据。只提供应用内提醒，不发外部通知或执行交易。
+
+配置读取在一个短只读SQLite事务中取得规则、baseline及核验回执；合并提醒列表和摘要也在同一个SQLite读快照中读取两类来源的总数、记录、业务日和检查状态。并发保存或worker提交不能使同一响应混入不同提交时点的数据；事务内不读取行情文件或联网。
+
+标准恢复关闭自动价位规则，并递增原启用规则的revision，保留类型和量能偏好。恢复副本移除可替换baseline及其 `auto-price-baseline:` 专用pin；历史event/evaluation/check及 `auto-price-event:` 来源pin原样保留，已排队或运行任务仍按恢复规则暂停。副本需明确重新开启监控并建立新基准，不能继承旧服务继续触发的授权；正式升级只按目标实例原已授权配置恢复，不引入预演规则。
+
 ## 上市身份与人工确认
 
 `GET /data/listing-status` 返回 `business_date/market_snapshot_id/revision/summary_is_current/identities/confirmations`。identities含 `stock_count/catalog_count/listed_count/known_count/pending_listing_count/unknown_count/pending_listing/unknown/indices_excluded`，名录数量包括待上市，不将指数放入股票分母。已上市日期覆盖分母为listed+unknown，pending单列，不要求尚未上市证券已有历史K线。

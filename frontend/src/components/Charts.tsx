@@ -48,6 +48,12 @@ import {
   textValue,
 } from "../lib/format";
 import { chartAutomaticTrendlines } from "./chartAutomaticTrendlines";
+import ChartPriceVolume from "./ChartPriceVolume";
+import AutomaticPriceAlertSettings from "./AutomaticPriceAlertSettings";
+import {
+  chartPriceVolume,
+  priceVolumeLineLabels,
+} from "./chartPriceVolumePresentation";
 import { candleChange } from "./candleChange";
 import { candleExtremeChange } from "./candleExtremeChange";
 import { bollCandleValues, chartBoll } from "./chartBoll";
@@ -272,6 +278,7 @@ export function CandleChart({
   controlledPeriod,
   onPeriodChange,
   onBoardPresentation,
+  onViewPriceAlerts,
   noonPreview,
   noonMode = Boolean(noonPreview),
 }: {
@@ -295,6 +302,7 @@ export function CandleChart({
   noonPreview?: NoonChartPreview;
   noonMode?: boolean;
   onBoardPresentation?: (value: { row: Row; date: string } | null) => void;
+  onViewPriceAlerts?: () => void;
 }) {
   const { preferences, persistent, update, reset } = useChartPreferences();
   const plotRoot = useRef<HTMLDivElement>(null);
@@ -305,6 +313,10 @@ export function CandleChart({
   const [railChart, setRailChart] = useState<echarts.ECharts | null>(null);
   const [lineControlsOpen, setLineControlsOpen] = useState(false);
   const [hiddenLineState, setHiddenLineState] = useState<{
+    scope: string;
+    ids: Set<string>;
+  }>({ scope: "", ids: new Set() });
+  const [priceVolumeVisibility, setPriceVolumeVisibility] = useState<{
     scope: string;
     ids: Set<string>;
   }>({ scope: "", ids: new Set() });
@@ -487,6 +499,21 @@ export function CandleChart({
     () => chartAutomaticTrendlines(data, instrumentId, period, asOf),
     [data, instrumentId, period, asOf],
   );
+  const priceVolume = useMemo(
+    () =>
+      !frozenMode && !result.loading && !result.error
+        ? chartPriceVolume(data, instrumentId, period, asOf)
+        : null,
+    [
+      data,
+      instrumentId,
+      period,
+      asOf,
+      frozenMode,
+      result.loading,
+      result.error,
+    ],
+  );
   useEffect(() => {
     const node = plotRoot.current;
     if (!node) return;
@@ -556,6 +583,11 @@ export function CandleChart({
     [historyEvents, data],
   );
   const lineScope = `${instrumentId}|${dataEndpoint || ""}|${frozenMode ? "frozen" : "live"}`;
+  const priceVolumeScope = `${instrumentId}|${data?.as_of || asOf || ""}|${period}|${data?.price_basis || ""}|${data?.snapshot_id || ""}|${dataEndpoint || ""}`;
+  const priceVolumeIds =
+    priceVolumeVisibility.scope === priceVolumeScope
+      ? priceVolumeVisibility.ids
+      : EMPTY_LINE_IDS;
   useEffect(() => setLineControlsOpen(false), [lineScope]);
   const hiddenLineIds =
     hiddenLineState.scope === lineScope ? hiddenLineState.ids : EMPTY_LINE_IDS;
@@ -623,7 +655,13 @@ export function CandleChart({
         detail: `${view.event.label} · ${view.event.date} ${eventPriceNames[view.event.priceField]} · 本图 ${num(view.price, 4)} · 原价 ${num(view.event.rawPrice, 4)} · ${view.event.match} · 绑定观察日 ${view.event.observed}${view.converted ? " · 已按本图复权锚换算，原始事件保持不变" : ""}`,
       });
     });
-    return lines;
+    return [
+      ...lines,
+      ...priceVolumeLineLabels(priceVolume).map((line) => ({
+        ...line,
+        enabled: priceVolumeIds.has(line.id),
+      })),
+    ];
   }, [
     allAnnotationViews,
     annotations.show,
@@ -634,6 +672,8 @@ export function CandleChart({
     showEventBaseline,
     historyViews,
     showHistoricalEvents,
+    priceVolume,
+    priceVolumeIds,
   ]);
   const visibleLineLabels = useMemo(
     () => visibleChartLineLabels(allLineLabels, hiddenLineIds),
@@ -673,6 +713,14 @@ export function CandleChart({
   const toggleLine = (id: string, checked: boolean) => {
     const line = allLineLabels.find((item) => item.id === id);
     if (!line) return;
+    if (line.group === "price-volume") {
+      setPriceVolumeVisibility((old) => {
+        const ids = new Set(old.scope === priceVolumeScope ? old.ids : []);
+        checked ? ids.add(id) : ids.delete(id);
+        return { scope: priceVolumeScope, ids };
+      });
+      return;
+    }
     setHiddenLineState((old) => {
       const ids = new Set(old.scope === lineScope ? old.ids : []);
       if (checked && !line.enabled)
@@ -685,15 +733,31 @@ export function CandleChart({
     if (checked && !line.enabled) {
       if (line.group === "annotation") annotations.setShow(true);
       else if (line.group === "baseline") update({ showEventBaseline: true });
-      else setShowHistoricalEvents(true);
+      else if (line.group === "history") setShowHistoricalEvents(true);
     }
   };
   const toggleAllLines = (show: boolean) => {
+    setPriceVolumeVisibility({
+      scope: priceVolumeScope,
+      ids: new Set(
+        show
+          ? allLineLabels
+              .filter((line) => line.group === "price-volume")
+              .map((line) => line.id)
+          : [],
+      ),
+    });
     setHiddenLineState({
       scope: lineScope,
-      ids: show ? new Set() : new Set(allLineLabels.map((line) => line.id)),
+      ids: show
+        ? new Set()
+        : new Set(
+            allLineLabels
+              .filter((line) => line.group !== "price-volume")
+              .map((line) => line.id),
+          ),
     });
-    if (show) {
+    if (show && allLineLabels.some((line) => line.group !== "price-volume")) {
       annotations.setShow(true);
       update({ showEventBaseline: true });
       setShowHistoricalEvents(true);
@@ -1055,7 +1119,7 @@ export function CandleChart({
             lineStyle: {
               color: line.color,
               width: 1,
-              type: "dashed",
+              type: line.group === "price-volume" ? "dotted" : "dashed",
               opacity: 0.75,
             },
             label: { show: false },
@@ -1843,6 +1907,36 @@ export function CandleChart({
             )}
           </div>
         )}
+        <ChartPriceVolume
+          view={priceVolume}
+          visibleIds={visibleLineIds}
+          onToggle={toggleLine}
+          onToggleAll={(show) =>
+            setPriceVolumeVisibility({
+              scope: priceVolumeScope,
+              ids: new Set(
+                show
+                  ? priceVolumeLineLabels(priceVolume).map((line) => line.id)
+                  : [],
+              ),
+            })
+          }
+          actions={
+            !frozenMode &&
+            !dataEndpoint &&
+            !isIndex &&
+            period === "D" &&
+            data?.instrument?.kind === "stock" &&
+            data.instrument.instrument_id === instrumentId ? (
+              <AutomaticPriceAlertSettings
+                key={instrumentId}
+                instrumentId={instrumentId}
+                name={data.instrument.name}
+                onViewAlerts={onViewPriceAlerts}
+              />
+            ) : undefined
+          }
+        />
         {(automaticTrendlines.events.length > 0 || waves) && (
           <div className="chart-analysis-controls">
             {automaticTrendlines.events.length > 0 && (
@@ -3251,6 +3345,7 @@ export function StockDrawer({
               controlledPeriod={drawerPeriod}
               onPeriodChange={setDrawerPeriod}
               onBoardPresentation={setEntryHeaderBoard}
+              onViewPriceAlerts={onClose}
               onLoad={(next) => {
                 if (
                   currentRequest.current.id === id &&

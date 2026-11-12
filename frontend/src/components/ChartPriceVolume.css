@@ -1,0 +1,122 @@
+.chart-price-volume {
+  margin: 6px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+  font-size: 12px;
+}
+.chart-price-volume-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 12px;
+  color: var(--muted);
+}
+.chart-price-volume-heading > strong {
+  color: var(--text);
+}
+.chart-price-volume-ratio {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.chart-price-volume-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.chart-price-volume-levels {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+}
+.chart-price-volume-level {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+}
+.chart-price-volume-level:last-child {
+  border-right: 0;
+}
+button.chart-price-volume-level {
+  cursor: pointer;
+}
+button.chart-price-volume-level:hover,
+button.chart-price-volume-level:focus-visible {
+  background: var(--surface-hover, var(--blue-bg));
+}
+button.chart-price-volume-level[aria-pressed="false"] > strong {
+  opacity: 0.6;
+}
+.chart-price-volume-level > strong {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-price-volume-level > small,
+.chart-price-volume-name {
+  color: var(--muted);
+}
+.chart-price-volume-level.stop > strong {
+  color: var(--amber, #e0b966);
+}
+.chart-price-volume-level.support > strong {
+  color: var(--down, #39bd9b);
+}
+.chart-price-volume-level.resistance > strong,
+.chart-price-volume-level.breakout > strong {
+  color: var(--up, #ed6865);
+}
+.chart-price-volume-level > strong.chart-price-volume-unavailable {
+  color: var(--muted);
+  font-size: 13px;
+}
+.chart-price-volume-evidence {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.chart-price-volume-evidence > summary {
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.chart-price-volume-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 4px 12px 12px;
+}
+.chart-price-volume-evidence-grid strong {
+  color: var(--text);
+}
+.chart-price-volume-evidence-grid p {
+  margin: 5px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 780px) {
+  .chart-price-volume-levels {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .chart-price-volume-level:nth-child(2) {
+    border-right: 0;
+  }
+  .chart-price-volume-level:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+  .chart-price-volume-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+  .chart-price-volume-ratio {
+    margin-left: 0;
+  }
+}

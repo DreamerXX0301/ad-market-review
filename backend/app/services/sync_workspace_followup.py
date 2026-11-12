@@ -183,10 +183,12 @@ def _block(connection, root, state):
             state.get('reason') or '同步后计算未完成，请检查缺口后手动执行', 'warning', state)
     # A skipped reminder is explicit, rather than an indefinitely missing link.
     params = json.loads(root['parameters_json'])
-    if params.get('line_alert_check_version') and _event(connection, root['job_id'], 'line_alert_check_queued') is None:
-        tasks.append_event(connection, root['job_id'], 'line_alert_check_queued',
-            '必需数据或后置计算未完整成功，本次不执行划线提醒', 'warning',
-            {'skipped': True, 'target_date': state.get('target_date'), 'reason': state.get('reason')})
+    for marker, stage in (('line_alert_check_version', 'line_alert_check_queued'),
+                          ('automatic_price_alert_check_version', 'automatic_price_alert_check_queued')):
+        if params.get(marker) and _event(connection, root['job_id'], stage) is None:
+            tasks.append_event(connection, root['job_id'], stage,
+                '必需数据或后置计算未完整成功，本次不执行提醒', 'warning',
+                {'skipped': True, 'target_date': state.get('target_date'), 'reason': state.get('reason')})
 
 
 def run(root_id):
@@ -257,6 +259,8 @@ def run(root_id):
                 tasks.append_event(connection, root_id, RELEASED, '本次同步后计算执行已退出，不再写入策略或跟踪')
     from .line_alerts import after_sync
     after_sync(dict(root))
+    from .automatic_price_alerts import after_sync as automatic_after_sync
+    automatic_after_sync(dict(root))
     return {'state': 'completed'}
 
 
@@ -276,7 +280,9 @@ def recover(limit=20):
             AND NOT EXISTS(SELECT 1 FROM job_event e WHERE e.job_id=j.job_id AND e.stage='workspace_followup_blocked')
             AND (NOT EXISTS(SELECT 1 FROM job_event e WHERE e.job_id=j.job_id AND e.stage='workspace_followup_completed')
                 OR json_extract(parameters_json,'$.line_alert_check_version') IS NOT NULL
-                AND NOT EXISTS(SELECT 1 FROM job_event e WHERE e.job_id=j.job_id AND e.stage='line_alert_check_queued'))
+                AND NOT EXISTS(SELECT 1 FROM job_event e WHERE e.job_id=j.job_id AND e.stage='line_alert_check_queued')
+                OR json_extract(parameters_json,'$.automatic_price_alert_check_version') IS NOT NULL
+                AND NOT EXISTS(SELECT 1 FROM job_event e WHERE e.job_id=j.job_id AND e.stage='automatic_price_alert_check_queued'))
             ORDER BY created_at_ms LIMIT ?""", (VERSION, max(1, min(limit, 100))))]
     results=[]
     for identifier in roots:

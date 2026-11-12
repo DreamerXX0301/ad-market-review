@@ -2,12 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { BellRing, X } from "lucide-react";
 import { list, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
-import { LINE_ALERT_CHECK_FINISHED } from "../../lib/workbenchEvents";
+import {
+  AUTOMATIC_PRICE_ALERTS_CHANGED,
+  LINE_ALERT_CHECK_FINISHED,
+} from "../../lib/workbenchEvents";
 import {
   LINE_ALERTS_OPEN,
   currentLineAlertSummary,
 } from "./lineAlertNotification";
-import { lineAlertView } from "./lineAlertPresentation";
+import { lineAlertSource, lineAlertView } from "./lineAlertPresentation";
 import "./LineAlertNotice.css";
 
 export default function LineAlertNotice({
@@ -24,9 +27,11 @@ export default function LineAlertNotice({
     const refresh = () => result.reload();
     window.addEventListener(LINE_ALERT_CHECK_FINISHED, refresh);
     window.addEventListener("chart-annotations-changed", refresh);
+    window.addEventListener(AUTOMATIC_PRICE_ALERTS_CHANGED, refresh);
     return () => {
       window.removeEventListener(LINE_ALERT_CHECK_FINISHED, refresh);
       window.removeEventListener("chart-annotations-changed", refresh);
+      window.removeEventListener(AUTOMATIC_PRICE_ALERTS_CHANGED, refresh);
     };
   }, [result.reload]);
   useEffect(() => {
@@ -61,7 +66,7 @@ export default function LineAlertNotice({
       ? "正在读取提醒"
       : !summary
         ? "提醒状态待确认"
-        : `今日划线提醒 ${total} 条`;
+        : `今日行情提醒 ${total} 条`;
   const badge = result.error
     ? "!"
     : !summary
@@ -100,11 +105,11 @@ export default function LineAlertNotice({
         <section
           id="today-line-alerts-popover"
           className="line-alert-notice-popover"
-          aria-label="今日划线提醒"
+          aria-label="今日行情提醒"
         >
           <header>
             <strong>
-              今日划线提醒{" "}
+              今日行情提醒{" "}
               <small>{summary?.business_date || "业务日待确认"}</small>
             </strong>
             <button
@@ -125,14 +130,16 @@ export default function LineAlertNotice({
           ) : !summary ? (
             <p>尚无当前业务日的提醒摘要；行情发布后可重新查看。</p>
           ) : total === 0 ? (
-            <p>今日暂无已确认的划线触发。</p>
+            <p>今日暂无已确认的行情提醒。</p>
           ) : (
             <ul>
               {list(summary).map((event) => (
                 <li key={event.event_id}>
                   <span>
                     {event.name || event.code}
-                    <small>{event.code}</small>
+                    <small>
+                      {event.code} · {lineAlertSource(event)}
+                    </small>
                   </span>
                   <b className={lineAlertView(event).tone}>
                     {lineAlertView(event).title}

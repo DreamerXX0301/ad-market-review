@@ -37,12 +37,15 @@ def market_topic_members(date:str|None=None,topic_id:str|None=Query(None,max_len
 @router.get('/market/sector-chart')
 def sector_chart(topic_code:str=Query(...,max_length=30),date:str|None=None,period:str=Query('D',pattern='^(D|W|M)$'),encoding:str=Query('rows',pattern='^(rows|columns-v1)$')):
     from app.analytics.chart_trendlines import automatic_trendlines
+    from app.analytics.chart_price_volume import price_volume_levels
     from app.services.sector_chart_jobs import chart_view
     from app.services.chart_transport import chart_payload
     market,status,day=market_service.context(date)
     result=chart_view(market,topic_code,day,period)
     if result['available']:
         result['automatic_trendlines'] = automatic_trendlines(
+            result, market.calendar(), expected_snapshot=status.get('snapshot_id'))
+        result['price_volume_levels'] = price_volume_levels(
             result, market.calendar(), expected_snapshot=status.get('snapshot_id'))
     return JSONResponse(chart_payload(result,encoding))
 
@@ -119,6 +122,7 @@ def topic_hotspots(limit:int=Query(8,ge=1,le=20)):
 def chart(instrument_id:str,period:str='D',as_of:str|None=None,price_basis:str='none',indicator_continuity:str=Query('quotes',pattern='^(quotes|market_sessions)$'),encoding:str=Query('rows',pattern='^(rows|columns-v1)$')):
     from app.analytics.market import canonical
     from app.analytics.chart_trendlines import automatic_trendlines
+    from app.analytics.chart_price_volume import price_volume_levels
     from app.services.chart_limits import enrich_chart_limits
     from app.services.chart_read_cache import instrument_projection
     from app.services.chart_transport import chart_payload
@@ -129,6 +133,7 @@ def chart(instrument_id:str,period:str='D',as_of:str|None=None,price_basis:str='
         if not result['bars']:raise HTTPException(404,'该标的没有已留存K线')
         expected_snapshot = market.status().get('snapshot_id') if status.get('snapshot_id') else None
         result['automatic_trendlines'] = automatic_trendlines(result, market.calendar(), expected_snapshot=expected_snapshot)
+        result['price_volume_levels'] = price_volume_levels(result, market.calendar(), expected_snapshot=expected_snapshot)
         return result
 
     variant = ('chart', canonical(instrument_id), period.upper(), price_basis, indicator_continuity)

@@ -71,11 +71,11 @@ for (const [name, url] of Object.entries({
     "export const useApi=()=>({data:{business_date:'2026-10-28',total:123,items:[]},reload:()=>{throw Error('render cannot fetch')},loading:false,error:''});export const list=(v)=>v?.items||[];",
   ),
   "../../lib/workbenchEvents": encoded(
-    "export const LINE_ALERT_CHECK_FINISHED='finished';",
+    "export const LINE_ALERT_CHECK_FINISHED='finished';export const AUTOMATIC_PRICE_ALERTS_CHANGED='automatic-changed';",
   ),
   "./lineAlertNotification": helperUrl,
   "./lineAlertPresentation": encoded(
-    "export const lineAlertView=()=>({tone:'triggered',title:'回踩收回'});",
+    "export const lineAlertView=()=>({tone:'triggered',title:'回踩收回'});export const lineAlertSource=()=> '手动画线';",
   ),
 }))
   source = source.replaceAll(
@@ -91,7 +91,7 @@ const html = renderToStaticMarkup(
     },
   }),
 );
-assert.match(html, /今日划线提醒 123 条/);
+assert.match(html, /今日行情提醒 123 条/);
 assert.match(html, /99\+/);
 assert.match(html, /aria-live="polite"/);
 assert.match(html, /aria-expanded="false"/);

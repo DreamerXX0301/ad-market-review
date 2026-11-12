@@ -43,6 +43,7 @@
 -- 040_auction_retention_30_days.sql sha256=77316c0066d358afe552f1d52043451505f0800d11443c80b6631128f3f07727
 -- 041_news_events.sql sha256=122d3bae86199b8715c7558a0c7338a767694cb14928c477a50b85cccea3d146
 -- 042_market_node_topic_overrides.sql sha256=492dc95745cabf6f4a5e856859e49a11e38c9e9cccd5be5ce52e8ea7ca2c329a
+-- 043_automatic_price_alerts.sql sha256=f44663961a5ec827339789b42c0b12154c9c00b9f010c2faba11706044837e9d
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -109,6 +110,73 @@ CREATE TABLE ai_task_event (
  data_json TEXT NOT NULL, at_ms INTEGER NOT NULL,
  PRIMARY KEY(task_id,seq)
 );
+
+CREATE TABLE automatic_price_alert_baseline (
+ rule_id TEXT PRIMARY KEY REFERENCES automatic_price_alert_rule(rule_id),
+ rule_revision INTEGER NOT NULL,
+ level_date TEXT NOT NULL,
+ market_snapshot_id TEXT NOT NULL,
+ baseline_json TEXT NOT NULL CHECK(json_valid(baseline_json)),
+ recorded_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE automatic_price_alert_check (
+ job_id TEXT PRIMARY KEY REFERENCES job(job_id),
+ business_date TEXT NOT NULL,
+ market_snapshot_id TEXT NOT NULL,
+ rules_signature TEXT NOT NULL,
+ checked_rules INTEGER NOT NULL,
+ trigger_count INTEGER NOT NULL,
+ unknown_count INTEGER NOT NULL,
+ checked_at_ms INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE automatic_price_alert_clock (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ revision INTEGER NOT NULL CHECK(revision>0)
+) STRICT;
+
+CREATE TABLE automatic_price_alert_evaluation (
+ job_id TEXT NOT NULL REFERENCES job(job_id),
+ rule_id TEXT NOT NULL,
+ rule_revision INTEGER NOT NULL,
+ instrument_id TEXT NOT NULL,
+ rule TEXT NOT NULL,
+ trade_date TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('triggered','invalidated','not_triggered','unknown')),
+ reason TEXT,
+ evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+ event_id TEXT REFERENCES automatic_price_alert_event(event_id),
+ recorded_at_ms INTEGER NOT NULL,
+ PRIMARY KEY(job_id,rule_id,rule_revision,rule,trade_date)
+) STRICT;
+
+CREATE TABLE automatic_price_alert_event (
+ event_id TEXT PRIMARY KEY,
+ rule_id TEXT NOT NULL,
+ rule_revision INTEGER NOT NULL,
+ instrument_id TEXT NOT NULL,
+ rule TEXT NOT NULL CHECK(rule IN ('support_reclaim','close_breakout','support_breakdown','stop_breakdown')),
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ state TEXT NOT NULL CHECK(state IN ('triggered','invalidated')),
+ job_id TEXT NOT NULL REFERENCES job(job_id),
+ event_json TEXT NOT NULL CHECK(json_valid(event_json)),
+ created_at_ms INTEGER NOT NULL,
+ UNIQUE(rule_id,rule_revision,rule,trade_date)
+) STRICT;
+
+CREATE TABLE automatic_price_alert_rule (
+ rule_id TEXT PRIMARY KEY,
+ instrument_id TEXT NOT NULL UNIQUE,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+ modes_json TEXT NOT NULL CHECK(json_valid(modes_json) AND json_type(modes_json)='array'),
+ require_volume INTEGER NOT NULL DEFAULT 1 CHECK(require_volume IN (0,1)),
+ algorithm TEXT NOT NULL CHECK(algorithm='structure-volume-levels-v1'),
+ effective_after_date TEXT NOT NULL CHECK(date(effective_after_date,'+0 days') IS effective_after_date),
+ created_at_ms INTEGER NOT NULL,
+ updated_at_ms INTEGER NOT NULL
+) STRICT;
 
 CREATE TABLE backtest_deletion (
   backtest_id TEXT PRIMARY KEY REFERENCES backtest_run(backtest_id),
@@ -1124,6 +1192,12 @@ CREATE INDEX auction_purge_date ON market_auction_purge(trade_date,status);
 
 CREATE INDEX auction_snapshot_by_date ON market_auction_snapshot(trade_date DESC);
 
+CREATE INDEX automatic_price_alert_evaluation_stock ON automatic_price_alert_evaluation(instrument_id,trade_date DESC,recorded_at_ms DESC);
+
+CREATE INDEX automatic_price_alert_event_day ON automatic_price_alert_event(trade_date DESC,created_at_ms DESC);
+
+CREATE INDEX automatic_price_alert_event_stock ON automatic_price_alert_event(instrument_id,trade_date DESC,created_at_ms DESC);
+
 CREATE INDEX backtest_deletion_strategy_batch ON backtest_deletion(strategy_deletion_id);
 
 CREATE INDEX candidates_by_result ON selection_candidate(run_id,decision);
@@ -1257,6 +1331,21 @@ CREATE TRIGGER append_only_tracking_policy_version_update BEFORE UPDATE ON track
 CREATE TRIGGER auction_automation_revision BEFORE UPDATE ON market_auction_automation
 WHEN NEW.singleton<>OLD.singleton OR NEW.version<>OLD.version OR NEW.revision<>OLD.revision+1
 BEGIN SELECT RAISE(ABORT,'auction automation requires the next revision'); END;
+
+CREATE TRIGGER automatic_price_alert_event_no_delete BEFORE DELETE ON automatic_price_alert_event
+BEGIN SELECT RAISE(ABORT,'retain automatic price alert evidence'); END;
+
+CREATE TRIGGER automatic_price_alert_event_no_update BEFORE UPDATE ON automatic_price_alert_event
+BEGIN SELECT RAISE(ABORT,'retain automatic price alert evidence'); END;
+
+CREATE TRIGGER automatic_price_alert_rule_delete AFTER DELETE ON automatic_price_alert_rule
+BEGIN INSERT INTO automatic_price_alert_clock VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
+
+CREATE TRIGGER automatic_price_alert_rule_insert AFTER INSERT ON automatic_price_alert_rule
+BEGIN INSERT INTO automatic_price_alert_clock VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
+
+CREATE TRIGGER automatic_price_alert_rule_update AFTER UPDATE ON automatic_price_alert_rule
+BEGIN INSERT INTO automatic_price_alert_clock VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET revision=revision+1; END;
 
 CREATE TRIGGER backtest_dependency_gate BEFORE INSERT ON backtest_run BEGIN
  SELECT CASE WHEN json_type(NEW.input_snapshots_json)<>'object' OR EXISTS(

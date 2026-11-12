@@ -87,7 +87,9 @@ const successfulIncrement = (task: Row, observedAtMs: number) =>
   task.finished_at_ms > 0 &&
   task.finished_at_ms <= observedAtMs;
 const isLineCheck = (task: Row) =>
-  task.operation === "line_alert_check" || task.kind === "line_alert_check";
+  ["line_alert_check", "automatic_price_alert_check"].includes(
+    task.operation,
+  ) || ["line_alert_check", "automatic_price_alert_check"].includes(task.kind);
 const emit = () => listeners.forEach((listener) => listener());
 const stopTimer = () => {
   if (timer) clearTimeout(timer);

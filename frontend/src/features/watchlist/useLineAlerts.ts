@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { post, requestKey, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
+import { AUTOMATIC_PRICE_ALERTS_CHANGED } from "../../lib/workbenchEvents";
 import {
   finishTaskRequest,
   startTaskRequest,
@@ -73,9 +74,11 @@ export function useLineAlerts(asOf?: string, scope = "all", limit = 100) {
       if (active) result.reload();
     };
     window.addEventListener("chart-annotations-changed", refresh);
+    window.addEventListener(AUTOMATIC_PRICE_ALERTS_CHANGED, refresh);
     window.addEventListener(WATCHLIST_CHANGED, refresh);
     return () => {
       window.removeEventListener("chart-annotations-changed", refresh);
+      window.removeEventListener(AUTOMATIC_PRICE_ALERTS_CHANGED, refresh);
       window.removeEventListener(WATCHLIST_CHANGED, refresh);
     };
   }, [active, result.reload]);

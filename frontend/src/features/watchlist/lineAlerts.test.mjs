@@ -39,6 +39,8 @@ const {
   lineAlertWatchlistState,
   lineCheckRefreshKeys,
   lineAlertPrice,
+  lineAlertSource,
+  lineAlertChecks,
 } = await import(helpersURL);
 const event = Object.freeze({
   event_id: "event-1",
@@ -98,6 +100,54 @@ assert.equal(
   "a breakdown can never be presented as a successful support reclaim",
 );
 assert.equal(lineAlertView({ ...event, rule: "pressure_touch" }).tone, "touch");
+const automatic = Object.freeze({
+  ...event,
+  event_id: "auto-stop",
+  source_kind: "automatic_price_volume",
+  rule: "stop_breakdown",
+  state: "invalidated",
+  previous_close: 24,
+  line_price: 23.25,
+  close: 23.1,
+  level_date: "2026-10-19",
+  revision: 3,
+  algorithm: "structure-volume-levels-v1",
+  level_evidence: {
+    as_of: "2026-10-19",
+    snapshot_id: "prior-frozen-source",
+  },
+  market_snapshot_id: "event-source",
+  automatic_level: {
+    source: "confirmed_pivot_low",
+    formed_at: "2026-10-15",
+    confirmed_on: "2026-10-19",
+    base_price: 23.75,
+    buffer_atr: 0.5,
+    buffer_value: 0.5,
+    atr_reference_date: "2026-10-19",
+  },
+  watchlist_add_state: "disabled",
+});
+assert.equal(lineAlertSource(event), "手动画线");
+assert.equal(lineAlertSource(automatic), "自动量价");
+assert.equal(lineAlertView(automatic).stateLabel, "止损位跌破");
+assert.equal(
+  lineAlertView({ ...automatic, state: "triggered" }).invalidated,
+  true,
+);
+assert.match(lineAlertWatchlistState(automatic), /仅提醒.*不自动入池/);
+assert.deepEqual(filterLineAlerts([event, automatic], "自动量价", "all"), [
+  automatic,
+]);
+assert.deepEqual(
+  lineAlertChecks({
+    latest_checks: {
+      manual_line: { job_id: "manual" },
+      automatic_price_volume: { job_id: "auto", stale: true },
+    },
+  }).map(({ check }) => check.job_id),
+  ["manual", "auto"],
+);
 assert.deepEqual(
   filterLineAlerts(
     [
@@ -136,9 +186,15 @@ assert.deepEqual(
       finished_at_ms: 123,
     },
     { job_id: "other", kind: "selection", status: "succeeded" },
+    {
+      job_id: "automatic",
+      operation: "automatic_price_alert_check",
+      status: "succeeded",
+      finished_at_ms: 456,
+    },
     { job_id: "running", kind: "line_alert_check", status: "running" },
   ]),
-  ["check1:123"],
+  ["check1:123", "automatic:456"],
 );
 const ui =
   encoded(`import {createElement as h} from ${JSON.stringify(import.meta.resolve("react"))};
@@ -205,6 +261,39 @@ const risk = renderToStaticMarkup(
 assert.match(risk, /line-alert-evidence-heading invalidated/);
 assert.doesNotMatch(risk, /line-alert-evidence-heading triggered/);
 assert.match(risk, /失守风险提醒/);
+const frozenAutomatic = JSON.stringify(automatic);
+const automaticHtml = renderToStaticMarkup(
+  createElement(LineAlertEvidence, { event: automatic }),
+);
+assert.match(automaticHtml, /自动量价/);
+assert.match(automaticHtml, /基准日期 2026-10-19/);
+assert.match(automaticHtml, /配置版本 V3/);
+assert.match(automaticHtml, /prior-frozen-source/);
+assert.match(automaticHtml, /event-source/);
+assert.match(automaticHtml, /止损位跌破/);
+assert.match(automaticHtml, /不修改手动画线/);
+assert.doesNotMatch(automaticHtml, /划线版本|原保存线价|补跑历史触发/);
+assert.equal(
+  JSON.stringify(automatic),
+  frozenAutomatic,
+  "render cannot recalculate or rewrite a frozen automatic event",
+);
+const breakoutHtml = renderToStaticMarkup(
+  createElement(LineAlertEvidence, {
+    event: {
+      ...automatic,
+      rule: "close_breakout",
+      state: "triggered",
+      volume_evidence: {
+        ratio: 1.8,
+        mean_start: "2026-09-21",
+        mean_end: "2026-10-19",
+      },
+    },
+  }),
+);
+assert.match(breakoutHtml, /突破日量能 1.80 倍前20日均量/);
+assert.match(breakoutHtml, /不含突破当日/);
 const missing = renderToStaticMarkup(
   createElement(LineAlertEvidence, {
     event: { ...event, previous_close: null },
@@ -240,6 +329,23 @@ assert.match(items, /最近 2 \/ 260 条/);
 assert.match(items, /回踩收回/);
 assert.match(items, /支撑失守/);
 assert.match(items, /查看详情/);
+const automaticItems = renderToStaticMarkup(
+  createElement(Alerts, {
+    data: { items: [automatic], total: 1, rules_total: 1, unknowns: [] },
+    loading: false,
+    error: "",
+    asOf: "2026-10-21",
+    onOpen: () => {},
+    onStock: () => {},
+    onReload: () => {
+      throw Error("render cannot evaluate");
+    },
+  }),
+);
+assert.match(automaticItems, /line-alert-source automatic/);
+assert.match(automaticItems, /自动量价/);
+assert.match(automaticItems, /止损位跌破/);
+assert.match(automaticItems, /仅提醒 · 不自动入池/);
 const annotationURL = await compile("../../components/chartAnnotations.ts");
 const chartURL = await compile("../../components/ChartDrawingTools.tsx", {
   "../lib/api": api,
@@ -473,7 +579,10 @@ const hotBrowseURL = await compile("../../components/HotBrowseFilter.tsx", {
   ),
 });
 const watchURL = await compile("./Watchlist.tsx", {
-  "./lineAlertNotification": encoded("export const LINE_ALERTS_OPEN='workbench-open-today-line-alerts';"),
+  "./lineAlertPresentation": helpersURL,
+  "./lineAlertNotification": encoded(
+    "export const LINE_ALERTS_OPEN='workbench-open-today-line-alerts';",
+  ),
   "../../lib/api": watchApi,
   "../../components/UI": ui,
   "../../lib/format": encoded(
@@ -494,7 +603,7 @@ const watchURL = await compile("./Watchlist.tsx", {
   ),
   "./WatchlistLineAlerts": lineUIURL,
   "./useLineAlerts": encoded(
-    "export const useLineAlerts=()=>({result:{data:null,error:'',loading:true,reload:()=>{}},evaluate:()=>{},busy:false,pending:false,task:null,error:''});",
+    "export const useLineAlerts=()=>globalThis.__watchlistAlertsFixture||({result:{data:null,error:'',loading:true,reload:()=>{}},evaluate:()=>{},busy:false,pending:false,task:null,error:''});",
   ),
   "./watchlistPresentation": watchPresentation,
   "../../components/HotBrowseFilter": hotBrowseURL,
@@ -504,6 +613,44 @@ const cold = renderToStaticMarkup(createElement(Watchlist, { onStock: nope }));
 assert.match(cold, /我的自选池 <span>— 只<\/span>/);
 assert.match(cold, /行情日 读取中/);
 assert.doesNotMatch(cold, /待初始化|0 只|把值得关注/);
+globalThis.__watchlistAlertsFixture = {
+  result: {
+    data: {
+      rules_total: 4,
+      latest_checks: {
+        manual_line: {
+          checked_rules: 2,
+          trigger_count: 0,
+          unknown_count: 0,
+          is_current: true,
+          checked_at_ms: 1,
+        },
+        automatic_price_volume: {
+          checked_rules: 2,
+          trigger_count: 0,
+          unknown_count: 1,
+          is_current: false,
+          stale_reason: "自动配置已更新",
+          checked_at_ms: 1,
+        },
+      },
+    },
+    error: "",
+    loading: false,
+    reload: nope,
+  },
+  evaluate: nope,
+  busy: false,
+  pending: false,
+  task: null,
+  error: "",
+};
+const independentChecks = renderToStaticMarkup(
+  createElement(Watchlist, { onStock: nope }),
+);
+assert.match(independentChecks, /手动画线 · 最近核验 2 条/);
+assert.match(independentChecks, /自动量价 · 需更新核验 2 条/);
+assert.match(independentChecks, /自动配置已更新/);
 console.log(
   "Line alerts: legacy quiet reference, support defaults, invalidation separation, historical isolation, frozen evidence and compact panel SSR passed",
 );

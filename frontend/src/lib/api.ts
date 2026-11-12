@@ -89,6 +89,8 @@ const scopePaths: Record<string, RegExp> = {
     /^\/(?:topics|topic-members|stock-topic-memberships|topic-hotspots|hot-universe|watchlist|tracking|sector-tracking|market\/(?:overview|sectors|ladder|gainers))(?:[/?-]|$)/,
   sources: /^\/(?:sources|data\/status)(?:[/?]|$)/,
   zodiac: /^\/zodiac(?:[/?-]|$)/,
+  price_alerts:
+    /^\/(?:watchlist(?:\/line-alerts|\/ids)?|instruments\/[^/]+\/automatic-price-alerts)(?:[/?]|$)/,
 };
 
 function matchesReadChange(path: string, { scope, date }: ReadChange) {

@@ -225,7 +225,7 @@ def recover_followups(limit=20):
 def _queue_local_sync_checks(job, completed_result=None):
     """Queue short local checks before the sector chain, without changing FIFO."""
     if job['kind'] not in ('initialise','increment','topic_init','topic_refresh'):return
-    from app.services import line_alerts,listing_status
+    from app.services import line_alerts,listing_status,automatic_price_alerts
     checks=(('listing_status',listing_status.after_sync),)
     if job['kind'] in ('initialise','increment'):
         from app.services.sync_progress import chain_stop_action
@@ -233,6 +233,7 @@ def _queue_local_sync_checks(job, completed_result=None):
             if chain_stop_action(connection,job):return
         parameters=_parameters(job)
         if not (parameters.get('line_alert_check_version')==line_alerts.VERSION
+                or parameters.get('automatic_price_alert_check_version')==automatic_price_alerts.VERSION
                 or parameters.get('listing_status_check_version')==listing_status.VERSION):return
         # A no-change request may not have a target. Freeze its own completed
         # date before either child is created; never borrow a later global head.
@@ -241,7 +242,7 @@ def _queue_local_sync_checks(job, completed_result=None):
             logger.warning('本地核验未排队 %s：同步日期未能冻结',job['job_id'])
             return
         from app.services.sync_workspace_followup import enabled
-        if not enabled(parameters):checks=(('line_alerts',line_alerts.after_sync),*checks)
+        if not enabled(parameters):checks=(('line_alerts',line_alerts.after_sync),('automatic_price_alerts',automatic_price_alerts.after_sync),*checks)
     for name,callback in checks:
         try:callback(job)
         except Exception as error:
@@ -488,6 +489,9 @@ def dispatch(job):
     elif kind=='source_check' and _parameters(job).get('operation')=='line_alert_check':
         from app.services.line_alerts import execute_check
         execute_check(job)
+    elif kind=='source_check' and _parameters(job).get('operation')=='automatic_price_alert_check':
+        from app.services.automatic_price_alerts import execute_check
+        execute_check(job)
     elif kind=='source_check' and _parameters(job).get('operation')=='listing_status_check':
         from app.services.listing_status import execute_check
         execute_check(job)
@@ -577,7 +581,8 @@ def run(once=False):
             set_setting('worker_heartbeat',{'owner':owner,'at_ms':now_ms()})
             from app.services.line_alerts import recover_sync_followups
             from app.services.listing_status import recover_sync_followups as recover_listing_followups
-            for name,recover in (('line_alerts',recover_sync_followups),('listing_status',recover_listing_followups)):
+            from app.services.automatic_price_alerts import recover_sync_followups as recover_automatic_price_followups
+            for name,recover in (('line_alerts',recover_sync_followups),('automatic_price_alerts',recover_automatic_price_followups),('listing_status',recover_listing_followups)):
                 try:recover()
                 except Exception as error:
                     logger.warning('本地核验补漏稍后重试 %s %s',name,type(error).__name__)

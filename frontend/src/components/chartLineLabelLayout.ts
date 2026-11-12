@@ -1,23 +1,29 @@
 export type ChartLineLabel = {
   id: string;
   kind: "support" | "resistance" | "reference" | "event";
-  group: "annotation" | "baseline" | "history";
+  group: "annotation" | "baseline" | "history" | "price-volume";
   price: number;
   color: string;
   detail: string;
   enabled: boolean;
+  shortLabel?: string;
 };
 
 /** Short text belongs in the reserved rail; the exact name/price stays in detail. */
 export function shortChartLineLabel(line: ChartLineLabel) {
-  const prefix = {
-    support: "撑",
-    resistance: "压",
-    reference: "参",
-    event: "事件",
-  }[line.kind];
+  const prefix =
+    line.shortLabel ||
+    {
+      support: "撑",
+      resistance: "压",
+      reference: "参",
+      event: "事件",
+    }[line.kind];
   return (
-    prefix + line.price.toLocaleString("zh-CN", { maximumFractionDigits: 4 })
+    prefix +
+    line.price.toLocaleString("zh-CN", {
+      maximumFractionDigits: line.group === "price-volume" ? 2 : 4,
+    })
   );
 }
 

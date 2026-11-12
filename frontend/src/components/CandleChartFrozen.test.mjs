@@ -24,6 +24,9 @@ const preferences = await helper("./chartPreferences.ts");
 const { chartAutomaticTrendlines } = await helper(
   "./chartAutomaticTrendlines.ts",
 );
+const { chartPriceVolume, priceVolumeLineLabels } = await helper(
+  "./chartPriceVolumePresentation.ts",
+);
 const { chartBoll, bollCandleValues } = await helper("./chartBoll.ts");
 const { annotationColors, lineLabel, savedLineSettings, levelOriginLabel } =
   await helper("./chartAnnotations.ts");
@@ -94,6 +97,8 @@ const scopeValues = {
   ...preferences,
   ...(await helper("./noonChartPreview.ts")),
   chartAutomaticTrendlines,
+  chartPriceVolume,
+  priceVolumeLineLabels,
   chartBoll: (data) => {
     overlayReads.boll++;
     return chartBoll(data);

@@ -217,6 +217,8 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 `GET /instruments/{id}/chart?period=D|W|M&as_of=&price_basis=none|forward&indicator_continuity=quotes|market_sessions`。
 
 - 返回 `instrument/period/as_of/bars/snapshot_id/quality/warnings`、价格/量额单位、实际与请求价格口径、`adjustment/indicator_gaps/quote_gaps/waves` 及涨跌停事件覆盖。
+- `price_volume_levels` 为普通个股、指数和已留存板块图表的量价参考，算法为 `structure-volume-levels-v1`。绑定同份图表的证券、行情代际、观察日、周期及实际价格口径，含 `reference_date/reference_price/support/resistance/stop/breakout/volume/atr/signal`。只用最近120根内连续可比的完整柱和左右各2根确认的拐点。参考止损基准取尚有效支撑与近5周期仍守住的原突破位中较高者，下留0.5倍ATR14；待突破参考在确认压力上方留0.2倍ATR14。最近突破的压力及缓冲按突破前一完整周期冻结，不能用当日形成的拐点反推当日突破。价位附形成日、确认日、基准价及波动缓冲，突破/回踩证据单列 `recent_breakout`。量能为本完整周期相对其此前20周期均量，本周期不进入均值；达到1.5倍标放量，不高于0.8倍标缩量，其他为正常。缺量、非正量或跨公司行动不可比时量能保持未知，仍可独立展示有效价格结构。
+- 日线缺观察日报价、无有效结构或预热不足时对应量价字段为空并含原因；周/月只可排除明确形成中的尾柱，参考日期标注最近完整周期。该结果复用图表读取及来源校验，不联网、不写入持仓或提醒。旧冻结研究报告缺该字段时不以当前行情补写。界面显示及参数见[自动量价参考](../docs/自动支撑压力线.md#自动量价参考)。
 - `automatic_trendlines` 为个股、指数和行业/概念板块图表的可选展示字段。包含 `algorithm=confirmed-pivot-trendlines-v1`、`pivot_wing/lookback/instrument_id/snapshot_id/as_of/period/price_basis/items/reason`。同一已发布图表的最近 120 根内，只使用最新连续且完整可比的一段。用左右各两根完整柱确认高低拐点，各取最多一条未被后续高低价穿越、末端最接近最新可比收盘的斜支撑和斜压力。
 - 每条线带 `line_type/start_date/start_price/end_date/end_price/slope_per_bar/confirmed_on` 及两个 `anchors`（各有 `date/price/confirmed_on`）。线止于最新可用完整柱。形成中的周月柱不会成为锚点或终点，缺口与无法核验的价格口径由空列表和原因表达。前复权请求回退时沿用父图实际显示的未复权 K 线，仍按公司行动覆盖与连续性分段。前端以父图表的证券、代际、观察日、周期和实际价格口径核对线条。这些线只供图表观察，手工画线、提醒、策略与回测各自保持原口径。
 - `near_items` 复用主线字段，用最近 35 根可比柱的拐点形成近端线，各方向最多一条，并排除与主线近似重合的线。`zones` 含 `lower_price/upper_price/start_date/end_date/line_type/touches`，来自确认拐点的邻近价位聚集，属于水平观察区。`events` 记录近期穿线，带 `scope/state/date/price/line`，其中 `line` 使用前一完整柱已确认的旧线，止于事件日。`price` 为穿线当天的线价。事件只在图上展示。

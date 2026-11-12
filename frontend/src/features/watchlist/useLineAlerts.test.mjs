@@ -122,6 +122,9 @@ for (const [path, replacement] of Object.entries({
   "../../components/taskActivity": encoded(
     "export const {finishTaskRequest,startTaskRequest,useTaskActivity}=globalThis.__lineTaskStore;",
   ),
+  "../../lib/workbenchEvents": encoded(
+    "export const AUTOMATIC_PRICE_ALERTS_CHANGED='automatic-changed';",
+  ),
   "./lineAlertPresentation": helpers,
   "./watchlistStore": encoded(
     "export const {refreshWatchlistMembership,WATCHLIST_CHANGED}=globalThis.__lineMembership;",
@@ -241,6 +244,33 @@ assert.equal(
   "manual job aged out of the compact activity feed recovers its exact durable status",
 );
 assert.ok(globalThis.__linePaths.includes("/tasks/line-job"));
+const beforeAutomatic = reloads;
+const postsBeforeAutomatic = globalThis.__linePosts.length;
+globalThis.__lineActivity = {
+  tasks: [
+    {
+      job_id: "automatic-check",
+      kind: "source_check",
+      operation: "automatic_price_alert_check",
+      status: "succeeded",
+      finished_at_ms: 350,
+    },
+  ],
+  pending: [],
+};
+render();
+assert.ok(
+  reloads > beforeAutomatic,
+  "automatic closing checks refresh the shared reminder list",
+);
+const beforeConfiguration = reloads;
+windowTarget.dispatchEvent(new Event("automatic-changed"));
+render();
+assert.ok(
+  reloads > beforeConfiguration,
+  "configuration changes refresh without creating a check during rendering",
+);
+assert.equal(globalThis.__linePosts.length, postsBeforeAutomatic);
 documentTarget.hidden = true;
 documentTarget.dispatchEvent(new Event("visibilitychange"));
 render();

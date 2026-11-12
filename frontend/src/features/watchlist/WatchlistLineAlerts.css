@@ -241,6 +241,19 @@
 .line-alert-auto-state {
   font-size: var(--workbench-type-caption, 11px);
 }
+.line-alert-source {
+  display: inline-block;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: var(--workbench-type-caption, 11px);
+}
+.line-alert-source.automatic {
+  color: var(--purple, #b496e7);
+  background: color-mix(in srgb, var(--purple, #b496e7) 7%, var(--surface));
+}
 .line-alert-table-evidence {
   display: grid;
   gap: 7px;
@@ -364,6 +377,30 @@
   color: var(--workbench-type-muted, var(--muted));
   font-size: var(--workbench-type-caption, 10px);
   line-height: 1.8;
+}
+.line-alert-automatic-evidence {
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.line-alert-automatic-evidence > strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.line-alert-automatic-evidence p {
+  margin: 7px 0 0;
+}
+.line-alert-automatic-evidence details {
+  margin-top: 10px;
+}
+.line-alert-automatic-evidence summary {
+  color: var(--blue);
+  cursor: pointer;
 }
 .line-alert-dialog-actions {
   display: flex;

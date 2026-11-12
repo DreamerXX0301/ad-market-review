@@ -25,6 +25,7 @@ import WatchlistLineAlerts, {
 } from "./WatchlistLineAlerts";
 import { useLineAlerts } from "./useLineAlerts";
 import { LINE_ALERTS_OPEN } from "./lineAlertNotification";
+import { lineAlertChecks } from "./lineAlertPresentation";
 import {
   watchlistEventBaseline,
   watchlistSourceLabel,
@@ -107,16 +108,14 @@ export default function Watchlist({
     alertLimit,
   );
   const checking = alerts.task ? activityPresentation(alerts.task) : null;
-  const lastCheck = alerts.result.data?.latest_check;
-  const staleCheck =
-    !!lastCheck && (lastCheck.stale === true || lastCheck.is_current === false);
+  const checks = lineAlertChecks(alerts.result.data);
   const openAlertStock = (event: Row) =>
     onStock(
       event.instrument_id,
       createStockNavigation([event], {
         source: "watchlist",
         scopeKey: `line-alert:${event.event_id}`,
-        label: "划线提醒",
+        label: "行情提醒",
         asOf: event.trade_date,
       }),
     );
@@ -177,14 +176,16 @@ export default function Watchlist({
           <h2>
             我的自选池 <Badge>{result.data?.total ?? "—"} 只</Badge>
           </h2>
-          <p>集中查看收藏股票、独立加入基准，以及支撑与压力线的盘后提醒。</p>
+          <p>
+            集中查看收藏股票、独立加入基准，以及手动画线与自动量价的盘后提醒。
+          </p>
         </div>
         <span className="muted">行情日 {dayCaption}</span>
       </div>
       <Panel
         className="watchlist-panel"
         title="我的关注"
-        subtitle="自选与划线提醒独立保存 · 移出自选不会停用划线提醒"
+        subtitle="自选、手动画线与自动量价分别保存 · 移出自选不会停用提醒"
         actions={
           <>
             <button
@@ -233,7 +234,7 @@ export default function Watchlist({
               onClick={() => setView("alerts")}
             >
               <BellRing size={15} />
-              划线提醒<b>{alerts.result.data?.total ?? "—"}</b>
+              行情提醒<b>{alerts.result.data?.total ?? "—"}</b>
             </button>
           </div>
           {view === "alerts" && alertScope === "history" && (
@@ -244,7 +245,7 @@ export default function Watchlist({
                 value={alertAsOf || ""}
                 max={day}
                 onChange={setAlertDate}
-                ariaLabel="划线提醒截至日期"
+                ariaLabel="行情提醒截至日期"
                 title="选择提醒观察日"
                 help="只显示该日及以前保存的触发，不会重新运行历史核验。"
                 shortcut={day ? { label: "最新行情日", date: day } : undefined}
@@ -263,23 +264,27 @@ export default function Watchlist({
               {checking.statusLabel} · {checking.stage} ·{" "}
               {checking.progressLabel}
             </span>
-          ) : lastCheck ? (
-            <span
-              className={staleCheck ? "watchlist-line-check-stale" : ""}
-              title={lastCheck.stale_reason || undefined}
-            >
-              {staleCheck ? "需更新核验 · 上次" : "最近核验"}{" "}
-              {lastCheck.checked_rules} 条 · 触发 {lastCheck.trigger_count} ·
-              待核验 {lastCheck.unknown_count}
-            </span>
+          ) : checks.length ? (
+            checks.map(({ source: checkSource, label, check }) => {
+              const stale = check.stale === true || check.is_current === false;
+              return (
+                <span
+                  key={checkSource}
+                  className={stale ? "watchlist-line-check-stale" : ""}
+                  title={`${check.stale_reason || "按独立规则核验"} · ${dateTime(check.checked_at_ms)}`}
+                >
+                  {label} · {stale ? "需更新核验" : "最近核验"}{" "}
+                  {check.checked_rules} 条 · 触发 {check.trigger_count} · 待核验{" "}
+                  {check.unknown_count}
+                </span>
+              );
+            })
           ) : (
-            <span>
-              未提醒持续监控；首次提醒后继续60个交易日，到期随盘后增量清理
-            </span>
+            <span>手动画线与自动量价分别核验；自动规则需在个股日K中启用</span>
           )}
           <small>
-            {lastCheck
-              ? `核验于 ${dateTime(lastCheck.checked_at_ms)}`
+            {checks.length
+              ? "自动规则只在盘后收盘确认，不是盘中实时监控"
               : `手动检查使用最新行情日 ${dayCaption}`}
           </small>
         </div>
@@ -294,14 +299,14 @@ export default function Watchlist({
             message={
               alerts.task.error ||
               alerts.task.error_message ||
-              "划线提醒检查失败，已有记录仍保留。"
+              "行情提醒检查失败，已有记录仍保留。"
             }
           />
         )}
         <div className="watchlist-stock-view" hidden={view !== "stocks"}>
           {alerts.result.error && (
             <ErrorBox
-              message={`划线提醒摘要暂未更新：${alerts.result.error}`}
+              message={`行情提醒摘要暂未更新：${alerts.result.error}`}
               retry={alerts.result.reload}
             />
           )}
@@ -334,7 +339,7 @@ export default function Watchlist({
                 <option value="all">全部来源</option>
                 <option value="tracking">策略跟踪</option>
                 <option value="sector">行业与题材</option>
-                <option value="stock">个股详情 / 划线提醒</option>
+                <option value="stock">个股详情 / 行情提醒</option>
               </select>
               <span className="watchlist-result-count">
                 {query.trim() || source !== "all" || hotFilter.enabled ? (
@@ -422,7 +427,7 @@ export default function Watchlist({
                 { key: "name", title: "股票" },
                 {
                   key: "latest_line_alert",
-                  title: "最近划线触发",
+                  title: "最近行情提醒",
                   sortValue: (row) => row.latest_line_alert?.trade_date || null,
                   render: (_value, row) => (
                     <LineAlertBadge

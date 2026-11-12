@@ -296,6 +296,39 @@ assert.equal(incrementEvents().length, beforeInvalidClock + 1);
 isolated.unsubscribe();
 assert.equal(timers.size, 0);
 assert.equal(documentListeners.size, 0);
+isolated = await freshStore("automatic-price-alert-completion");
+const lineNoticeCount = () =>
+  events.filter((event) => event.type === "workbench-line-alert-check-finished")
+    .length;
+const noticeBefore = lineNoticeCount();
+const autoCheck = {
+  job_id: "automatic-price-one",
+  kind: "source_check",
+  operation: "automatic_price_alert_check",
+  status: "succeeded",
+  finished_at_ms: 920000,
+};
+await pollItems(isolated.store, [autoCheck]);
+assert.equal(
+  lineNoticeCount(),
+  noticeBefore + 1,
+  "automatic close checks share the existing reminder refresh event",
+);
+await pollItems(isolated.store, [autoCheck]);
+assert.equal(
+  lineNoticeCount(),
+  noticeBefore + 1,
+  "unchanged automatic receipts do not refresh again",
+);
+await pollItems(isolated.store, [
+  { ...autoCheck, job_id: "automatic-price-failed", status: "failed" },
+]);
+assert.equal(
+  lineNoticeCount(),
+  noticeBefore + 1,
+  "failed checks cannot announce refreshed reminders",
+);
+isolated.unsubscribe();
 console.log(
   "Task activity store: shared read polling, pending guard, hidden pause, market increment baseline/dedupe/strict receipts, abort recovery and cleanup passed",
 );

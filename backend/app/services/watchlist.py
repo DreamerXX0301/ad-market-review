@@ -226,7 +226,7 @@ def list_items(query=''):
                    current_topics_observed_date=day)
     if query:
         selected = [row for row in selected if query in ' '.join([*(str(row.get(key) or '') for key in ('name', 'code', 'instrument_id', 'source_name')), *(tag['name'] for tag in row['current_topics'])]).lower()]
-    from app.services.line_alerts import latest_by_stock
+    from app.services.market_alerts import latest_by_stock
     selected_symbols = [row['instrument_id'] for row in selected]
     with connect() as connection:
         alerts = latest_by_stock(connection, selected_symbols, day)

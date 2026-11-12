@@ -171,6 +171,13 @@ def read_revisions(connection, observation_date, *, historical=False):
     domains['suspensions'] = digest(suspension) if suspension else None
     domains['news_calendar'] = _receipt(connection, '''SELECT source,captured_at,content_sha256
         FROM market_news_calendar_archive ORDER BY rowid DESC LIMIT 1''')
+    # Monotonic clocks and append-only receipt rowids keep notification reads
+    # fresh without scanning each saved rule or loading chart/market data.
+    domains['price_alerts'] = _receipt(connection, '''SELECT
+        (SELECT revision FROM line_alert_rule_clock WHERE singleton=1),
+        (SELECT revision FROM automatic_price_alert_clock WHERE singleton=1),
+        (SELECT max(rowid) FROM line_alert_check),
+        (SELECT max(rowid) FROM automatic_price_alert_check)''')
     result = {'today': today, 'market': market, 'market_locked': False, 'dates': dates, 'domains': domains}
     if historical and observation_date and observation_date <= today:
         domains['historical_reference'] = _historical_reference(connection, root.resolve())

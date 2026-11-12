@@ -593,6 +593,23 @@ assert.equal(requests.length, beforeDatedRefresh + 2);
 assert.equal(requests.at(-1).url, "/api/v1" + path);
 await answer(requests.at(-1), { groups: ["updated"] });
 assert.deepEqual(render().data.groups, ["updated"]);
+for (const configPath of [
+  "/watchlist",
+  "/watchlist/ids",
+  "/watchlist/line-alerts/summary",
+  "/instruments/000678.SZ/automatic-price-alerts",
+]) {
+  path = configPath;
+  render();
+  await answer(requests.at(-1), { config: "before" });
+  const beforePriceRule = requests.length;
+  notifyReadChanges([{ scope: "price_alerts" }]);
+  render();
+  assert.equal(requests.length, beforePriceRule + 1, configPath);
+  assert.equal(requests.at(-1).url, "/api/v1" + configPath);
+  await answer(requests.at(-1), { config: "after" });
+  assert.equal(render().data.config, "after");
+}
 effects.forEach((effect) => effect?.cleanup?.());
 delete globalThis.__pageHooks;
 delete globalThis.window;

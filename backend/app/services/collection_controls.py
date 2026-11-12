@@ -20,7 +20,7 @@ def protected(connection, row):
         seen = {identifier}
         for _ in range(32):
             previous = connection.execute("""SELECT j.job_id,j.kind FROM job_event e JOIN job j ON j.job_id=e.job_id
-                WHERE e.stage IN ('followup_queued','line_alert_check_queued','listing_status_check_queued','increment_retry_queued')
+                WHERE e.stage IN ('followup_queued','line_alert_check_queued','automatic_price_alert_check_queued','listing_status_check_queued','increment_retry_queued')
                 AND json_extract(e.details_json,'$.next_task_id')=? ORDER BY e.occurred_at_ms DESC,e.seq DESC LIMIT 1""", (identifier,)).fetchone()
             if not previous or previous['job_id'] in seen:
                 break

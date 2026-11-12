@@ -1,0 +1,101 @@
+.automatic-price-alert-settings {
+  padding: 18px 22px;
+  display: grid;
+  gap: 15px;
+}
+.automatic-price-alert-intro {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+  font-size: 13px;
+}
+.automatic-price-alert-settings label {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.automatic-price-alert-settings input[type="checkbox"] {
+  margin-top: 4px;
+  accent-color: var(--blue, #79a9ff);
+}
+.automatic-price-alert-settings label span {
+  display: grid;
+  gap: 4px;
+}
+.automatic-price-alert-settings small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.automatic-price-alert-enabled {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 14px;
+}
+.automatic-price-alert-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.automatic-price-alert-modes label {
+  border: 1px solid var(--border);
+  padding: 11px;
+  border-radius: 8px;
+}
+.automatic-price-alert-modes label:has(input:checked) {
+  background: var(--surface-2, var(--blue-bg));
+}
+.automatic-price-alert-modes label[data-risk="true"] strong {
+  color: var(--amber, #e0b966);
+}
+.automatic-price-alert-volume {
+  font-size: 13px;
+}
+.automatic-price-alert-status {
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+  border-radius: 8px;
+  background: var(--surface-2, var(--surface));
+  font-size: 12px;
+  color: var(--muted);
+}
+.automatic-price-alert-status strong {
+  color: var(--text);
+}
+.automatic-price-alert-basis {
+  font-size: 12px;
+  color: var(--muted);
+}
+.automatic-price-alert-basis summary {
+  cursor: pointer;
+}
+.automatic-price-alert-basis > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 8px 0;
+}
+.automatic-price-alert-basis strong {
+  color: var(--text);
+}
+.automatic-price-alert-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.automatic-price-alert-message {
+  margin: 0;
+  color: var(--blue, #79a9ff);
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  .automatic-price-alert-settings {
+    padding: 14px;
+  }
+  .automatic-price-alert-modes {
+    grid-template-columns: 1fr;
+  }
+}

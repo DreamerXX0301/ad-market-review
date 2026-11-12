@@ -15,7 +15,10 @@ import {
   filterLineAlerts,
   lineAlertBasis,
   lineAlertInScope,
+  isAutomaticPriceAlert,
+  lineAlertChecks,
   lineAlertPrice,
+  lineAlertSource,
   lineAlertView,
   lineAlertWatchlistState,
 } from "./lineAlertPresentation";
@@ -39,19 +42,24 @@ export function LineAlertBadge({
     <button
       className={`watchlist-line-latest ${view.tone}`}
       onClick={() => onOpen(event)}
-      title={`${event.trade_date} · ${event.reason || view.title} · 查看日线核验依据`}
+      title={`${lineAlertSource(event)} · ${event.trade_date} · ${event.reason || view.title} · 查看日线核验依据`}
     >
       <span>
         {view.invalidated ? <CircleAlert size={12} /> : <BellRing size={12} />}
         {view.title}
       </span>
-      <small>{event.trade_date}</small>
+      <small>
+        {lineAlertSource(event)} · {event.trade_date}
+      </small>
     </button>
   );
 }
 
 export function LineAlertEvidence({ event }: { event: Row }) {
   const view = lineAlertView(event);
+  const automatic = isAutomaticPriceAlert(event);
+  const level = event.automatic_level;
+  const volume = event.volume_evidence;
   return (
     <div className="line-alert-evidence">
       <div className={`line-alert-evidence-heading ${view.tone}`}>
@@ -63,7 +71,7 @@ export function LineAlertEvidence({ event }: { event: Row }) {
         <div>
           <strong>{view.title}</strong>
           <span>
-            {event.trade_date} · {view.stateLabel}
+            {lineAlertSource(event)} · {event.trade_date} · {view.stateLabel}
           </span>
         </div>
         <b>
@@ -76,7 +84,7 @@ export function LineAlertEvidence({ event }: { event: Row }) {
       </p>
       <dl className="line-alert-price-evidence">
         {[
-          ["前收盘", event.previous_close],
+          [automatic ? "基准前收盘" : "前收盘", event.previous_close],
           ["开盘", event.open],
           ["最高", event.high],
           ["最低", event.low],
@@ -88,29 +96,84 @@ export function LineAlertEvidence({ event }: { event: Row }) {
           </div>
         ))}
       </dl>
-      <div className="line-alert-evidence-meta">
-        <span>
-          原保存线价 {num(event.line_price, 4)} · {lineAlertBasis(event)}
-        </span>
-        <span>
-          <Check size={14} />
-          {lineAlertWatchlistState(event)}
-        </span>
-        {event.watchlist_added_business_date && (
-          <span>实际加入自选日 {event.watchlist_added_business_date}</span>
-        )}
-        <span>
-          判定价格锚点{" "}
-          {event.comparison_evidence?.comparison_anchor || event.trade_date}
-        </span>
-        <span>划线版本 V{event.annotation_revision ?? "—"}</span>
-        {event.annotation_label && (
-          <span>划线名称 {event.annotation_label}</span>
-        )}
-        <span>记录于 {dateTime(event.created_at_ms)}</span>
-      </div>
+      {automatic ? (
+        <div className="line-alert-automatic-evidence">
+          <strong>触发前已确定的监控基准</strong>
+          <p>
+            基准日期 {event.level_date || "待核验"} · 判定价{" "}
+            {num(lineAlertPrice(event), 4)} · {lineAlertBasis(event)}
+          </p>
+          {level && (
+            <p>
+              {level.source === "breakout_retest_reference"
+                ? "原突破位回踩参考"
+                : "确认高低点参考"}
+              {level.formed_at && ` · 形成于 ${level.formed_at}`}
+              {level.confirmed_on && ` · 确认于 ${level.confirmed_on}`}
+            </p>
+          )}
+          {typeof level?.buffer_atr === "number" && (
+            <p>
+              结构基准 {num(level.base_price, 4)} · 波动缓冲{" "}
+              {num(level.buffer_atr)} 倍ATR14（{num(level.buffer_value, 4)}）
+              {level.atr_reference_date &&
+                ` · 截至 ${level.atr_reference_date}`}
+            </p>
+          )}
+          {event.rule === "close_breakout" && (
+            <p>
+              突破日量能 {num(volume?.ratio)} 倍前20日均量
+              {volume?.mean_start &&
+                volume?.mean_end &&
+                ` · ${volume.mean_start} 至 ${volume.mean_end}，不含突破当日`}
+              {volume?.reason && ` · ${volume.reason}`}
+            </p>
+          )}
+          {typeof event.raw_previous_close === "number" &&
+            event.raw_previous_close !== event.previous_close && (
+              <p>
+                本代前收盘修订值 {num(event.raw_previous_close, 4)}
+                ；本次穿越判断保留事前监控基准收盘。
+              </p>
+            )}
+          <details>
+            <summary>算法与来源</summary>
+            <p>
+              算法{" "}
+              {event.algorithm || event.level_evidence?.algorithm || "待核验"} ·
+              配置版本 V{event.revision ?? event.annotation_revision ?? "—"}
+            </p>
+            <p>基准行情代际 {event.level_evidence?.snapshot_id || "待核验"}</p>
+            <p>触发行情代际 {event.market_snapshot_id || "待核验"}</p>
+          </details>
+        </div>
+      ) : (
+        <div className="line-alert-evidence-meta">
+          <span>
+            原保存线价 {num(event.line_price, 4)} · {lineAlertBasis(event)}
+          </span>
+          <span>
+            <Check size={14} />
+            {lineAlertWatchlistState(event)}
+          </span>
+          {event.watchlist_added_business_date && (
+            <span>实际加入自选日 {event.watchlist_added_business_date}</span>
+          )}
+          <span>
+            判定价格锚点{" "}
+            {event.comparison_evidence?.comparison_anchor || event.trade_date}
+          </span>
+          <span>划线版本 V{event.annotation_revision ?? "—"}</span>
+          {event.annotation_label && (
+            <span>划线名称 {event.annotation_label}</span>
+          )}
+          <span>记录于 {dateTime(event.created_at_ms)}</span>
+        </div>
+      )}
       <p className="line-alert-evidence-note">
-        按所示交易日日线保存的核验记录。触碰仅表示日内经过线价；收盘失守不计为回踩成功。补跑历史触发时，自选以实际加入日收盘为独立基准；移出自选不会停用划线提醒，同一事件复查不会重复加入。
+        {automatic
+          ? `按所示交易日收盘核验，使用前一市场交易日已保存的基准。后续价位重算不改写本记录，也不修改手动画线。仅提醒，不自动入池或交易。记录于 ${dateTime(event.created_at_ms)}。`
+          : "按所示交易日日线保存的核验记录。触碰仅表示日内经过线价；收盘失守不计为回踩成功。补跑历史触发时，自选以实际加入日收盘为独立基准；移出自选不会停用划线提醒，同一事件复查不会重复加入。"}
       </p>
     </div>
   );
@@ -127,7 +190,7 @@ export function LineAlertDialog({
 }) {
   return (
     <Modal
-      title={`${event.name || event.code || event.instrument_id} · 划线提醒`}
+      title={`${event.name || event.code || event.instrument_id} · ${event.source_kind === "automatic_price_volume" ? "自动量价提醒" : "划线提醒"}`}
       onClose={onClose}
       escapeUnderStock
     >
@@ -138,7 +201,11 @@ export function LineAlertDialog({
           instrumentId={event.instrument_id}
           sourceKind="stock"
           sourceId={event.annotation_id}
-          sourceName="划线提醒"
+          sourceName={
+            event.source_kind === "automatic_price_volume"
+              ? "自动量价提醒"
+              : "划线提醒"
+          }
           observedDate={event.trade_date}
         />
         <button
@@ -183,6 +250,10 @@ export default function WatchlistLineAlerts({
   const loaded = list(data).filter((event) => lineAlertInScope(event, asOf));
   const rows = filterLineAlerts(loaded, query, state, asOf);
   const unknowns = list(data?.unknowns);
+  const unknownCount = lineAlertChecks(data).reduce(
+    (count, item) => count + (Number(item.check.unknown_count) || 0),
+    0,
+  );
   return (
     <div className="watchlist-line-alerts">
       <div className="line-alert-view-intro">
@@ -190,13 +261,13 @@ export default function WatchlistLineAlerts({
         <div>
           <strong>
             {scope === "today"
-              ? "今日划线提醒"
+              ? "今日行情提醒"
               : scope === "history"
-                ? "历史划线提醒"
-                : "划线触发记录"}
+                ? "历史行情提醒"
+                : "行情触发记录"}
           </strong>
           <p>
-            未提醒的线持续监控；首次提醒后继续60个交易日，到期随盘后增量删除线和关联提醒。移出自选不会提前停用划线。
+            手动画线按原规则监控和到期清理；自动量价按个股设置独立检查，旧触发依据保留。移出自选不会停用提醒。
           </p>
         </div>
         <span>{data?.total ?? "—"} 条已保存</span>
@@ -231,12 +302,12 @@ export default function WatchlistLineAlerts({
         <div
           className="line-alert-state-filter"
           role="group"
-          aria-label="筛选划线提醒状态"
+          aria-label="筛选行情提醒状态"
         >
           {[
             ["all", "全部记录"],
             ["triggered", "触发提醒"],
-            ["invalidated", "支撑失守"],
+            ["invalidated", "支撑失守 / 止损跌破"],
           ].map(([value, label]) => (
             <button
               key={value}
@@ -251,7 +322,7 @@ export default function WatchlistLineAlerts({
         <label className="line-alert-search">
           <Search size={15} />
           <input
-            aria-label="搜索划线提醒"
+            aria-label="搜索行情提醒"
             placeholder="股票、代码、提醒条件"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -273,10 +344,10 @@ export default function WatchlistLineAlerts({
         <Empty
           title={
             scope === "today"
-              ? "今日暂无已确认的划线触发"
-              : "尚无已确认的划线触发"
+              ? "今日暂无已确认的行情提醒"
+              : "尚无已确认的行情提醒"
           }
-          description="在个股 K 线上设置支撑或压力线并勾选提醒条件；盘后核验后在此保留触发与失守记录。"
+          description="在个股日K启用自动量价提醒，或为手动画线勾选提醒条件；盘后核验后在此保留触发与风险记录。"
         />
       ) : data ? (
         <Table
@@ -285,6 +356,18 @@ export default function WatchlistLineAlerts({
           pageSize={20}
           columns={[
             { key: "trade_date", title: "触发交易日" },
+            {
+              key: "source_kind",
+              title: "来源",
+              sortValue: lineAlertSource,
+              render: (_value, event) => (
+                <span
+                  className={`line-alert-source ${isAutomaticPriceAlert(event) ? "automatic" : "manual"}`}
+                >
+                  {lineAlertSource(event)}
+                </span>
+              ),
+            },
             {
               key: "name",
               title: "股票",
@@ -342,7 +425,9 @@ export default function WatchlistLineAlerts({
                   instrumentId={event.instrument_id}
                   sourceKind="stock"
                   sourceId={event.annotation_id}
-                  sourceName="划线提醒"
+                  sourceName={
+                    isAutomaticPriceAlert(event) ? "自动量价提醒" : "划线提醒"
+                  }
                   observedDate={event.trade_date}
                 />
               ),
@@ -368,8 +453,7 @@ export default function WatchlistLineAlerts({
       {unknowns.length > 0 && (
         <details className="line-alert-unknowns">
           <summary>
-            {data?.latest_check?.unknown_count ?? unknowns.length} 项待核验 ·
-            查看缺少的依据
+            {Math.max(unknownCount, unknowns.length)} 项待核验 · 查看缺少的依据
           </summary>
           <ul>
             {unknowns.map((item, index) => (

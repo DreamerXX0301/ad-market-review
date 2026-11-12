@@ -12,7 +12,7 @@ from app.services.task_service import _activity_view
 
 SUCCESS = {'succeeded', 'partial', 'no_change'}
 STOPPED = {'failed', 'cancelled', 'paused'}
-LINK_STAGES = ('followup_queued', 'line_alert_check_queued', 'listing_status_check_queued', 'increment_retry_queued')
+LINK_STAGES = ('followup_queued', 'line_alert_check_queued', 'automatic_price_alert_check_queued', 'listing_status_check_queued', 'increment_retry_queued')
 LOCK_VERSION = 'increment-workbench-lock-v1'
 LOCK_SETTING = 'increment-workbench-session'
 _history_cache = {}
@@ -38,7 +38,7 @@ def _chain(connection, root):
         items.append(item)
         events = connection.execute("""SELECT stage,details_json FROM job_event WHERE job_id=?
             AND (stage IN ('chain_authorized','followup_queued','chain_blocked',
-                'line_alert_check_queued','listing_status_check_queued','increment_retry_queued')
+                'line_alert_check_queued','automatic_price_alert_check_queued','listing_status_check_queued','increment_retry_queued')
                 OR stage IN ('workspace_followup_started','workspace_followup_completed','workspace_followup_blocked')
                 OR stage LIKE 'local_check_queue_error:%') ORDER BY seq LIMIT 128""", (identifier,)).fetchall()
         stages = {event['stage'] for event in events}
@@ -64,6 +64,7 @@ def _chain(connection, root):
                         waiting.append(identifier)
                 for marker, stage, label in (
                     ('line_alert_check_version', 'line_alert_check_queued', '划线提醒'),
+                    ('automatic_price_alert_check_version', 'automatic_price_alert_check_queued', '自动量价提醒'),
                     ('listing_status_check_version', 'listing_status_check_queued', '上市身份'),
                 ):
                     if not parameters.get(marker) or stage in stages:
@@ -130,7 +131,7 @@ def root_for_task(connection, identifier):
     # original durable next_task_id link still proves the same root on resume.
     seen = {identifier}
     for _ in range(32):
-        parent = connection.execute("SELECT job_id FROM job_event WHERE stage IN ('followup_queued','line_alert_check_queued','listing_status_check_queued','increment_retry_queued') AND json_extract(details_json,'$.next_task_id')=? ORDER BY occurred_at_ms DESC,seq DESC,job_id LIMIT 1", (identifier,)).fetchone()
+        parent = connection.execute("SELECT job_id FROM job_event WHERE stage IN ('followup_queued','line_alert_check_queued','automatic_price_alert_check_queued','listing_status_check_queued','increment_retry_queued') AND json_extract(details_json,'$.next_task_id')=? ORDER BY occurred_at_ms DESC,seq DESC,job_id LIMIT 1", (identifier,)).fetchone()
         if not parent or parent[0] in seen:
             break
         identifier = parent[0]; seen.add(identifier)
@@ -181,7 +182,7 @@ def chain_stop_action(connection, job, *, parent_task_id=None):
     identifier = parent_task_id or job['job_id']
     ancestors.add(identifier)
     for _ in range(32):
-        parent = connection.execute("SELECT job_id FROM job_event WHERE stage IN ('followup_queued','line_alert_check_queued','listing_status_check_queued','increment_retry_queued') AND json_extract(details_json,'$.next_task_id')=? ORDER BY occurred_at_ms DESC,seq DESC,job_id LIMIT 1", (identifier,)).fetchone()
+        parent = connection.execute("SELECT job_id FROM job_event WHERE stage IN ('followup_queued','line_alert_check_queued','automatic_price_alert_check_queued','listing_status_check_queued','increment_retry_queued') AND json_extract(details_json,'$.next_task_id')=? ORDER BY occurred_at_ms DESC,seq DESC,job_id LIMIT 1", (identifier,)).fetchone()
         if not parent or parent[0] in ancestors:
             break
         identifier = parent[0]; ancestors.add(identifier)
