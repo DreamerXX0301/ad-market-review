@@ -32,6 +32,39 @@
   border-bottom: 1px solid var(--border);
   padding-bottom: 14px;
 }
+.automatic-price-alert-profile {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.automatic-price-alert-profile label {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.automatic-price-alert-profile select,
+.automatic-price-alert-profile input[type="number"] {
+  min-width: 100px;
+  max-width: 180px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.automatic-price-alert-risk-presets {
+  display: flex;
+  gap: 7px;
+}
+.automatic-price-alert-risk-presets button[aria-pressed="true"] {
+  border-color: var(--blue, #79a9ff);
+  color: var(--blue, #79a9ff);
+}
+.automatic-price-alert-breached {
+  color: var(--amber, #e0b966);
+}
 .automatic-price-alert-modes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

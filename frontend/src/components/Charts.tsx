@@ -54,6 +54,7 @@ import {
   chartPriceVolume,
   priceVolumeLineLabels,
 } from "./chartPriceVolumePresentation";
+import type { PriceVolumeProfile } from "./chartPriceVolumePresentation";
 import { candleChange } from "./candleChange";
 import { candleExtremeChange } from "./candleExtremeChange";
 import { bollCandleValues, chartBoll } from "./chartBoll";
@@ -320,6 +321,8 @@ export function CandleChart({
     scope: string;
     ids: Set<string>;
   }>({ scope: "", ids: new Set() });
+  const [priceVolumeChoice, setPriceVolumeChoice] =
+    useState<PriceVolumeProfile>("short_week_v1");
   const defaultAdapted = useRef(false);
   const userZoomed = useRef(false);
   const entryRoot = useRef<HTMLDivElement>(null);
@@ -499,10 +502,15 @@ export function CandleChart({
     () => chartAutomaticTrendlines(data, instrumentId, period, asOf),
     [data, instrumentId, period, asOf],
   );
+  const supportsShortVolume =
+    period === "D" && data?.instrument?.kind === "stock";
+  const priceVolumeProfile = supportsShortVolume
+    ? priceVolumeChoice
+    : "structure";
   const priceVolume = useMemo(
     () =>
       !frozenMode && !result.loading && !result.error
-        ? chartPriceVolume(data, instrumentId, period, asOf)
+        ? chartPriceVolume(data, instrumentId, period, asOf, priceVolumeProfile)
         : null,
     [
       data,
@@ -512,6 +520,7 @@ export function CandleChart({
       frozenMode,
       result.loading,
       result.error,
+      priceVolumeProfile,
     ],
   );
   useEffect(() => {
@@ -583,7 +592,7 @@ export function CandleChart({
     [historyEvents, data],
   );
   const lineScope = `${instrumentId}|${dataEndpoint || ""}|${frozenMode ? "frozen" : "live"}`;
-  const priceVolumeScope = `${instrumentId}|${data?.as_of || asOf || ""}|${period}|${data?.price_basis || ""}|${data?.snapshot_id || ""}|${dataEndpoint || ""}`;
+  const priceVolumeScope = `${instrumentId}|${data?.as_of || asOf || ""}|${period}|${data?.price_basis || ""}|${data?.snapshot_id || ""}|${dataEndpoint || ""}|${priceVolumeProfile}`;
   const priceVolumeIds =
     priceVolumeVisibility.scope === priceVolumeScope
       ? priceVolumeVisibility.ids
@@ -1909,6 +1918,14 @@ export function CandleChart({
         )}
         <ChartPriceVolume
           view={priceVolume}
+          onProfileChange={
+            supportsShortVolume
+              ? (profile) => {
+                  setPriceVolumeChoice(profile);
+                  setPriceVolumeVisibility({ scope: "", ids: new Set() });
+                }
+              : undefined
+          }
           visibleIds={visibleLineIds}
           onToggle={toggleLine}
           onToggleAll={(show) =>

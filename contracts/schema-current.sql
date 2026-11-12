@@ -44,6 +44,7 @@
 -- 041_news_events.sql sha256=122d3bae86199b8715c7558a0c7338a767694cb14928c477a50b85cccea3d146
 -- 042_market_node_topic_overrides.sql sha256=492dc95745cabf6f4a5e856859e49a11e38c9e9cccd5be5ce52e8ea7ca2c329a
 -- 043_automatic_price_alerts.sql sha256=f44663961a5ec827339789b42c0b12154c9c00b9f010c2faba11706044837e9d
+-- 044_short_week_price_alerts.sql sha256=4c525ea85519eaf93a037d25c7d7e6757cd62f7057f7657b9c1505a4e3556127
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -176,7 +177,9 @@ CREATE TABLE automatic_price_alert_rule (
  effective_after_date TEXT NOT NULL CHECK(date(effective_after_date,'+0 days') IS effective_after_date),
  created_at_ms INTEGER NOT NULL,
  updated_at_ms INTEGER NOT NULL
-) STRICT;
+, profile TEXT NOT NULL DEFAULT 'structure'
+ CHECK(profile IN ('structure','short_week_v1')), max_risk_pct REAL NOT NULL DEFAULT 5.0
+ CHECK(max_risk_pct>=0.5 AND max_risk_pct<=20.0 AND abs(max_risk_pct*100-round(max_risk_pct*100))<0.0000001)) STRICT;
 
 CREATE TABLE backtest_deletion (
   backtest_id TEXT PRIMARY KEY REFERENCES backtest_run(backtest_id),

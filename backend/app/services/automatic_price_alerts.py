@@ -5,6 +5,7 @@ of chart annotations; reading a page neither computes levels nor queues work.
 """
 from datetime import date
 from contextlib import nullcontext
+from copy import deepcopy
 import json
 import logging
 import math
@@ -12,7 +13,7 @@ import re
 
 from fastapi import HTTPException
 
-from app.analytics.chart_price_volume import VERSION as ALGORITHM, price_volume_levels
+from app.analytics.chart_price_volume import VERSION as ALGORITHM, SHORT_VERSION, price_volume_levels
 from app.core import connect, digest, dumps, get_market, new_id, now_ms
 from app.services import task_service as tasks
 from app.services.workspace_common import current, pin
@@ -59,12 +60,16 @@ def _rule(row):
     value['enabled'] = bool(value['enabled'])
     value['require_volume'] = bool(value['require_volume'])
     value['modes'] = json.loads(value.pop('modes_json'))
+    value['profile'] = value.get('profile', 'structure')
+    value['max_risk_pct'] = value.get('max_risk_pct', 5.0)
+    value['algorithm'] = SHORT_VERSION if value['profile'] == 'short_week_v1' else ALGORITHM
     return value
 
 
 def _default():
     return {'rule_id': None, 'revision': 0, 'enabled': False, 'modes': [],
-            'require_volume': True, 'algorithm': ALGORITHM, 'effective_after_date': None}
+            'require_volume': True, 'algorithm': SHORT_VERSION, 'effective_after_date': None,
+            'profile': 'short_week_v1', 'max_risk_pct': 5.0}
 
 
 def _clock(connection):
@@ -119,9 +124,21 @@ def get_config(identifier):
 
 def save_config(identifier, payload):
     symbol = _symbol(identifier)
-    if not isinstance(payload, dict) or set(payload) != {'enabled', 'modes', 'require_volume', 'expected_revision'}:
+    required_keys = {'enabled', 'modes', 'require_volume', 'expected_revision'}
+    if (not isinstance(payload, dict) or not required_keys <= set(payload)
+            or set(payload) - required_keys - {'profile', 'max_risk_pct', 'reset_monitoring'}):
         raise HTTPException(422, '请提供启用状态、提醒类型、突破量能确认和当前配置版本')
     enabled, modes, required, revision = (payload[key] for key in ('enabled', 'modes', 'require_volume', 'expected_revision'))
+    # Older clients and already-frozen jobs retain the original model.
+    profile = payload.get('profile', 'structure')
+    risk = payload.get('max_risk_pct', 5.0)
+    reset = payload.get('reset_monitoring', False)
+    if not isinstance(reset, bool) or reset and (not enabled or profile != 'short_week_v1'):
+        raise HTTPException(422, '只有已启用的一周短线规则可显式重新设定监控基准')
+    if profile not in ('structure', 'short_week_v1') or not isinstance(profile, str):
+        raise HTTPException(422, '请选择历史结构或一周短线模式')
+    if (not _number(risk) or not 0.5 <= risk <= 20 or abs(risk * 100 - round(risk * 100)) > 1e-7):
+        raise HTTPException(422, '风险距离上限须为0.5至20之间的百分数，最多两位小数')
     if not isinstance(enabled, bool) or not isinstance(required, bool):
         raise HTTPException(422, '启用状态和量能确认需要是布尔值')
     if (not isinstance(modes, list) or any(not isinstance(mode, str) or mode not in MODES for mode in modes)
@@ -145,17 +162,18 @@ def save_config(identifier, payload):
         if old['revision'] != revision:
             raise HTTPException(409, '自动提醒配置已变更，请重新读取后保存')
         modes = sorted(modes)
-        if (old['enabled'], old['modes'], old['require_volume']) != (enabled, modes, required):
+        if reset or (old['enabled'], old['modes'], old['require_volume'], old['profile'], old['max_risk_pct']) != (enabled, modes, required, profile, risk):
             day = current(connection)
             _head(connection)
             stamp, identifier = now_ms(), old['rule_id'] or new_id('auto-price-rule')
             connection.execute('''INSERT INTO automatic_price_alert_rule
-                (rule_id,instrument_id,revision,enabled,modes_json,require_volume,algorithm,effective_after_date,created_at_ms,updated_at_ms)
-                VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(instrument_id) DO UPDATE SET revision=excluded.revision,
+                (rule_id,instrument_id,revision,enabled,modes_json,require_volume,algorithm,effective_after_date,created_at_ms,updated_at_ms,profile,max_risk_pct)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(instrument_id) DO UPDATE SET revision=excluded.revision,
                 enabled=excluded.enabled,modes_json=excluded.modes_json,require_volume=excluded.require_volume,
-                effective_after_date=excluded.effective_after_date,updated_at_ms=excluded.updated_at_ms''',
+                effective_after_date=excluded.effective_after_date,updated_at_ms=excluded.updated_at_ms,
+                profile=excluded.profile,max_risk_pct=excluded.max_risk_pct''',
                 (identifier, symbol, revision + 1, int(enabled), dumps(modes), int(required), ALGORITHM,
-                 day, old.get('created_at_ms', stamp), stamp))
+                 day, old.get('created_at_ms', stamp), stamp, profile, risk))
             connection.execute('DELETE FROM automatic_price_alert_baseline WHERE rule_id=?', (identifier,))
             connection.execute("DELETE FROM retention_pin WHERE owner_kind='manual' AND owner_id=?",
                                ('auto-price-baseline:' + identifier,))
@@ -225,14 +243,93 @@ def _guard(connection, job, parameters):
         raise StaleCheck('自动提醒配置已修改，旧版本不继续提交')
 
 
-def build_baseline(symbol, rows, day, calendar, snapshot, primary_snapshot=None):
+def build_baseline(symbol, rows, day, calendar, snapshot, primary_snapshot=None, *, profile='structure', max_risk_pct=5.0):
     """Clip BEFORE analysis; a day-T close can never set its own trigger level."""
     selected = [dict(row) for row in rows if _date(row.get('date')) and row['date'] <= day]
     chart = {'instrument': {'instrument_id': symbol, 'kind': 'stock'}, 'period': 'D', 'as_of': day,
              'snapshot_id': snapshot, 'price_basis': 'none', 'bars': selected[-120:]}
-    levels = price_volume_levels(chart, calendar, expected_snapshot=snapshot)
+    levels = price_volume_levels(chart, calendar, expected_snapshot=snapshot, profile=profile, max_risk_pct=max_risk_pct)
     return {'as_of': day, 'snapshot_id': snapshot, 'primary_snapshot_id': primary_snapshot,
-            'algorithm': ALGORITHM, 'price_basis': 'none', 'levels': levels, 'monitoring_baseline': True}
+            'algorithm': levels['algorithm'], 'profile': profile, 'max_risk_pct': max_risk_pct,
+            'price_basis': 'none', 'levels': levels, 'monitoring_baseline': True}
+
+
+def _baseline_sources(baseline):
+    anchor = baseline.get('risk_anchor') or {}
+    return {baseline.get('primary_snapshot_id'), anchor.get('primary_snapshot_id')} - {None}
+
+
+def advance_short_baseline(previous, latest, rows, calendar=None):
+    """Retain the higher pre-existing risk boundary, including after a breach.
+
+    The original calculation evidence is bounded to one anchor, not a chain of
+    daily baselines. A configuration revision explicitly starts a new monitor.
+    """
+    if latest.get('profile') != 'short_week_v1':
+        return latest
+    result = deepcopy(latest)
+    levels = result['levels']
+    today = [row for row in rows if row.get('date') == result['as_of']]
+    stop = levels.get('stop')
+    # Missing/corporate-action quotes cannot make a carried nominal price valid.
+    comparable = (len(today) == 1 and _quote(today[0])
+                  and not today[0].get('noon_provisional')
+                  and today[0].get('corporate_action_coverage_known') is True
+                  and not today[0].get('corporate_action')
+                  and levels.get('reference_date') == result['as_of'])
+    prior_anchor = (previous or {}).get('risk_anchor')
+    prior_stop = (previous or {}).get('levels', {}).get('stop')
+    carried = (previous and previous.get('monitoring_baseline') is True
+               and previous.get('profile') == 'short_week_v1'
+               and previous.get('as_of') <= result['as_of'])
+    intervening = [row for row in rows if carried and previous['as_of'] < row.get('date', '') <= result['as_of']]
+    required = [day for day in (calendar or []) if carried and previous['as_of'] < day <= result['as_of']]
+    before = [row for row in rows if carried and row.get('date') == previous['as_of']]
+    prior_available = (len(before) == 1 and _quote(before[0]) and not before[0].get('noon_provisional')
+                       and before[0].get('corporate_action_coverage_known') is True and not before[0].get('corporate_action'))
+    can_carry = (prior_available and all(_quote(row) and not row.get('noon_provisional') and row.get('corporate_action_coverage_known') is True
+                     and not row.get('corporate_action') for row in intervening)
+                 and (calendar is None or [row['date'] for row in intervening] == required))
+    blocked = carried and (bool((prior_anchor or {}).get('suspended')) or not can_carry)
+    if not comparable or blocked:
+        levels['stop'] = None
+        levels['state'] = 'unknown'
+        levels['reason'] = '短线监控跨越缺失、未完成报价或公司行动，风险基准待重新设定'
+        if carried and (prior_anchor or prior_stop):
+            result['risk_anchor'] = deepcopy(prior_anchor or {
+                'as_of': previous['as_of'], 'snapshot_id': previous['snapshot_id'],
+                'primary_snapshot_id': previous['primary_snapshot_id'], 'level': prior_stop,
+                'reference_price': previous['levels'].get('reference_price'), 'atr': previous['levels'].get('atr')})
+            result['risk_anchor']['suspended'] = True
+        return result
+    if stop:
+        result['risk_anchor'] = {'as_of': result['as_of'], 'snapshot_id': result['snapshot_id'],
+                                'primary_snapshot_id': result['primary_snapshot_id'],
+                                'level': deepcopy(stop), 'reference_price': levels['reference_price'],
+                                'atr': deepcopy(levels['atr'])}
+    if carried:
+        previous_stop = prior_stop
+        missed_breach = next((row['date'] for row in intervening if previous_stop and row['close'] < previous_stop['price']), None)
+        # A comparable current session can carry the old threshold even while
+        # fresh ATR warmup is unavailable. Corporate actions break continuity.
+        if (can_carry and isinstance(previous_stop, dict) and _number(previous_stop.get('price'))
+                and (not stop or previous_stop['price'] > stop['price']
+                     or previous_stop.get('state') == 'breached' or missed_breach)):
+            levels['stop'] = deepcopy(previous_stop)
+            if missed_breach:
+                levels['stop']['state'] = 'breached'
+                levels['stop']['observed_breach_date'] = missed_breach
+            result['risk_anchor'] = deepcopy(previous.get('risk_anchor') or {
+                'as_of': previous['as_of'], 'snapshot_id': previous['snapshot_id'],
+                'primary_snapshot_id': previous['primary_snapshot_id'], 'level': previous_stop,
+                'reference_price': previous['levels'].get('reference_price'), 'atr': previous['levels'].get('atr')})
+    if levels.get('stop'):
+        held = levels['stop']
+        held['distance_pct'] = (held['price'] / levels['reference_price'] - 1) * 100
+        held['state'] = 'breached' if held.get('state') == 'breached' or levels['reference_price'] < held['price'] else 'monitoring'
+        held['monitoring_since'] = result['risk_anchor']['as_of']
+        held['tracking_policy'] = 'raise_only_until_configuration_change'
+    return result
 
 
 def _prior_baseline(connection, rule, target, previous):
@@ -270,6 +367,8 @@ def evaluate_mode(rule, mode, target, previous, rows, baseline, target_baseline)
     if len(today) != 1 or not _quote(today[0]) or len(before) != 1 or not _quote(before[0]):
         return None, '目标日或前一市场交易日缺少唯一有效日K，不回退更早报价', evidence
     raw, prior = today[0], before[0]
+    if rule.get('profile') == 'short_week_v1' and (raw.get('noon_provisional') or prior.get('noon_provisional')):
+        return None, '午间临时报价不能作为短线收盘核验依据', evidence
     evidence.update({key: raw[key] for key in ('open', 'high', 'low', 'close')})
     # A later publication can repair old quotes. Keep the pre-trigger basis and
     # its original close immutable; expose the new source quote separately.
@@ -278,6 +377,8 @@ def evaluate_mode(rule, mode, target, previous, rows, baseline, target_baseline)
     if raw.get('corporate_action_coverage_known') is not True or raw.get('corporate_action'):
         return None, '目标日公司行动发生或覆盖未知，未复权价位不可直接跨日比较', evidence
     levels = baseline['levels']
+    if rule.get('profile', 'structure') != baseline.get('profile', 'structure'):
+        return None, '监控基准与当前规则模式不一致，请等待新版本基准准备', evidence
     if (levels.get('reference_date') != previous or not _number(frozen_previous)
             or levels.get('snapshot_id') != baseline['snapshot_id']):
         return None, levels.get('reason') or '前一交易日完整结构依据不足，未形成自动价位', evidence
@@ -285,6 +386,8 @@ def evaluate_mode(rule, mode, target, previous, rows, baseline, target_baseline)
     level = levels.get(key)
     if not isinstance(level, dict) or not _number(level.get('price')):
         return None, '前一交易日尚未形成已确认的' + {'breakout': '突破位', 'stop': '参考止损位', 'support': '支撑位'}[key], evidence
+    if rule.get('profile') == 'short_week_v1' and key == 'stop' and level.get('state') == 'breached':
+        return False, '短线风险线已失守，保留原基准；重新设定规则后才开始新一轮监控', evidence
     price = level['price']
     evidence.update(line_price=price, comparison_line_price=price, automatic_level=level)
     hit = (frozen_previous <= price < raw['close'] if mode == 'close_breakout' else
@@ -322,6 +425,10 @@ def execute_check(job):
             with connect() as connection:
                 _guard(connection, job, parameters)
                 baseline = _prior_baseline(connection, rule, target, previous)
+                saved_monitor = connection.execute('''SELECT baseline_json FROM automatic_price_alert_baseline
+                    WHERE rule_id=? AND rule_revision=? AND level_date<=?''',
+                    (rule['rule_id'], rule['revision'], target)).fetchone()
+                carry_baseline = json.loads(saved_monitor[0]) if saved_monitor else baseline
             symbol = rule['instrument_id']
             identity = identities.get(symbol, {})
             if identity.get('kind', identity.get('asset_type')) not in ('stock', 'equity', 'a_share', 'A'):
@@ -330,7 +437,9 @@ def execute_check(job):
                 rows = market.bars(symbol, as_of=target)
             baseline = baseline or {'as_of': previous, 'snapshot_id': None, 'primary_snapshot_id': None,
                                     'algorithm': ALGORITHM, 'price_basis': 'none', 'levels': {}, 'monitoring_baseline': False}
-            next_baseline = build_baseline(symbol, rows, target, calendar, parameters['market_snapshot_id'], parameters['primary_snapshot_id'])
+            next_baseline = build_baseline(symbol, rows, target, calendar, parameters['market_snapshot_id'], parameters['primary_snapshot_id'],
+                                           profile=rule.get('profile', 'structure'), max_risk_pct=rule.get('max_risk_pct', 5.0))
+            next_baseline = advance_short_baseline(carry_baseline, next_baseline, rows, calendar)
             for mode in rule['modes']:
                 processed += 1
                 with connect() as connection:
@@ -350,21 +459,25 @@ def execute_check(job):
                     if hit:
                         event_id = identifier
                         stamp = now_ms()
+                        title = '短线风险线收盘跌破' if mode == 'stop_breakdown' and rule.get('profile') == 'short_week_v1' else TITLES[mode]
                         event = {**evidence, 'event_id': identifier, 'instrument_id': symbol, 'code': symbol[:6],
                                  'name': identity.get('name') or symbol, 'rule_id': rule['rule_id'], 'revision': rule['revision'],
                                  'annotation_id': rule['rule_id'], 'annotation_revision': rule['revision'],
                                  'line_type': 'resistance' if mode == 'close_breakout' else 'support',
-                                 'annotation_label': TITLES[mode], 'rule': mode, 'trade_date': target, 'state': state,
-                                 'title': TITLES[mode], 'reason': reason, 'source_kind': SOURCE, 'created_at_ms': stamp,
-                                 'require_volume': rule['require_volume'],
+                                 'annotation_label': title, 'rule': mode, 'trade_date': target, 'state': state,
+                                 'title': title, 'reason': reason, 'source_kind': SOURCE, 'created_at_ms': stamp,
+                                 'require_volume': rule['require_volume'], 'profile': rule.get('profile', 'structure'),
+                                 'max_risk_pct': rule.get('max_risk_pct', 5.0),
                                  'added_to_watchlist': False, 'watchlist_add_state': 'disabled',
                                  'market_snapshot_id': parameters['market_snapshot_id'],
                                  'input_snapshots': {'daily_raw': parameters['primary_snapshot_id'],
-                                                     'level_daily_raw': baseline['primary_snapshot_id']}, 'algorithm': ALGORITHM}
+                                                     'level_daily_raw': baseline['primary_snapshot_id'],
+                                                     'risk_anchor_daily_raw': (baseline.get('risk_anchor') or {}).get('primary_snapshot_id')},
+                                 'algorithm': baseline['algorithm']}
                         connection.execute('''INSERT INTO automatic_price_alert_event VALUES(?,?,?,?,?,?,?,?,?,?)
                             ON CONFLICT(rule_id,rule_revision,rule,trade_date) DO NOTHING''',
                             (identifier, rule['rule_id'], rule['revision'], symbol, mode, target, state, job['job_id'], dumps(event), stamp))
-                        for source in {parameters['primary_snapshot_id'], baseline.get('primary_snapshot_id')} - {None}:
+                        for source in {parameters['primary_snapshot_id']} | _baseline_sources(baseline):
                             pin(connection, source, 'manual', 'auto-price-event:' + identifier)
                     connection.execute('''INSERT INTO automatic_price_alert_evaluation VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
                         (job['job_id'], rule['rule_id'], rule['revision'], symbol, mode, target, state, reason, dumps(evidence), event_id, now_ms()))
@@ -379,7 +492,8 @@ def execute_check(job):
                     (rule['rule_id'], rule['revision'], target, parameters['market_snapshot_id'], dumps(next_baseline), now_ms()))
                 owner = 'auto-price-baseline:' + rule['rule_id']
                 connection.execute("DELETE FROM retention_pin WHERE owner_kind='manual' AND owner_id=?", (owner,))
-                pin(connection, parameters['primary_snapshot_id'], 'manual', owner)
+                for source in _baseline_sources(next_baseline):
+                    pin(connection, source, 'manual', owner)
         with connect() as connection:
             connection.execute('BEGIN IMMEDIATE')
             _guard(connection, job, parameters)

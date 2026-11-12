@@ -2,6 +2,8 @@ import type { Row } from "../lib/api";
 import type { ChartPeriod } from "./candleChange";
 import type { ChartLineLabel } from "./chartLineLabelLayout";
 
+export type PriceVolumeProfile = "structure" | "short_week_v1";
+
 export type PriceVolumeLevel = {
   price: number;
   distancePct: number | null;
@@ -17,6 +19,10 @@ export type PriceVolumeLevel = {
 };
 
 export type PriceVolumeView = {
+  profile: PriceVolumeProfile;
+  maxRiskPct: number | null;
+  supportReason: string;
+  notice: string;
   referenceDate: string | null;
   referencePrice: number | null;
   unit: "元" | "点";
@@ -64,14 +70,27 @@ export function chartPriceVolume(
   instrumentId: string,
   period: ChartPeriod,
   asOf?: string,
+  profile: PriceVolumeProfile = "structure",
 ): PriceVolumeView | null {
-  const source = chart?.price_volume_levels;
+  const short = profile === "short_week_v1";
+  const source = short
+    ? chart?.price_volume_levels?.short_term
+    : chart?.price_volume_levels;
   if (
     chart?.instrument?.instrument_id !== instrumentId ||
     chart?.period !== period ||
     typeof chart?.as_of !== "string" ||
     (asOf && asOf !== chart.as_of) ||
-    source?.algorithm !== "structure-volume-levels-v1" ||
+    source?.algorithm !==
+      (short ? "short-week-risk-levels-v1" : "structure-volume-levels-v1") ||
+    (short &&
+      (period !== "D" ||
+        chart.instrument?.kind !== "stock" ||
+        source.profile !== "short_week_v1" ||
+        !finite(source.max_risk_pct) ||
+        source.max_risk_pct < 0.5 ||
+        source.max_risk_pct > 20)) ||
+    (!short && source.profile != null && source.profile !== "structure") ||
     source.instrument_id !== instrumentId ||
     source.period !== period ||
     source.as_of !== chart.as_of ||
@@ -162,6 +181,10 @@ export function chartPriceVolume(
     atr.window_start <= atr.window_end &&
     atr.window_end === referenceDate;
   return {
+    profile,
+    maxRiskPct: short ? source.max_risk_pct : null,
+    supportReason: text(source.support_reason),
+    notice: text(source.notice),
     referenceDate: hasReference ? referenceDate : null,
     referencePrice: hasReference ? source.reference_price : null,
     unit:
@@ -172,7 +195,10 @@ export function chartPriceVolume(
     reason: text(source.reason),
     support: level(source.support),
     resistance: level(source.resistance),
-    stop: level(source.stop),
+    stop:
+      short && source.stop?.source !== "short_risk_boundary"
+        ? null
+        : level(source.stop),
     breakout: level(source.breakout),
     signal: {
       state: text(source.signal?.state) || "unknown",
@@ -231,8 +257,11 @@ export function priceVolumeLineLabels(
         price: level.price,
         color,
         enabled: true,
-        shortLabel,
-        detail: `${key === "breakout" && ["held", "retest"].includes(level.state) ? "原突破参考" : label} ${level.price} ${view.unit} · ${view.referenceDate} 完整${view.cycle}K · 拐点 ${level.formedAt} · 确认 ${level.confirmedOn}`,
+        shortLabel:
+          key === "stop" && view.profile === "short_week_v1"
+            ? "短险"
+            : shortLabel,
+        detail: `${key === "stop" ? (view.profile === "short_week_v1" ? "短线风险线" : "结构失效参考") : key === "breakout" && ["held", "retest"].includes(level.state) ? "原突破参考" : label} ${level.price} ${view.unit} · ${view.referenceDate} 完整${view.cycle}K · ${level.source === "short_risk_boundary" ? `风险公式基准 ${level.formedAt}，不代表确认支撑` : `拐点 ${level.formedAt} · 确认 ${level.confirmedOn}`}`,
       },
     ];
   });

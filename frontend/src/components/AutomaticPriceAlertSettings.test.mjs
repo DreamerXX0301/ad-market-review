@@ -212,7 +212,10 @@ const render = (Component = Editor, id = instrumentId) => {
   run.forEach((effect) => effect());
   return tree;
 };
-const inputs = (tree) => flatten(tree).filter((item) => item.type === "input");
+const inputs = (tree) =>
+  flatten(tree).filter(
+    (item) => item.type === "input" && item.props.type === "checkbox",
+  );
 const button = (tree, label) =>
   flatten(tree).find(
     (item) => item.type === "button" && text(item).includes(label),
@@ -282,6 +285,8 @@ assert.deepEqual(JSON.parse(put[1].body), {
   enabled: true,
   modes: ["close_breakout"],
   require_volume: true,
+  profile: "structure",
+  max_risk_pct: 5,
   expected_revision: 0,
 });
 assert.match(text(tree), /正在准备下一交易日参考位/);
@@ -386,6 +391,173 @@ assert.equal(
   "foreign stock config never populates form",
 );
 assert.equal(button(tree, "保存设置").props.disabled, true);
+
+// New short rules are explicit, editable, and never reuse a legacy algorithm.
+const shortFixture = () => ({
+  ...fixture(),
+  rule: {
+    ...fixture().rule,
+    profile: "short_week_v1",
+    max_risk_pct: 5,
+    algorithm: "short-week-risk-levels-v1",
+  },
+});
+assert.equal(
+  helpers.automaticAlertConfig(fixture(), instrumentId).rule.profile,
+  "structure",
+);
+assert.equal(
+  helpers.automaticAlertConfig(shortFixture(), instrumentId).rule.profile,
+  "short_week_v1",
+);
+assert.equal(
+  helpers.automaticAlertConfig(
+    {
+      ...shortFixture(),
+      rule: { ...shortFixture().rule, algorithm: "structure-volume-levels-v1" },
+    },
+    instrumentId,
+  ),
+  null,
+);
+for (const risk of [NaN, 0, 20.01, 5.001]) {
+  assert.equal(
+    helpers.automaticAlertConfig(
+      {
+        ...shortFixture(),
+        rule: { ...shortFixture().rule, max_risk_pct: risk },
+      },
+      instrumentId,
+    ),
+    null,
+  );
+  assert.throws(
+    () =>
+      helpers.automaticAlertPayload(
+        {
+          ...helpers.automaticAlertDraft(shortFixture().rule),
+          max_risk_pct: risk,
+        },
+        shortFixture(),
+      ),
+    /风险距离/,
+  );
+}
+reset();
+resultData = shortFixture();
+render();
+tree = render();
+assert.match(text(tree), /只抬高不下调/);
+assert.match(text(tree), /短线风险线跌破/);
+const select = flatten(tree).find((item) => item.type === "select");
+assert.equal(select.props.value, "short_week_v1");
+const riskInput = () =>
+  flatten(tree).find(
+    (item) => item.type === "input" && item.props.type === "number",
+  );
+assert.equal(riskInput().props.value, 5);
+button(tree, "3%").props.onClick();
+tree = render();
+assert.equal(riskInput().props.value, 3);
+riskInput().props.onChange({ target: { value: "4.25" } });
+tree = render();
+assert.equal(riskInput().props.value, 4.25);
+inputs(tree)[0].props.onChange({ target: { checked: true } });
+tree = render();
+inputs(tree)[4].props.onChange({ target: { checked: true } });
+tree = render();
+response = {
+  ...shortFixture(),
+  rule: {
+    ...shortFixture().rule,
+    enabled: true,
+    revision: 1,
+    modes: ["stop_breakdown"],
+    max_risk_pct: 4.25,
+  },
+};
+button(tree, "保存设置").props.onClick();
+await tick();
+tree = render();
+const shortPut = calls.find((item) => item[1]?.method === "PUT");
+assert.deepEqual(JSON.parse(shortPut[1].body), {
+  enabled: true,
+  modes: ["stop_breakdown"],
+  require_volume: true,
+  profile: "short_week_v1",
+  max_risk_pct: 4.25,
+  expected_revision: 0,
+});
+assert.equal(
+  calls.some((item) => String(item[0]).includes("/annotations")),
+  false,
+);
+
+reset();
+resultData = {
+  ...shortFixture(),
+  rule: {
+    ...shortFixture().rule,
+    enabled: true,
+    revision: 2,
+    max_risk_pct: 8,
+    modes: ["stop_breakdown"],
+  },
+  latest_baseline: {
+    as_of: "2026-11-11",
+    algorithm: "short-week-risk-levels-v1",
+    levels: { stop: { price: 19.25, state: "breached" } },
+  },
+};
+render();
+tree = render();
+assert.match(text(tree), /8.00%/);
+assert.match(text(tree), /19.25 元/);
+assert.match(text(tree), /已失守/);
+assert.match(text(tree), /默认5%上限/);
+const resetBaseline = button(tree, "重新设定短线基准");
+assert.ok(resetBaseline);
+response = {
+  ...resultData,
+  rule: { ...resultData.rule, revision: 3 },
+  latest_baseline: null,
+  task: { job_id: "reset-short-baseline", status: "queued" },
+};
+resetBaseline.props.onClick();
+await tick();
+tree = render();
+assert.equal(
+  JSON.parse(calls.find((item) => item[1]?.method === "PUT")[1].body)
+    .reset_monitoring,
+  true,
+);
+assert.match(text(tree), /正在准备下一交易日参考位/);
+
+reset();
+resultData = {
+  ...shortFixture(),
+  rule: {
+    ...shortFixture().rule,
+    enabled: true,
+    revision: 2,
+    modes: ["stop_breakdown"],
+  },
+  latest_baseline: {
+    as_of: "2026-11-11",
+    levels: { stop: { price: 19.25, state: "breached" } },
+  },
+};
+render();
+tree = render();
+button(tree, "8%").props.onClick();
+tree = render();
+button(tree, "重新设定短线基准").props.onClick();
+await tick();
+tree = render();
+assert.equal(calls.filter((item) => item[1]?.method === "PUT").length, 0);
+assert.ok(
+  flatten(tree).some((item) => item.props.message?.includes("请先保存")),
+);
 console.log(
   "automatic price alert settings: lazy GET, explicit opt-in, independent PUT, optimistic revision, event refresh, frozen basis and late-response safety passed",
 );

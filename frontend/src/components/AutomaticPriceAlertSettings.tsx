@@ -108,7 +108,7 @@ function AutomaticPriceAlertEditor({
       window.removeEventListener(AUTOMATIC_PRICE_ALERTS_CHANGED, refresh);
     };
   }, [result.reload]);
-  const save = async () => {
+  const save = async (resetMonitoring = false) => {
     if (!draft || !config || inFlight.current) return;
     if (draftRevision !== config.rule.revision) {
       setError("配置已在其他位置更新，请重新读取后再保存");
@@ -117,6 +117,17 @@ function AutomaticPriceAlertEditor({
     let payload;
     try {
       payload = automaticAlertPayload(draft, config);
+      if (
+        resetMonitoring &&
+        (draft.enabled !== config.rule.enabled ||
+          draft.profile !== config.rule.profile ||
+          draft.max_risk_pct !== config.rule.max_risk_pct ||
+          draft.require_volume !== config.rule.require_volume ||
+          [...draft.modes].sort().join() !==
+            [...config.rule.modes].sort().join())
+      ) {
+        throw new Error("请先保存或重新读取表单改动，再重新设定短线基准");
+      }
     } catch (problem) {
       setError((problem as Error).message);
       return;
@@ -128,7 +139,9 @@ function AutomaticPriceAlertEditor({
     try {
       const response = await api<Row>(path, {
         method: "PUT",
-        body: JSON.stringify(payload),
+        body: JSON.stringify(
+          resetMonitoring ? { ...payload, reset_monitoring: true } : payload,
+        ),
       });
       const next = automaticAlertConfig(response, instrumentId);
       if (!next) throw new Error("配置回执与当前股票不匹配，请重新读取");
@@ -184,6 +197,82 @@ function AutomaticPriceAlertEditor({
                 <small>每日准备次日价位，结构未变时价位可能不变</small>
               </span>
             </label>
+            <div className="automatic-price-alert-profile">
+              <label>
+                <span>提醒参考模式</span>
+                <select
+                  aria-label="提醒参考模式"
+                  value={draft.profile}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      profile: event.target
+                        .value as AutomaticAlertDraft["profile"],
+                    })
+                  }
+                >
+                  <option value="short_week_v1">一周短线</option>
+                  <option value="structure">历史结构</option>
+                </select>
+              </label>
+              {draft.profile === "short_week_v1" ? (
+                <>
+                  <label>
+                    <span>风险距离上限（%）</span>
+                    <input
+                      type="number"
+                      aria-label="风险距离上限百分比"
+                      min={0.5}
+                      max={20}
+                      step={0.01}
+                      value={
+                        Number.isFinite(draft.max_risk_pct)
+                          ? draft.max_risk_pct
+                          : ""
+                      }
+                      disabled={busy}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          max_risk_pct:
+                            event.target.value === ""
+                              ? NaN
+                              : Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <div
+                    className="automatic-price-alert-risk-presets"
+                    role="group"
+                    aria-label="风险距离快捷选择"
+                  >
+                    {[3, 5, 8].map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className="btn small"
+                        disabled={busy}
+                        aria-pressed={draft.max_risk_pct === value}
+                        onClick={() =>
+                          setDraft({ ...draft, max_risk_pct: value })
+                        }
+                      >
+                        {value}%
+                      </button>
+                    ))}
+                  </div>
+                  <small>
+                    从启用或重新设定时的收盘准备基准，后续风险线只抬高不下调；失守后保持，需重新设定才重置。这是收盘监控参考，不是个人成本止损，也不保证成交损失。
+                  </small>
+                </>
+              ) : (
+                <small>
+                  沿用历史结构和ATR缓冲，参考位可能较远；已有历史规则不会自动转换成短线模式。
+                </small>
+              )}
+            </div>
             <div
               className="automatic-price-alert-modes"
               role="group"
@@ -207,8 +296,18 @@ function AutomaticPriceAlertEditor({
                     }
                   />
                   <span>
-                    <strong>{automaticPriceAlertModes[mode].title}</strong>
-                    <small>{automaticPriceAlertModes[mode].hint}</small>
+                    <strong>
+                      {mode === "stop_breakdown"
+                        ? draft.profile === "short_week_v1"
+                          ? "短线风险线跌破"
+                          : "结构失效参考跌破"
+                        : automaticPriceAlertModes[mode].title}
+                    </strong>
+                    <small>
+                      {mode === "stop_breakdown"
+                        ? "收盘跌破已保存的事前风险参考位"
+                        : automaticPriceAlertModes[mode].hint}
+                    </small>
                   </span>
                 </label>
               ))}
@@ -233,6 +332,12 @@ function AutomaticPriceAlertEditor({
               <strong>
                 {config.rule.enabled ? "已启用" : "当前关闭"} · 日K收盘确认
               </strong>
+              <span>
+                已保存模式：
+                {config.rule.profile === "short_week_v1"
+                  ? `一周短线 · 距离上限 ${num(config.rule.max_risk_pct)}%`
+                  : "历史结构"}
+              </span>
               <span>
                 {config.rule.effective_after_date
                   ? `保存业务日 ${config.rule.effective_after_date}，后续新交易日起生效`
@@ -261,7 +366,12 @@ function AutomaticPriceAlertEditor({
                     [
                       ["support", "支撑"],
                       ["breakout", "突破"],
-                      ["stop", "参考止损"],
+                      [
+                        "stop",
+                        config.rule.profile === "short_week_v1"
+                          ? "短线风险线"
+                          : "结构失效参考",
+                      ],
                     ] as const
                   ).map(([key, label]) => (
                     <span key={key}>
@@ -275,8 +385,28 @@ function AutomaticPriceAlertEditor({
                   ))}
                 </div>
                 <small>
-                  这组价位用于后续交易日核验，不替代图表当前参考线。没有新增确认拐点时可沿用原价位。
+                  {config.rule.profile === "short_week_v1"
+                    ? "这组已保存价位才是提醒核验依据。图表短线风险线按观察日收盘及默认5%上限重新展示，与本规则的逐股上限及只上移监控基准分别读取。"
+                    : "这组价位用于后续交易日核验，不替代图表当前参考线。没有新增确认拐点时可沿用原价位。"}
                 </small>
+                {baseline.levels?.stop?.state === "breached" && (
+                  <>
+                    <p className="automatic-price-alert-breached">
+                      短线风险线已失守，保留原基准；需明确重新设定后才开始新一轮监控。
+                    </p>
+                    {config.rule.enabled &&
+                      config.rule.profile === "short_week_v1" && (
+                        <button
+                          type="button"
+                          className="btn small"
+                          disabled={busy}
+                          onClick={() => void save(true)}
+                        >
+                          重新设定短线基准
+                        </button>
+                      )}
+                  </>
+                )}
               </details>
             )}
           </>

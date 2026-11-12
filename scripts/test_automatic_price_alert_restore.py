@@ -1,6 +1,7 @@
 """Restoring schema43 keeps evidence but drops new monitoring authorization."""
 import json
 from pathlib import Path
+import pytest
 
 from backup import connect_sqlite, perform_backup, sha
 from restore import perform_restore, verify_backup
@@ -9,13 +10,20 @@ from test_deployment import source
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_restore_disables_automatic_rules_preserves_receipts_and_only_drops_baseline_pins(source, tmp_path):
+@pytest.mark.parametrize('schema', [43, 44])
+def test_restore_disables_automatic_rules_preserves_receipts_and_only_drops_baseline_pins(source, tmp_path, schema):
     database = source / 'business/app.sqlite3'
     with connect_sqlite(database) as connection:
         connection.executescript((ROOT / 'backend/app/migrations/043_automatic_price_alerts.sql').read_text())
+        if schema == 44:
+            connection.executescript((ROOT / 'backend/app/migrations/044_short_week_price_alerts.sql').read_text())
         for identifier, symbol, revision, enabled in [('on', '600001.SH', 3, 1), ('off', '000001.SZ', 7, 0)]:
-            connection.execute('INSERT INTO automatic_price_alert_rule VALUES(?,?,?,?,?,?,?,?,?,?)',
+            connection.execute('''INSERT INTO automatic_price_alert_rule
+                (rule_id,instrument_id,revision,enabled,modes_json,require_volume,algorithm,effective_after_date,created_at_ms,updated_at_ms)
+                VALUES(?,?,?,?,?,?,?,?,?,?)''',
                 (identifier, symbol, revision, enabled, '["close_breakout"]', 1, 'structure-volume-levels-v1', '2026-10-19', 1, 1))
+            if schema == 44:
+                connection.execute("UPDATE automatic_price_alert_rule SET profile='short_week_v1',max_risk_pct=3.5 WHERE rule_id=?", (identifier,))
             connection.execute('INSERT INTO automatic_price_alert_baseline VALUES(?,?,?,?,?,?)',
                 (identifier, revision, '2026-10-19', 'bars', '{"as_of":"2026-10-19","levels":{"support":{"price":10}}}', 1))
             connection.execute('INSERT INTO retention_pin(pin_id,snapshot_id,owner_kind,owner_id,created_at_ms) VALUES(?,?,?,?,1)',
@@ -43,6 +51,9 @@ def test_restore_disables_automatic_rules_preserves_receipts_and_only_drops_base
         assert rules['on']['enabled'] == 0 and rules['on']['revision'] == 4
         assert rules['off']['enabled'] == 0 and rules['off']['revision'] == 7
         assert rules['on']['modes_json'] == '["close_breakout"]' and rules['on']['require_volume'] == 1
+        if schema == 44:
+            assert rules['on']['profile'] == rules['off']['profile'] == 'short_week_v1'
+            assert rules['on']['max_risk_pct'] == rules['off']['max_risk_pct'] == 3.5
         assert connection.execute('SELECT revision FROM automatic_price_alert_clock').fetchone()[0] > old_clock
         assert connection.execute('SELECT count(*) FROM automatic_price_alert_baseline').fetchone()[0] == 0
         assert [tuple(row) for row in connection.execute('SELECT * FROM automatic_price_alert_event')] == old_events

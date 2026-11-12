@@ -134,6 +134,7 @@ const chartScope = new Function(
   "asOf",
   "period",
   "dataEndpoint",
+  "priceVolumeProfile = 'structure'",
   `return (${scope.initializer.getText(ast)});`,
 );
 const data = {
@@ -141,7 +142,14 @@ const data = {
   snapshot_id: "market-A",
   price_basis: "none",
 };
-const base = chartScope("000678.SZ", data, undefined, "D", undefined);
+const base = chartScope(
+  "000678.SZ",
+  data,
+  undefined,
+  "D",
+  undefined,
+  "structure",
+);
 const switches = [
   chartScope("002300.SZ", data, undefined, "D", undefined),
   chartScope(
@@ -167,8 +175,43 @@ const switches = [
   ),
   chartScope("000678.SZ", data, undefined, "W", undefined),
   chartScope("000678.SZ", data, undefined, "D", "/different-chart"),
+  chartScope("000678.SZ", data, undefined, "D", undefined, "short_week_v1"),
 ];
 assert.ok(switches.every((value) => value !== base));
+
+// Run the production profile switch handler: it only resets this overlay group.
+let profileChange;
+function findProfileChange(node) {
+  if (ts.isJsxAttribute(node) && node.name.getText(ast) === "onProfileChange")
+    profileChange = node.initializer.expression;
+  ts.forEachChild(node, findProfileChange);
+}
+findProfileChange(ast);
+assert.ok(profileChange);
+let chosen = "short_week_v1";
+const handler = new Function(
+  "supportsShortVolume",
+  "setPriceVolumeChoice",
+  "setPriceVolumeVisibility",
+  `return (${compile(`const value = ${profileChange.getText(ast)};`)
+    .replace(/^const value = /, "")
+    .replace(/;\s*$/, "")});`,
+)(
+  true,
+  (value) => {
+    chosen = value;
+  },
+  (value) => {
+    priceState = value;
+  },
+);
+const savedManualState = structuredClone(hiddenState);
+const priorEffects = structuredClone(effects);
+handler("structure");
+assert.equal(chosen, "structure");
+assert.deepEqual(priceState, { scope: "", ids: new Set() });
+assert.deepEqual(hiddenState, savedManualState);
+assert.deepEqual(effects, priorEffects);
 console.log(
   "price-volume overlay isolation: exact chart scope, manual line/history/preference isolation, original manual controls and no source mutation passed",
 );

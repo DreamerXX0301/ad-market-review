@@ -141,7 +141,7 @@ const render = (value = view) =>
   );
 const html = render();
 for (const text of [
-  "参考止损",
+  "结构失效参考",
   "支撑参考",
   "压力参考",
   "突破参考",
@@ -313,6 +313,101 @@ assert.equal(
   null,
   "forming candle cannot masquerade as completed reference",
 );
+
+const shortChart = structuredClone(chart);
+shortChart.price_volume_levels.short_term = {
+  ...structuredClone(chart.price_volume_levels),
+  algorithm: "short-week-risk-levels-v1",
+  profile: "short_week_v1",
+  max_risk_pct: 5,
+  support: null,
+  support_reason: "最近20日没有距离上限内的确认支撑",
+  notice: "试算参数尚未完成收益有效性回测",
+  stop: {
+    price: 10,
+    distance_pct: (10 / 10.5 - 1) * 100,
+    source: "short_risk_boundary",
+    formed_at: day,
+    confirmed_on: day,
+    buffer_atr: 0.5,
+    buffer_value: 0.5,
+    base_price: 10.5,
+    atr_reference_date: day,
+  },
+};
+const shortView = chartPriceVolume(shortChart, id, "D", day, "short_week_v1");
+assert.equal(shortView.profile, "short_week_v1");
+assert.equal(shortView.maxRiskPct, 5);
+assert.equal(shortView.support, null);
+assert.equal(shortView.stop.price, 10);
+const shortHtml = render(shortView);
+assert.match(shortHtml, /短线风险线/);
+assert.match(shortHtml, /暂无近端支撑/);
+assert.match(shortHtml, /最近20日没有距离上限内的确认支撑/);
+assert.match(shortHtml, /近20个完整交易日结构/);
+assert.match(shortHtml, /公式基准/);
+assert.match(shortHtml, /不是确认支撑或个人成本止损/);
+assert.match(shortHtml, /试算参数/);
+assert.doesNotMatch(shortHtml, /短线风险线以支撑位/);
+const collectElements = (node) =>
+  Array.isArray(node)
+    ? node.flatMap(collectElements)
+    : node?.props
+      ? [node, ...collectElements(node.props.children)]
+      : [];
+const selectedProfiles = [];
+const shortPanelTree = Panel({
+  view: shortView,
+  visibleIds: new Set(),
+  onToggle: () => {},
+  onProfileChange: (profile) => selectedProfiles.push(profile),
+});
+const profileSelect = collectElements(shortPanelTree).find(
+  (node) => node.type === "select",
+);
+assert.equal(profileSelect.props.value, "short_week_v1");
+profileSelect.props.onChange({ target: { value: "structure" } });
+assert.deepEqual(selectedProfiles, ["structure"]);
+assert.equal(
+  shortView.profile,
+  "short_week_v1",
+  "mode selection cannot mutate the source view",
+);
+const shortRiskLabel = priceVolumeLineLabels(shortView)[0];
+assert.equal(shortRiskLabel.shortLabel, "短险");
+assert.match(shortRiskLabel.detail, /风险公式基准/);
+assert.doesNotMatch(shortRiskLabel.detail, /拐点/);
+assert.equal(chartPriceVolume(shortChart, id, "D", day).stop.price, 8.5);
+assert.equal(chartPriceVolume(chart, id, "D", day, "short_week_v1"), null);
+for (const [key, value] of Object.entries({
+  algorithm: "structure-volume-levels-v1",
+  profile: "structure",
+  max_risk_pct: 999,
+  as_of: "2026-11-09",
+  snapshot_id: "old",
+})) {
+  const invalid = structuredClone(shortChart);
+  invalid.price_volume_levels.short_term[key] = value;
+  assert.equal(
+    chartPriceVolume(invalid, id, "D", day, "short_week_v1"),
+    null,
+    key,
+  );
+}
+const wrongRiskSource = structuredClone(shortChart);
+wrongRiskSource.price_volume_levels.short_term.stop.source =
+  "confirmed_pivot_low";
+assert.equal(
+  chartPriceVolume(wrongRiskSource, id, "D", day, "short_week_v1").stop,
+  null,
+);
+const foreignKind = structuredClone(shortChart);
+foreignKind.instrument.kind = "index";
+assert.equal(
+  chartPriceVolume(foreignKind, id, "D", day, "short_week_v1"),
+  null,
+);
+
 console.log(
   "chart price-volume: exact chart identity, complete reference, dated pivots, unknown volume, points and folded evidence passed",
 );

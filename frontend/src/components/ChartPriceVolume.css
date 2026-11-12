@@ -17,6 +17,25 @@
 .chart-price-volume-heading > strong {
   color: var(--text);
 }
+.chart-price-volume-profile {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.chart-price-volume-profile select {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+}
+.chart-price-volume-scope {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--muted);
+  line-height: 1.6;
+}
 .chart-price-volume-ratio {
   margin-left: auto;
   font-variant-numeric: tabular-nums;

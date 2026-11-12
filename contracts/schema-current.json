@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 43,
+  "migration_version": 44,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -170,6 +170,10 @@
     {
       "name": "043_automatic_price_alerts.sql",
       "sha256": "f44663961a5ec827339789b42c0b12154c9c00b9f010c2faba11706044837e9d"
+    },
+    {
+      "name": "044_short_week_price_alerts.sql",
+      "sha256": "4c525ea85519eaf93a037d25c7d7e6757cd62f7057f7657b9c1505a4e3556127"
     }
   ],
   "counts": {
@@ -178,7 +182,7 @@
     "view": 1,
     "trigger": 156
   },
-  "schema_sha256": "24c51aea78b88f1fc09b4c4e2a6db4800c8e9ec9a59b42160fcd8022b7ef1927",
+  "schema_sha256": "bdb5c8d9e939076253ba68e05249b69c752a3b2e9e47f5a60c19bed0cc8ee338",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -1454,6 +1458,22 @@
           "type": "INTEGER",
           "notnull": 1,
           "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "profile",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'structure'",
+          "pk": 0
+        },
+        {
+          "cid": 11,
+          "name": "max_risk_pct",
+          "type": "REAL",
+          "notnull": 1,
+          "dflt_value": "5.0",
           "pk": 0
         }
       ],

@@ -1,10 +1,13 @@
 import { compactQuantity, num, percent } from "../lib/format";
 import type { ReactNode } from "react";
-import type { PriceVolumeView } from "./chartPriceVolumePresentation";
+import type {
+  PriceVolumeProfile,
+  PriceVolumeView,
+} from "./chartPriceVolumePresentation";
 import "./ChartPriceVolume.css";
 
 const levelNames = {
-  stop: "参考止损",
+  stop: "结构失效参考",
   support: "支撑参考",
   resistance: "压力参考",
   breakout: "突破参考",
@@ -22,21 +25,25 @@ export default function ChartPriceVolume({
   onToggle,
   onToggleAll,
   actions,
+  onProfileChange,
 }: {
   view: PriceVolumeView | null;
   visibleIds: ReadonlySet<string>;
   onToggle: (id: string, show: boolean) => void;
   onToggleAll?: (show: boolean) => void;
   actions?: ReactNode;
+  onProfileChange?: (profile: PriceVolumeProfile) => void;
 }) {
   if (!view) return null;
   const price = (value: number | null) =>
     value == null ? "待核验" : `${num(value)} ${view.unit}`;
   const levelLabel = (key: keyof typeof levelNames) =>
-    key === "breakout" &&
-    ["held", "retest"].includes(view.breakout?.state || "")
-      ? "原突破参考"
-      : levelNames[key];
+    key === "stop" && view.profile === "short_week_v1"
+      ? "短线风险线"
+      : key === "breakout" &&
+          ["held", "retest"].includes(view.breakout?.state || "")
+        ? "原突破参考"
+        : levelNames[key];
   const volumeLabel =
     {
       expanded: "放量",
@@ -56,6 +63,21 @@ export default function ChartPriceVolume({
     <section className="chart-price-volume" aria-label="自动量价参考">
       <div className="chart-price-volume-heading">
         <strong>量价参考</strong>
+        {onProfileChange && (
+          <label className="chart-price-volume-profile">
+            <span>参考模式</span>
+            <select
+              aria-label="量价参考模式"
+              value={view.profile}
+              onChange={(event) =>
+                onProfileChange(event.target.value as PriceVolumeProfile)
+              }
+            >
+              <option value="short_week_v1">一周短线</option>
+              <option value="structure">历史结构</option>
+            </select>
+          </label>
+        )}
         <span>
           {view.referenceDate
             ? `${view.referenceDate} · 完整${view.cycle}K`
@@ -104,6 +126,11 @@ export default function ChartPriceVolume({
           {actions}
         </div>
       </div>
+      <p className="chart-price-volume-scope">
+        {view.profile === "short_week_v1"
+          ? `近20个完整交易日结构 · 风险线按本图收盘重算，距收盘最多 ${num(view.maxRiskPct)}%；已开启提醒使用设置中单独保存的跟踪基准。`
+          : "最近120根完整K线的历史结构观察；结构失效参考未绑定个人成本或持股期限。"}
+      </p>
       <div className="chart-price-volume-levels">
         {(["stop", "support", "resistance", "breakout"] as const).map((key) => {
           const level = view[key];
@@ -124,13 +151,17 @@ export default function ChartPriceVolume({
               >
                 {noConfirmedLevel
                   ? key === "support"
-                    ? "暂无确认支撑"
+                    ? view.profile === "short_week_v1"
+                      ? "暂无近端支撑"
+                      : "暂无确认支撑"
                     : "暂无确认压力"
                   : price(level?.price ?? null)}
               </strong>
               <small>
                 {noConfirmedLevel
-                  ? "不推算不存在的价位"
+                  ? key === "support" && view.supportReason
+                    ? view.supportReason
+                    : "不推算不存在的价位"
                   : level?.distancePct != null
                     ? `距参考收盘 ${percent(level.distancePct)}`
                     : "暂无可核验价位"}
@@ -205,7 +236,9 @@ export default function ChartPriceVolume({
             </p>
           </div>
           <div>
-            <strong>波动缓冲</strong>
+            <strong>
+              {view.profile === "short_week_v1" ? "短线风险与波动" : "波动缓冲"}
+            </strong>
             <p>
               14{view.cycle}平均真实波幅 {price(view.atr.value)}。
             </p>
@@ -213,23 +246,34 @@ export default function ChartPriceVolume({
               const level = view[key];
               return level?.bufferAtr != null && level.bufferValue != null ? (
                 <p key={key}>
-                  {levelLabel(key)}以
-                  {level.source === "breakout_retest_reference"
-                    ? ` ${level.breakoutDate || "已确认"} 突破前的压力位`
-                    : key === "stop"
-                      ? "支撑位"
-                      : "压力位"}{" "}
-                  {price(level.basePrice)} 为基准，
-                  {key === "stop" ? "下留" : "上留"} {num(level.bufferAtr)}{" "}
-                  倍波幅 （{price(level.bufferValue)}）。
-                  {level.atrReferenceDate &&
-                    `波幅截至 ${level.atrReferenceDate}。`}
+                  {level.source === "short_risk_boundary" ? (
+                    <>
+                      短线风险线以 {level.formedAt} 收盘为公式基准，综合1倍ATR、
+                      {num(view.maxRiskPct)}%距离上限及可用近端结构计算； 距基准{" "}
+                      {price(level.bufferValue)}，不是确认支撑或个人成本止损。
+                    </>
+                  ) : (
+                    <>
+                      {levelLabel(key)}以
+                      {level.source === "breakout_retest_reference"
+                        ? ` ${level.breakoutDate || "已确认"} 突破前的压力位`
+                        : key === "stop"
+                          ? "支撑位"
+                          : "压力位"}{" "}
+                      {price(level.basePrice)} 为基准，
+                      {key === "stop" ? "下留" : "上留"} {num(level.bufferAtr)}{" "}
+                      倍波幅 （{price(level.bufferValue)}）。
+                      {level.atrReferenceDate &&
+                        `波幅截至 ${level.atrReferenceDate}。`}
+                    </>
+                  )}
                 </p>
               ) : null;
             })}
             {view.atr.value == null && view.atr.reason && (
               <p>{view.atr.reason}</p>
             )}
+            {view.notice && <p>{view.notice}</p>}
           </div>
         </div>
       </details>

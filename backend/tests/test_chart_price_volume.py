@@ -1,9 +1,11 @@
 from copy import deepcopy
 from datetime import date, timedelta
+import hashlib
+import json
 
 import pytest
 
-from app.analytics.chart_price_volume import price_volume_levels
+from app.analytics.chart_price_volume import price_volume_levels, price_volume_profiles
 
 
 def fixture(period='D', kind='stock'):
@@ -172,3 +174,168 @@ def test_historical_breakout_does_not_use_an_adjustment_occurring_after_event():
     assert result['recent_breakout'] is None
     assert result['reference_date'] == following
     assert result['volume']['state'] == 'unknown'
+
+
+@pytest.mark.parametrize(('period', 'original_sha256'), [
+    ('D', '5aaf4a769e511471e5f4d021ccb6635017d2a63d2dff7b321d1df2e66fd7be6d'),
+    ('W', 'facceab32720dae1533fc4d7d2fc473e98550f642aad94869f8a2f836a63dd2b'),
+    ('M', '916974d002d3feed1072db5f9cd03600c58f544fb9a7d8c5239d178b02e47a40'),
+])
+def test_structure_output_preserves_every_field_from_before_short_profile(period, original_sha256):
+    # These fingerprints were taken from the committed v1 implementation.
+    chart, days = fixture(period)
+    original = deepcopy(chart)
+    value = price_volume_levels(chart, days, expected_snapshot='market-test')
+    assert hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest() == original_sha256
+    assert price_volume_levels(chart, days, profile='structure') == value
+    combined = price_volume_profiles(chart, days, expected_snapshot='market-test')
+    assert {key: item for key, item in combined.items() if key != 'short_term'} == value
+    assert 'profile' not in value and 'short_term' not in value
+    assert chart == original
+
+
+def test_short_profile_rejects_far_support_without_moving_its_real_price():
+    chart, days = fixture()
+    structure = price_volume_levels(chart, days)
+    short = price_volume_levels(chart, days, profile='short_week_v1')
+    assert structure['support']['price'] == 9
+    assert short['support'] is None
+    assert '暂无可用近端支撑' in short['support_reason']
+    assert short['algorithm'] == 'short-week-risk-levels-v1'
+    assert short['max_risk_pct'] == short['risk_max_pct'] == 5
+    assert short['structure_lookback'] == 20 and short['lookback'] == 120
+    assert short['atr'] == structure['atr'] and short['volume'] == structure['volume']
+    assert short['stop']['source'] == 'short_risk_boundary'
+    assert short['stop']['price'] >= chart['bars'][-1]['close'] * .95
+    assert '不代表真实支撑' in short['reason']
+
+
+def test_short_profile_uses_recent_formed_pivots_without_old_structure_fallback():
+    chart, days = fixture()
+    chart['bars'][25]['high'] = 10.6
+    chart['bars'][28]['low'] = 9.4
+    structure = price_volume_levels(chart, days)
+    short = price_volume_levels(chart, days, profile='short_week_v1')
+    assert structure['support']['formed_at'] == days[12]
+    assert structure['resistance']['formed_at'] == days[8]
+    assert short['support'] is None and short['resistance'] is None
+    assert short['breakout'] is None and short['recent_breakout'] is None
+    assert '近20根' in short['support_reason'] and '近20根' in short['breakout_reason']
+    assert short['stop'] is not None
+    assert short['atr']['window_start'] == days[0]
+
+
+def test_short_profile_keeps_genuine_near_support_and_its_confirmation_dates():
+    chart, days = fixture()
+    for bar in chart['bars'][-20:]:
+        bar.update(low=10.3, high=10.7, close=10.4, open=10.4)
+    chart['bars'][28]['low'] = 10.1
+    chart['bars'][-1]['close'] = 10.5
+    short = price_volume_levels(chart, days, profile='short_week_v1')
+    assert short['support']['price'] == 10.1
+    assert short['support']['formed_at'] == days[28]
+    assert short['support']['confirmed_on'] == days[30]
+    assert short['support_reason'] is None
+    boundary = short['stop']
+    assert boundary['formed_at'] == boundary['confirmed_on'] == days[-1]
+    assert boundary['base_price'] == 10.5
+    assert boundary['structure_reference'] == short['support']
+    assert boundary['price'] >= 10.1 - .25 * short['atr']['value']
+
+
+def test_rapid_rise_short_risk_boundary_is_bounded_and_not_called_support():
+    chart, days = fixture()
+    chart['bars'][-1].update(open=49.5, low=49, high=51, close=50)
+    short = price_volume_levels(chart, days, profile='short_week_v1', max_risk_pct=5)
+    boundary = short['stop']
+    assert short['support'] is None
+    assert boundary['price'] == pytest.approx(47.5)
+    assert boundary['selected_basis'] == 'maximum_risk_distance'
+    assert boundary['source'] == 'short_risk_boundary'
+    assert boundary['distance_pct'] == pytest.approx(-5)
+    assert boundary['buffer_value'] == pytest.approx(50 - boundary['price'])
+    assert boundary['buffer_atr'] == pytest.approx(boundary['buffer_value'] / short['atr']['value'])
+    assert boundary['atr_reference_date'] == days[-1]
+    assert '不是真实支撑或个人成本止损' in boundary['notice']
+    assert '未经最优性回测' in boundary['notice']
+
+
+def test_short_risk_reference_respects_atr_and_configured_distance_independently():
+    chart, days = fixture()
+    short = price_volume_levels(chart, days, profile='short_week_v1', max_risk_pct=20)
+    assert short['stop']['price'] == pytest.approx(short['reference_price'] - short['atr']['value'])
+    assert short['stop']['selected_basis'] == 'reference_close_minus_atr14'
+    tight = price_volume_levels(chart, days, profile='short_week_v1', max_risk_pct=.5)
+    assert tight['support'] is None
+    assert tight['stop']['price'] == pytest.approx(tight['reference_price'] * .995)
+    assert tight['stop']['distance_pct'] == pytest.approx(-.5)
+
+
+@pytest.mark.parametrize(('period', 'kind'), [('W', 'stock'), ('M', 'stock'), ('D', 'index')])
+def test_short_profile_does_not_substitute_other_chart_periods_or_instruments(period, kind):
+    chart, days = fixture(period, kind)
+    value = price_volume_levels(chart, days, profile='short_week_v1')
+    assert value['state'] == 'unknown'
+    assert value['reference_price'] is None
+    assert value['support'] is value['stop'] is value['breakout'] is None
+    assert '仅支持个股完整日K' in value['reason']
+
+
+@pytest.mark.parametrize('mutation', ['gap', 'action', 'bad_quote', 'future', 'snapshot'])
+def test_short_profile_missing_atr_bad_quotes_and_future_data_stay_unknown(mutation):
+    chart, days = fixture()
+    expected = None
+    if mutation == 'gap':
+        del chart['bars'][-4]
+    elif mutation == 'action':
+        chart['bars'][-8]['corporate_action'] = True
+    elif mutation == 'bad_quote':
+        chart['bars'][-1]['close'] = 0
+    elif mutation == 'future':
+        chart['as_of'] = days[-2]
+    else:
+        expected = 'other-snapshot'
+    value = price_volume_levels(chart, days, profile='short_week_v1', expected_snapshot=expected)
+    assert value['state'] == 'unknown'
+    assert value['stop'] is None
+
+
+@pytest.mark.parametrize('risk', [None, True, False, '5', 0, -1, 100, float('nan'), float('inf')])
+def test_short_profile_rejects_invalid_risk_percentages(risk):
+    chart, days = fixture()
+    with pytest.raises(ValueError, match='max_risk_pct'):
+        price_volume_levels(chart, days, profile='short_week_v1', max_risk_pct=risk)
+
+
+def test_unknown_profile_is_rejected_without_silent_structure_fallback():
+    chart, days = fixture()
+    with pytest.raises(ValueError, match='profile'):
+        price_volume_levels(chart, days, profile='unknown')
+
+
+@pytest.mark.parametrize(('field', 'value'), [('complete', False), ('noon_provisional', True)])
+def test_short_profile_rejects_forming_or_noon_quotes_without_falling_back(field, value):
+    chart, days = fixture()
+    chart['bars'][-1][field] = value
+    short = price_volume_levels(chart, days, profile='short_week_v1')
+    assert short['state'] == 'unknown'
+    assert short['reference_price'] is None and short['reference_date'] is None
+    assert short['support'] is short['stop'] is short['breakout'] is None
+    assert short['atr']['state'] == 'unknown'
+    # This profile does not expand the old structural contract's validation.
+    structure = price_volume_levels(chart, days)
+    assert structure['reference_date'] == days[-1]
+    assert 'structure_lookback' not in structure
+
+
+@pytest.mark.parametrize(('field', 'value'), [('complete', False), ('noon_provisional', True)])
+def test_short_incomplete_interior_quote_restarts_warmup_without_skipping_it(field, value):
+    chart, days = fixture()
+    chart['bars'][-4][field] = value
+    short = price_volume_levels(chart, days, profile='short_week_v1')
+    assert short['reference_date'] == days[-1]
+    assert short['window_start'] == days[-3]
+    assert short['observed_bars'] == 3
+    assert short['state'] == 'unknown'
+    assert short['support'] is short['stop'] is short['breakout'] is None
+    assert short['atr']['observed_bars'] == 3

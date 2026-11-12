@@ -5,7 +5,9 @@ import math
 from .support_resistance import WING, _consecutive, _day, _number, _valid_bar, confirmed_pivots
 
 VERSION = 'structure-volume-levels-v1'
+SHORT_VERSION = 'short-week-risk-levels-v1'
 LOOKBACK = 120
+SHORT_LOOKBACK = 20
 ATR_PERIOD = 14
 VOLUME_PERIOD = 20
 STOP_ATR = 0.5
@@ -14,7 +16,7 @@ RECENT_BARS = 5
 TOLERANCE = 1e-9
 
 
-def _segment(bars, period, sessions, *, stock, basis):
+def _segment(bars, period, sessions, *, stock, basis, strict_daily_complete=False):
     closed, coverage = {'W': ('week_closed', 'weekly_quote_coverage_complete'),
                         'M': ('month_closed', 'monthly_quote_coverage_complete')}.get(period, (None, None))
     # Only an explicitly forming period may be omitted. A bad completed final
@@ -26,6 +28,7 @@ def _segment(bars, period, sessions, *, stock, basis):
     for bar in bars:
         if (not _valid_bar(bar, period) or bar['date'] not in sessions
                 or bar.get('price_basis', basis) != basis
+                or (strict_daily_complete and (bar.get('complete') is False or bar.get('noon_provisional') is True))
                 or (closed and bar.get(closed) is False)
                 or (coverage and bar.get(coverage) is False)
                 or (stock and basis == 'none' and bar.get('corporate_action_coverage_known') is not True)):
@@ -135,7 +138,7 @@ def _buffered(level, atr, multiple, reference, *, state=None):
             **({'state': state} if state else {})}
 
 
-def _recent_breakout(bars, pivots, chart):
+def _recent_breakout(bars, pivots, chart, *, structure_lookback=None):
     adjustment_date = max(
         (event['date'] for event in (chart.get('adjustment') or {}).get('events', [])
          if isinstance(event, dict) and _day(event.get('date'))), default=None,
@@ -144,7 +147,11 @@ def _recent_breakout(bars, pivots, chart):
         history = bars[:index]
         if len(history) <= ATR_PERIOD or (adjustment_date and history[-1]['date'] < adjustment_date):
             continue
-        pivot = _active(pivots, history, 'resistance', inclusive=True)
+        candidates = pivots
+        if structure_lookback is not None:
+            cutoff = history[-structure_lookback]['date'] if len(history) >= structure_lookback else history[0]['date']
+            candidates = [pivot for pivot in pivots if pivot['date'] >= cutoff]
+        pivot = _active(candidates, history, 'resistance', inclusive=True)
         if pivot is None:
             continue
         previous_atr = _atr(history)
@@ -199,7 +206,42 @@ def _signal(result):
             'reason': '窗口内未确认最近五个完整周期的收盘突破，候选价位随当前已确认结构展示'}
 
 
-def price_volume_levels(chart, calendar, *, expected_snapshot=None):
+def _short_risk_boundary(base, atr, reference, reference_date, max_risk_pct):
+    """A bounded observation reference, never a claimed support or cost stop."""
+    if atr['value'] is None:
+        return None
+    candidates = [
+        {'basis': 'reference_close_minus_atr14', 'price': reference - atr['value']},
+        {'basis': 'maximum_risk_distance', 'price': reference * (1 - max_risk_pct / 100)},
+    ]
+    if base is not None:
+        candidates.append({'basis': 'near_structure_minus_quarter_atr14',
+                           'price': base['price'] - 0.25 * atr['value']})
+    selected = max(candidates, key=lambda item: item['price'])
+    price = selected['price']
+    if not math.isfinite(price) or not 0 < price < reference:
+        return None
+    distance = reference - price
+    return {'price': price, 'source': 'short_risk_boundary',
+            'formed_at': reference_date, 'confirmed_on': reference_date,
+            'base_price': reference, 'buffer_atr': distance / atr['value'],
+            'buffer_value': distance, 'atr_reference_date': atr['window_end'],
+            'buffer_basis': 'latest_complete_atr14',
+            'distance_pct': (price / reference - 1) * 100,
+            'max_risk_pct': max_risk_pct, 'risk_max_pct': max_risk_pct,
+            'selected_basis': selected['basis'], 'candidates': candidates,
+            'structure_reference': base,
+            'notice': '按参考收盘计算的短线风险边界，不是真实支撑或个人成本止损；风险距离与ATR系数未经最优性回测，也不保证成交损失上限'}
+
+
+def price_volume_levels(chart, calendar, *, expected_snapshot=None,
+                        profile='structure', max_risk_pct=5.0):
+    if profile not in ('structure', 'short_week_v1'):
+        raise ValueError('Unsupported price-volume profile')
+    if (isinstance(max_risk_pct, bool) or not isinstance(max_risk_pct, (int, float))
+            or not math.isfinite(max_risk_pct) or not 0 < max_risk_pct < 100):
+        raise ValueError('max_risk_pct must be a finite percentage between 0 and 100')
+    short = profile == 'short_week_v1'
     instrument = chart.get('instrument') or {}
     period, as_of, basis = (chart.get(key) for key in ('period', 'as_of', 'price_basis'))
     result = {'algorithm': VERSION, 'instrument_id': instrument.get('instrument_id'),
@@ -208,6 +250,17 @@ def price_volume_levels(chart, calendar, *, expected_snapshot=None):
               'state': 'unknown', 'reason': None, 'lookback': LOOKBACK,
               'support': None, 'resistance': None, 'stop': None, 'breakout': None,
               'recent_breakout': None, 'support_break': None, 'volume': _volume([], chart), 'atr': _atr([])}
+    if short:
+        result.update(algorithm=SHORT_VERSION, profile=profile,
+                      structure_lookback=SHORT_LOOKBACK, max_risk_pct=max_risk_pct,
+                      risk_max_pct=max_risk_pct,
+                      support_reason='暂无可核验的近端支撑',
+                      breakout_reason='暂无可核验的近端突破参考',
+                      notice='一周持股观察档位；结构取最近20根完整日K，ATR与量能沿用连续可比报价。参数未经最优性回测，风险边界不等同个人持仓止损')
+        if period != 'D' or instrument.get('kind') != 'stock':
+            result['reason'] = '一周短线参考仅支持个股完整日K'
+            result['signal'] = _signal(result)
+            return result
     if (instrument.get('kind') not in ('stock', 'index') or period not in ('D', 'W', 'M')
             or not _day(as_of) or not result['snapshot_id']
             or (expected_snapshot and result['snapshot_id'] != expected_snapshot)):
@@ -227,12 +280,16 @@ def price_volume_levels(chart, calendar, *, expected_snapshot=None):
             result['reason'] = '观察日没有可核验报价，不使用更早报价冒充当前参考'
         else:
             sessions = {day: index for index, day in enumerate(calendar)}
-            segment, forming = _segment(bars, period, sessions, stock=instrument['kind'] == 'stock', basis=basis)
+            segment, forming = _segment(bars, period, sessions, stock=instrument['kind'] == 'stock', basis=basis,
+                                        strict_daily_complete=short)
             if not segment:
                 result['reason'] = '最新完整周期价格或可比口径未核验，不回退更早报价'
             else:
                 reference = segment[-1]['close']
                 pivots = list(confirmed_pivots(segment, period, sessions))
+                if short:
+                    cutoff = segment[-SHORT_LOOKBACK]['date'] if len(segment) >= SHORT_LOOKBACK else segment[0]['date']
+                    pivots = [pivot for pivot in pivots if pivot['date'] >= cutoff]
                 support, resistance = (_active(pivots, segment, kind) for kind in ('support', 'resistance'))
                 atr = _atr(segment)
                 result.update(reference_date=segment[-1]['date'], reference_price=reference,
@@ -241,7 +298,16 @@ def price_volume_levels(chart, calendar, *, expected_snapshot=None):
                               reason='当前周期尚未完成，参考截至最近完整周期' if forming else None)
                 result['support'] = _level(support, reference) if support else None
                 result['resistance'] = _level(resistance, reference) if resistance else None
-                result['recent_breakout'] = _recent_breakout(segment, pivots, chart)
+                if short:
+                    if result['support'] is None:
+                        result['support_reason'] = '近20根完整日K暂无已确认且仍有效的近端支撑'
+                    elif -result['support']['distance_pct'] > max_risk_pct + TOLERANCE:
+                        result['support_reason'] = f'已确认支撑距参考收盘{-result["support"]["distance_pct"]:.2f}%，超过{max_risk_pct:g}%短线距离范围；暂无可用近端支撑'
+                        result['support'] = None
+                    else:
+                        result['support_reason'] = None
+                result['recent_breakout'] = _recent_breakout(segment, pivots, chart,
+                    structure_lookback=SHORT_LOOKBACK if short else None)
                 result['support_break'] = _support_break(segment, pivots)
                 event = result['recent_breakout']
                 stop_base = result['support']
@@ -250,7 +316,8 @@ def price_volume_levels(chart, calendar, *, expected_snapshot=None):
                     stop_base = {**_level({'line_type': 'resistance', 'price': event['base_price'],
                                           'date': event['formed_at'], 'confirmed_on': event['confirmed_on']}, reference),
                                  'source': 'breakout_retest_reference', 'breakout_date': event['date']}
-                result['stop'] = _buffered(stop_base, atr, -STOP_ATR, reference)
+                result['stop'] = (_short_risk_boundary(stop_base, atr, reference, segment[-1]['date'], max_risk_pct)
+                                  if short else _buffered(stop_base, atr, -STOP_ATR, reference))
                 if result['stop'] is not None:
                     result['stop']['buffer_basis'] = 'latest_complete_atr14'
                 if event and event['state'] != 'failed':
@@ -258,5 +325,20 @@ def price_volume_levels(chart, calendar, *, expected_snapshot=None):
                                           if key not in ('date', 'close', 'volume', 'volume_confirmed')}
                 else:
                     result['breakout'] = _buffered(result['resistance'], atr, BREAKOUT_ATR, reference, state='watching')
+                if short:
+                    result['breakout_reason'] = None if result['breakout'] else '近20根完整日K暂无可核验的近端压力与突破参考'
+                    if atr['value'] is None or result['stop'] is None:
+                        result['state'] = 'unknown'
+                        result['reason'] = atr['reason'] or '无法形成正值且低于参考收盘的短线风险边界'
+                    elif result['support'] is None:
+                        result['reason'] = '暂无近端支撑；短线风险边界按波动与风险距离计算，不代表真实支撑'
     result['signal'] = _signal(result)
+    return result
+
+
+def price_volume_profiles(chart, calendar, *, expected_snapshot=None, max_risk_pct=5.0):
+    """Keep the original structural contract and expose short-term data apart."""
+    result = price_volume_levels(chart, calendar, expected_snapshot=expected_snapshot)
+    result['short_term'] = price_volume_levels(chart, calendar, expected_snapshot=expected_snapshot,
+                                             profile='short_week_v1', max_risk_pct=max_risk_pct)
     return result

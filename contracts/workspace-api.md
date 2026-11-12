@@ -391,6 +391,14 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 自动规则与 `chart_annotation`、手动规则 clock 和手动提醒保留政策独立。043迁移不为旧股票自动启用规则。`GET /instruments/{id}/automatic-price-alerts` 只查SQLite，返回 `instrument_id/rule/latest_evaluation/latest_baseline`；未配置返回disabled、revision=0、rule_id=null，不取行情或排队。`PUT` 接受完整 `{enabled,modes,require_volume,expected_revision}`，版本冲突409；只支持已留存个股，默认关闭，启用至少选一项。修改后从保存时已发布业务日之后生效，不追溯产生旧触发。响应另含 `task`，配置保存和基准准备任务排队在同一短事务，唯一worker在事务外读取行情。
 
+044新增 `profile:structure|short_week_v1` 和 `max_risk_pct`。已有规则迁移为structure/5，不改旧规则版本、历史证据和基准；旧客户端PUT省略新增字段仍按structure/5。未配置股票的GET默认short_week_v1/5，但保持关闭。新客户端PUT显式提交模式与风险距离上限（0.5至20的百分数，最多两位小数）；任一模式/风险参数修改递增revision、清除旧baseline与专用pin，并仅为启用规则准备新基准。GET的algorithm为实际计算版本；原表algorithm字段保持043兼容值，实际模型由持久化profile冻结，旧任务缺profile仍使用原structure算法。
+
+一周短线使用 `short-week-risk-levels-v1`，结构限近20根完整日K，超出风险距离的真实支撑保留在历史结构观察、不充作近端支撑；没有近端支撑时明确未知。初始短线风险线取真实近端结构下留0.25ATR14、收盘减1ATR14、收盘乘(1-max_risk_pct/100)中最高的有效价格；它是可配置风险参考，不表示该价位存在市场支撑，也不绑定个人持仓成本。每次配置开启/修改后首次有效基准确定监控起点；后续基准按前一日已持久化风险线与本次公式参考取较高者，只抬高不放宽。收盘跌破后风险线state=breached，保持原价及失守状态，不因后续恢复再次重复stop_breakdown或自动重开新一轮；用户修改配置或关闭后重新启用才重置。缺失精确相邻交易日基准或公司行动不可比时不跨段沿用名义价位。
+
+短线baseline另存有界单一 `risk_anchor`，保留实际抬高当日的原始价格、ATR、来源代际及primary_snapshot_id；baseline与事件pin同时覆盖当前来源及抬高原件，避免只保留今日来源而丢失跟踪依据。事件中的profile、max_risk_pct、实际algorithm与冻结基准不可变。图表默认5%的当日重算参考和已开启规则的只上移监控基准分别标明，逐股修改参数或已有跟踪线应以提醒设置中显示的冻结基准为准，不把两者当同一持仓止损。
+
+PUT可额外传 `reset_monitoring:true` 显式重新设定已启用的一周短线规则。默认false；true只允许enabled=true且profile=short_week_v1，同值配置也递增revision、清除可替换基准并准备下一交易日监控，旧事件不删。失守状态的重新设定按钮使用该字段，不自动重设或回填保存当日的触发。
+
 模式为 `support_reclaim/close_breakout/support_breakdown/stop_breakdown`，只核验日K收盘。回踩要求前收>=事前支撑、当日low<=支撑<=收盘；突破要求前收<=事前突破参考<收盘；失守/止损跌破要求前收>=对应参考>收盘。前两类为triggered，后两类为invalidated风险提醒，不自动入自选。`require_volume=true` 只约束突破，要求当日成交量至少为此前20日均量1.5倍；风险提醒不被缺量过滤。原始价跨公司行动或覆盖未知、缺精确前一交易日报价、无事前完整基准或有效价位时保持unknown，不混用盘中快照或更早报价。
 
 每日先以已保存、同规则版本且日期严格为前一市场交易日的监控基准检查当天，再准备当前完整K线的新基准供下一日使用。支撑压力随新拐点确认、失效或窗口移出而变，ATR缓冲可每日变化；缺前一日监控基准时不事后重构触发，只准备后续基准。每股票规则只保留一份当前baseline；事件固定保存旧价位、日期、算法、量能及来源引用，不被下一次重算覆盖。自动事件不参与手动画线首次提醒后60交易日的删线政策。
