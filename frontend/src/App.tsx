@@ -9,6 +9,9 @@ import { ApiPageActivity, useApi } from "./lib/api";
 import type { Row } from "./lib/api";
 import { lazyView } from "./components/LazyView";
 import AppShell, { marketRoutes, routeTitles } from "./components/AppShell";
+const IntradayMonitor = lazyView(
+  () => import("./features/monitor/IntradayMonitor"),
+);
 import { isCalendarDate } from "./components/marketDate";
 import { intradayChartSelection } from "./components/intradayChartNavigation";
 import {
@@ -328,10 +331,10 @@ export default function App() {
     [route, date, noonChartAsOf, noonPublishedClose, notify],
   );
   const openTrackedStock = useCallback(
-    (id: string, round: Row, navigation?: StockNavigation) => {
+    (id: string, round: Row | null, navigation?: StockNavigation) => {
       setStock({
         ...stockSelectionForOpen(id, navigation),
-        eventBaseline: trackingEventBaseline(round),
+        ...(round ? { eventBaseline: trackingEventBaseline(round) } : {}),
       });
     },
     [],
@@ -623,6 +626,8 @@ export default function App() {
             initialStrategyId={context.tracking?.strategy_id}
           />
         );
+      case "monitor":
+        return <IntradayMonitor onStock={openStock} />;
       case "zodiac":
         return <Zodiac onStock={openStock} />;
       case "watchlist":

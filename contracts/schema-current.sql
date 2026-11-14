@@ -45,6 +45,7 @@
 -- 042_market_node_topic_overrides.sql sha256=492dc95745cabf6f4a5e856859e49a11e38c9e9cccd5be5ce52e8ea7ca2c329a
 -- 043_automatic_price_alerts.sql sha256=f44663961a5ec827339789b42c0b12154c9c00b9f010c2faba11706044837e9d
 -- 044_short_week_price_alerts.sql sha256=4c525ea85519eaf93a037d25c7d7e6757cd62f7057f7657b9c1505a4e3556127
+-- 045_intraday_monitor.sql sha256=9d259d28ec6100d831d71949673b722354a31014611c7f852c50585cb37cb6fe
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -268,6 +269,76 @@ CREATE TABLE dataset_snapshot (
   CHECK(data_begin<=data_end),
   CHECK(price_basis NOT IN ('forward','backward') OR adjustment_anchor IS NOT NULL),
   CHECK(state<>'published' OR (published_at_ms IS NOT NULL AND quality<>'invalid'))
+) STRICT;
+
+CREATE TABLE intraday_monitor_baseline (
+ trade_date TEXT NOT NULL,
+ instrument_id TEXT NOT NULL,
+ market_snapshot_id TEXT NOT NULL,
+ baseline_json TEXT NOT NULL CHECK(json_valid(baseline_json)),
+ PRIMARY KEY(trade_date,instrument_id)
+) STRICT;
+
+CREATE TABLE intraday_monitor_batch (
+ batch_id TEXT PRIMARY KEY,
+ job_id TEXT NOT NULL UNIQUE REFERENCES job(job_id),
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ slot_key TEXT NOT NULL,
+ config_revision INTEGER NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','partial','failed','missed','no_change')),
+ requested_count INTEGER NOT NULL DEFAULT 0,
+ valid_count INTEGER NOT NULL DEFAULT 0,
+ unknown_count INTEGER NOT NULL DEFAULT 0,
+ event_count INTEGER NOT NULL DEFAULT 0,
+ level_unknown_count INTEGER NOT NULL DEFAULT 0,
+ started_at_ms INTEGER,
+ completed_at_ms INTEGER,
+ reason TEXT,
+ manifest_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(manifest_json)),
+ cleanup_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(cleanup_json)),
+ purged_at_ms INTEGER,
+ UNIQUE(trade_date,slot_key)
+) STRICT;
+
+CREATE TABLE intraday_monitor_event (
+ event_id TEXT PRIMARY KEY,
+ instrument_id TEXT NOT NULL,
+ name TEXT NOT NULL,
+ trade_date TEXT NOT NULL CHECK(date(trade_date,'+0 days') IS trade_date),
+ type TEXT NOT NULL,
+ phase TEXT NOT NULL CHECK(phase IN ('observed','holding')),
+ lower_price REAL NOT NULL CHECK(lower_price>0),
+ upper_price REAL NOT NULL CHECK(upper_price>=lower_price),
+ first_seen_at_ms INTEGER NOT NULL,
+ last_seen_at_ms INTEGER NOT NULL,
+ confirmed_at_ms INTEGER,
+ latest_price REAL NOT NULL CHECK(latest_price>0),
+ change_pct REAL,
+ read_at_ms INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+CREATE TABLE intraday_monitor_evidence (
+ receipt_id TEXT PRIMARY KEY,
+ event_id TEXT NOT NULL REFERENCES intraday_monitor_event(event_id),
+ batch_id TEXT NOT NULL REFERENCES intraday_monitor_batch(batch_id),
+ rule_key TEXT NOT NULL,
+ episode TEXT NOT NULL,
+ type TEXT NOT NULL,
+ phase TEXT NOT NULL CHECK(phase IN ('observed','holding')),
+ observed_at_ms INTEGER NOT NULL,
+ evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)),
+ UNIQUE(rule_key,episode,type,phase)
+) STRICT;
+
+CREATE TABLE intraday_monitor_state (
+ instrument_id TEXT PRIMARY KEY,
+ trade_date TEXT NOT NULL,
+ slot_key TEXT NOT NULL,
+ config_revision INTEGER NOT NULL,
+ state_json TEXT NOT NULL CHECK(json_valid(state_json)),
+ quote_json TEXT NOT NULL CHECK(json_valid(quote_json)),
+ levels_json TEXT NOT NULL CHECK(json_valid(levels_json)),
+ updated_at_ms INTEGER NOT NULL
 ) STRICT;
 
 CREATE TABLE job (
@@ -1211,6 +1282,16 @@ CREATE INDEX chart_annotation_instrument ON chart_annotation(instrument_id, crea
 
 CREATE UNIQUE INDEX chart_annotation_origin_key ON chart_annotation(instrument_id,origin_key) WHERE origin_key IS NOT NULL;
 
+CREATE INDEX intraday_monitor_batch_day ON intraday_monitor_batch(trade_date DESC,slot_key DESC);
+
+CREATE INDEX intraday_monitor_event_day ON intraday_monitor_event(trade_date DESC,last_seen_at_ms DESC,event_id);
+
+CREATE INDEX intraday_monitor_event_stock ON intraday_monitor_event(instrument_id,trade_date,type,last_seen_at_ms DESC);
+
+CREATE INDEX intraday_monitor_evidence_batch ON intraday_monitor_evidence(batch_id);
+
+CREATE INDEX intraday_monitor_evidence_event ON intraday_monitor_evidence(event_id,observed_at_ms,receipt_id);
+
 CREATE INDEX line_alert_by_day ON line_alert_event(trade_date DESC,created_at_ms DESC);
 
 CREATE INDEX line_alert_by_stock ON line_alert_event(instrument_id,trade_date DESC,created_at_ms DESC);
@@ -1537,6 +1618,17 @@ END;
 
 CREATE TRIGGER insert_snapshot_staged_only BEFORE INSERT ON dataset_snapshot
 WHEN NEW.state='published' BEGIN SELECT RAISE(ABORT,'insert staged then validate and publish'); END;
+
+CREATE TRIGGER intraday_monitor_event_no_delete BEFORE DELETE ON intraday_monitor_event
+WHEN intraday_monitor_expiry_allowed(OLD.event_id)!=1
+BEGIN SELECT RAISE(ABORT,'retain intraday monitor card until authorized expiry'); END;
+
+CREATE TRIGGER intraday_monitor_evidence_no_delete BEFORE DELETE ON intraday_monitor_evidence
+WHEN intraday_monitor_expiry_allowed(OLD.event_id)!=1
+BEGIN SELECT RAISE(ABORT,'retain intraday monitor source evidence'); END;
+
+CREATE TRIGGER intraday_monitor_evidence_no_update BEFORE UPDATE ON intraday_monitor_evidence
+BEGIN SELECT RAISE(ABORT,'retain intraday monitor source evidence'); END;
 
 CREATE TRIGGER job_event_order BEFORE INSERT ON job_event
 WHEN NEW.seq<>coalesce((SELECT max(seq)+1 FROM job_event WHERE job_id=NEW.job_id),1)

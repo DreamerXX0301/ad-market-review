@@ -66,6 +66,7 @@ export const navigation = [
       { id: "topics", name: "题材库", icon: Network },
       { id: "strategy", name: "策略管理", icon: Settings2 },
       { id: "tracking", name: "策略跟踪", icon: Target },
+      { id: "monitor", name: "盘中监控", icon: Activity },
       { id: "watchlist", name: "我的自选", icon: Star },
       { id: "zodiac", name: "生肖跟踪", icon: CalendarDays },
       { id: "research", name: "个股研究", icon: BookOpen },
@@ -175,6 +176,8 @@ export default function AppShell({
     .flatMap((group) => group.items)
     .find((item) => item.id === route);
   const PageIcon = currentNavigation?.icon || BarChart3;
+  const displayedDataDate =
+    dataDate || (dataLoading ? "读取中…" : dataError ? "读取失败" : "未初始化");
   return (
     <div className="app-layout" data-workspace={workspace} data-route={route}>
       <button
@@ -359,18 +362,31 @@ export default function AppShell({
               <div className="current-business-date">股票研究 · 行情复盘</div>
             ) : (
               <div className="current-business-date">
-                <span className={`status-dot${dataDate ? " good" : ""}`} />
-                行情截止{" "}
-                {dataDate ||
-                  (dataLoading
-                    ? "读取中…"
-                    : dataError
-                      ? "读取失败"
-                      : "未初始化")}
+                <span
+                  className={`status-dot${dataDate ? " good" : ""}`}
+                  aria-hidden="true"
+                />
+                <span className="topbar-date-label">行情截止</span>
+                {dataDate ? (
+                  <time className="topbar-date-value" dateTime={dataDate}>
+                    {displayedDataDate}
+                  </time>
+                ) : (
+                  <span className="topbar-date-value">{displayedDataDate}</span>
+                )}
               </div>
             )}
-            <LineAlertNotice businessDate={dataDate} onNavigate={onNavigate} />
-            <button className="avatar" title="本机个人研究空间">
+            <LineAlertNotice
+              businessDate={dataDate}
+              today={today}
+              onNavigate={onNavigate}
+            />
+            <button
+              type="button"
+              className="avatar"
+              title="本机个人研究空间"
+              aria-label="本机个人研究空间"
+            >
               本
             </button>
           </div>

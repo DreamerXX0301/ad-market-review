@@ -68,7 +68,10 @@ for (const [name, url] of Object.entries({
   "react/jsx-runtime": import.meta.resolve("react/jsx-runtime"),
   "lucide-react": import.meta.resolve("lucide-react"),
   "../../lib/api": encoded(
-    "export const useApi=()=>({data:{business_date:'2026-10-28',total:123,items:[]},reload:()=>{throw Error('render cannot fetch')},loading:false,error:''});export const list=(v)=>v?.items||[];",
+    "export const useApi=(path)=>({data:path==='/intraday-monitor/summary'?{date:'2026-10-28',enabled:false,total:0,unread_count:0,items:[]}:{business_date:'2026-10-28',total:123,items:[]},reload:()=>{throw Error('render cannot fetch')},loading:false,error:''});export const usePageActive=()=>true;export const list=(v)=>v?.items||[];",
+  ),
+  "../../components/UI": encoded(
+    "export const useToast=()=>()=>{throw Error('render cannot toast historical reminders')};",
   ),
   "../../lib/workbenchEvents": encoded(
     "export const LINE_ALERT_CHECK_FINISHED='finished';export const AUTOMATIC_PRICE_ALERTS_CHANGED='automatic-changed';",
@@ -86,22 +89,27 @@ const { default: Notice } = await import(encoded(source));
 const html = renderToStaticMarkup(
   createElement(Notice, {
     businessDate: "2026-10-28",
+    today: "2026-10-28",
     onNavigate: () => {
       throw Error("render cannot navigate");
     },
   }),
 );
-assert.match(html, /今日行情提醒 123 条/);
+assert.match(html, /盘后行情提醒 123 条/);
 assert.match(html, /99\+/);
 assert.match(html, /aria-live="polite"/);
 assert.match(html, /aria-expanded="false"/);
 assert.doesNotMatch(
   component,
-  /AudioContext|playLineAlertSound|Volume2|VolumeX|setInterval|Notification\./,
+  /AudioContext|playLineAlertSound|Volume2|VolumeX|Notification\./,
 );
 assert.doesNotMatch(component, /开启声音|关闭声音|试听|localStorage/);
 assert.match(component, /LINE_ALERT_CHECK_FINISHED/);
 assert.match(component, /watchlist\?alerts=today/);
+assert.match(component, /30_000/);
+assert.match(component, /\/intraday-monitor\/summary/);
+assert.match(component, /document\.visibilityState/);
+assert.doesNotMatch(component, /method:\s*["'](?:POST|PUT)|\/evaluate/);
 console.log(
-  "Line notice: visible bounded today badge, direct list navigation, no sound/storage/background polling passed",
+  "Line notice: preserved daily date/badge rules, direct navigation, visible-only saved summary polling and no capture mutation passed",
 );

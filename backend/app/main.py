@@ -11,7 +11,7 @@ from app.routers import platform,workspace,backtests,watchlist,chart_annotations
 from app.routers import intraday, news_events, zodiac
 from app.routers import ai
 from app.routers import ai_events
-from app.routers import automatic_price_alerts
+from app.routers import automatic_price_alerts, intraday_monitor
 from app.services.supplement_access import SupplementWriteMiddleware
 from app.services.increment_access import IncrementWorkbenchMiddleware
 from app.services.ai_attachments import AIRequestSizeMiddleware
@@ -46,6 +46,7 @@ app.include_router(watchlist.router)
 app.include_router(zodiac.router)
 app.include_router(chart_annotations.router)
 app.include_router(automatic_price_alerts.router)
+app.include_router(intraday_monitor.router)
 
 @app.get('/health',include_in_schema=False)
 def health():return {'status':'ok','application':APP_ID,'app_name':APP_NAME,'version':APP_VERSION}

@@ -444,6 +444,9 @@ def dispatch(job):
         if result.get('status') != 'no_change':
             _capture_suspensions(job)
             _warm_pane_after_snapshot(job,result,kind='auction')
+    elif kind=='source_check' and _parameters(job).get('operation')=='intraday_monitor':
+        from app.services.intraday_monitor import execute_capture
+        execute_capture(job)
     elif kind=='source_check' and _parameters(job).get('operation')=='intraday_snapshot':
         from app.services.intraday_service import execute_capture
         result=execute_capture(job,lambda stage,percent:tasks.progress(
@@ -609,6 +612,13 @@ def run(once=False):
                     tick_automatic()
                 except Exception as error:
                     logger.warning('盘中自动计划核验稍后重试 %s',type(error).__name__)
+                job=tasks.claim_next(owner)
+            if not job:
+                try:
+                    from app.services.intraday_monitor import tick_automatic as tick_monitor
+                    tick_monitor()
+                except Exception as error:
+                    logger.warning('盘中关注池计划核验稍后重试 %s',type(error).__name__)
                 job=tasks.claim_next(owner)
             if not job:
                 if once:return

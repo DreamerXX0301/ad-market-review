@@ -82,6 +82,7 @@ const scopePaths: Record<string, RegExp> = {
     /^\/(?:strateg(?:ies|y-runs|y-batches)|sector-strateg(?:ies|y-runs))(?:[/?]|$)/,
   tracking:
     /^\/(?:tracking(?:-rounds|-events)?|sector-tracking(?:-rounds|-events)?|strategies|sector-strategies)(?:[/?]|$)/,
+  monitor: /^\/intraday-monitor(?:[/?]|$)/,
   research: /^\/research\/jobs(?:[/?]|$)/,
   backtest: /^\/backtests(?:[/?]|$)/,
   tasks: /^\/tasks(?:[/?]|$)/,

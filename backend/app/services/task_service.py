@@ -54,6 +54,8 @@ def append_event(connection, job_id: str, stage: str, message: str, level="info"
 def create_task(kind: str, parameters: dict, target_date: str | None = None, request_key: str | None = None, retry_of: str | None = None, *, chain_parent_id: str | None = None) -> dict:
     if kind == 'source_check' and parameters.get('operation') == 'auction_snapshot':
         raise HTTPException(403, '竞价只能由唯一worker的每天自动计划登记，不接受通用任务手动创建')
+    if kind == 'source_check' and parameters.get('operation') == 'intraday_monitor':
+        raise HTTPException(403, '盘中监控只能由唯一worker的已启用自动计划登记，不接受通用任务手动创建')
     request_key = request_key or new_id("request")
     if not isinstance(request_key,str) or not 1<=len(request_key)<=200:
         raise HTTPException(422,'请求标识须为1至200字符')
@@ -255,7 +257,7 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
         'source_check': {'sector_chart': '单板块历史K线', 'sector_charts': '板块K线尾部增量' if parameters.get('mode') == 'increment' else '全库板块历史K线',
                          'market_supplement': '盘面补充', 'dragon_tiger':'龙虎榜补齐', 'local_storage_conversion':'本地存储升级', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','automatic_price_alert_check':'自动量价提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
                          'strategy_batch_tracking': '板块命中自动入池' if target == 'sector' else '个股命中自动入池',
-                         'noon_snapshot': '午评快照采集', 'intraday_snapshot': '盘中快照采集', 'auction_snapshot': '盘前竞价终态采集'}.get(operation, '数据来源任务'),
+                         'noon_snapshot': '午评快照采集', 'intraday_snapshot': '盘中快照采集', 'intraday_monitor': '关注池盘中监控', 'auction_snapshot': '盘前竞价终态采集'}.get(operation, '数据来源任务'),
     }.get(item['kind'], '后台任务')
     # accepted_batches is a weighted percentage only after progress() reports.
     # A freshly started job with the schema default 0 has no measured progress.
@@ -387,7 +389,7 @@ def change_task(identifier: str, action: str):
     if batch and json.loads(batch['parameters_json']).get('operation')=='auction_snapshot' and action in ('retry','resume'):
         from .auction_service import requeue_capture
         return requeue_capture(identifier, action)
-    if batch and json.loads(batch['parameters_json']).get('operation')=='intraday_snapshot' and action in ('retry','resume'):
+    if batch and json.loads(batch['parameters_json']).get('operation') in ('intraday_snapshot','intraday_monitor') and action in ('retry','resume'):
         raise HTTPException(409,'盘中观察每时段只提交一次；未完成时可等下一观察时段')
     if batch and json.loads(batch['parameters_json']).get('operation')=='noon_snapshot':
         if action=='retry':
@@ -491,7 +493,7 @@ def claim_next(owner: str):
                     connection.execute("UPDATE job SET status='failed',phase='interrupted',finished_at_ms=?,error_summary='API计算进程中断，请手动重跑',lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?",(now_ms(),running['job_id']))
                     append_event(connection,running['job_id'],'interrupted','API计算租约已过期，请在原模块手动重跑','error')
                 else:
-                    if recoverable_selection or (running['kind']=='source_check' and json.loads(running['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_tracking','line_alert_check','automatic_price_alert_check','listing_status_check','quote_gap_source_check','noon_snapshot','auction_snapshot','intraday_snapshot')):
+                    if recoverable_selection or (running['kind']=='source_check' and json.loads(running['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_tracking','line_alert_check','automatic_price_alert_check','listing_status_check','quote_gap_source_check','noon_snapshot','auction_snapshot','intraday_snapshot','intraday_monitor')):
                         owner = owner+':'+new_id('attempt')
                     if recoverable_selection:
                         connection.execute("UPDATE job SET accepted_batches=0,phase='recovery' WHERE job_id=?", (running['job_id'],))
@@ -510,7 +512,7 @@ def claim_next(owner: str):
             queued = _next_queued(connection)
         if not queued:
             return None
-        if json.loads(queued['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_item','strategy_batch_tracking','line_alert_check','automatic_price_alert_check','listing_status_check','quote_gap_source_check','noon_snapshot','auction_snapshot','intraday_snapshot'):
+        if json.loads(queued['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_item','strategy_batch_tracking','line_alert_check','automatic_price_alert_check','listing_status_check','quote_gap_source_check','noon_snapshot','auction_snapshot','intraday_snapshot','intraday_monitor'):
             owner = owner+':'+new_id('attempt')
         connection.execute("UPDATE job SET status='running',phase='starting',lease_owner=?,lease_expires_at_ms=? WHERE job_id=?", (owner, now_ms() + 60_000, queued["job_id"]))
         append_event(connection, queued["job_id"], "starting", "工作进程已领取任务")

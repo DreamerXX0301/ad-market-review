@@ -54,6 +54,19 @@ def disable_intraday_automation(connection, now):
     return disable_switch_automation(connection, now, 'intraday-automation-v1')
 
 
+def disable_intraday_monitor(connection, now):
+    """Keep immutable observations, but remove permission and rolling state."""
+    disabled = disable_switch_automation(connection, now, 'intraday-monitor-config-v1')
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if not disabled and not {'intraday_monitor_state', 'intraday_monitor_baseline'}.intersection(tables):
+        return None
+    states = connection.execute('DELETE FROM intraday_monitor_state').rowcount if 'intraday_monitor_state' in tables else 0
+    baselines = connection.execute('DELETE FROM intraday_monitor_baseline').rowcount if 'intraday_monitor_baseline' in tables else 0
+    pins = connection.execute("DELETE FROM retention_pin WHERE owner_kind='manual' AND owner_id LIKE 'intraday-monitor-baseline:%'").rowcount if 'retention_pin' in tables else 0
+    return {'configuration_disabled': disabled, 'removed_states': states, 'removed_baselines': baselines,
+            'removed_baseline_pins': pins}
+
+
 def disable_automatic_price_alerts(connection, now):
     """A restored copy retains receipts, not permission to monitor new closes.
 
@@ -133,7 +146,7 @@ def verify_backup(bundle):
         path=safe_path(bundle,key)
         if key in expected:raise ValueError('Duplicate manifest file')
         if not path.is_file() or path.stat().st_size!=item['bytes'] or sha(path)!=item['sha256']:raise ValueError('Backup checksum mismatch: '+key)
-        if key not in ('business/app.sqlite3',) and not key.startswith(('published/','credentials/','raw/noon/')):raise ValueError('Unexpected file category')
+        if key not in ('business/app.sqlite3',) and not key.startswith(('published/','credentials/','raw/noon/','raw/intraday-monitor/')):raise ValueError('Unexpected file category')
         if key.startswith('credentials/') and not (len(Path(key).parts)==2 and key.endswith('.enc')):raise ValueError('Only ciphertext files can be restored')
         expected.add(key)
     actual=set()
@@ -152,6 +165,11 @@ def verify_backup(bundle):
         noon=noon_inventory(c,bundle/'raw')
         declared_noon={item['path'].removeprefix('raw/'):item['sha256'] for item in manifest['files'] if item['path'].startswith('raw/noon/')}
         if {key:value['stored_sha256'] for key,value in noon.items()}!=declared_noon:raise ValueError('Noon backup dependency closure differs from manifest')
+        from monitor_archive import inventory as monitor_inventory
+        monitor=monitor_inventory(c,bundle/'published',bundle/'raw')
+        for root,required in monitor.items():
+            declared={item['path'].removeprefix(root+'/'):item['sha256'] for item in manifest['files'] if item['path'].startswith(root+'/intraday-monitor/')}
+            if {key:value['sha256'] for key,value in required.items()}!=declared:raise ValueError('Intraday monitor backup dependency closure differs from manifest')
     finally:c.close()
     return manifest
 
@@ -165,7 +183,7 @@ def perform_restore(bundle,target):
         for item in manifest['files']:
             src=safe_path(bundle,item['path']);dst=safe_path(stage,item['path']);dst.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(src,dst)
             if sha(dst)!=item['sha256']:raise ValueError('Restore copy verification failed')
-            if item['path'].startswith(('business/','credentials/','raw/noon/')):dst.chmod(0o600)
+            if item['path'].startswith(('business/','credentials/','raw/noon/','raw/intraday-monitor/')):dst.chmod(0o600)
         c=connect_sqlite(stage/'business/app.sqlite3')
         try:
             now=time.time_ns()//1000000;c.execute('BEGIN IMMEDIATE')
@@ -176,6 +194,7 @@ def perform_restore(bundle,target):
             c.execute("DELETE FROM retention_pin WHERE owner_kind='request' OR (owner_kind='backup' AND owner_id=?)",(manifest['backup_id'],))
             automatic_review_disabled=disable_automatic_review(c,now)
             intraday_automation_disabled=disable_intraday_automation(c,now)
+            intraday_monitor_disabled=disable_intraday_monitor(c,now)
             automatic_price_alerts_disabled=disable_automatic_price_alerts(c,now)
             auction_discovery_disabled=disable_switch_automation(c,now,'auction-discovery-automation-v1')
             event_calendar_default_disabled=False
@@ -201,6 +220,9 @@ def perform_restore(bundle,target):
         result={'backup_id':manifest['backup_id'],'restored_at_ms':now,'paused_jobs':interrupted,'request_leases_removed':True,'master_key_restored':False,'credentials_require_original_master_key_or_reconfiguration':bool(manifest.get('credential_ciphertexts')),'auction_automation_disabled':automation_disabled,'automatic_review_disabled':automatic_review_disabled,'ai_disabled':ai['disabled'],'ai_interrupted_tasks':ai['interrupted_tasks'],'ai_cancelled_tasks':ai['cancelled_tasks']}
         if intraday_automation_disabled:
             result['intraday_automation_disabled'] = True
+        if intraday_monitor_disabled is not None:
+            result['intraday_monitor_disabled'] = True
+            result['intraday_monitor_reset'] = intraday_monitor_disabled
         if automatic_price_alerts_disabled is not None:
             result['automatic_price_alerts_disabled'] = True
             result['automatic_price_alert_reset'] = automatic_price_alerts_disabled

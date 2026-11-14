@@ -236,6 +236,11 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
             required,snapshots=needed_files(copied,published)
             from noon_archive import inventory as noon_inventory,copy_sources as copy_noon_sources
             noon_required=noon_inventory(copied,raw)
+            from monitor_archive import inventory as monitor_inventory,copy_raw_sources as copy_monitor_raw
+            monitor_required=monitor_inventory(copied,published,raw)
+            for key,meta in monitor_required['published'].items():
+                if key in required and required[key] not in (None,meta['sha256']):raise ValueError('Conflicting intraday monitor artifact hashes')
+                required[key]=meta['sha256']
             # A publication could have committed between initial pins and the online snapshot.
             # Pin its exact captured dependencies before copying; unavailable files make backup fail.
             make_pins(source,snapshots,owner)
@@ -253,6 +258,8 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
             dragon_tiger={key:value for key,value in required.items() if key.startswith('dragon-tiger/')}
             if dragon_tiger_files(published)!=dragon_tiger:raise ValueError('Dragon-tiger changed during backup; wait for manual collection to finish and retry')
             copy_noon_sources(noon_required,raw,stage)
+            copy_monitor_raw(monitor_required['raw'],raw,stage)
+            if monitor_inventory(copied,stage/'published',stage/'raw')!=monitor_required:raise ValueError('Intraday monitor backup dependency closure changed during copy')
             if latest:
                 generation=json.loads(latest[0]).get('market_snapshot_id')
                 if generation:
@@ -282,7 +289,7 @@ def _perform_backup(data_dir,output,sqlite_path=None,published_dir=None,credenti
             if path.is_symlink():raise ValueError('Symlink in backup staging directory')
             if finder_metadata(path):continue
             if path.is_file():files.append({'path':str(path.relative_to(stage)),'sha256':sha(path),'bytes':path.stat().st_size})
-        manifest={'format':'shixu-backup-v1','backup_id':owner,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),'sqlite_version':sqlite3.sqlite_version,'heads':heads,'retained_snapshot_count':len(snapshots),'credential_ciphertexts':credential_files,'master_key_included':False,'files':files,'notes':['Online SQLite backup; immutable file references pinned while copying','Optional public market-supplement JSON objects and mutable pointers copied only after checksum and stable-inventory verification','Optional dragon-tiger day/source CAS closure and resumable component pointers verified independently; no historical CAS directory scan','Optional noon sources copied only from captured SQLite and exact manifest closure with stored/canonical checksums; no raw directory scan','Bulk raw downloads and active DuckDB work files intentionally excluded','Do not change provider credentials during a backup; ciphertext storage is not cross-store versioned']}
+        manifest={'format':'shixu-backup-v1','backup_id':owner,'created_at':dt.datetime.now(dt.timezone.utc).isoformat(),'sqlite_version':sqlite3.sqlite_version,'heads':heads,'retained_snapshot_count':len(snapshots),'credential_ciphertexts':credential_files,'master_key_included':False,'files':files,'notes':['Online SQLite backup; immutable file references pinned while copying','Optional public market-supplement JSON objects and mutable pointers copied only after checksum and stable-inventory verification','Optional dragon-tiger day/source CAS closure and resumable component pointers verified independently; no historical CAS directory scan','Optional noon sources copied only from captured SQLite and exact manifest closure with stored/canonical checksums; no raw directory scan','Optional intraday monitor quote/raw pairs copied only from captured SQLite with exact path, byte length and SHA closure; purged receipts need no files','Bulk raw downloads and active DuckDB work files intentionally excluded','Do not change provider credentials during a backup; ciphertext storage is not cross-store versioned']}
         (stage/'backup-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
         for f in stage.rglob('*'):
             if f.is_symlink():raise ValueError('Symlink in backup staging directory')

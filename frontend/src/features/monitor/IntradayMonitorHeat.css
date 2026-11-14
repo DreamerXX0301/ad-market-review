@@ -1,0 +1,116 @@
+.intraday-monitor-heat-controls {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.intraday-monitor-heat-controls > label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+}
+.intraday-monitor-heat-controls select {
+  height: 36px;
+  min-height: 36px;
+  min-width: 145px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+}
+.intraday-monitor-heat-context {
+  display: grid;
+  gap: 6px;
+  padding: 15px 18px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.intraday-monitor-heat-context > strong {
+  color: var(--text);
+  font-size: var(--workbench-type-label, 13px);
+}
+.intraday-monitor-heat > .notice {
+  margin: 0 18px 14px;
+}
+.intraday-monitor-heat-topic {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  min-width: 125px;
+}
+.intraday-monitor-heat-topic small,
+.intraday-monitor-heat-coverage small,
+.intraday-monitor-heat-median small {
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+}
+.intraday-monitor-heat-coverage,
+.intraday-monitor-heat-median {
+  display: grid;
+  gap: 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.intraday-monitor-heat-leaders {
+  display: grid;
+  gap: 2px;
+  min-width: 145px;
+}
+.intraday-monitor-heat-leaders button {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  min-height: 18px;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-align: left;
+}
+.intraday-monitor-heat .table-wrap td {
+  padding: 9px 12px;
+  white-space: nowrap;
+}
+.intraday-monitor-heat-topic {
+  gap: 3px;
+}
+.intraday-monitor-heat-coverage,
+.intraday-monitor-heat-median {
+  gap: 3px;
+}
+.intraday-monitor-heat-leaders button > span,
+.intraday-monitor-heat-leaders button > b {
+  white-space: nowrap;
+}
+.intraday-monitor-heat-leaders b {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.intraday-monitor-heat-notes {
+  display: grid;
+  gap: 8px;
+  padding: 15px 18px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: var(--workbench-type-caption, 11px);
+  line-height: 1.8;
+}
+.intraday-monitor-heat-notes p {
+  margin: 0;
+}
+@media (max-width: 650px) {
+  .intraday-monitor-heat-controls {
+    gap: 10px;
+  }
+  .intraday-monitor-heat-controls > label {
+    flex: 1 1 130px;
+  }
+  .intraday-monitor-heat-controls select {
+    min-width: 0;
+    width: 100%;
+  }
+}

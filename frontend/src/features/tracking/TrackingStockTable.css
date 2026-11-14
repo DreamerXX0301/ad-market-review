@@ -1,0 +1,97 @@
+.tracking-stock-groups > .table-wrap > table {
+  min-width: 1000px;
+}
+.tracking-stock-group-row {
+  cursor: pointer;
+}
+.tracking-stock-group-row:hover > td {
+  background: color-mix(in srgb, var(--accent-secondary) 5%, var(--surface));
+}
+.tracking-stock-group-row:focus-visible {
+  outline: 2px solid var(--accent-secondary);
+  outline-offset: -2px;
+}
+.tracking-stock-strategies,
+.tracking-stock-entry-range {
+  display: grid;
+  gap: 7px;
+}
+.tracking-stock-strategies {
+  min-width: 180px;
+  max-width: 290px;
+}
+.tracking-stock-strategies > strong {
+  color: var(--accent-secondary);
+  font-size: var(--workbench-type-label, 13px);
+}
+.tracking-stock-strategies .tags {
+  gap: 5px;
+  align-items: center;
+}
+.tracking-stock-strategies .badge {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tracking-stock-more,
+.tracking-stock-entry-range > small,
+.tracking-stock-round-heading > span {
+  color: var(--workbench-type-muted, var(--muted));
+  font-size: var(--workbench-type-caption, 11px);
+  line-height: 1.65;
+}
+.tracking-stock-entry-range {
+  min-width: 185px;
+  font-variant-numeric: tabular-nums;
+}
+.tracking-stock-expand {
+  white-space: nowrap;
+}
+.tracking-stock-expand.active {
+  border-color: color-mix(in srgb, var(--accent-secondary) 35%, var(--border));
+  color: var(--accent-secondary);
+}
+.tracking-stock-groups
+  > .table-wrap
+  > table
+  > tbody
+  > .table-expanded-row
+  > td {
+  padding: 0 16px 18px;
+  background: color-mix(in srgb, var(--accent-secondary) 4%, var(--surface));
+}
+.tracking-stock-round-details {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.tracking-stock-round-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 7px 20px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.tracking-stock-round-heading > strong {
+  font-size: var(--workbench-type-label, 13px);
+}
+.tracking-stock-round-details .multi-sort-controls {
+  background: transparent;
+}
+@media (max-width: 700px) {
+  .tracking-stock-groups
+    > .table-wrap
+    > table
+    > tbody
+    > .table-expanded-row
+    > td {
+    padding-inline: 8px;
+  }
+  .tracking-stock-round-heading {
+    padding-inline: 12px;
+  }
+}

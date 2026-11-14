@@ -49,6 +49,14 @@
   gap: 18px;
   padding: 18px 22px;
 }
+.tracking-list-mode {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tracking-group-summary {
+  line-height: 1.8;
+}
 .tracking-view-tabs {
   display: inline-flex;
   flex-wrap: wrap;

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   createContext,
   useContext,
   useEffect,
@@ -6,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import {
   AlertCircle,
   ArrowDown,
@@ -444,6 +445,8 @@ export function Table({
   sorting = "auto",
   multiSort = false,
   multiDefaultSort = [],
+  renderExpandedRow,
+  rowProps,
 }: {
   rows: Row[];
   columns: Column[];
@@ -461,6 +464,10 @@ export function Table({
   /** Opt-in client sorting across all loaded rows, before pagination. */
   multiSort?: boolean;
   multiDefaultSort?: TableSort[];
+  /** Extra content for visible parent rows only; never enters sorting or pagination. */
+  renderExpandedRow?: (row: Row, orderedRows: Row[]) => ReactNode;
+  /** Optional attributes and interactions for data rows, excluding expanded content. */
+  rowProps?: (row: Row) => HTMLAttributes<HTMLTableRowElement>;
 }) {
   rows = rows.filter((row) => !isHiddenIndicatorField(row.field));
   columns = columns.filter((column) => !isHiddenIndicatorField(column.key));
@@ -658,57 +665,69 @@ export function Table({
                 r.round_id ||
                 r.topic_id ||
                 String(start + i);
+              const expanded = renderExpandedRow?.(r, sorted);
               return (
-                <tr key={id + "-" + i}>
-                  {onSelect && (
-                    <td>
-                      <input
-                        type="checkbox"
-                        aria-label={"选择" + (r.name || r.code || id)}
-                        checked={selection?.has(id)}
-                        onChange={() => onSelect(id)}
-                      />
-                    </td>
-                  )}
-                  {columns.map((c) => (
-                    <td
-                      key={c.key}
-                      className={c.align === "right" ? "text-right" : ""}
-                    >
-                      {c.render ? (
-                        c.render(r[c.key], r, start + i)
-                      ) : c.key === "name" &&
-                        (onStock || onStockNavigate) &&
-                        r.instrument_id ? (
-                        <div className="stock-identity-cell">
-                          <button
-                            className="stock-link"
-                            onClick={() =>
-                              onStockNavigate
-                                ? onStockNavigate(r.instrument_id, sorted, r)
-                                : onStock?.(r.instrument_id)
-                            }
-                          >
-                            <strong>{r.name || r.code}</strong>
-                          </button>
-                          <CopyStockCode
-                            code={r.code}
-                            instrumentId={r.instrument_id}
-                          />
-                        </div>
-                      ) : ["code", "instrument_id"].includes(c.key) &&
-                        r.instrument_id ? (
-                        <CopyStockCode
-                          code={r[c.key]}
-                          instrumentId={r.instrument_id}
-                          variant={c.key === "instrument_id" ? "full" : "short"}
+                <Fragment key={id + "-" + i}>
+                  <tr {...rowProps?.(r)}>
+                    {onSelect && (
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={"选择" + (r.name || r.code || id)}
+                          checked={selection?.has(id)}
+                          onChange={() => onSelect(id)}
                         />
-                      ) : (
-                        <Cell field={c.key} value={r[c.key]} />
-                      )}
-                    </td>
-                  ))}
-                </tr>
+                      </td>
+                    )}
+                    {columns.map((c) => (
+                      <td
+                        key={c.key}
+                        className={c.align === "right" ? "text-right" : ""}
+                      >
+                        {c.render ? (
+                          c.render(r[c.key], r, start + i)
+                        ) : c.key === "name" &&
+                          (onStock || onStockNavigate) &&
+                          r.instrument_id ? (
+                          <div className="stock-identity-cell">
+                            <button
+                              className="stock-link"
+                              onClick={() =>
+                                onStockNavigate
+                                  ? onStockNavigate(r.instrument_id, sorted, r)
+                                  : onStock?.(r.instrument_id)
+                              }
+                            >
+                              <strong>{r.name || r.code}</strong>
+                            </button>
+                            <CopyStockCode
+                              code={r.code}
+                              instrumentId={r.instrument_id}
+                            />
+                          </div>
+                        ) : ["code", "instrument_id"].includes(c.key) &&
+                          r.instrument_id ? (
+                          <CopyStockCode
+                            code={r[c.key]}
+                            instrumentId={r.instrument_id}
+                            variant={
+                              c.key === "instrument_id" ? "full" : "short"
+                            }
+                          />
+                        ) : (
+                          <Cell field={c.key} value={r[c.key]} />
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                  {expanded != null && expanded !== false && (
+                    <tr className="table-expanded-row">
+                      <td colSpan={columns.length + (onSelect ? 1 : 0)}>
+                        {expanded}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>

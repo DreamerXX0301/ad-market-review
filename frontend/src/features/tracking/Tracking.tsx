@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { visibleIndicatorData } from "../../lib/indicatorVisibility";
 import {
   Check,
@@ -43,6 +43,8 @@ import TrackingFilters from "./TrackingFilters";
 import StrategyPicker from "./StrategyPicker";
 import { trackingPriceContext } from "./trackingPricePresentation";
 import TrackingTabs from "./TrackingTabs";
+import TrackingStockTable from "./TrackingStockTable";
+import { groupTrackingStocks } from "./trackingStockGroups";
 import WatchlistButton from "../watchlist/WatchlistButton";
 import HotBrowseFilter, {
   HotBrowseBadge,
@@ -62,7 +64,11 @@ export default function Tracking({
   initialTargetType,
   initialStrategyId,
 }: {
-  onStock: (id: string, round: Row, navigation?: StockNavigation) => void;
+  onStock: (
+    id: string,
+    round: Row | null,
+    navigation?: StockNavigation,
+  ) => void;
   onMemberStock: SectorMemberStockCallback;
   initialTargetType?: string;
   initialStrategyId?: string;
@@ -432,13 +438,18 @@ function PolicyEditor({
 function StockTracking({
   onStock,
 }: {
-  onStock: (id: string, round: Row, navigation?: StockNavigation) => void;
+  onStock: (
+    id: string,
+    round: Row | null,
+    navigation?: StockNavigation,
+  ) => void;
 }) {
   const strategiesResult = useApi<Row>("/strategies"),
     fieldsResult = useApi<Row>("/strategy-fields"),
     topicsResult = useApi<Row>("/topics");
   const [strategyId, setStrategyId] = useState(""),
     [tab, setTab] = useState("active"),
+    [listMode, setListMode] = useState<"stocks" | "rounds">("stocks"),
     [triggered, setTriggered] = useState(false),
     [topicIds, setTopicIds] = useState<string[]>([]),
     [topicMatch, setTopicMatch] = useState<"any" | "all">("any"),
@@ -505,6 +516,10 @@ function StockTracking({
     result.data?.hot_filter_scope,
   );
   const rows = hotFilter.rows;
+  const stockGroups = useMemo(
+    () => groupTrackingStocks(rows, result.data?.business_date),
+    [rows, result.data?.business_date],
+  );
   const hasFilters = Boolean(
     strategyId ||
     stockQuery.trim() ||
@@ -558,10 +573,29 @@ function StockTracking({
     }
   }
   const strategies = list(strategiesResult.data);
+  const openStockFromGroup = (id: string, orderedGroups: Row[]) => {
+    const chartRows = orderedGroups.map(({ instrument_id, name, code }) => ({
+      instrument_id,
+      name,
+      code,
+    }));
+    const navigation = createStockNavigation(chartRows, {
+      source: "tracking",
+      scopeKey: JSON.stringify({
+        view: "stocks",
+        businessDate: result.data?.business_date,
+        ids: chartRows.map((row) => row.instrument_id),
+      }),
+      label: "跟踪池 · 股票汇总 · 当前筛选",
+      asOf: result.data?.business_date || undefined,
+    });
+    onStock(id, null, navigation);
+  };
   const openStockFromList = (
     id: string,
     orderedRows: Row[],
     clickedRow: Row,
+    navigationStrategyId?: string,
   ) => {
     const round = byRound.get(clickedRow.round_id) || clickedRow;
     const navigationRows = orderedRows.map((row) => ({
@@ -577,6 +611,7 @@ function StockTracking({
         scopeKey: JSON.stringify({
           tab,
           strategyId,
+          navigationStrategyId: navigationStrategyId || null,
           triggered,
           topicIds,
           topicMatch,
@@ -592,7 +627,9 @@ function StockTracking({
             : null,
           businessDate: result.data?.business_date,
         }),
-        label: `跟踪池 · ${tab === "alerts" ? "触发列表" : tab === "history" ? "结束历史" : "跟踪中"} · 当前筛选 · 已去重股票`,
+        label: navigationStrategyId
+          ? `跟踪池 · ${round.strategy_name || "当前策略"} · 当前匹配股票`
+          : `跟踪池 · ${tab === "alerts" ? "触发列表" : tab === "history" ? "结束历史" : "跟踪中"} · 当前筛选 · 已去重股票`,
         asOf: result.data?.business_date || undefined,
       },
       {
@@ -654,6 +691,195 @@ function StockTracking({
             row.evidence?.reason ||
             row.message,
         );
+  const renderRoundTable = (roundRows: Row[], navigationRows?: Row[]) => (
+    <Table
+      key={tab}
+      rows={roundRows}
+      rowKey="round_id"
+      multiSort
+      multiDefaultSort={[
+        { key: "trading_age", order: "desc" },
+        { key: "today_change_pct", order: "desc" },
+      ]}
+      columns={[
+        { key: "name" },
+        { key: "strategy_name", title: "所属策略" },
+        {
+          key: "current_topics",
+          title: "当前题材 / 行业",
+          render: currentTopicCell,
+          sortValue: topicSortValue,
+        },
+        {
+          key: "today_change_pct",
+          title: tab === "history" ? "结束日涨幅" : "今日涨幅",
+          sortValue: (row) => row.today_change_pct,
+          render: (value, row) => (
+            <span
+              className={tone(value)}
+              title={"可比行情日 " + (row.valuation_date || "待核验")}
+            >
+              {percent(value)}
+            </span>
+          ),
+        },
+        {
+          key: "tracking_change_pct",
+          title: "跟踪涨幅",
+          sortValue: (row) => trackingPriceContext(row).change,
+          render: (v, r) => {
+            const price = trackingPriceContext(r);
+            return (
+              <span
+                className={tone(price.forward ? price.change : v)}
+                title={price.reason}
+              >
+                {percent(price.forward ? price.change : v)}
+                {(price.forward ? price.change : v) == null &&
+                  r.comparison_reason && <Badge tone="warn">待核验</Badge>}
+                {price.forward && (
+                  <small className="tracking-price-context">
+                    同口径价格变化 ·{" "}
+                    {price.reference == null
+                      ? price.reason
+                      : `参照 ${num(price.reference)} · 锚 ${price.anchor}`}
+                  </small>
+                )}
+              </span>
+            );
+          },
+        },
+        {
+          key: "trading_age",
+          title: "进度",
+          description:
+            "按已核验的跟踪市场交易日数排序，不按进度条百分比；进度待核验时排末。",
+          sortValue: trackingProgressSortValue,
+          render: (_, r) => {
+            const progress = trackingProgress(r);
+            return (
+              <div className="tracking-age">
+                {progress.percentage === null ? (
+                  <span className="muted">交易日进度待核验</span>
+                ) : (
+                  <>
+                    <span>
+                      第 {progress.age} 日 <small>/ {progress.duration}</small>
+                    </span>
+                    <div>
+                      <i style={{ width: progress.percentage + "%" }} />
+                    </div>
+                  </>
+                )}
+                {r.status === "tracking" &&
+                  (r.duration_reached ? (
+                    <Badge tone="warn">已到期限，待核对</Badge>
+                  ) : r.policy_review_pending ? (
+                    <small className="muted">当前政策待核对</small>
+                  ) : null)}
+              </div>
+            );
+          },
+        },
+        { key: "entry_business_date" },
+        { key: "entry_price", title: "事件日收盘" },
+        {
+          key: "latest_event",
+          title: "最新事件",
+          sortValue: (row) => row.latest_event?.recorded_at_ms ?? null,
+          render: (v, r) => (
+            <button className="link" onClick={() => openDetail(r)}>
+              {v
+                ? statusText[v.event_type] ||
+                  textValue(v.event_type || v.message || v)
+                : "查看记录"}
+            </button>
+          ),
+        },
+        { key: "status", render: (v) => <Status value={v} /> },
+        {
+          key: "actions",
+          title: "操作",
+          render: (_, r) => (
+            <div className="button-group">
+              <WatchlistButton
+                instrumentId={r.instrument_id}
+                trackingRoundId={r.round_id}
+                sourceKind="tracking"
+                sourceName={r.strategy_name}
+                compact
+              />
+              <button
+                className="icon-btn"
+                title="提醒与结束条件"
+                onClick={() => setPolicy(r)}
+              >
+                <Settings2 size={14} />
+              </button>
+              {r.status === "tracking" && (
+                <button
+                  className="icon-btn danger-text"
+                  title="移出跟踪"
+                  onClick={() => {
+                    setRemove(r);
+                    setRemoveReason("");
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+              {r.status !== "tracking" && (
+                <button
+                  className="btn small"
+                  onClick={async () => {
+                    try {
+                      await api(
+                        `/strategies/${r.strategy_id}/ignores/${r.instrument_id}`,
+                        { method: "DELETE" },
+                      );
+                      toast("已解除忽略，下次真实命中后可重新入池");
+                    } catch (e: any) {
+                      setError(e.message);
+                    }
+                  }}
+                >
+                  解除忽略
+                </button>
+              )}
+            </div>
+          ),
+        },
+      ]}
+      pageSize={20}
+      onStockNavigate={
+        navigationRows
+          ? (id, _orderedRows, clickedRow) =>
+              openStockFromList(
+                id,
+                navigationRows.filter(
+                  (row) => row.strategy_id === clickedRow.strategy_id,
+                ),
+                clickedRow,
+                clickedRow.strategy_id,
+              )
+          : openStockFromList
+      }
+      emptyTitle={
+        hasFilters
+          ? "没有匹配的跟踪轮次"
+          : tab === "history"
+            ? "暂无结束轮次"
+            : "还没有跟踪中的股票"
+      }
+      emptyDescription={
+        hasFilters
+          ? "可切换策略或调整搜索及筛选条件。"
+          : tab === "history"
+            ? "到期、提前结束或手动移除的轮次会显示在这里。"
+            : "先在策略管理运行选股，再将命中结果加入对应跟踪池。"
+      }
+    />
+  );
   return (
     <div className="page-stack stock-tracking-workspace">
       <div className="section-intro">
@@ -677,7 +903,11 @@ function StockTracking({
         </div>
       </div>
       <div className="stats-grid">
-        <Stat label="当前列表" value={rows.length} />
+        <Stat
+          label={tab === "active" ? "当前股票" : "当前列表"}
+          value={tab === "active" ? stockGroups.length : rows.length}
+          sub={tab === "active" ? `${rows.length} 个匹配跟踪轮次` : undefined}
+        />
         <Stat label="最新业务日" value={result.data?.business_date || "—"} />
         <Stat label="提醒记录" value={alertCount ?? "—"} />
         <Stat
@@ -708,6 +938,30 @@ function StockTracking({
             }}
           />
           {tab === "active" && (
+            <div
+              className="tracking-list-mode"
+              role="group"
+              aria-label="跟踪列表显示方式"
+            >
+              <button
+                type="button"
+                className={`btn small ${listMode === "stocks" ? "primary" : ""}`}
+                aria-pressed={listMode === "stocks"}
+                onClick={() => setListMode("stocks")}
+              >
+                按股票汇总
+              </button>
+              <button
+                type="button"
+                className={`btn small ${listMode === "rounds" ? "primary" : ""}`}
+                aria-pressed={listMode === "rounds"}
+                onClick={() => setListMode("rounds")}
+              >
+                按策略轮次
+              </button>
+            </div>
+          )}
+          {tab === "active" && (
             <label className="checkbox-label">
               <input
                 type="checkbox"
@@ -733,6 +987,12 @@ function StockTracking({
           scope={result.data?.current_topics_scope}
         />
         <HotBrowseFilter model={hotFilter} onRefreshList={result.reload} />
+        {tab === "active" && (
+          <div className="panel-footnote tracking-group-summary" role="status">
+            当前筛选：{stockGroups.length} 只股票 / {rows.length} 个跟踪轮次。
+            页签按轮次统计；展开仅显示匹配筛选的策略，入池基准、跟踪收益和操作各自独立。
+          </div>
+        )}
         {result.loading && result.data && (
           <div className="panel-footnote" role="status">
             正在核对最新跟踪数据…
@@ -849,189 +1109,27 @@ function StockTracking({
             }
             onStockNavigate={openStockFromList}
           />
-        ) : (
-          <Table
-            key={tab}
-            rows={rows}
-            rowKey="round_id"
-            multiSort
-            multiDefaultSort={[
-              { key: "trading_age", order: "desc" },
-              { key: "today_change_pct", order: "desc" },
-            ]}
-            columns={[
-              { key: "name" },
-              { key: "strategy_name", title: "所属策略" },
-              {
-                key: "current_topics",
-                title: "当前题材 / 行业",
-                render: currentTopicCell,
-                sortValue: topicSortValue,
-              },
-              {
-                key: "today_change_pct",
-                title: tab === "history" ? "结束日涨幅" : "今日涨幅",
-                sortValue: (row) => row.today_change_pct,
-                render: (value, row) => (
-                  <span
-                    className={tone(value)}
-                    title={"可比行情日 " + (row.valuation_date || "待核验")}
-                  >
-                    {percent(value)}
-                  </span>
-                ),
-              },
-              {
-                key: "tracking_change_pct",
-                title: "跟踪涨幅",
-                sortValue: (row) => trackingPriceContext(row).change,
-                render: (v, r) => {
-                  const price = trackingPriceContext(r);
-                  return (
-                    <span
-                      className={tone(price.forward ? price.change : v)}
-                      title={price.reason}
-                    >
-                      {percent(price.forward ? price.change : v)}
-                      {(price.forward ? price.change : v) == null &&
-                        r.comparison_reason && (
-                          <Badge tone="warn">待核验</Badge>
-                        )}
-                      {price.forward && (
-                        <small className="tracking-price-context">
-                          同口径价格变化 ·{" "}
-                          {price.reference == null
-                            ? price.reason
-                            : `参照 ${num(price.reference)} · 锚 ${price.anchor}`}
-                        </small>
-                      )}
-                    </span>
-                  );
-                },
-              },
-              {
-                key: "trading_age",
-                title: "进度",
-                description:
-                  "按已核验的跟踪市场交易日数排序，不按进度条百分比；进度待核验时排末。",
-                sortValue: trackingProgressSortValue,
-                render: (_, r) => {
-                  const progress = trackingProgress(r);
-                  return (
-                    <div className="tracking-age">
-                      {progress.percentage === null ? (
-                        <span className="muted">交易日进度待核验</span>
-                      ) : (
-                        <>
-                          <span>
-                            第 {progress.age} 日{" "}
-                            <small>/ {progress.duration}</small>
-                          </span>
-                          <div>
-                            <i style={{ width: progress.percentage + "%" }} />
-                          </div>
-                        </>
-                      )}
-                      {r.status === "tracking" &&
-                        (r.duration_reached ? (
-                          <Badge tone="warn">已到期限，待核对</Badge>
-                        ) : r.policy_review_pending ? (
-                          <small className="muted">当前政策待核对</small>
-                        ) : null)}
-                    </div>
-                  );
-                },
-              },
-              { key: "entry_business_date" },
-              { key: "entry_price", title: "事件日收盘" },
-              {
-                key: "latest_event",
-                title: "最新事件",
-                sortValue: (row) => row.latest_event?.recorded_at_ms ?? null,
-                render: (v, r) => (
-                  <button className="link" onClick={() => openDetail(r)}>
-                    {v
-                      ? statusText[v.event_type] ||
-                        textValue(v.event_type || v.message || v)
-                      : "查看记录"}
-                  </button>
-                ),
-              },
-              { key: "status", render: (v) => <Status value={v} /> },
-              {
-                key: "actions",
-                title: "操作",
-                render: (_, r) => (
-                  <div className="button-group">
-                    <WatchlistButton
-                      instrumentId={r.instrument_id}
-                      trackingRoundId={r.round_id}
-                      sourceKind="tracking"
-                      sourceName={r.strategy_name}
-                      compact
-                    />
-                    <button
-                      className="icon-btn"
-                      title="提醒与结束条件"
-                      onClick={() => setPolicy(r)}
-                    >
-                      <Settings2 size={14} />
-                    </button>
-                    {r.status === "tracking" && (
-                      <button
-                        className="icon-btn danger-text"
-                        title="移出跟踪"
-                        onClick={() => {
-                          setRemove(r);
-                          setRemoveReason("");
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                    {r.status !== "tracking" && (
-                      <button
-                        className="btn small"
-                        onClick={async () => {
-                          try {
-                            await api(
-                              `/strategies/${r.strategy_id}/ignores/${r.instrument_id}`,
-                              { method: "DELETE" },
-                            );
-                            toast("已解除忽略，下次真实命中后可重新入池");
-                          } catch (e: any) {
-                            setError(e.message);
-                          }
-                        }}
-                      >
-                        解除忽略
-                      </button>
-                    )}
-                  </div>
-                ),
-              },
-            ]}
-            pageSize={20}
-            onStockNavigate={openStockFromList}
-            emptyTitle={
-              hasFilters
-                ? "没有匹配的跟踪轮次"
-                : tab === "history"
-                  ? "暂无结束轮次"
-                  : "还没有跟踪中的股票"
-            }
-            emptyDescription={
-              hasFilters
-                ? "可切换策略或调整搜索及筛选条件。"
-                : tab === "history"
-                  ? "到期、提前结束或手动移除的轮次会显示在这里。"
-                  : "先在策略管理运行选股，再将命中结果加入对应跟踪池。"
+        ) : tab === "active" && listMode === "stocks" ? (
+          <TrackingStockTable
+            groups={stockGroups}
+            businessDate={result.data?.business_date}
+            hasFilters={hasFilters}
+            onStockNavigate={openStockFromGroup}
+            renderRoundTable={(matchingRounds, orderedGroups) =>
+              renderRoundTable(
+                matchingRounds,
+                orderedGroups.flatMap((group) => group.rounds),
+              )
             }
           />
+        ) : (
+          renderRoundTable(rows)
         )}
       </Panel>
       <Warning>
-        页面的当前业务日来自已发布行情，不受盘面回看日期影响。连续浏览按当前筛选、排序后的已加载股票去重，行情观察日固定为当前业务日；每只股票使用自身轮次的事件价线。跟踪结束只是记录状态变化，不代表真实卖出。
+        页面的当前业务日来自已发布行情，不受盘面回看日期影响。点击汇总行股票名查看
+        K
+        线，点击行内其他普通区域展开或收起策略明细。汇总入口连续浏览当前筛选、排序后的股票，观察日固定为当前业务日；具体轮次入口保留该轮事件价线，并限定浏览该策略的当前匹配股票。跟踪结束只是记录状态变化，不代表真实卖出。
       </Warning>
       {policy && (
         <PolicyEditor
