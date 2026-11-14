@@ -46,7 +46,7 @@ def one_edit(left, right):
     return left[at:] == right[at+1:]
 
 
-def identity_match(query, name, *codes):
+def identity_match(query, name, *codes, allow_short_leading_typo=True):
     term = normalized(query)
     values = [normalized(value) for value in (name, *codes) if value is not None]
     for rank, matched, kind, label in (
@@ -72,7 +72,12 @@ def identity_match(query, name, *codes):
             return (3 if latin == initials else 4), {'match_type': 'initials', 'match_label': '首字母匹配', 'is_suggestion': False}
     if is_chinese and phonetic_keys(term)[0] == full:
         return 5, {'match_type': 'homophone', 'match_label': '可能想找 · 同音', 'is_suggestion': True}
-    if ((is_chinese and one_edit(term, normalized(name)))
+    name_text = normalized(name)
+    # A three-character display name sharing only its suffix can identify a
+    # different stock or classification. Genuine homophones were handled above.
+    ambiguous_suffix = (not allow_short_leading_typo and len(term) == len(name_text) == 3
+                        and term[0] != name_text[0] and term[1:] == name_text[1:])
+    if ((is_chinese and not ambiguous_suffix and one_edit(term, name_text))
             or (is_latin and len(latin) >= 5 and one_edit(latin, full))):
         return 6, {'match_type': 'typo', 'match_label': '可能想找 · 近似名称', 'is_suggestion': True}
     return None
@@ -82,14 +87,15 @@ def list_identity_match(query, name, codes, labels=()):
     """Find the best identity or classification match without reordering a list."""
     if not normalized(query):
         return None
-    match = identity_match(query, name or '', *codes)
+    match = identity_match(query, name or '', *codes, allow_short_leading_typo=False)
     if match and match[0] == 0:
         return match[1]
     for label in labels:
         if isinstance(label, dict):
-            candidate = identity_match(query, label.get('name') or '', label.get('topic_id'), label.get('topic_code'))
+            candidate = identity_match(query, label.get('name') or '', label.get('topic_id'), label.get('topic_code'),
+                                       allow_short_leading_typo=False)
         elif isinstance(label, str):
-            candidate = identity_match(query, label)
+            candidate = identity_match(query, label, allow_short_leading_typo=False)
         else:
             continue
         if candidate and (match is None or candidate[0] < match[0]):

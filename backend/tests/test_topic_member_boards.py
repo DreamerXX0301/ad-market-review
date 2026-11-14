@@ -32,6 +32,10 @@ def test_board_union_combines_with_category_union_intersection_and_search(member
     assert members(client, selected, ['chinext'], match='all')['total'] == 0
     assert symbols(members(client, selected, ['main'], query='甲股票')) == [A]
     assert members(client, selected, ['star'], query='甲股票')['total'] == 0
+    assert symbols(members(client, selected, ['star'], query='dgp')) == [D]
+    suggested = members(client, selected, ['star'], query='丁果票')['items']
+    assert [row['instrument_id'] for row in suggested] == [D]
+    assert suggested[0]['search_match']['is_suggestion'] is True
     assert combined['business_date'] == combined['quote_date'] == market.entry
     assert combined['metric_coverage']['total'] == combined['total'] == 2
 
