@@ -185,6 +185,32 @@ def test_path_drawdown_chronology_gaps_actions_and_boll(annual, monkeypatch):
     assert result['change_pct'] is None and result['volume_vs_5d'] is None
 
 
+def test_pool_search_fuzzy_matches_then_loads_only_matching_quotes(annual, monkeypatch):
+    market, client = annual
+    add(client, reason='追踪理由')
+    add(client, symbol='000001.SZ', focused=True)
+    with core.connect() as c:
+        c.execute("UPDATE zodiac_pool_member SET name='日出东方' WHERE instrument_id='600001.SH'")
+    original = market.history_for_instruments
+    requests = []
+
+    def watched(symbols, **scope):
+        requests.append(set(symbols))
+        return original(symbols, **scope)
+
+    monkeypatch.setattr(market, 'history_for_instruments', watched)
+    for query in ('日出', 'ＲＣＤＦ', 'ri chu', 'richudongfagn', '日出东芳', '６００００１', '追踪理由', '日出东方 600001'):
+        requests.clear()
+        result = listing(client, query=query)
+        assert result['total'] == 2 and result['matched_count'] == 1
+        assert result['items'][0]['instrument_id'] == '600001.SH'
+        assert requests and all('000001.SZ' not in batch for batch in requests)
+    requests.clear()
+    assert listing(client, query='600009')['matched_count'] == 0
+    assert listing(client, query='rcdf', focused=True)['matched_count'] == 0
+    assert not requests
+
+
 def test_readonly_get_missing_market_and_backup_closure(annual, monkeypatch, tmp_path):
     market, client = annual
     add(client)
@@ -305,8 +331,8 @@ def test_same_day_raw_publication_invalidates_write_and_inflight_list(annual, mo
     assert client.patch('/api/v1/zodiac-pool-members/'+row['member_id'], json=stale).status_code == 409
     original = zodiac_metrics.enrich
 
-    def changing_generation(*args):
-        result = original(*args)
+    def changing_generation(*args, **kwargs):
+        result = original(*args, **kwargs)
         publish_raw('third')
         return result
 

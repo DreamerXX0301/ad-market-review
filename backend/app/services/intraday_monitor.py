@@ -17,6 +17,7 @@ from app.services import task_service as tasks
 from app.services.increment_access import require_business_unlocked
 from app.services.noon_collection import CHINA
 from app.services.noon_service import _configured
+from app.services.search_matching import phonetic_keys
 from app.services.intraday_monitor_capture import collect_quotes
 from app.services.intraday_monitor_rules import SLOTS, TITLES, evaluate_snapshot, merge_observations
 from app.services.intraday_monitor_levels import automatic_baseline, manual_levels, comparable_quote, annotate_action_coverage
@@ -197,8 +198,15 @@ def _names(universe, market):
 
 def _decorate(items, head):
     """Current classifications are reread; fixed-generation numeric facts reuse a small worker projection."""
-    if not items or not head:
+    if not items:
         return items
+    named_items = []
+    for item in items:
+        name = item.get('name')
+        pinyin, initials = phonetic_keys(name) if isinstance(name, str) and not name.isdecimal() else ('', '')
+        named_items.append({**item, 'search_pinyin': pinyin, 'search_initials': initials})
+    if not head:
+        return named_items
     from .intraday_monitor_metadata import read_metadata
     from .stock_memberships import current_memberships
     with connect() as connection:
@@ -211,7 +219,7 @@ def _decorate(items, head):
                  if topic.get(key) is not None}
                  for topic in memberships['memberships'].get(row['instrument_id'], [])],
              'topic_date': memberships['business_date'], 'metrics_date': head['business_date'],
-             'topics_scope': memberships['scope']} for row in items]
+             'topics_scope': memberships['scope']} for row in named_items]
 
 
 def _public_metrics(value):

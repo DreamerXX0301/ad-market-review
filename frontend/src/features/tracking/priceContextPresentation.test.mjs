@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import ts from "typescript";
+import { useState } from "react";
 import { jsx, jsxs } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 const encode = (value) =>
@@ -127,8 +128,9 @@ const Boundary = new Function(
   "_jsx",
   "_jsxs",
   "backtestPriceContext",
+  "useState",
   `${declarations};return BoundaryDetails;`,
-)(jsx, jsxs, backtest);
+)(jsx, jsxs, backtest, useState);
 const raw = renderToStaticMarkup(
   jsx(Boundary, { warnings: [], summary: "受限研究样本" }),
 );

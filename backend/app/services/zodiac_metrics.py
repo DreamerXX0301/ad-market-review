@@ -13,6 +13,7 @@ from app.domain.conditions import metrics_for
 from app.services import topic_member_metrics as metrics
 from app.services.market_supplement import load_supplement_with_fingerprint
 from app.services.member_turnover import turnover_index, turnover_for
+from app.services.search_matching import identity_match, normalized
 from app.services.stock_memberships import current_memberships
 from app.services.stock_summary import _master, summary_fields
 from app.services.tracking_quotes import action_dates_for, tracking_quotes
@@ -105,16 +106,19 @@ def extended(history, actions, calendar, day, quote):
     return result
 
 
-def enrich(saved, market, head):
+def enrich(saved, market, head, *, master=None, memberships=None):
     if not saved: return []
-    calendar = sorted(set(market.calendar())); master = _master(market)
+    calendar = sorted(set(market.calendar()))
+    if master is None:
+        master = _master(market)
     day = head['business_date']; status = market.status() if callable(getattr(market, 'status', None)) else {}
     snapshot = status.get('snapshot_id')
     supplement, fingerprint = load_supplement_with_fingerprint(snapshot, dates=[d for d in calendar if d <= day], fields=('public_pools', 'annual_pools', 'annual_down_pools')) if snapshot else ({}, None)
     reference = market.reference() if callable(getattr(market, 'reference', None)) else {}
     reference = {**reference, '_supplement': supplement}
     board_proof = retained_proof(reference, snapshot)
-    memberships = current_memberships(market, [r['instrument_id'] for r in saved], expected_day=day)
+    if memberships is None:
+        memberships = current_memberships(market, [r['instrument_id'] for r in saved], expected_day=day)
     quotes = {}
     for offset in range(0, len(saved), 128):
         quotes.update(tracking_quotes(market, saved[offset:offset+128], calendar, day, strict_close=True))
@@ -174,6 +178,14 @@ def enrich(saved, market, head):
     return result
 
 
+def _matches(row, term, topics):
+    names = [tag.get('name') for tag in topics]
+    topic_names = [name for name in names if isinstance(name, str) and name]
+    contents = [row['name'], row['instrument_id'], row['reason'], row['custom_label'], *topic_names]
+    return (term in normalized(' '.join(contents))
+            or any(identity_match(term, name) is not None for name in (row['name'], *topic_names)))
+
+
 def listing(year, *, status='tracking', query='', relation='', focused=False, board='', completeness='', sort='focused:desc,added_business_date:desc', offset=0, limit=50):
     zodiac.year_info(year)
     if status not in ('tracking', 'ended'): fail('无效成员状态')
@@ -191,12 +203,23 @@ def listing(year, *, status='tracking', query='', relation='', focused=False, bo
         head = zodiac._head(c)
         p = c.execute('SELECT revision FROM zodiac_pool WHERE observation_year=?', (year,)).fetchone()
         saved = [zodiac.view(r) for r in rows(c, 'SELECT * FROM zodiac_pool_member WHERE observation_year=? AND status=? ORDER BY created_at_ms,member_id', (year, status))]
-    values = enrich(saved, get_market(), head) if saved and head['business_date'] else []
+    day = head['business_date']
+    total = len(saved) if day else 0
+    candidates = [r for r in saved if (not relation or r['relation_type'] == relation) and (not focused or r['focused'])]
+    values = []
+    if candidates and day:
+        market = get_market()
+        master = _master(market) if board else None
+        if board:
+            candidates = [r for r in candidates if summary_fields(r, master.get(r['instrument_id']), r['end_business_date'] or day)['board'] == board]
+        memberships = None
+        term = normalized(query)
+        if term and candidates:
+            memberships = current_memberships(market, [r['instrument_id'] for r in candidates], expected_day=day)
+            candidates = [r for r in candidates if _matches(r, term, memberships['memberships'].get(r['instrument_id'], []))]
+        values = enrich(candidates, market, head, master=master, memberships=memberships)
     def complete(r): return all(r.get(k) is not None for k in ('return_ytd_pct', 'change_30d_pct', 'limit_up_ytd'))
-    query = query.strip().casefold()
-    selected = [r for r in values if (not query or query in ' '.join([r['name'], r['instrument_id'], r['reason'], r['custom_label'], *(t['name'] for t in r['current_topics'])]).casefold())
-                and (not relation or r['relation_type'] == relation) and (not focused or r['focused'])
-                and (not board or r['board'] == board) and (not completeness or complete(r) == (completeness == 'complete'))]
+    selected = [r for r in values if not completeness or complete(r) == (completeness == 'complete')]
     selected.sort(key=lambda r: r['member_id'])
     for key, direction in reversed(sorting):
         known = [r for r in selected if r.get(key) is not None]; unknown = [r for r in selected if r.get(key) is None]
@@ -208,7 +231,7 @@ def listing(year, *, status='tracking', query='', relation='', focused=False, bo
         if zodiac._head(c) != head: fail('行情已更新，请刷新生肖池', 409)
         current_revision = c.execute('SELECT revision FROM zodiac_pool WHERE observation_year=?', (year,)).fetchone()
         if (current_revision[0] if current_revision else 0) != (p[0] if p else 0): fail('生肖池已更新，请刷新', 409)
-    return {**zodiac.year_info(year), **head, 'pool_revision': p[0] if p else 0, 'total': len(values), 'matched_count': len(selected),
+    return {**zodiac.year_info(year), **head, 'pool_revision': p[0] if p else 0, 'total': total, 'matched_count': len(selected),
         'items': selected[offset:offset+limit], 'navigation': [{k: r.get(k) for k in ('instrument_id','name','code','metrics_as_of')} for r in selected],
         'summary': {'focused': sum(r['focused'] for r in selected), 'up': sum(v > 0 for v in changes), 'down': sum(v < 0 for v in changes),
                     'flat': sum(v == 0 for v in changes), 'unknown': len(selected)-len(changes), 'median_change_pct': median(changes) if changes else None,

@@ -20,10 +20,12 @@ export default function useBacktestAvailability({
   strategy,
   ready,
   dataVersion,
+  active = true,
 }: {
   strategy?: Row;
   ready: boolean;
   dataVersion?: string;
+  active?: boolean;
 }) {
   const identity =
     ready && strategy?.strategy_id
@@ -33,6 +35,7 @@ export default function useBacktestAvailability({
   const currentScope = useRef(scope);
   currentScope.current = scope;
   const successfulIdentity = useRef("");
+  const verifiedScope = useRef("");
   const [response, setResponse] = useState<{ scope: string; data: Row } | null>(
     null,
   );
@@ -44,6 +47,8 @@ export default function useBacktestAvailability({
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   useEffect(() => {
+    if (verifiedScope.current !== scope) verifiedScope.current = "";
+    if (!active || (scope && verifiedScope.current === scope)) return;
     const request = new AbortController();
     setResponse(null);
     setProblem(null);
@@ -59,6 +64,7 @@ export default function useBacktestAvailability({
     })
       .then((data) => {
         if (!current()) return;
+        verifiedScope.current = scope;
         setResponse({ scope, data });
         successfulIdentity.current = identity;
         setStart((value) =>
@@ -79,7 +85,7 @@ export default function useBacktestAvailability({
         if (current()) setPending("");
       });
     return () => request.abort();
-  }, [scope, identity]);
+  }, [scope, identity, active]);
   const availability =
     scope && response?.scope === scope ? response.data : null;
   const error = scope && problem?.scope === scope ? problem.message : "";
@@ -93,6 +99,7 @@ export default function useBacktestAvailability({
     end,
     setEnd,
     canRun:
+      active &&
       ready &&
       !!strategy?.strategy_id &&
       !checking &&

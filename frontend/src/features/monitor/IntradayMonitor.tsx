@@ -198,7 +198,12 @@ export function filterMonitorRows(
     !Object.hasOwn(metricLabels, filters.metric)
   )
     return [];
-  const text = query.trim().toLowerCase();
+  const text = query.normalize("NFKC").trim().toLowerCase();
+  const phonetic = text
+    .replaceAll("u:", "v")
+    .replaceAll("ü", "v")
+    .replace(/[\s'’\-]/g, "");
+  const usePhonetic = /^[a-z]{2,80}$/.test(phonetic);
   const topicText = filters.topicQuery.trim().toLowerCase();
   const lower = filters.min.trim(),
     upper = filters.max.trim();
@@ -255,7 +260,7 @@ export function filterMonitorRows(
         (upper && (date ? value > upper : value > Number(upper))))
     )
       return false;
-    return [
+    const searchableText = [
       row.name,
       row.code,
       row.instrument_id,
@@ -265,8 +270,15 @@ export function filterMonitorRows(
         : []),
     ]
       .join(" ")
-      .toLowerCase()
-      .includes(text);
+      .normalize("NFKC")
+      .toLowerCase();
+    return (
+      searchableText.includes(text) ||
+      (usePhonetic &&
+        [row.search_pinyin, row.search_initials].some(
+          (key) => typeof key === "string" && key.startsWith(phonetic),
+        ))
+    );
   });
 }
 
@@ -884,7 +896,11 @@ export default function IntradayMonitor({
                   <input
                     type="search"
                     aria-label="搜索监控股票或提醒"
-                    placeholder="股票名称、代码或提醒依据"
+                    placeholder={
+                      view === "events"
+                        ? "名称 / 代码 / 拼音 / 首字母 / 提醒依据"
+                        : "名称 / 代码 / 拼音 / 首字母"
+                    }
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                   />

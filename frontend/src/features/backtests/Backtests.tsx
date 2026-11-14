@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
   FlaskConical,
@@ -9,7 +9,7 @@ import {
   Trash2,
   RotateCcw,
 } from "lucide-react";
-import { api, list, post, useApi } from "../../lib/api";
+import { api, list, post, useApi, usePageActive } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import {
   amount,
@@ -36,7 +36,7 @@ import {
   Warning,
   Warnings,
 } from "../../components/UI";
-import { EquityChart } from "../../components/Charts";
+import { lazyView } from "../../components/LazyView";
 import { backtestPriceContext } from "./backtestPricePresentation";
 import DatePicker from "../../components/DatePicker";
 import RecycleConfirm from "../../components/RecycleConfirm";
@@ -66,6 +66,10 @@ import useBacktestAvailability, {
 } from "./useBacktestAvailability";
 import { TradeRuleSummary } from "../strategies/TradeRules";
 import { summarizeChecks } from "../strategies/Conditions";
+const EquityChart = lazyView(() => import("./EquityChart"));
+const ReportEquityChart = memo(EquityChart);
+
+const emptyRows: Row[] = [];
 const defaultConfig = {
   initial_capital: 100000,
   max_positions: 5,
@@ -104,7 +108,9 @@ function BoundaryDetails({
   config?: boolean;
   priceContext?: Row | null;
 }) {
+  const [showQuality, setShowQuality] = useState(false);
   const texts = warningTexts(warnings);
+  const context = backtestPriceContext(priceContext);
   return (
     <details
       className={
@@ -114,9 +120,7 @@ function BoundaryDetails({
     >
       <summary>
         <span className="boundary-summary">
-          {backtestPriceContext(priceContext)
-            ? `${backtestPriceContext(priceContext)?.label} · `
-            : ""}
+          {context ? `${context.label} · ` : ""}
           {summary}
         </span>
         <span className="boundary-more">
@@ -124,9 +128,7 @@ function BoundaryDetails({
         </span>
       </summary>
       <div className="boundary-body">
-        {backtestPriceContext(priceContext) && (
-          <p>{backtestPriceContext(priceContext)?.reason}</p>
-        )}
+        {context && <p>{context.reason}</p>}
         {texts.length > 0 && (
           <ul>
             {texts.map((text, i) => (
@@ -135,15 +137,269 @@ function BoundaryDetails({
           </ul>
         )}
         {quality && (
-          <details className="technical-boundary">
+          <details
+            className="technical-boundary"
+            onToggle={(event) => setShowQuality(event.currentTarget.open)}
+          >
             <summary>完整样本与验收字段</summary>
-            <pre>{JSON.stringify(quality, null, 2)}</pre>
+            {showQuality && <pre>{JSON.stringify(quality, null, 2)}</pre>}
           </details>
         )}
       </div>
     </details>
   );
 }
+const CompletedBacktestReport = memo(function CompletedBacktestReport({
+  report: r,
+  strategyName,
+  tab,
+  onTab,
+  onStock,
+  onTrade,
+}: {
+  report: Row;
+  strategyName?: string;
+  tab: string;
+  onTab: (tab: string) => void;
+  onStock: (id: string) => void;
+  onTrade: (id: string, trade: Row) => void;
+}) {
+  const [orderFilter, setOrderFilter] = useState("all");
+  const stats = r.stats || {};
+  const capital = frozenInitialCapital(r);
+  const equity = r.equity || r.curve || emptyRows;
+  const finalPositions = useMemo(
+    () =>
+      (r.positions || emptyRows).filter(
+        (position: Row) =>
+          !position.date ||
+          position.date === (r.end_date || r.config?.end_date),
+      ),
+    [r.positions, r.end_date, r.config?.end_date],
+  );
+  const orderRows: Row[] = r.orders || emptyRows;
+  const orderStatuses = useMemo(
+    () => [...new Set(orderRows.map((row) => row.status))],
+    [orderRows],
+  );
+  const orders = useMemo(
+    () =>
+      orderFilter === "all"
+        ? orderRows
+        : orderRows.filter((row) => row.status === orderFilter),
+    [orderRows, orderFilter],
+  );
+  return (
+    <>
+      <div className="report-heading">
+        <div>
+          <h2>{r.strategy_name || strategyName || "回测报告"}</h2>
+          <p>
+            {r.start_date || r.config?.start_date} —{" "}
+            {r.end_date || r.config?.end_date} <span>·</span>{" "}
+            {r.backtest_id?.slice(0, 10)}
+          </p>
+        </div>
+        <Badge tone="good">已完成</Badge>
+      </div>
+      <TradeRuleSummary value={r.trade_rules} config={r.config} compact />
+      <div className="metrics-seven">
+        {[
+          ["total_return", "总收益"],
+          ["annual_return", "年化收益"],
+          ["max_drawdown", "最大回撤"],
+          ["win_rate", "胜率"],
+          ["payoff_ratio", "盈亏比"],
+          ["trade_count", "交易数"],
+          ["final_equity", "最终权益"],
+        ].map(([key, caption]) => (
+          <Stat
+            key={key}
+            label={caption}
+            value={
+              <span
+                className={
+                  ["total_return", "annual_return"].includes(key)
+                    ? tone(stats[key])
+                    : key === "max_drawdown"
+                      ? "down"
+                      : ""
+                }
+              >
+                {[
+                  "total_return",
+                  "annual_return",
+                  "max_drawdown",
+                  "win_rate",
+                ].includes(key)
+                  ? key === "max_drawdown" || key === "win_rate"
+                    ? stats[key] == null
+                      ? "—"
+                      : num(stats[key]) + "%"
+                    : percent(stats[key])
+                  : key === "final_equity"
+                    ? num(stats[key])
+                    : key === "trade_count"
+                      ? integer(stats[key])
+                      : num(stats[key])}
+              </span>
+            }
+            sub={
+              key === "payoff_ratio" && stats[key] == null
+                ? "无足够盈亏样本"
+                : undefined
+            }
+          />
+        ))}
+      </div>
+      {(r.data_quality || warningTexts(r.warnings).length > 0) && (
+        <BoundaryDetails
+          priceContext={r}
+          warnings={r.warnings}
+          quality={r.data_quality}
+          summary={`受限研究样本${r.data_quality?.eligible_symbols != null && r.data_quality?.total_symbols != null ? " " + integer(r.data_quality.eligible_symbols) + " / " + integer(r.data_quality.total_symbols) : ""} · 未复权撮合，已排除区间分红送转 · 收盘信号次日撮合`}
+        />
+      )}
+      <Panel
+        title="收益率、账户权益与回撤"
+        subtitle={`本次初始权益 ${num(capital.value)} 元 · 累计费用 ${num(stats.total_fees)} 元${capital.configMismatch ? " · 使用报告中实际冻结初始权益" : ""}`}
+      >
+        <ReportEquityChart
+          key={r.backtest_id}
+          rows={equity}
+          initialCapital={capital.value}
+        />
+      </Panel>
+      <Panel
+        title="交易与账户明细"
+        actions={<Badge>{(r.trades || []).length} 笔闭合交易</Badge>}
+      >
+        <div className="result-toolbar">
+          <div className="tabs">
+            {[
+              ["trades", "闭合交易"],
+              ["orders", "委托记录"],
+              ["fills", "成交记录"],
+              ["positions", "期末持仓"],
+            ].map(([key, name]) => (
+              <button
+                key={key}
+                className={tab === key ? "active" : ""}
+                onClick={() => onTab(key)}
+              >
+                {name}{" "}
+                <span>
+                  {key === "positions"
+                    ? finalPositions.length
+                    : (r[key] || []).length}
+                </span>
+              </button>
+            ))}
+          </div>
+          {tab === "orders" && (
+            <select
+              value={orderFilter}
+              onChange={(e) => setOrderFilter(e.target.value)}
+              aria-label="委托状态"
+            >
+              <option value="all">全部状态</option>
+              {orderStatuses.map((x) => (
+                <option key={x} value={x}>
+                  {(
+                    {
+                      filled: "已成交",
+                      rejected: "已拒绝",
+                      unexecuted: "未执行",
+                      not_filled: "未成交",
+                      pending: "待执行",
+                    } as Row
+                  )[x] || x}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        {tab === "trades" ? (
+          <Table
+            rows={r.trades || []}
+            columns={[
+              { key: "name" },
+              { key: "entry_date" },
+              { key: "exit_date" },
+              { key: "entry_price" },
+              { key: "exit_price" },
+              { key: "quantity" },
+              { key: "net_pnl" },
+              { key: "return_pct" },
+              { key: "exit_reason" },
+              {
+                key: "detail",
+                title: "详情",
+                render: (_, row) => (
+                  <button
+                    className="link"
+                    onClick={() => onTrade(r.backtest_id, row)}
+                  >
+                    逐笔依据 <ChevronRight size={12} />
+                  </button>
+                ),
+              },
+            ]}
+            onStock={onStock}
+            emptyTitle="暂无闭合交易"
+            emptyDescription="期末未平仓仍计入权益，但不进入胜率与盈亏比。"
+          />
+        ) : tab === "orders" ? (
+          <Table
+            rows={orders}
+            columns={inferColumns(orders, [
+              "date",
+              "name",
+              "side",
+              "status",
+              "quantity",
+              "filled_quantity",
+              "price",
+              "reason",
+            ])}
+            onStock={onStock}
+            emptyTitle="暂无委托记录"
+          />
+        ) : tab === "fills" ? (
+          <Table
+            rows={r.fills || []}
+            columns={inferColumns(r.fills || [], [
+              "date",
+              "name",
+              "side",
+              "quantity",
+              "price",
+              "fee",
+            ])}
+            onStock={onStock}
+            emptyTitle="暂无实际模拟成交"
+          />
+        ) : (
+          <Table
+            rows={finalPositions}
+            columns={inferColumns(finalPositions, [
+              "name",
+              "quantity",
+              "entry_date",
+              "entry_price",
+              "close",
+              "market_value",
+              "unrealized_pnl",
+            ])}
+            onStock={onStock}
+            emptyTitle="期末无持仓"
+          />
+        )}
+      </Panel>
+    </>
+  );
+});
+
 export default function Backtests({
   onStock,
   initialStrategyId,
@@ -166,10 +422,9 @@ export default function Backtests({
     history = useApi<Row>(
       `/backtests?deleted=${deletedHistory}&limit=25&offset=${historyOffset}&_refresh=${historyGeneration}`,
     );
-  const historyRows = visibleRecycleRows(
-    list(history.data),
-    deletedHistory,
-    "backtest_id",
+  const historyRows = useMemo(
+    () => visibleRecycleRows(list(history.data), deletedHistory, "backtest_id"),
+    [history.data, deletedHistory],
   );
   useEffect(() => {
     setHistoryOffset((current) =>
@@ -183,14 +438,26 @@ export default function Backtests({
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [tab, setTab] = useState("trades"),
-    [orderFilter, setOrderFilter] = useState("all"),
     [tradeSelection, setTrade] = useState<{
       backtestId: string;
       trade: Row;
     } | null>(null);
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
-  const strategyOptions = backtestStrategyOptions(list(strategies.data));
+  const openTrade = useCallback(
+    (backtestId: string, trade: Row) => setTrade({ backtestId, trade }),
+    [],
+  );
+  const active = usePageActive();
+  const strategyRows = useMemo(() => list(strategies.data), [strategies.data]);
+  const strategyOptions = useMemo(
+    () => backtestStrategyOptions(strategyRows),
+    [strategyRows],
+  );
+  const strategyNames = useMemo(
+    () => new Map(strategyRows.map((row) => [row.strategy_id, row.name])),
+    [strategyRows],
+  );
   const chosenStrategy = strategyOptions.find(
     (item) => item.strategy_id === strategyId,
   );
@@ -209,6 +476,7 @@ export default function Backtests({
     strategy: chosenStrategy,
     ready: strategiesReady,
     dataVersion,
+    active,
   });
   const report = useApi<Row>(
     selectedId && !deletedHistory ? `/backtests/${selectedId}` : null,
@@ -220,30 +488,29 @@ export default function Backtests({
   useEffect(() => {
     if (!strategiesReady) return;
     setStrategyId((current) =>
-      resolvedBacktestStrategyId(list(strategies.data), current),
+      resolvedBacktestStrategyId(strategyRows, current),
     );
-  }, [strategies.data, strategiesReady, strategyId]);
+  }, [strategyRows, strategiesReady, strategyId]);
   useEffect(
     () => setError(""),
     [strategyId, chosenStrategy?.version, dataVersion],
   );
   useEffect(() => {
     if (deletedHistory) return;
-    const rows = visibleRecycleRows(list(history.data), false, "backtest_id");
     setSelectedId((current) =>
       backtestSelectionForStrategies(
         current,
         report.data,
-        rows,
-        list(strategies.data),
+        historyRows,
+        strategyRows,
         strategiesReady,
       ),
     );
   }, [
-    history.data,
+    historyRows,
     deletedHistory,
     report.data,
-    strategies.data,
+    strategyRows,
     strategiesReady,
     selectedId,
   ]);
@@ -253,7 +520,9 @@ export default function Backtests({
     deletedHistory,
     report.error,
   );
-  const capital = frozenInitialCapital(r);
+  const listedStatus = historyRows.find(
+    (row) => row.backtest_id === selectedId,
+  )?.status;
   const trade = selectedBacktestTrade(tradeSelection, selectedId, r);
   useEffect(() => {
     setTrade((current) =>
@@ -261,13 +530,34 @@ export default function Backtests({
     );
   }, [selectedId]);
   useEffect(() => {
-    if (!r || !["queued", "running", "pending"].includes(r.status)) return;
-    const timer = setTimeout(report.reload, 1500);
-    return () => clearTimeout(timer);
-  }, [r, report.reload]);
+    if (
+      !active ||
+      report.loading ||
+      !r ||
+      !["queued", "running", "pending"].includes(r.status)
+    )
+      return;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      clearTimeout(timer);
+      if (!document.hidden) timer = setTimeout(report.reload, 3000);
+    };
+    schedule();
+    document.addEventListener("visibilitychange", schedule);
+    return () => {
+      document.removeEventListener("visibilitychange", schedule);
+      clearTimeout(timer);
+    };
+  }, [active, r, report.loading, report.reload]);
   useEffect(() => {
-    if (r?.status === "completed") history.reload();
-  }, [r?.status, selectedId]);
+    if (
+      active &&
+      r?.status === "completed" &&
+      listedStatus &&
+      listedStatus !== r.status
+    )
+      history.reload();
+  }, [active, r?.backtest_id, r?.status, listedStatus, history.reload]);
   async function recycleBacktest(item: Row, restore = false) {
     if (historyMutation) return;
     const id = item.backtest_id;
@@ -277,7 +567,6 @@ export default function Backtests({
       if (restore) await post(`/backtests/${encodeURIComponent(id)}/restore`);
       else
         await api(`/backtests/${encodeURIComponent(id)}`, { method: "DELETE" });
-      setHistoryGeneration((current) => current + 1);
       history.setData((current) =>
         recycleListWithout(current, id, "backtest_id"),
       );
@@ -290,7 +579,6 @@ export default function Backtests({
         typeof history.data?.total === "number" ? history.data.total - 1 : null;
       if (total !== null && historyOffset > 0 && total <= historyOffset)
         setHistoryOffset(Math.max(0, historyOffset - 25));
-      else history.reload();
       toast(restore ? "回测已恢复到历史" : "回测已移到回收站，可恢复");
     } catch (problem: any) {
       setHistoryActionError(problem.message);
@@ -344,14 +632,6 @@ export default function Backtests({
       setBusy(false);
     }
   }
-  const stats = r?.stats || {};
-  const equity = r?.equity || r?.curve || [];
-  const finalPositions = (r?.positions || []).filter(
-    (p: Row) => !p.date || p.date === (r?.end_date || r?.config?.end_date),
-  );
-  const orders = (r?.orders || []).filter(
-    (o: Row) => orderFilter === "all" || o.status === orderFilter,
-  );
   return (
     <div className="page-stack">
       <div className="section-intro">
@@ -569,235 +849,15 @@ export default function Backtests({
                     <Warnings items={r.warnings} />
                   </Panel>
                 ) : (
-                  <>
-                    <div className="report-heading">
-                      <div>
-                        <h2>
-                          {r.strategy_name ||
-                            list(strategies.data).find(
-                              (s) => s.strategy_id === r.strategy_id,
-                            )?.name ||
-                            "回测报告"}
-                        </h2>
-                        <p>
-                          {r.start_date || r.config?.start_date} —{" "}
-                          {r.end_date || r.config?.end_date} <span>·</span>{" "}
-                          {r.backtest_id?.slice(0, 10)}
-                        </p>
-                      </div>
-                      <Badge tone="good">已完成</Badge>
-                    </div>
-                    <TradeRuleSummary
-                      value={r.trade_rules}
-                      config={r.config}
-                      compact
-                    />
-                    <div className="metrics-seven">
-                      {[
-                        ["total_return", "总收益"],
-                        ["annual_return", "年化收益"],
-                        ["max_drawdown", "最大回撤"],
-                        ["win_rate", "胜率"],
-                        ["payoff_ratio", "盈亏比"],
-                        ["trade_count", "交易数"],
-                        ["final_equity", "最终权益"],
-                      ].map(([key, caption]) => (
-                        <Stat
-                          key={key}
-                          label={caption}
-                          value={
-                            <span
-                              className={
-                                ["total_return", "annual_return"].includes(key)
-                                  ? tone(stats[key])
-                                  : key === "max_drawdown"
-                                    ? "down"
-                                    : ""
-                              }
-                            >
-                              {[
-                                "total_return",
-                                "annual_return",
-                                "max_drawdown",
-                                "win_rate",
-                              ].includes(key)
-                                ? key === "max_drawdown" || key === "win_rate"
-                                  ? stats[key] == null
-                                    ? "—"
-                                    : num(stats[key]) + "%"
-                                  : percent(stats[key])
-                                : key === "final_equity"
-                                  ? num(stats[key])
-                                  : key === "trade_count"
-                                    ? integer(stats[key])
-                                    : num(stats[key])}
-                            </span>
-                          }
-                          sub={
-                            key === "payoff_ratio" && stats[key] == null
-                              ? "无足够盈亏样本"
-                              : undefined
-                          }
-                        />
-                      ))}
-                    </div>
-                    {(r.data_quality ||
-                      warningTexts(r.warnings).length > 0) && (
-                      <BoundaryDetails
-                        priceContext={r}
-                        warnings={r.warnings}
-                        quality={r.data_quality}
-                        summary={`受限研究样本${r.data_quality?.eligible_symbols != null && r.data_quality?.total_symbols != null ? " " + integer(r.data_quality.eligible_symbols) + " / " + integer(r.data_quality.total_symbols) : ""} · 未复权撮合，已排除区间分红送转 · 收盘信号次日撮合`}
-                      />
-                    )}
-                    <Panel
-                      title="收益率、账户权益与回撤"
-                      subtitle={`本次初始权益 ${num(capital.value)} 元 · 累计费用 ${num(stats.total_fees)} 元${capital.configMismatch ? " · 使用报告中实际冻结初始权益" : ""}`}
-                    >
-                      <EquityChart
-                        key={r.backtest_id}
-                        rows={equity}
-                        initialCapital={capital.value}
-                      />
-                    </Panel>
-                    <Panel
-                      title="交易与账户明细"
-                      actions={
-                        <Badge>{(r.trades || []).length} 笔闭合交易</Badge>
-                      }
-                    >
-                      <div className="result-toolbar">
-                        <div className="tabs">
-                          {[
-                            ["trades", "闭合交易"],
-                            ["orders", "委托记录"],
-                            ["fills", "成交记录"],
-                            ["positions", "期末持仓"],
-                          ].map(([key, name]) => (
-                            <button
-                              key={key}
-                              className={tab === key ? "active" : ""}
-                              onClick={() => setTab(key)}
-                            >
-                              {name}{" "}
-                              <span>
-                                {key === "positions"
-                                  ? finalPositions.length
-                                  : (r[key] || []).length}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                        {tab === "orders" && (
-                          <select
-                            value={orderFilter}
-                            onChange={(e) => setOrderFilter(e.target.value)}
-                            aria-label="委托状态"
-                          >
-                            <option value="all">全部状态</option>
-                            {[
-                              ...new Set(
-                                (r.orders || []).map((x: Row) => x.status),
-                              ),
-                            ].map((x: any) => (
-                              <option key={x} value={x}>
-                                {(
-                                  {
-                                    filled: "已成交",
-                                    rejected: "已拒绝",
-                                    unexecuted: "未执行",
-                                    not_filled: "未成交",
-                                    pending: "待执行",
-                                  } as Row
-                                )[x] || x}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                      </div>
-                      {tab === "trades" ? (
-                        <Table
-                          rows={r.trades || []}
-                          columns={[
-                            { key: "name" },
-                            { key: "entry_date" },
-                            { key: "exit_date" },
-                            { key: "entry_price" },
-                            { key: "exit_price" },
-                            { key: "quantity" },
-                            { key: "net_pnl" },
-                            { key: "return_pct" },
-                            { key: "exit_reason" },
-                            {
-                              key: "detail",
-                              title: "详情",
-                              render: (_, row) => (
-                                <button
-                                  className="link"
-                                  onClick={() =>
-                                    setTrade({
-                                      backtestId: r.backtest_id,
-                                      trade: row,
-                                    })
-                                  }
-                                >
-                                  逐笔依据 <ChevronRight size={12} />
-                                </button>
-                              ),
-                            },
-                          ]}
-                          onStock={onStock}
-                          emptyTitle="暂无闭合交易"
-                          emptyDescription="期末未平仓仍计入权益，但不进入胜率与盈亏比。"
-                        />
-                      ) : tab === "orders" ? (
-                        <Table
-                          rows={orders}
-                          columns={inferColumns(orders, [
-                            "date",
-                            "name",
-                            "side",
-                            "status",
-                            "quantity",
-                            "filled_quantity",
-                            "price",
-                            "reason",
-                          ])}
-                          onStock={onStock}
-                          emptyTitle="暂无委托记录"
-                        />
-                      ) : tab === "fills" ? (
-                        <Table
-                          rows={r.fills || []}
-                          columns={inferColumns(r.fills || [], [
-                            "date",
-                            "name",
-                            "side",
-                            "quantity",
-                            "price",
-                            "fee",
-                          ])}
-                          onStock={onStock}
-                          emptyTitle="暂无实际模拟成交"
-                        />
-                      ) : (
-                        <Table
-                          rows={finalPositions}
-                          columns={inferColumns(finalPositions, [
-                            "name",
-                            "quantity",
-                            "entry_date",
-                            "entry_price",
-                            "close",
-                            "market_value",
-                            "unrealized_pnl",
-                          ])}
-                          onStock={onStock}
-                          emptyTitle="期末无持仓"
-                        />
-                      )}
-                    </Panel>
-                  </>
+                  <CompletedBacktestReport
+                    key={r.backtest_id}
+                    report={r}
+                    strategyName={strategyNames.get(r.strategy_id)}
+                    tab={tab}
+                    onTab={setTab}
+                    onStock={onStock}
+                    onTrade={openTrade}
+                  />
                 )}
               </>
             )
@@ -902,9 +962,7 @@ export default function Backtests({
                       <div>
                         <strong>
                           {x.strategy_name ||
-                            list(strategies.data).find(
-                              (s) => s.strategy_id === x.strategy_id,
-                            )?.name ||
+                            strategyNames.get(x.strategy_id) ||
                             "策略回测"}
                         </strong>
                         <Status value={x.status} />

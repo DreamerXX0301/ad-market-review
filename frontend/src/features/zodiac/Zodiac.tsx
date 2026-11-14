@@ -7,6 +7,7 @@ import {
   CalendarDays,
   Plus,
   RefreshCw,
+  SlidersHorizontal,
   Star,
 } from "lucide-react";
 import { post, useApi, usePageActive } from "../../lib/api";
@@ -29,8 +30,7 @@ import {
   yearLabel,
 } from "./zodiacPresentation";
 import { MetricCell } from "./ZodiacCells";
-import ZodiacEditor from "./ZodiacEditor";
-import ZodiacDetails from "./ZodiacDetails";
+import { lazyView } from "../../components/LazyView";
 import ZodiacTable from "./ZodiacTable";
 import "./Zodiac.css";
 
@@ -49,6 +49,10 @@ function write(key: string, value: unknown) {
   }
 }
 const pageSize = 50;
+const mobileColumns = selectedColumns("综合", undefined);
+const ZodiacEditor = lazyView(() => import("./ZodiacEditor"));
+const ZodiacDetails = lazyView(() => import("./ZodiacDetails"));
+
 export default function Zodiac({
   onStock,
 }: {
@@ -62,6 +66,7 @@ export default function Zodiac({
   const [year, setYear] = useState(() =>
     preference.follow ? shanghaiYear() : preference.year,
   );
+  const [yearDraft, setYearDraft] = useState<string | null>(null);
   const [status, setStatus] = useState("tracking"),
     [query, setQuery] = useState(""),
     [debounced, setDebounced] = useState(""),
@@ -72,7 +77,11 @@ export default function Zodiac({
     [sort, setSort] = useState("focused:desc"),
     [secondary, setSecondary] = useState("added_business_date:desc"),
     [page, setPage] = useState(0),
-    [group, setGroup] = useState<string>("综合");
+    [group, setGroup] = useState<string>("综合"),
+    [composing, setComposing] = useState(false),
+    [mobile, setMobile] = useState(
+      () => window.matchMedia("(max-width: 640px)").matches,
+    );
   const [custom, setCustom] = useState<Record<string, string[]>>(() => {
       try {
         return JSON.parse(read("zodiac-columns") || "{}");
@@ -118,12 +127,20 @@ export default function Zodiac({
   }, [data, result.error, active]);
   const shown = selectedColumns(group, custom?.[group]);
   useEffect(() => {
+    const layout = window.matchMedia("(max-width: 640px)");
+    const update = () => setMobile(layout.matches);
+    layout.addEventListener("change", update);
+    update();
+    return () => layout.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    if (composing || query.trim() === debounced) return;
     const timer = setTimeout(() => {
-      setDebounced(query);
+      setDebounced(query.trim());
       setPage(0);
     }, 250);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, debounced, composing]);
   useEffect(() => {
     write("zodiac-year", preference);
   }, [preference]);
@@ -137,6 +154,7 @@ export default function Zodiac({
     const follow = () => {
       if (active && preference.follow && !editor && !detail) {
         const next = shanghaiYear();
+        if (next !== year) setPage(0);
         setYear(next);
         setPreference((p) => (p.year === next ? p : { ...p, year: next }));
       }
@@ -150,10 +168,7 @@ export default function Zodiac({
       document.removeEventListener("visibilitychange", follow);
       clearInterval(timer);
     };
-  }, [active, preference.follow, editor, detail]);
-  useEffect(() => {
-    setPage(0);
-  }, [year, status, relation, focused, board, completeness, sort, secondary]);
+  }, [active, preference.follow, editor, detail, year]);
   const availableYears = [
     ...new Set([
       shanghaiYear() - 1,
@@ -196,6 +211,8 @@ export default function Zodiac({
   }
   function selectYear(next: number) {
     if (!Number.isInteger(next) || next < 1900 || next > 2199) return;
+    if (next !== year) setPage(0);
+    setYearDraft(null);
     setYear(next);
     setPreference({ follow: false, year: next });
   }
@@ -301,7 +318,10 @@ export default function Zodiac({
       <ZodiacSelect
         aria-label={label}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          setPage(0);
+          onChange(e.target.value);
+        }}
       >
         {label === "次排序" && <option value="">不使用</option>}
         <option value="focused:desc">重点优先</option>
@@ -354,6 +374,7 @@ export default function Zodiac({
       </div>
     </div>
   );
+  const activeFilters = [relation, board, completeness].filter(Boolean).length;
   return (
     <div className={`zodiac-page zodiac-${density}`}>
       <div className="zodiac-hero">
@@ -361,7 +382,6 @@ export default function Zodiac({
           <CalendarDays size={28} />
           <div>
             <h2>生肖跟踪</h2>
-            <p>自己选股，逐年积累观察。名单、理由与每轮基准独立保留。</p>
           </div>
         </div>
         <div className="zodiac-toolbar">
@@ -410,23 +430,14 @@ export default function Zodiac({
               ))}
             </ZodiacSelect>
           </label>
-          <label>
-            指定年份
-            <input
-              aria-label="指定观察年份"
-              type="number"
-              min={1900}
-              max={2199}
-              value={year}
-              onChange={(e) => selectYear(Number(e.target.value))}
-            />
-          </label>
           <label className="zodiac-check">
             <input
               type="checkbox"
               checked={preference.follow}
               onChange={(e) => {
                 const next = e.target.checked ? shanghaiYear() : year;
+                if (next !== year) setPage(0);
+                setYearDraft(null);
                 setPreference({ follow: e.target.checked, year: next });
                 setYear(next);
               }}
@@ -435,9 +446,6 @@ export default function Zodiac({
           </label>
         </div>
       </section>
-      <p className="zodiac-scope">
-        每年1月1日仅切换默认年度。旧池与名单保留，股票由你手动添加；不会自动迁移。行业概念是当前研究归属。
-      </p>
       {data && (
         <div className="zodiac-summary">
           <span>
@@ -481,13 +489,19 @@ export default function Zodiac({
         <div className="zodiac-groups">
           <button
             className={status === "tracking" ? "active" : ""}
-            onClick={() => setStatus("tracking")}
+            onClick={() => {
+              if (status !== "tracking") setPage(0);
+              setStatus("tracking");
+            }}
           >
             观察中
           </button>
           <button
             className={status === "ended" ? "active" : ""}
-            onClick={() => setStatus("ended")}
+            onClick={() => {
+              if (status !== "ended") setPage(0);
+              setStatus("ended");
+            }}
           >
             已移出历史
           </button>
@@ -498,128 +512,174 @@ export default function Zodiac({
             value={query}
             maxLength={200}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="股票、代码、行业、概念或理由"
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={(e) => {
+              setQuery(e.currentTarget.value);
+              setComposing(false);
+            }}
+            placeholder="股票、代码、拼音、概念或理由"
           />
-          <ZodiacSelect
-            aria-label="关联类型"
-            value={relation}
-            onChange={(e) => setRelation(e.target.value)}
-          >
-            <option value="">全部关联类型</option>
-            {Object.entries(relations).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v}
-              </option>
-            ))}
-          </ZodiacSelect>
-          <ZodiacSelect
-            aria-label="上市板块"
-            value={board}
-            onChange={(e) => setBoard(e.target.value)}
-          >
-            <option value="">全部上市板块</option>
-            <option value="main">主板</option>
-            <option value="chinext">创业板</option>
-            <option value="star">科创板</option>
-            <option value="beijing">北交所</option>
-            <option value="unknown">未知</option>
-          </ZodiacSelect>
-          <ZodiacSelect
-            aria-label="指标覆盖"
-            value={completeness}
-            onChange={(e) => setCompleteness(e.target.value)}
-          >
-            <option value="">全部覆盖状态</option>
-            <option value="complete">年度与30日指标可核验</option>
-            <option value="missing">存在统计缺口</option>
-          </ZodiacSelect>
           <label className="zodiac-check">
             <input
               type="checkbox"
               checked={focused}
-              onChange={(e) => setFocused(e.target.checked)}
+              onChange={(e) => {
+                setPage(0);
+                setFocused(e.target.checked);
+              }}
             />
             仅重点
           </label>
         </div>
-        <div className="zodiac-toolbar zodiac-table-toolbar">
-          <div className="zodiac-groups">
-            {groups.map((g) => (
-              <button
-                key={g}
-                className={group === g ? "active" : ""}
-                onClick={() => setGroup(g)}
-              >
-                {g}
-              </button>
-            ))}
-          </div>
-          <label>
-            密度
-            <ZodiacSelect
-              aria-label="显示密度"
-              value={density}
-              onChange={(e) => setDensity(e.target.value)}
+        <details className="zodiac-advanced">
+          <summary>
+            <SlidersHorizontal size={15} />
+            筛选与显示
+            {activeFilters > 0 && (
+              <span className="zodiac-filter-count">{activeFilters}</span>
+            )}
+          </summary>
+          <div className="zodiac-filters">
+            <form
+              className="zodiac-year-jump"
+              onSubmit={(e) => {
+                e.preventDefault();
+                selectYear(Number(yearDraft ?? year));
+              }}
             >
-              <option value="normal">标准</option>
-              <option value="compact">紧凑</option>
-            </ZodiacSelect>
-          </label>
-          <details className="zodiac-column-picker">
-            <summary>自定义列</summary>
-            <div>
-              {columns.map((c) => (
-                <label className="zodiac-check" key={c.key}>
-                  <input
-                    type="checkbox"
-                    checked={shown.some((s) => s.key === c.key)}
-                    onChange={(e) =>
-                      setCustom({
-                        ...custom,
-                        [group]: e.target.checked
-                          ? [...shown.map((s) => s.key), c.key]
-                          : shown
-                              .filter((s) => s.key !== c.key)
-                              .map((s) => s.key),
-                      })
-                    }
-                  />
-                  {c.label}
-                  {shown.some((s) => s.key === c.key) && (
-                    <>
-                      <button
-                        onClick={() => moveColumn(c.key, -1)}
-                        aria-label={`${c.label}前移`}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        onClick={() => moveColumn(c.key, 1)}
-                        aria-label={`${c.label}后移`}
-                      >
-                        ↓
-                      </button>
-                    </>
-                  )}
-                </label>
-              ))}
-              <button
-                className="btn"
-                onClick={() =>
-                  setCustom({ ...custom, [group]: groupKeys[group] })
-                }
-              >
-                恢复本组默认列
+              <label>
+                指定年份
+                <input
+                  aria-label="指定观察年份"
+                  type="number"
+                  min={1900}
+                  max={2199}
+                  value={yearDraft ?? year}
+                  required
+                  onChange={(e) => setYearDraft(e.target.value)}
+                />
+              </label>
+              <button className="btn small" type="submit">
+                查看
               </button>
-            </div>
-          </details>
-        </div>
-        <div className="zodiac-sort">
-          {sorter(sort, setSort, "主排序")}
-          {sorter(secondary, setSecondary, "次排序")}
-          <small>
-            全池过滤后排序，再分页；未知始终置后，涨停下界不参与精确次数排名。
-          </small>
+            </form>
+            <ZodiacSelect
+              aria-label="关联类型"
+              value={relation}
+              onChange={(e) => {
+                setPage(0);
+                setRelation(e.target.value);
+              }}
+            >
+              <option value="">全部关联类型</option>
+              {Object.entries(relations).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </ZodiacSelect>
+            <ZodiacSelect
+              aria-label="上市板块"
+              value={board}
+              onChange={(e) => {
+                setPage(0);
+                setBoard(e.target.value);
+              }}
+            >
+              <option value="">全部上市板块</option>
+              <option value="main">主板</option>
+              <option value="chinext">创业板</option>
+              <option value="star">科创板</option>
+              <option value="beijing">北交所</option>
+              <option value="unknown">未知</option>
+            </ZodiacSelect>
+            <ZodiacSelect
+              aria-label="指标覆盖"
+              value={completeness}
+              onChange={(e) => {
+                setPage(0);
+                setCompleteness(e.target.value);
+              }}
+            >
+              <option value="">全部覆盖状态</option>
+              <option value="complete">年度与30日指标可核验</option>
+              <option value="missing">存在统计缺口</option>
+            </ZodiacSelect>
+          </div>
+          <div className="zodiac-sort">
+            {sorter(sort, setSort, "主排序")}
+            {sorter(secondary, setSecondary, "次排序")}
+            <label>
+              密度
+              <ZodiacSelect
+                aria-label="显示密度"
+                value={density}
+                onChange={(e) => setDensity(e.target.value)}
+              >
+                <option value="normal">标准</option>
+                <option value="compact">紧凑</option>
+              </ZodiacSelect>
+            </label>
+            <details className="zodiac-column-picker">
+              <summary>自定义列</summary>
+              <div>
+                {columns.map((c) => (
+                  <label className="zodiac-check" key={c.key}>
+                    <input
+                      type="checkbox"
+                      checked={shown.some((s) => s.key === c.key)}
+                      onChange={(e) =>
+                        setCustom({
+                          ...custom,
+                          [group]: e.target.checked
+                            ? [...shown.map((s) => s.key), c.key]
+                            : shown
+                                .filter((s) => s.key !== c.key)
+                                .map((s) => s.key),
+                        })
+                      }
+                    />
+                    {c.label}
+                    {shown.some((s) => s.key === c.key) && (
+                      <>
+                        <button
+                          onClick={() => moveColumn(c.key, -1)}
+                          aria-label={`${c.label}前移`}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          onClick={() => moveColumn(c.key, 1)}
+                          aria-label={`${c.label}后移`}
+                        >
+                          ↓
+                        </button>
+                      </>
+                    )}
+                  </label>
+                ))}
+                <button
+                  className="btn"
+                  onClick={() =>
+                    setCustom({ ...custom, [group]: groupKeys[group] })
+                  }
+                >
+                  恢复本组默认列
+                </button>
+              </div>
+            </details>
+          </div>
+        </details>
+        <div className="zodiac-groups zodiac-table-toolbar">
+          {groups.map((g) => (
+            <button
+              key={g}
+              className={group === g ? "active" : ""}
+              onClick={() => setGroup(g)}
+            >
+              {g}
+            </button>
+          ))}
         </div>
       </div>
       <div
@@ -633,7 +693,7 @@ export default function Zodiac({
           <>
             <MemberMetricCoverage coverage={data.coverage} />
             {data.items.length ? (
-              <>
+              !mobile ? (
                 <ZodiacTable
                   active={active}
                   scrollLeft={tableScrollLeft}
@@ -657,12 +717,13 @@ export default function Zodiac({
                     </tr>
                   ))}
                 </ZodiacTable>
+              ) : (
                 <div className="zodiac-mobile-cards">
                   {data.items.map((row: Row) => (
                     <article key={row.member_id}>
                       {identity(row)}
                       <div className="zodiac-card-metrics">
-                        {selectedColumns("综合", undefined).map((c) => (
+                        {mobileColumns.map((c) => (
                           <div
                             className={c.type === "topics" ? "wide" : ""}
                             key={c.key}
@@ -685,7 +746,7 @@ export default function Zodiac({
                     </article>
                   ))}
                 </div>
-              </>
+              )
             ) : (
               <div className="zodiac-empty">
                 <CalendarDays size={34} />

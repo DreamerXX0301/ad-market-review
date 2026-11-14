@@ -699,6 +699,40 @@
   font-size: var(--workbench-type-label, 12px);
   border-radius: 8px;
 }
+.zodiac-advanced > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: var(--workbench-type-label, 12px);
+}
+.zodiac-advanced[open] > summary {
+  color: var(--accent-secondary);
+}
+.zodiac-advanced > div {
+  margin-top: 10px;
+}
+.zodiac-year-jump,
+.zodiac-year-jump > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.zodiac-advanced input[type="number"] {
+  width: 86px;
+}
+.zodiac-filter-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--surface2);
+  color: var(--text);
+  text-align: center;
+}
 .zodiac-table-toolbar {
   padding-top: 10px;
   border-top: 1px solid var(--border);

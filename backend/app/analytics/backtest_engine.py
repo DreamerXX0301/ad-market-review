@@ -162,22 +162,33 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
     master={r['instrument_id']:r for r in market.instruments(limit=10000)}
     excluded=defaultdict(int);signals=defaultdict(list);quotes=defaultdict(dict);signal_rows=[];eligible=[];unknown=0;evaluated=0
     ast,rules,dependencies=strategy_predicates(strategy)
-    needs_history=bool(history_nodes(dependencies))
-    needs_history_limits=any('limit_up' in names(event['where']) for event in history_nodes(dependencies))
+    events=history_nodes(dependencies)
+    needs_history=bool(events)
+    needs_history_limits=any('limit_up' in names(event['where']) for event in events)
     if needs_history_limits:
         from app.services.strategy_limits import LimitConditionEvidence
         from app.services.history_events import attach_limit_events
         limit_evidence=LimitConditionEvidence(market)
     buy_ast={'all':[ast,rules['entry']]} if rules['entry'] is not None else ast
     exit_unknown=0
-    total=market.status().get('symbols',0)
+    status=market.status();total=status.get('symbols',0)
+    snapshot=status.get('snapshot_id')
+    default_period=strategy.get('period','D')
+    other_periods=periods_for(dependencies,default_period)-{default_period}
+    required_periods=other_periods|{default_period}
+    fields=names(dependencies)
+    needs_daily_breakout=default_period in ('W','M') and fields&{'close_breakout_high','intraday_high_change_pct'}
+    needs_daily='D' in required_periods or needs_daily_breakout or bool(exit_ma)
+    history_start=history_retain_start([dependencies],cal,start) if needs_history else None
+    expected_closes={period:{day:latest_closed_date(cal,day,period) for day in dates} for period in other_periods}
+    starting_day=date.fromisoformat(start)
     for i,(symbol,rows) in enumerate(market.iter_histories(end)):
         identity=master.get(symbol,{})
         code=symbol[:6]
         if symbol.endswith('.BJ') or code.startswith(('688','689')):excluded['unsupported_board']+=1;continue
         if 'ST' in identity.get('name','').upper():excluded['current_st']+=1;continue
         if not identity.get('list_date'):excluded['identity_missing']+=1;continue
-        if (date.fromisoformat(start)-date.fromisoformat(identity['list_date'])).days<30:excluded['new_listing']+=1;continue
+        if (starting_day-date.fromisoformat(identity['list_date'])).days<30:excluded['new_listing']+=1;continue
         in_range=[r for r in rows if start<=r['date']<=end]
         if {r['date'] for r in in_range}!=expected:excluded['missing_quotes_in_interval']+=1;continue
         if any(r.get('corporate_action') for r in in_range):excluded['corporate_action_in_interval']+=1;continue
@@ -189,26 +200,29 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
             if r['date']<start:prev=r
         # Store a genuine prior close for the first execution's price-band check.
         if prev:quotes['_previous'][symbol]=prev
-        daily_indicators=enrich_bars(rows,cal)
-        history_context=HistoryContext(rows,cal,end,market.status().get('snapshot_id'),retain_start=history_retain_start([dependencies],cal,start)) if needs_history else None
+        daily_indicators=[]
+        if needs_daily:
+            # Replay the retained seed and materialize only the report range
+            # plus the immediately preceding bar for crossing comparisons.
+            first_observation=next(index for index,row in enumerate(rows) if row['date']>=start)
+            daily_indicators=enrich_bars(rows,cal,tail=len(rows)-max(0,first_observation-1))
+        history_context=HistoryContext(rows,cal,end,snapshot,retain_start=history_start) if needs_history else None
         if needs_history_limits:attach_limit_events(history_context,symbol,[dependencies],limit_evidence)
-        default_period=strategy.get('period','D')
-        required_periods=periods_for(dependencies,default_period)|{default_period}
-        daily_breakout={row['date']:row for row in daily_indicators} if default_period in ('W','M') and names(dependencies)&{'close_breakout_high','intraday_high_change_pct'} else {}
+        daily_breakout={row['date']:row for row in daily_indicators} if needs_daily_breakout else {}
         if exit_ma:
             for row in daily_indicators:
                 if row['date']>=start:quotes[row['date']][symbol]['exit_ma_value']=row.get(f'ma{exit_ma}')
-        series={'D':daily_indicators}
+        series={'D':daily_indicators} if daily_indicators else {}
         if 'W' in required_periods:
             series['W']=completed_indicator_bars(rows,cal,end,'W')
         if 'M' in required_periods:
             series['M']=completed_indicator_bars(rows,cal,end,'M')
-        if 'higher_lows' in names(dependencies):
+        if 'higher_lows' in fields:
             from .higher_lows import summaries as higher_lows_summaries
             for selected,values in series.items():
                 structure=higher_lows_summaries(rows,cal,end,selected)
                 for row in values:row['higher_lows_state']=structure.get(row['date'])
-        if 'boll_signal' in names(dependencies):
+        if 'boll_signal' in fields:
             from .boll_conditions import configs_for, states_for_bars
             for selected,configs in configs_for(dependencies,default_period).items():
                 if not configs:continue
@@ -216,33 +230,41 @@ def prepare(market,strategy,start,end,progress=None,exit_ma=0):
                 # growing-prefix recomputation for every historical signal.
                 states=states_for_bars(rows,cal,end,selected,configs)
                 for row in series[selected]:row['boll_states']=states.get(row['date'],{})
-        # Each summary is computed once per symbol. Scoped conditions select a
-        # closed bar whose date is at or before the signal day, never future OHLC.
-        scoped={selected:{r['date']:metrics_from_enriched(r,values[index-1] if index else None)
-                          for index,r in enumerate(values)} for selected,values in series.items() if selected in required_periods}
-        pointers={selected:-1 for selected in required_periods}
+        # Build the latest scoped summary only when a closed bar is consumed.
+        # Most historical bars seed indicators but are never themselves evaluated.
+        scoped={selected:{} for selected in other_periods}
+        pointers={selected:-1 for selected in other_periods}
         enriched=series[default_period]
         previous=None
         for row in enriched:
             if row['date']<start:previous=row;continue
-            m=metrics_from_enriched(row,previous);m.update(identity_flags(identity,row['date']));m['indicator_period']=strategy.get('period','D');previous=row
-            if required_periods-{default_period}:
+            m=metrics_from_enriched(row,previous);m.update(identity_flags(identity,row['date']));m['indicator_period']=default_period;previous=row
+            if other_periods:
                 by_period={default_period:dict(m)}
-                for selected in required_periods-{default_period}:
+                for selected in other_periods:
                     values=series[selected];pointer=pointers[selected]
                     while pointer+1<len(values) and values[pointer+1]['date']<=row['date']:pointer+=1
                     pointers[selected]=pointer
-                    by_period[selected]={**scoped[selected][values[pointer]['date']],'indicator_period':selected} if pointer>=0 and values[pointer]['date']==latest_closed_date(cal,row['date'],selected) else {}
+                    by_period[selected]={}
+                    schedule=expected_closes[selected]
+                    if row['date'] not in schedule:
+                        schedule[row['date']]=latest_closed_date(cal,row['date'],selected)
+                    if pointer>=0 and values[pointer]['date']==schedule[row['date']]:
+                        day=values[pointer]['date']
+                        if day not in scoped[selected]:
+                            scoped[selected][day]=metrics_from_enriched(values[pointer],values[pointer-1] if pointer else None)
+                        by_period[selected]={**scoped[selected][day],'indicator_period':selected}
                 m['_period_metrics']=by_period
             if daily_breakout:
                 daily_state=daily_breakout.get(row['date'],{})
                 m.update({field:daily_state.get(field) for field in ('breakout_valid','breakout_previous_sessions','breakout_blocking_distance','new_high_current_close')})
                 m.update({field:daily_state.get(field) for field in ('intraday_high_change_pct','intraday_high_change_pct_reason')})
+            history=history_context.at(row['date']) if history_context else None
             if rules['exit'] is not None:
-                exit_check=evaluate(rules['exit'],m,history_context.at(row['date']) if history_context else None)
+                exit_check=evaluate(rules['exit'],m,history)
                 if exit_check['result'] is None:exit_unknown+=1
                 quotes[row['date']][symbol].update(custom_exit=exit_check['result'],custom_exit_checks=exit_check)
-            decision=evaluate(buy_ast,m,history_context.at(row['date']) if history_context else None);evaluated+=1
+            decision=evaluate(buy_ast,m,history);evaluated+=1
             if decision['result'] is None:unknown+=1
             if decision['result'] is True:
                 sig={'date':row['date'],'instrument_id':symbol,'code':code,'name':identity.get('name',symbol),'close':row['close'],'metrics':m,'checks':decision}
@@ -261,7 +283,7 @@ def _prepare_forward(market,strategy,start,end,progress=None,exit_ma=0,*,_reuse_
     """
     from app.domain.conditions import metrics_for
     from app.domain.strategy_prices import prepare_condition_prices, compact_source_token, VERSION as price_version
-    from app.services.strategy_periods import add_period_metrics
+    from app.services.strategy_periods import add_period_metrics, compile_metric_plan
     from .boll_conditions import configs_for
     if strategy.get('hot_universe') is not None:
         from app.services.strategy_hot_universe import HISTORICAL_REASON
@@ -270,34 +292,40 @@ def _prepare_forward(market,strategy,start,end,progress=None,exit_ma=0,*,_reuse_
     master={row['instrument_id']:row for row in market.instruments(limit=10000)}
     verify=getattr(market,'verify_condition_sources',None)
     source=compact_source_token(verify()) if callable(verify) else None
-    snapshot=market.status().get('snapshot_id');action_map={}
+    status=market.status();snapshot=status.get('snapshot_id')
     action_reader=getattr(market,'actions_for_instruments',None)
-    symbols=list(master)
-    if callable(action_reader):
-        for offset in range(0,len(symbols),32):
-            batch=action_reader(symbols[offset:offset+32])
-            if isinstance(batch,dict):action_map.update(batch)
+    action_map=action_reader(list(master)) if callable(action_reader) else None
+    if not isinstance(action_map,dict):action_map={}
     ast,rules,dependencies=strategy_predicates(strategy)
     buy_ast={'all':[ast,rules['entry']]} if rules['entry'] is not None else ast
-    needs_history=bool(history_nodes(dependencies))
-    needs_history_limits=any('limit_up' in names(event['where']) for event in history_nodes(dependencies))
+    events=history_nodes(dependencies)
+    needs_history=bool(events)
+    needs_history_limits=any('limit_up' in names(event['where']) for event in events)
     if needs_history_limits:
         from app.services.strategy_limits import LimitConditionEvidence
         from app.services.history_events import attach_limit_events
         limit_evidence=LimitConditionEvidence(market)
     default=strategy.get('period','D');configs=configs_for(dependencies,default)
-    required_periods=periods_for(dependencies,default)|{default}
+    metric_plan=compile_metric_plan([dependencies],default)
+    required_periods=set(metric_plan.periods)
+    other_periods=required_periods-{default}
+    fields=names(dependencies)
+    needs_higher_lows='higher_lows' in fields
+    ordinary=not fields&{'higher_lows','boll_signal'}
+    needs_context_history=not ordinary or needs_history
+    history_start=history_retain_start([dependencies],cal,start) if needs_history else None
+    starting_day=date.fromisoformat(start)
     def dated_action(event):
         try:return isinstance(event,dict) and isinstance(event.get('date'),str) and date.fromisoformat(event['date']).isoformat()==event['date']
         except ValueError:return False
     excluded=defaultdict(int);signals=defaultdict(list);quotes=defaultdict(dict);signal_rows=[]
-    unknown=evaluated=exit_unknown=0;eligible=[];total=market.status().get('symbols',0)
+    unknown=evaluated=exit_unknown=0;eligible=[];total=status.get('symbols',0)
     for i,(symbol,rows) in enumerate(market.iter_histories(end)):
         identity=master.get(symbol,{});code=symbol[:6]
         if symbol.endswith('.BJ') or code.startswith(('688','689')):excluded['unsupported_board']+=1;continue
         if 'ST' in identity.get('name','').upper():excluded['current_st']+=1;continue
         if not identity.get('list_date'):excluded['identity_missing']+=1;continue
-        if (date.fromisoformat(start)-date.fromisoformat(identity['list_date'])).days<30:excluded['new_listing']+=1;continue
+        if (starting_day-date.fromisoformat(identity['list_date'])).days<30:excluded['new_listing']+=1;continue
         in_range=[row for row in rows if start<=row['date']<=end]
         if len(in_range)!=len(expected) or {row['date'] for row in in_range}!=expected:excluded['missing_quotes_in_interval']+=1;continue
         if any(row.get('corporate_action') for row in in_range):excluded['corporate_action_in_interval']+=1;continue
@@ -318,31 +346,33 @@ def _prepare_forward(market,strategy,start,end,progress=None,exit_ma=0,*,_reuse_
             seed=prepare_condition_prices(rows,actions,cal,start,'forward',instrument_id=symbol,
                 actions_coverage={'known':True,'source_token':source,'snapshot_id':snapshot})
             optimized=interval_prices(seed,rows,cal,start,end,required_periods,symbol,source,actions)
-        ordinary=not bool(names(dependencies)&{'higher_lows','boll_signal'})
         if default in ('W','M'):
             observed={row['date'] for row in completed_indicator_bars(rows,cal,end,default) if start<=row['date']<=end}
         else:observed=expected
         for day in dates:
             if day not in observed and not exit_ma:continue
-            context=(optimized.context(day) if optimized is not None else
+            context=(optimized.context(day,include_history=needs_context_history) if optimized is not None else
                 prepare_condition_prices(rows,actions,cal,day,'forward',instrument_id=symbol,
                     actions_coverage={'known':True,'source_token':source,'snapshot_id':snapshot}))
+            daily=None
             if exit_ma:
                 daily=optimized.metrics(day,'D',context) if optimized is not None else metrics_for(rows,day,cal,'D',price_context=context)
                 quotes[day][symbol]['exit_ma_value']=daily.get(f'ma{exit_ma}')
             if day not in observed:continue
-            metrics=(optimized.metrics(day,default,context) if optimized is not None and ordinary else
-                metrics_for(rows,day,cal,default,include_higher_lows='higher_lows' in names(dependencies),
+            metrics=(daily if default=='D' and daily is not None and ordinary else
+                optimized.metrics(day,default,context) if optimized is not None and ordinary else
+                metrics_for(rows,day,cal,default,include_higher_lows=needs_higher_lows,
                             boll_configs=configs.get(default),price_context=context))
-            ready=({selected:optimized.metrics(day,selected,context) for selected in required_periods-{default}}
+            ready=({selected:daily if selected=='D' and daily is not None else optimized.metrics(day,selected,context)
+                    for selected in other_periods}
                    if optimized is not None and ordinary else None)
             metrics=add_period_metrics(metrics,rows,day,cal,[dependencies],default,
-                instrument_id=symbol,generation=snapshot,price_context=context,ready=ready)
+                instrument_id=symbol,generation=snapshot,price_context=context,ready=ready,plan=metric_plan)
             metrics.update(identity_flags(identity,day));metrics['indicator_period']=default
             history=None
             if needs_history:
                 history=HistoryContext(rows,cal,day,snapshot,
-                    retain_start=history_retain_start([dependencies],cal,start),price_context=context)
+                    retain_start=history_start,price_context=context)
                 if needs_history_limits:attach_limit_events(history,symbol,[dependencies],limit_evidence)
             if rules['exit'] is not None:
                 check=evaluate(rules['exit'],metrics,history.at(day) if history else None)

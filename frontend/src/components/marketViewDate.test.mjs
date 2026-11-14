@@ -209,6 +209,18 @@ function elements(node) {
 const shell = () => elements(tree).find((node) => node.type === "shell").props;
 const progress = () =>
   elements(tree).find((node) => node.type === "progress").props;
+const stockDrawer = () =>
+  elements(tree).find(
+    (node) => node.type === "page" && node.props.id === "603366.SH",
+  )?.props;
+function searchStock() {
+  shell().onStock("603366.SH");
+  render();
+  const stock = stockDrawer();
+  stock?.onClose();
+  render();
+  return stock;
+}
 function navigate(route) {
   shell().onNavigate(route);
   render();
@@ -389,6 +401,52 @@ assert.ok(
   reloads.includes("/market/noon/dates"),
   "base pages refresh only the small date directory, not all market data",
 );
+packets["/bootstrap?scope=navigation"] = {
+  data_date: "2026-11-13",
+  market_dates: ["2026-11-05", "2026-11-06", "2026-11-13"],
+};
+packets["/market/noon/dates"] = { today: "2026-11-14" };
+packets["/market/auction/dates"] = { today: "2026-11-14" };
+reset("#market");
+shell().onDate("2026-11-06");
+render();
+for (const route of routes) {
+  navigate(route);
+  assert.equal(
+    searchStock()?.asOf,
+    "2026-11-06",
+    `global search follows the observed day in ${route}`,
+  );
+}
+navigate("tracking");
+assert.equal(
+  searchStock().asOf,
+  undefined,
+  "independent routes keep global search on the latest publication",
+);
+navigate("market");
+assert.equal(
+  searchStock()?.asOf,
+  "2026-11-06",
+  "returning to the market restores the pinned day",
+);
+shell().onDate("2026-11-09");
+render();
+for (const route of ["market", "news-events"]) {
+  navigate(route);
+  assert.equal(searchStock(), undefined, "an unpublished historical day cannot show later K-lines");
+  assert.ok(elements(tree).some((node) => node.props.children === "当前观察日暂无可用的已发布收盘行情。"));
+}
+navigate("market");
+shell().onResetDate();
+render();
+assert.equal(searchStock()?.asOf, "2026-11-13");
+for (const route of ["news-events", "auction", "noon", "intraday"]) {
+  assert.equal(navigate(route).date, "2026-11-14");
+  assert.equal(searchStock()?.asOf, "2026-11-13", `today's ${route} uses the latest verified close when pending`);
+}
+packets["/bootstrap?scope=navigation"] = { data_date: "2026-10-29", market_dates: days };
+packets["/market/noon/dates"] = { today: "2026-10-30", dates: ["2026-10-29"] };
 const { default: Notice } = await import(
   await moduleUrl(new URL("./MarketDateNotice.tsx", import.meta.url), {})
 );

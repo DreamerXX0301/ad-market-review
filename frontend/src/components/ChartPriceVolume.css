@@ -48,8 +48,17 @@
 }
 .chart-price-volume-levels {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 2fr);
   border-top: 1px solid var(--border);
+}
+.chart-price-volume-pressure-values {
+  display: flex;
+}
+.chart-price-volume-pressure-values > .chart-price-volume-level {
+  flex: 1 1 0;
+}
+.chart-price-volume-level > strong.chart-price-volume-pressure-zone {
+  color: var(--amber, #e0b966);
 }
 .chart-price-volume-level {
   display: flex;
@@ -126,10 +135,11 @@ button.chart-price-volume-level[aria-pressed="false"] > strong {
   .chart-price-volume-levels {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .chart-price-volume-level:nth-child(2) {
+  .chart-price-volume-levels > .chart-price-volume-level:nth-child(2) {
     border-right: 0;
   }
-  .chart-price-volume-level:nth-child(n + 3) {
+  .chart-price-volume-pressure {
+    grid-column: 1 / -1;
     border-top: 1px solid var(--border);
   }
   .chart-price-volume-evidence-grid {

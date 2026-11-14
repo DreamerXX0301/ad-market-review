@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -432,8 +433,8 @@ export function Cell({ field, value }: { field: string; value: any }) {
   );
 }
 export function Table({
-  rows,
-  columns,
+  rows: inputRows,
+  columns: inputColumns,
   onStock,
   onStockNavigate,
   emptyTitle = "暂无记录",
@@ -469,8 +470,14 @@ export function Table({
   /** Optional attributes and interactions for data rows, excluding expanded content. */
   rowProps?: (row: Row) => HTMLAttributes<HTMLTableRowElement>;
 }) {
-  rows = rows.filter((row) => !isHiddenIndicatorField(row.field));
-  columns = columns.filter((column) => !isHiddenIndicatorField(column.key));
+  const rows = useMemo(
+    () => inputRows.filter((row) => !isHiddenIndicatorField(row.field)),
+    [inputRows],
+  );
+  const columns = useMemo(
+    () => inputColumns.filter((column) => !isHiddenIndicatorField(column.key)),
+    [inputColumns],
+  );
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<TableSort | null>(null);
   const [sortLevels, setSortLevels] = useState<TableSort[]>(() => [
@@ -483,68 +490,101 @@ export function Table({
   );
   const localSorting =
     sorting === "local" || (sorting === "auto" && !customHeadings);
-  const sortable = (column: Column) =>
-    localSorting &&
-    column.sortable !== false &&
-    !["actions", "action", "checks", "evidence"].includes(column.key) &&
-    (column.title == null ||
-      ["string", "number"].includes(typeof column.title)) &&
-    (column.sortValue != null ||
-      column.sortable === true ||
-      (rows.some((row) => row[column.key] != null) &&
-        rows.every((row) => isSortValue(row[column.key]))));
+  const sortableColumns = useMemo(
+    () =>
+      localSorting
+        ? columns.filter(
+            (column) =>
+              column.sortable !== false &&
+              !["actions", "action", "checks", "evidence"].includes(
+                column.key,
+              ) &&
+              (column.title == null ||
+                ["string", "number"].includes(typeof column.title)) &&
+              (column.sortValue != null ||
+                column.sortable === true ||
+                (rows.some((row) => row[column.key] != null) &&
+                  rows.every((row) => isSortValue(row[column.key])))),
+          )
+        : [],
+    [columns, localSorting, rows],
+  );
+  const sortable = (column: Column) => sortableColumns.includes(column);
   const sortColumn = columns.find((column) => column.key === sort?.key);
-  const sortChoices = multiSort && localSorting ? columns.filter(sortable) : [];
-  const activeLevels = availableSortLevels(
-    sortLevels,
-    sortChoices.map((column) => column.key),
+  const sortChoices = useMemo(
+    () => (multiSort ? sortableColumns : []),
+    [multiSort, sortableColumns],
+  );
+  const activeLevels = useMemo(
+    () =>
+      availableSortLevels(
+        sortLevels,
+        sortChoices.map((column) => column.key),
+      ),
+    [sortLevels, sortChoices],
   );
   const activeSorts = multiSort ? activeLevels : sort ? [sort] : [];
   const sortSignature = activeSorts
     .map((level) => `${level.key}:${level.order}`)
     .join("|");
-  const sortColumns = new Map(
-    sortChoices.map((column) => [column.key, column]),
-  );
-  const sorted =
-    multiSort && localSorting
-      ? sortTableRowsByLevels(
-          rows,
-          activeLevels,
-          (row, key) => {
-            const column = sortColumns.get(key)!;
-            return column.sortValue ? column.sortValue(row) : row[key];
-          },
-          (row) =>
-            [
-              row.instrument_id || row.topic_code || row.name || "",
-              row[rowKey || "round_id"] || row.event_id || "",
-            ].join("\u0000"),
+  const sorted = useMemo(() => {
+    if (multiSort && localSorting) {
+      const sortColumns = new Map(
+        sortChoices.map((column) => [column.key, column]),
+      );
+      return sortTableRowsByLevels(
+        rows,
+        activeLevels,
+        (row, key) => {
+          const column = sortColumns.get(key)!;
+          return column.sortValue ? column.sortValue(row) : row[key];
+        },
+        (row) =>
+          [
+            row.instrument_id || row.topic_code || row.name || "",
+            row[rowKey || "round_id"] || row.event_id || "",
+          ].join("\u0000"),
+      );
+    }
+    return sort && sortColumn && sortableColumns.includes(sortColumn)
+      ? sortTableRows(rows, sort, (row) =>
+          sortColumn.sortValue
+            ? sortColumn.sortValue(row)
+            : row[sortColumn.key],
         )
-      : sort && sortColumn && sortable(sortColumn)
-        ? sortTableRows(rows, sort, (row) =>
-            sortColumn.sortValue
-              ? sortColumn.sortValue(row)
-              : row[sortColumn.key],
-          )
-        : rows;
-  const rowSignature = rows
-    .map(
-      (r, i) =>
-        String(
-          r[rowKey || "instrument_id"] ||
-            r.round_id ||
-            r.event_id ||
-            r.topic_id ||
-            r.order_id ||
-            r.field ||
-            r.name ||
-            i,
-        ) +
-        ":" +
-        String(r.business_date || r.date || r.entry_date || ""),
-    )
-    .join("|");
+      : rows;
+  }, [
+    rows,
+    multiSort,
+    localSorting,
+    sortChoices,
+    activeLevels,
+    sort,
+    sortColumn,
+    sortableColumns,
+    rowKey,
+  ]);
+  const rowSignature = useMemo(
+    () =>
+      rows
+        .map(
+          (r, i) =>
+            String(
+              r[rowKey || "instrument_id"] ||
+                r.round_id ||
+                r.event_id ||
+                r.topic_id ||
+                r.order_id ||
+                r.field ||
+                r.name ||
+                i,
+            ) +
+            ":" +
+            String(r.business_date || r.date || r.entry_date || ""),
+        )
+        .join("|"),
+    [rows, rowKey],
+  );
   useEffect(() => setPage(0), [rowSignature, sortSignature]);
   const safePage = Math.min(
     page,

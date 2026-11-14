@@ -190,6 +190,20 @@ render({ ...input, strategy: a, ready: true });
 requested[6].resolve({ available: false, reason: "coverage unavailable" });
 await flush();
 assert.equal(render().canRun, false);
+render({ ...input, active: false, dataVersion: "v4" });
+assert.equal(requested.length, 7, "a hidden page never starts an availability request");
+render({ ...input, active: true });
+assert.equal(requested.length, 8);
+render({ ...input, active: false });
+assert.equal(requested[7].options.signal.aborted, true, "leaving cancels pending availability work");
+render({ ...input, active: true });
+assert.equal(requested.length, 9, "return retries the interrupted request");
+requested[8].resolve(bounds());
+await flush();
+assert.equal(render().canRun, true);
+render({ ...input, active: false });
+assert.equal(render({ ...input, active: true }).canRun, true);
+assert.equal(requested.length, 9, "return preserves same-version verified availability");
 slots.forEach((slot) => slot?.cleanup?.());
 console.log(
   "backtest availability: removed/archived selection fallback, authority readiness, scoped bounds/errors, late-response cancellation and same-strategy date preservation passed",

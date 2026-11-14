@@ -4,7 +4,7 @@ The first observation owns the adjustment seed. Later observations append real
 raw quotes because no new action factor is permitted in this interval. This is
 not an end-date adjusted series projected back into earlier signal dates.
 """
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 
 from app.domain.conditions import FIELDS, metrics_for, metrics_from_enriched, normalized_metric_rows, merge_condition_price_metrics
 from app.domain.strategy_prices import price_cache_key
@@ -33,18 +33,22 @@ class ForwardIntervalPrices:
                 row['_volume_known']=row['volume'] is not None
                 row['volume']=row['volume'] if row['_volume_known'] else 0
                 row['amount']=row['amount'] if row['amount'] is not None else 0
-            daily=enrich_bars(valid,calendar)
+            first=bisect_left([row['date'] for row in valid],self.start)
+            daily=enrich_bars(valid,calendar,tail=max(1,len(valid)-max(0,first-1)))
             self.series[lane]={'D':daily}
             for period in periods-{'D'}:
                 self.series[lane][period]=completed_indicator_bars(valid,calendar,end,period)
             self.dates[lane]={period:[row['date'] for row in values] for period,values in self.series[lane].items()}
 
-    def context(self,day):
-        stop=bisect_right(self.days,day)
-        return {**self.seed,'anchor_date':day,'raw_rows':self.raw[:stop],
-            'price_rows':[{**row,'adjustment_anchor':day} for row in self.prices[:stop]],
-            'adjustment':{**self.seed['adjustment'],'anchor':day},
-            'cache_key':price_cache_key(self.symbol,day,'forward',self.source)}
+    def context(self,day,*,include_history):
+        context={key:value for key,value in self.seed.items() if key not in ('raw_rows','price_rows')}
+        context.update(anchor_date=day,adjustment={**self.seed['adjustment'],'anchor':day},
+                       cache_key=price_cache_key(self.symbol,day,'forward',self.source))
+        if include_history:
+            stop=bisect_right(self.days,day)
+            context.update(raw_rows=self.raw[:stop],
+                           price_rows=[{**row,'adjustment_anchor':day} for row in self.prices[:stop]])
+        return context
 
     def _metrics(self,lane,day,period,daily_facts):
         values=self.series[lane][period];dates=self.dates[lane][period]

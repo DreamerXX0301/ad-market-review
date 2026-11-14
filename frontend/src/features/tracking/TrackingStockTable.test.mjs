@@ -97,6 +97,13 @@ function harness(code, name, extra = {}) {
         },
       ];
     },
+    useMemo(calculate, deps) {
+      const index = cursor++;
+      const previous = states[index];
+      if (!previous || deps.some((value, i) => !Object.is(value, previous.deps[i])))
+        states[index] = { value: calculate(), deps };
+      return states[index].value;
+    },
     useEffect() {},
   };
   const component = Function(

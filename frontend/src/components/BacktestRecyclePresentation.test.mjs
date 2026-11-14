@@ -15,13 +15,13 @@ const helper = ts.transpileModule(
 const helperUrl =
   "data:text/javascript;base64," + Buffer.from(helper).toString("base64");
 let chartSource = await fs.readFile(
-  new URL("./Charts.tsx", import.meta.url),
+  new URL("../features/backtests/EquityChart.tsx", import.meta.url),
   "utf8",
 );
 chartSource = chartSource.slice(
-  chartSource.indexOf("export function EquityChart("),
+  chartSource.indexOf("function EquityChart("),
 );
-const prelude = `import React, {useState,useEffect,useRef} from ${JSON.stringify(import.meta.resolve("react"))};
+const prelude = `import React, {useState,useEffect,useRef,useMemo} from ${JSON.stringify(import.meta.resolve("react"))};
 import {equityCurvePoints,equityCurveTooltip,validInitialCapital,curvePercent,curveAxisAmount} from ${JSON.stringify(helperUrl)};
 let lastOption; export function options(){return lastOption;}
 const chartPalette=()=>({tooltip:"#192332",line:"#31425c",text:"#dde7fa"});
@@ -41,7 +41,7 @@ chartCompiled = chartCompiled.replaceAll(
   '"react/jsx-runtime"',
   JSON.stringify(import.meta.resolve("react/jsx-runtime")),
 );
-const { EquityChart, options } = await import(
+const { default: EquityChart, options } = await import(
   "data:text/javascript;base64," + Buffer.from(chartCompiled).toString("base64")
 );
 const props = {

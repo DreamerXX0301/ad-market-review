@@ -1,5 +1,6 @@
 """Frozen backtest jobs and immutable result publication, separate from simulation."""
 from pathlib import Path
+from hashlib import sha256
 import json
 import os
 import shutil
@@ -134,8 +135,13 @@ def get_backtest(backtest_id):
         else:artifact=None
     if artifact:
         path=(published_dir()/artifact['object_key']).resolve()
-        if not path.is_relative_to(published_dir().resolve()) or not path.is_file() or hash_file(path)!=artifact['sha256']:raise ValueError('结果文件缺失或校验和不一致')
-        result.update(json.loads(path.read_text()))
+        if not path.is_relative_to(published_dir().resolve()) or not path.is_file():raise ValueError('结果文件缺失或校验和不一致')
+        try:
+            content=path.read_bytes()
+        except FileNotFoundError as error:
+            raise ValueError('结果文件缺失或校验和不一致') from error
+        if sha256(content).hexdigest()!=artifact['sha256']:raise ValueError('结果文件缺失或校验和不一致')
+        result.update(json.loads(content))
     return result
 
 

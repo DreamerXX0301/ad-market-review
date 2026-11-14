@@ -238,6 +238,39 @@ assert.deepEqual(filterMonitorEvents([event, eventB], "我的支撑线", "all"),
   event,
 ]);
 assert.deepEqual(filterMonitorEvents([event, eventB], "", "holding"), [event]);
+const sunrise = {
+  ...event,
+  instrument_id: "603366.SH",
+  name: "日出东方",
+  code: "603366",
+  board: "main",
+  search_pinyin: "richudongfang",
+  search_initials: "rcdf",
+};
+for (const query of [
+  "rc",
+  "RCDF",
+  "ｒｃ",
+  "ri chu",
+  "richudongfang",
+  "日出",
+  "603366",
+]) {
+  assert.deepEqual(
+    filterMonitorRows([sunrise, eventB], query),
+    [sunrise],
+    query,
+  );
+}
+assert.deepEqual(filterMonitorEvents([sunrise, eventB], "rc", "holding"), [
+  sunrise,
+]);
+assert.deepEqual(
+  filterMonitorRows([sunrise, eventB], "rc", { board: "star" }),
+  [],
+);
+assert.deepEqual(filterMonitorRows([eventB], "乙股票"), [eventB]);
+assert.deepEqual(filterMonitorRows([sunrise], "cdf"), []);
 const zero = { ...event, change_pct: 0, limit_up_1y: 8, limit_up_ytd: 0 };
 const unknown = {
   ...eventB,

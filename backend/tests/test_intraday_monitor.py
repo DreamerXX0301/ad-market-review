@@ -419,8 +419,15 @@ def test_scope_change_while_response_returns_cannot_commit_frozen_old_universe(m
     assert not list(core.raw_dir().glob('intraday-monitor/**/*.json.gz'))
 
 
-def test_real_worker_three_slots_persist_sha_states_and_merge_source_events_without_old_mutations(monitored):
+def test_real_worker_three_slots_persist_sha_states_and_merge_source_events_without_old_mutations(monitored, monkeypatch):
     env = monitored
+    original_instruments = env.market.instruments
+
+    def instruments(*args, **kwargs):
+        return [dict(row, name='日出东方') if row['instrument_id'] == SYMBOL else row
+                for row in original_instruments(*args, **kwargs)]
+
+    monkeypatch.setattr(env.market, 'instruments', instruments)
     initial = price_levels.automatic_baseline(SYMBOL, env.market.bars(SYMBOL, env.market.entry),
         previous_day=env.market.entry, calendar=env.market.days, snapshot='raw', primary_snapshot='raw')
     zone = next(item for item in initial['levels'] if item['kind'] == 'resistance' and item['source_kind'] == 'automatic_zone')
@@ -434,6 +441,10 @@ def test_real_worker_three_slots_persist_sha_states_and_merge_source_events_with
     assert events['date'] == env.day and events['chart_as_of'] == env.market.entry
     assert events['total'] == events['unread_count'] == 1
     event = events['items'][0]
+    overview = env.client.get(BASE).json()
+    for item in (overview['stocks'][0], overview['events']['items'][0], event):
+        assert item['instrument_id'] == SYMBOL and item['name'] == '日出东方'
+        assert (item['search_pinyin'], item['search_initials']) == ('richudongfang', 'rcdf')
     assert event['type'] == 'pressure_breakout' and event['sampling_only'] is True
     assert {source['source_kind'] for source in event['sources']} == {'manual_line', 'automatic_zone'}
     assert all(source['source_time_ms'] and source['observed_at_ms'] for source in event['sources'])

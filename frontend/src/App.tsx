@@ -330,6 +330,28 @@ export default function App() {
     },
     [route, date, noonChartAsOf, noonPublishedClose, notify],
   );
+  const openSearchedStock = (id: string) => {
+    if (
+      !marketRoutes.has(route) ||
+      isIntradayReview(route) ||
+      dates.includes(date)
+    ) {
+      openStock(id);
+      return;
+    }
+    // News is available before the market's daily close is published.
+    if (
+      route === "news-events" &&
+      dateChoice?.mode !== "manual" &&
+      date === today &&
+      latestDate < date &&
+      dates.includes(latestDate)
+    ) {
+      setStock(stockSelectionForOpen(id, undefined, latestDate));
+      return;
+    }
+    notify("当前观察日暂无可用的已发布收盘行情。", "error");
+  };
   const openTrackedStock = useCallback(
     (id: string, round: Row | null, navigation?: StockNavigation) => {
       setStock({
@@ -686,7 +708,7 @@ export default function App() {
           dataError={!!bootstrap.error}
           theme={theme}
           onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          onStock={(id) => setStock(stockSelectionForOpen(id))}
+          onStock={openSearchedStock}
           onSector={(row) => {
             const next = globalSectorSelection(
               row,

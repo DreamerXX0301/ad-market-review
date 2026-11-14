@@ -855,11 +855,17 @@ class MarketData:
             return prepared
 
     def iter_histories(self, as_of=None):
-        frame = self._daily_frame()
+        with self._lock:
+            frame = self._daily_frame()
+            ranges = self._symbol_ranges.copy()
         if frame is None:return
-        if as_of:frame=frame.loc[frame.date<=as_of]
-        for symbol,group in frame.groupby('instrument_id',sort=False):
-            yield symbol,group.to_dict('records')
+        for symbol,(left,right) in ranges.items():
+            group=frame.iloc[left:right]
+            if as_of:
+                last=group.date.iat[-1]
+                if not isinstance(last,str):group=group.loc[group.date<=as_of]
+                elif last>as_of:group=group.iloc[:group.date.searchsorted(as_of,side='right')]
+            if not group.empty:yield symbol,group.to_dict('records')
 
     def amount_top10_history(self, days):
         """Project only dated amount facts; do not compute seven full panels."""

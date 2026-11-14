@@ -26,6 +26,7 @@ export default function ChartPriceVolume({
   onToggleAll,
   actions,
   onProfileChange,
+  pressureZone,
 }: {
   view: PriceVolumeView | null;
   visibleIds: ReadonlySet<string>;
@@ -33,6 +34,7 @@ export default function ChartPriceVolume({
   onToggleAll?: (show: boolean) => void;
   actions?: ReactNode;
   onProfileChange?: (profile: PriceVolumeProfile) => void;
+  pressureZone?: { low: number; high: number };
 }) {
   if (!view) return null;
   const price = (value: number | null) =>
@@ -63,6 +65,52 @@ export default function ChartPriceVolume({
     breakoutSignalLabel && view.recentBreakout
       ? `${view.recentBreakout.date} ${breakoutSignalLabel}`
       : view.signal.label;
+  const renderLevel = (key: keyof typeof levelNames) => {
+    const level = view[key];
+    const id = `price-volume:${key}`;
+    const noSupport =
+      key === "support" && view.referencePrice != null && !level;
+    const content = (
+      <>
+        <span className="chart-price-volume-name">{levelLabel(key)}</span>
+        <strong
+          className={!level ? "chart-price-volume-unavailable" : undefined}
+        >
+          {noSupport ? "暂无确认支撑" : price(level?.price ?? null)}
+        </strong>
+        <small>
+          {level?.distancePct != null
+            ? `距参考收盘 ${percent(level.distancePct)}`
+            : noSupport
+              ? view.supportReason || "当前结构窗口暂无有效支撑"
+              : key === "breakout" && view.atr.value == null
+                ? "缺少可比波动数据"
+                : "暂无可核验价位"}
+        </small>
+        {key === "support" && level && view.profile === "short_week_v1" && (
+          <small>
+            {view.supportDistanceState === "far"
+              ? "距离较远，不能替代短线风险线"
+              : "结构观察，不等于短线风险线"}
+          </small>
+        )}
+      </>
+    );
+    return key !== "resistance" && level ? (
+      <button
+        type="button"
+        className={`chart-price-volume-level ${key}`}
+        aria-label={`${levelLabel(key)} ${price(level.price)}，切换图上标注`}
+        aria-pressed={visibleIds.has(id)}
+        title="点击显示或隐藏对应参考线"
+        onClick={() => onToggle(id, !visibleIds.has(id))}
+      >
+        {content}
+      </button>
+    ) : (
+      <div className={`chart-price-volume-level ${key}`}>{content}</div>
+    );
+  };
   return (
     <section className="chart-price-volume" aria-label="自动量价参考">
       <div className="chart-price-volume-heading">
@@ -136,67 +184,43 @@ export default function ChartPriceVolume({
           : "最近120根完整K线的历史结构观察；结构失效参考未绑定个人成本或持股期限。"}
       </p>
       <div className="chart-price-volume-levels">
-        {(["stop", "support", "resistance", "breakout"] as const).map((key) => {
-          const level = view[key];
-          const id = `price-volume:${key}`;
-          const noConfirmedLevel =
-            view.referencePrice != null &&
-            !level &&
-            (key === "support" || key === "resistance");
-          const content = (
-            <>
-              <span className="chart-price-volume-name">{levelLabel(key)}</span>
-              <strong
-                className={
-                  noConfirmedLevel
-                    ? "chart-price-volume-unavailable"
-                    : undefined
-                }
-              >
-                {noConfirmedLevel
-                  ? key === "support"
-                    ? "暂无确认支撑"
-                    : "暂无确认压力"
-                  : price(level?.price ?? null)}
-              </strong>
-              <small>
-                {noConfirmedLevel
-                  ? key === "support" && view.supportReason
-                    ? view.supportReason
-                    : "不推算不存在的价位"
-                  : level?.distancePct != null
-                    ? `距参考收盘 ${percent(level.distancePct)}`
-                    : "暂无可核验价位"}
-              </small>
-              {key === "support" &&
-                level &&
-                view.profile === "short_week_v1" && (
-                  <small>
-                    {view.supportDistanceState === "far"
-                      ? "距离较远，不能替代短线风险线"
-                      : "结构观察，不等于短线风险线"}
-                  </small>
-                )}
-            </>
-          );
-          return key !== "resistance" && level ? (
-            <button
-              type="button"
-              key={key}
-              className={`chart-price-volume-level ${key}`}
-              aria-label={`${levelLabel(key)} ${price(level.price)}，切换图上标注`}
-              aria-pressed={visibleIds.has(id)}
-              title="点击显示或隐藏对应参考线"
-              onClick={() => onToggle(id, !visibleIds.has(id))}
-            >
-              {content}
-            </button>
-          ) : (
-            <div className={`chart-price-volume-level ${key}`} key={key}>
-              {content}
+        {renderLevel("stop")}
+        {renderLevel("support")}
+        <div
+          className="chart-price-volume-pressure"
+          role="group"
+          aria-label="压力与突破参考"
+        >
+          {view.resistance || view.breakout ? (
+            <div className="chart-price-volume-pressure-values">
+              {view.resistance && renderLevel("resistance")}
+              {renderLevel("breakout")}
             </div>
-          );
-        })}
+          ) : (
+            <div className="chart-price-volume-level">
+              <span className="chart-price-volume-name">压力与突破参考</span>
+              {pressureZone ? (
+                <>
+                  <strong className="chart-price-volume-pressure-zone">
+                    {num(pressureZone.low)}–{num(pressureZone.high)} {view.unit}
+                  </strong>
+                  <small>水平压力区</small>
+                </>
+              ) : (
+                <strong className="chart-price-volume-unavailable">
+                  {view.referencePrice == null ? "待核验" : "暂无确认压力"}
+                </strong>
+              )}
+              <small>
+                {view.referencePrice == null
+                  ? view.reason || "暂无可核验收盘行情"
+                  : view.profile === "short_week_v1"
+                    ? "近20根完整日K暂无有效的单点压力及突破参考"
+                    : "当前结构窗口暂无有效的单点压力及突破参考"}
+              </small>
+            </div>
+          )}
+        </div>
       </div>
       <details className="chart-price-volume-evidence">
         <summary>判断依据</summary>

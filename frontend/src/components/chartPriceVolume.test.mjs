@@ -129,10 +129,11 @@ assert.deepEqual(
   lines.map((line) => line.shortLabel),
   ["自止", "自撑", "自破"],
 );
-const render = (value = view) =>
+const render = (value = view, pressureZone) =>
   renderToStaticMarkup(
     jsx(Panel, {
       view: value,
+      pressureZone,
       visibleIds: new Set(lines.map((line) => line.id)),
       onToggle: () => {
         throw Error("render cannot change data");
@@ -154,6 +155,8 @@ for (const text of [
 ])
   assert.ok(html.includes(text), text);
 assert.doesNotMatch(html, /<details[^>]*open/);
+assert.match(html, /role="group" aria-label="压力与突破参考"/);
+assert.match(html, /突破参考 12\.20 元，切换图上标注/);
 assert.equal(render(null), "");
 const noStructure = chartPriceVolume(
   {
@@ -173,7 +176,8 @@ const noStructure = chartPriceVolume(
 const noStructureHtml = render(noStructure);
 assert.match(noStructureHtml, /chart-price-volume-unavailable">暂无确认支撑/);
 assert.match(noStructureHtml, /chart-price-volume-unavailable">暂无确认压力/);
-assert.equal(noStructureHtml.split("不推算不存在的价位").length - 1, 2);
+assert.doesNotMatch(noStructureHtml, /class="chart-price-volume-level breakout"/);
+assert.match(noStructureHtml, /当前结构窗口暂无有效的单点压力及突破参考/);
 const noReferenceHtml = render({
   ...noStructure,
   referenceDate: null,
@@ -348,6 +352,21 @@ assert.match(shortHtml, /近20个完整交易日结构/);
 assert.match(shortHtml, /公式基准/);
 assert.match(shortHtml, /不是确认支撑或个人成本止损/);
 assert.match(shortHtml, /试算参数/);
+const shortWithZone = render(
+  { ...shortView, resistance: null, breakout: null },
+  { low: 7.29, high: 7.328 },
+);
+assert.match(shortWithZone, /7\.29–7\.33 元/);
+assert.match(shortWithZone, /水平压力区/);
+assert.match(shortWithZone, /近20根完整日K暂无有效的单点压力及突破参考/);
+assert.doesNotMatch(shortWithZone, /class="chart-price-volume-level breakout"/);
+const onlyPriorBreakout = render({
+  ...shortView,
+  resistance: null,
+  breakout: { ...shortView.breakout, state: "held" },
+});
+assert.match(onlyPriorBreakout, /原突破参考 12\.20 元，切换图上标注/);
+assert.doesNotMatch(onlyPriorBreakout, /class="chart-price-volume-level resistance"/);
 assert.doesNotMatch(shortHtml, /短线风险线以支撑位/);
 const collectElements = (node) =>
   Array.isArray(node)
