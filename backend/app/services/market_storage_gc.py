@@ -15,6 +15,7 @@ import stat
 
 from app.analytics.market_storage import OBJECT_ROOT, safe_object
 from app.core import digest, dumps, hash_file, new_id, now_ms, raw_dir, work_dir
+from app.services.selection_candidate_storage import reference_scan_rows
 
 VERSION='market-storage-gc-v1'
 _GENERATION=re.compile(r'market-[0-9a-f]{24}\Z')
@@ -53,9 +54,8 @@ def _roots(connection,snapshots,now):
         columns=[row[1] for row in connection.execute('PRAGMA table_info("'+table.replace('"','""')+'")')]
         fields=[value for value in columns if 'snapshot' in value or value.endswith('_json')]
         if not fields:continue
-        quoted=','.join('"'+value.replace('"','""')+'"' for value in fields)
         where=" WHERE status IN ('queued','running','paused')" if table=='job' else ''
-        for row in connection.execute('SELECT '+quoted+' FROM "'+table.replace('"','""')+'"'+where):
+        for row in reference_scan_rows(connection, table, fields, where=where):
             for value in row:
                 for item in _strings(value):
                     if item in identifiers or item in generations:roots.add(item)

@@ -10,6 +10,7 @@ from app.services.auction_integrity import (
     AUCTION_RETENTION_WINDOWS as POLICY_WINDOWS,
     LIMIT, retention_window, validate_discovery, validate_snapshot,
 )
+from app.services.selection_candidate_storage import reference_scan_rows
 from app.services.supplement_access import supplement_access
 
 DISCOVERY_POLICY = 'auction-discovery-retention-v1'
@@ -94,9 +95,8 @@ def _protected(connection, snapshots):
         columns = [row[1] for row in connection.execute('PRAGMA table_info(' + quoted + ')') if row[2].upper() in ('TEXT', '')]
         if not columns:
             continue
-        fields = ','.join('"' + value.replace('"', '""') + '"' for value in columns)
         where = " WHERE status IN ('queued','running','paused')" if table == 'job' else ''
-        for values in connection.execute('SELECT ' + fields + ' FROM ' + quoted + where):
+        for values in reference_scan_rows(connection, table, columns, where=where):
             count += 1
             owner = values[columns.index('snapshot_id')] if table == 'market_auction_snapshot' else None
             for value in values:

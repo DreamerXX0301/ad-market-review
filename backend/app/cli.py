@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sqlite3
 from app.core import APP_VERSION,connect,ensure_ready,hash_file,published_dir,json_clean
 
 
@@ -46,12 +47,21 @@ def main():
     sub.add_parser('migrate');sub.add_parser('validate')
     importer=sub.add_parser('import-audit');importer.add_argument('path')
     server=sub.add_parser('serve');server.add_argument('--host',default='127.0.0.1');server.add_argument('--port',type=int,default=8788)
+    compact=sub.add_parser('compact-selection-candidates',help='将独立恢复的业务库压缩到新文件')
+    compact.add_argument('--input',type=Path,required=True,help='已经关闭的独立恢复库')
+    compact.add_argument('--output',type=Path,required=True,help='另一目录下尚不存在的业务库文件')
     args=parser.parse_args()
     if args.command=='migrate':ensure_ready();result={'ok':True,'version':APP_VERSION}
     elif args.command=='validate':result=validate()
     elif args.command=='import-audit':
         from app.services.bootstrap import import_validated_audit
         result=import_validated_audit(args.path)
+    elif args.command=='compact-selection-candidates':
+        from app.services.selection_candidate_compaction import compact_selection_candidates
+        try:
+            result=compact_selection_candidates(args.input,args.output)
+        except (OSError, RuntimeError, ValueError, sqlite3.Error) as error:
+            result={'ok':False,'error':str(error)}
     elif args.command=='serve':
         import uvicorn
         uvicorn.run('app.main:app',host=args.host,port=args.port);return

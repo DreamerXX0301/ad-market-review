@@ -11,6 +11,7 @@ import re
 import stat
 
 from app.core import connect, dumps, now_ms, raw_dir
+from app.services.selection_candidate_storage import reference_scan_rows
 from app.services.supplement_access import supplement_access
 
 LEGACY_VERSION = 'noon-retention-28d-v1'
@@ -189,8 +190,7 @@ def _protected(connection, snapshots):
         if not columns:
             continue
         where = " WHERE status IN ('queued','running','paused')" if table == 'job' else ''
-        fields = ','.join('"' + value.replace('"', '""') + '"' for value in columns)
-        for values in connection.execute('SELECT ' + fields + ' FROM ' + quoted + where):
+        for values in reference_scan_rows(connection, table, columns, where=where):
             if table == 'market_noon_snapshot':
                 values = _provenance_only_fragment(values, columns)
             owner = values[columns.index('snapshot_id')] if table in ('market_noon_snapshot', 'market_noon_note') else None

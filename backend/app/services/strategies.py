@@ -22,6 +22,7 @@ from app.services import strategy_hot_universe as hot_universe
 from app.services.condition_basis_cache import disk_session
 from app.services.selection_compute_pool import compute_session,current_session
 from app.services import stock_daily_once
+from app.services.selection_candidate_storage import candidate_evidence, pack_evidence
 ENGINE_VERSION="workspace-v8-bounded-history-events"
 FORWARD_ENGINE_VERSION='workspace-v17-local-forward-prices-v1'
 PRICE_BASIS_CONTRACT='strategy-local-forward-v1'
@@ -239,7 +240,8 @@ def seed_workspace(price_basis='none'):
     return {**result,'default_strategies':3}
 
 def _candidate(r,master):
-    return {**code_info(r['instrument_id'],master),'decision':r['decision'],'close_price':money(r['close_price_e8']),'metrics':obj(r['metrics_json'],{}),'checks':obj(r['checks_json'],{}),'topics':obj(r['topic_snapshot_json'],[])}
+    checks, metrics, topics = candidate_evidence(r)
+    return {**code_info(r['instrument_id'],master),'decision':r['decision'],'close_price':money(r['close_price_e8']),'metrics':metrics,'checks':checks,'topics':topics}
 
 def candidate_requirements(definition):
     """Compile sparse evidence fields once for a selection's fixed rule."""
@@ -556,7 +558,10 @@ def run_strategy(sid,payload=None,*,queued_job=None,response_decision=None):
                 entry_close=float(daily['close']) if daily and daily.get('close') is not None else None
                 ms.update(signal_date=ms.get('observed_date'),signal_close=ms.get('close'),current_daily_close=entry_close,entry_price_policy='business_day_close-v1')
             stored_metrics,stored_checks,stored_topics=compact_candidate(ms,check,topics.get(ident,[]),decision,st['definition'],requirements=candidate_fields)
-            result.append(dict(run_id=rid,instrument_id=ident,decision=decision,close_price_e8=e8(entry_close) if entry_close and entry_close>0 else None,checks_json=js(stored_checks),metrics_json=js(stored_metrics),topic_snapshot_json=js(stored_topics)))
+            evidence = js(stored_checks), js(stored_metrics), js(stored_topics)
+            packed = pack_evidence(*evidence)
+            checks_json, metrics_json, topics_json = evidence if packed is None else ('{}', '{}', '[]')
+            result.append(dict(run_id=rid,instrument_id=ident,decision=decision,close_price_e8=e8(entry_close) if entry_close and entry_close>0 else None,checks_json=checks_json,metrics_json=metrics_json,topic_snapshot_json=topics_json,packed_evidence=packed))
             if sequence%128==0 or sequence+1==len(ordered):
                 report('核验个股条件',min(95,round((sequence+1)/max(1,len(ordered))*95)),
                     f'已核验 {sequence+1}/{len(ordered)} 只证券',

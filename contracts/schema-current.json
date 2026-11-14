@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 46,
+  "migration_version": 47,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -182,15 +182,19 @@
     {
       "name": "046_news_closed_market_window.sql",
       "sha256": "7052051bfa1c8c724c5c28846b6c951309736894afc922244730dbb8a18bab8f"
+    },
+    {
+      "name": "047_selection_candidate_packed_evidence.sql",
+      "sha256": "5d26979f346abd17521ebfce397dc1928e4f137f167f9d9608d511f2e4255508"
     }
   ],
   "counts": {
     "table": 94,
-    "index": 62,
+    "index": 57,
     "view": 1,
     "trigger": 159
   },
-  "schema_sha256": "ab3cb06a3fd3708b4edc0ea9ed89f2e69b6c548e71ae79ed6fcb8ab0a9b73829",
+  "schema_sha256": "f1e8065c87e11a94eba84a62799e1b7f905481e40de6a3993de70d8db6e68093",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -6559,6 +6563,14 @@
           "name": "topic_snapshot_json",
           "type": "TEXT",
           "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "packed_evidence",
+          "type": "BLOB",
+          "notnull": 0,
           "dflt_value": null,
           "pk": 0
         }

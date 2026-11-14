@@ -386,6 +386,16 @@ def test_nonmatch_storage_is_sparse_but_checks_and_dependencies_stay(ws):
     with core.connect() as db:
         manifest=json.loads(db.execute('SELECT universe_definition_json FROM selection_run WHERE run_id=?',(result['run_id'],)).fetchone()[0])
         assert manifest['candidate_storage_contract']=='sparse-nonmatches-v1'
+        stored=db.execute('SELECT * FROM selection_candidate WHERE run_id=? AND decision=?', (result['run_id'], 'matched')).fetchone()
+        assert stored['packed_evidence'] is not None
+        assert (stored['checks_json'], stored['metrics_json'], stored['topic_snapshot_json']) == ('{}', '{}', '[]')
+    reread=c.get('/api/v1/strategy-runs/'+result['run_id']).json()
+    assert reread['items']==result['items']
+    added=c.post('/api/v1/tracking-rounds',json={'run_id':result['run_id'],'instrument_ids':[matched['instrument_id']]}).json()
+    assert added['added_count']==1
+    with core.connect() as db:
+        entry=db.execute('SELECT entry_basis_json FROM tracking_round WHERE round_id=?',(added['items'][0]['round_id'],)).fetchone()
+        assert json.loads(entry['entry_basis_json'])['entry_checks']==matched['checks']
 
 def test_unknown_sparse_storage_retains_unknown_dependency(ws):
     m,c=ws;s=make_strategy(c,{'field':'ma250','op':'>','value':0})

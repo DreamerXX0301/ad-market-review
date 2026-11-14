@@ -15,6 +15,7 @@ from app.services.entry_high import LOW_FIELD as ENTRY_LOW_FIELD, load_entry_low
 from app.domain.history_events import HistoryContext, nodes as history_nodes, retain_start as history_retain_start
 from app.services.tracking_quotes import tracking_quotes
 from app.services.strategy_periods import add_period_metrics
+from app.services.selection_candidate_storage import candidate_evidence
 
 
 def _signal_price_basis(round_, basis=None):
@@ -76,7 +77,8 @@ def add_tracking(payload, *, automatic=False, transaction_guard=None, on_commit=
                 skipped.append({'instrument_id':ident,'reason':'已手动忽略，再次入池前先解除忽略','reason_code':'ignored'});continue
             if automatic and c.execute('SELECT 1 FROM tracking_round WHERE origin_run_id=? AND instrument_id=?',(rid,ident)).fetchone():
                 skipped.append({'instrument_id':ident,'reason':'本次运行已生成过跟踪轮次，保留原结束状态','reason_code':'already_recorded'});continue
-            tid=new_id('tracking');basis={'comparison_basis_id':snapshot['snapshot_id']+':'+snapshot['price_basis']+':'+str(snapshot['adjustment_anchor']),'price_basis':snapshot['price_basis'],'adjustment_anchor':snapshot['adjustment_anchor'],'algorithm_version':snapshot['algorithm_version'],'entry_snapshot_id':snapshot['snapshot_id'],'source_lineage':obj(snapshot['lineage_json'],{}),'entry_topics':obj(found['topic_snapshot_json'],[]),'entry_checks':obj(found['checks_json'],{}),'entry_complete_topic_ids':obj(found['metrics_json'],{}).get('_complete_topic_ids',[]),'entry_price_date':day,'signal_date':obj(found['metrics_json'],{}).get('signal_date',day),'signal_price':obj(found['metrics_json'],{}).get('signal_close',money(found['close_price_e8'])),'signal_period':obj(found['metrics_json'],{}).get('indicator_period','D')}
+            checks, metrics, topics = candidate_evidence(found)
+            tid=new_id('tracking');basis={'comparison_basis_id':snapshot['snapshot_id']+':'+snapshot['price_basis']+':'+str(snapshot['adjustment_anchor']),'price_basis':snapshot['price_basis'],'adjustment_anchor':snapshot['adjustment_anchor'],'algorithm_version':snapshot['algorithm_version'],'entry_snapshot_id':snapshot['snapshot_id'],'source_lineage':obj(snapshot['lineage_json'],{}),'entry_topics':topics,'entry_checks':checks,'entry_complete_topic_ids':metrics.get('_complete_topic_ids',[]),'entry_price_date':day,'signal_date':metrics.get('signal_date',day),'signal_price':metrics.get('signal_close',money(found['close_price_e8'])),'signal_period':metrics.get('indicator_period','D')}
             basis['signal_price_basis']=strategy.get('price_basis','none')
             if basis['signal_price_basis']=='forward':
                 from app.domain.strategy_prices import VERSION as price_version

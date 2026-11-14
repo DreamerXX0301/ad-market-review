@@ -18,6 +18,7 @@ import stat
 import time
 
 from app.core import connect, digest, new_id, now_ms, published_dir, work_dir
+from app.services.selection_candidate_storage import reference_scan_rows
 from app.services.supplement_access import supplement_access
 from app.services.task_service import TaskCancelled, TaskPaused
 
@@ -261,10 +262,8 @@ def _database_scope(job_id):
             fields = [row[1] for row in connection.execute('PRAGMA table_info('+quoted_table+')') if 'snapshot' in row[1] or row[1].endswith('_json')]
             if not fields:
                 continue
-            sql = 'SELECT '+','.join('"'+value.replace('"', '""')+'"' for value in fields)+' FROM '+quoted_table
-            if table == 'job':
-                sql += " WHERE status IN ('queued','running','paused')"
-            for row in connection.execute(sql):
+            where = " WHERE status IN ('queued','running','paused')" if table == 'job' else ''
+            for row in reference_scan_rows(connection, table, fields, where=where):
                 for value in row:
                     if value is None:
                         continue

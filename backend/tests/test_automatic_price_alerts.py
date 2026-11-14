@@ -104,7 +104,7 @@ def test_new_empty_database_reminder_reads_are_empty_without_market_or_business_
     assert alerts.list_alerts(scope='today')['total'] == 0
     assert alerts.alert_summary()['total'] == 0
     with core.connect() as connection:
-        assert connection.execute('PRAGMA user_version').fetchone()[0] == 46
+        assert connection.execute('PRAGMA user_version').fetchone()[0] == 47
         assert connection.execute('PRAGMA foreign_keys').fetchone()[0] == 1
         assert connection.execute('PRAGMA recursive_triggers').fetchone()[0] == 1
     with pytest.raises(HTTPException):

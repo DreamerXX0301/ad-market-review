@@ -1,27 +1,27 @@
 # Docker部署
 
-本文对应冒险的梦想家 v0.1.29，镜像标签为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.29`，支持 Linux amd64 和 arm64。安装前在本版 `release-image.json` 核对完整源码 SHA、镜像摘要及平台检查记录。[源码标签](https://github.com/DreamerXX0301/ad-market-review/tree/v0.1.29) · [发行附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.29) · [镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)
+本文对应冒险的梦想家 v0.1.30。镜像发行目标为 `ghcr.io/dreamerxx0301/ad-market-review:v0.1.30`，覆盖 Linux amd64 和 arm64。确认本版发行后，在配套 `release-image.json` 核对完整源码 SHA、镜像摘要及平台检查记录。[源码标签](https://github.com/DreamerXX0301/ad-market-review/tags) · [发行附件](https://github.com/DreamerXX0301/ad-market-review/releases) · [镜像发行工作流](https://github.com/DreamerXX0301/ad-market-review/actions/workflows/publish-image.yml)
 
 本镜像提供完整自建工作台，包括数据源配置、行情初始化与增量、自动采集计划、策略和 AI 助手。线上公开站点在部署入口关闭数据源模块与接口，使用已发布行情供浏览。下载完整镜像后，可在自己的实例配置数据源。
 
-v0.1.29 使用 schema42。迁移 042 新增逐日题材调整表，共有 83 张表（含迁移登记表）、54 个显式索引、1 个视图、151 个触发器和 41 份迁移。[版本升级与回滚](版本升级与回滚.md)
+v0.1.30 使用 schema47。个股选股候选支持无损证据压缩。既有历史的物理压缩可选，须在独立恢复副本上执行。升级、验收和回滚详见[版本升级与回滚](版本升级与回滚.md)。
 
 ## 全新安装
 
 需要 Docker Engine 或 Docker Desktop，以及 Docker Compose v2；`curl`仅用于可选健康检查。以下命令面向全新安装；已有实例应先阅读[版本升级与回滚](版本升级与回滚.md)，不要直接复用旧实例的卷。默认只绑定本机 `127.0.0.1:8788`；已有服务占用时先设置 `export SHIXU_HTTP_PORT=8789`。
 
-源码仓库及已公开的Release附件可以匿名下载，公开镜像也允许匿名拉取，不要求GitHub登录。独立Compose文件从对应[0.1.29 Release附件](https://github.com/DreamerXX0301/ad-market-review/releases/tag/v0.1.29)获取；须先核对本版正式发行及匿名拉取状态，不必克隆仓库或安装GitHub CLI。
+先在 GitHub 发行页查看 v0.1.30 的附件和匿名拉取核验状态，再下载独立 Compose 文件。公开附件及通过匿名验收的镜像无需登录。[GitHub 发行页](https://github.com/DreamerXX0301/ad-market-review/releases)
 
 ```bash
 mkdir ad-market-review
 cd ad-market-review
 test ! -e docker-compose.yml && test ! -L docker-compose.yml && \
   curl --fail --location --output docker-compose.yml \
-  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.29/docker-compose.yml'
-docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.29
+  'https://github.com/DreamerXX0301/ad-market-review/releases/download/v0.1.30/docker-compose.yml'
+docker pull ghcr.io/dreamerxx0301/ad-market-review:v0.1.30
 ```
 
-上面的下载前置检查会拒绝已有同名文件；已有文件时先核对版本或使用新目录。已持有配套源码时，也可将其中的 `deploy/docker-compose.yml` 复制到新安装目录；已安装并配置 `gh` 时可选用 `gh release download v0.1.29 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml`。这些是可选的公开下载方式，不需要将GitHub凭据或数据源Key配置为镜像登录。
+上面的下载前置检查会拒绝已有同名文件。已持有配套源码时，可将其中的 `deploy/docker-compose.yml` 复制到新安装目录。也可运行 `gh release download v0.1.30 --repo DreamerXX0301/ad-market-review --pattern docker-compose.yml`。
 
 创建一个新的、独立保存的主密钥。镜像中自带生成脚本，不要求宿主安装 Python；脚本遇到已有文件会拒绝覆盖。Docker Desktop 需允许挂载此目录。
 
@@ -31,7 +31,7 @@ key_dir="$HOME/.local/share/ad-market-review-secrets"
 mkdir -p -m 700 "$key_dir"
 docker run --rm --user 0:0 --network none \
   --mount "type=bind,src=$key_dir,dst=/secrets" \
-  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.29 \
+  --entrypoint python ghcr.io/dreamerxx0301/ad-market-review:v0.1.30 \
   /app/deploy/create_secret.py /secrets/master.key
 export SHIXU_MASTER_KEY_FILE="$key_dir/master.key"
 
@@ -55,9 +55,9 @@ docker compose --profile worker ps
 
 每次在新终端执行 Compose 命令，需要重新设置 `SHIXU_MASTER_KEY_FILE`。默认项目名是 `ad-market-review`，不会沿用开发入口原有项目名。内部 `SHIXU_*` 配置、卷名和容器数据路径保留兼容，不需自行批量改名。
 
-## 已有实例升级到0.1.29
+## 已有实例升级到 v0.1.30
 
-以目标实例实际版本、完整提交、schema、最新业务和原有授权为基线。schema41 实例核对原 40 份迁移 SHA 后应用 042。更早实例按顺序补齐缺少的迁移。已有 AI 历史、费用、凭据、生肖、策略和快照原件随本实例备份恢复。使用该实例原有的外置主密钥，验证期间从已留存来源核对业务和 SHA。
+以目标实例实际版本、完整提交、schema、最新业务和原有授权为基线。v0.1.29／schema42 实例在独立恢复副本核对现有迁移 SHA 后，依次应用 043 至 047。已有 AI 历史、费用、凭据、生肖、策略和快照原件随本实例备份恢复。使用原有的外置主密钥，从已留存来源核对业务和 SHA。
 
 标准恢复清除官方日程的新装默认，发行预演入口 `compose.release.yaml` 默认关闭官方日程采集。正式切换后按实例原有授权配置。公开站点保持官方日程采集的部署开关关闭。
 
@@ -86,7 +86,7 @@ docker compose config
 
 `.github/workflows/publish-image.yml` 只接受人工 `workflow_dispatch`，限定本仓库 `master`，并要求确认上传。workflow 必须先合入默认分支；版本源码标签及配套Release附件也应绑定同一审核提交，已公开的源码与Release附件可匿名下载；发行写入仍由有权限的维护者执行。[手动事件的默认分支要求](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
 
-已有发行标签不能用于重新发布本次改动，也不能删除或覆盖旧版本标签来绕过门禁。本次选定 `0.1.29`。发行前须确认该版本的 Git 源码标签与镜像标签均未占用，同步根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose默认版本、workflow输入默认值及安装文档，并运行 `python3 scripts/export_schema.py --check` 核对 schema42 导出，审核后合入 `master`。最终完整提交冻结之前，不从仍在修改的共享目录打包或触发发行。下面命令仅用于已明确授权的发行，版本取自该已审定源码。执行前核对完整提交，避免把后续变动一起发出。
+本次选定 `0.1.30`。发行前确认 Git 源码标签与镜像标签均未占用，核对根 `VERSION`、前后端版本与锁文件、运行版本、Docker/Compose 默认版本、workflow 输入默认值及安装文档，并运行 `python3 scripts/export_schema.py --check` 核对 schema47 导出。在 `master` 审定完整提交后，以该提交的版本触发发行。
 
 ```bash
 gh workflow run publish-image.yml --repo DreamerXX0301/ad-market-review --ref master -f version="$(cat VERSION)" -F confirm=true

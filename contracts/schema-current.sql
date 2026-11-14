@@ -47,6 +47,7 @@
 -- 044_short_week_price_alerts.sql sha256=4c525ea85519eaf93a037d25c7d7e6757cd62f7057f7657b9c1505a4e3556127
 -- 045_intraday_monitor.sql sha256=9d259d28ec6100d831d71949673b722354a31014611c7f852c50585cb37cb6fe
 -- 046_news_closed_market_window.sql sha256=7052051bfa1c8c724c5c28846b6c951309736894afc922244730dbb8a18bab8f
+-- 047_selection_candidate_packed_evidence.sql sha256=5d26979f346abd17521ebfce397dc1928e4f137f167f9d9608d511f2e4255508
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -905,7 +906,9 @@ CREATE TABLE selection_candidate (
   close_price_e8 INTEGER CHECK(close_price_e8 IS NULL OR close_price_e8>0), -- CNY/股×10^8
   checks_json TEXT NOT NULL CHECK(json_valid(checks_json)),
   metrics_json TEXT NOT NULL CHECK(json_valid(metrics_json)),
-  topic_snapshot_json TEXT NOT NULL CHECK(json_valid(topic_snapshot_json)),
+  topic_snapshot_json TEXT NOT NULL CHECK(json_valid(topic_snapshot_json)), packed_evidence BLOB
+ CHECK(packed_evidence IS NULL OR (length(packed_evidence)>0
+   AND checks_json='{}' AND metrics_json='{}' AND topic_snapshot_json='[]')),
   PRIMARY KEY(run_id,instrument_id)
 ) STRICT;
 
@@ -1251,8 +1254,6 @@ CREATE UNIQUE INDEX ai_only_one_running ON ai_task((1)) WHERE state='running';
 
 CREATE INDEX ai_request_receipt_budget ON ai_request_receipt(day,sent_at_ms);
 
-CREATE INDEX ai_request_receipt_task ON ai_request_receipt(task_id,ordinal);
-
 CREATE INDEX ai_session_expiry ON ai_session(keep,expires_at_ms);
 
 CREATE INDEX ai_session_scope ON ai_session(kind,updated_at_ms DESC,session_id DESC);
@@ -1265,11 +1266,7 @@ CREATE INDEX ai_task_queue ON ai_task(state,created_at_ms);
 
 CREATE INDEX artifact_content_references ON snapshot_artifact(sha256);
 
-CREATE INDEX auction_automation_run_latest ON market_auction_automation_run(trade_date DESC);
-
 CREATE INDEX auction_purge_date ON market_auction_purge(trade_date,status);
-
-CREATE INDEX auction_snapshot_by_date ON market_auction_snapshot(trade_date DESC);
 
 CREATE INDEX automatic_price_alert_evaluation_stock ON automatic_price_alert_evaluation(instrument_id,trade_date DESC,recorded_at_ms DESC);
 
@@ -1286,8 +1283,6 @@ CREATE INDEX capability_latest ON capability_probe(connection_id,capability,prob
 CREATE INDEX chart_annotation_instrument ON chart_annotation(instrument_id, created_at_ms, annotation_id);
 
 CREATE UNIQUE INDEX chart_annotation_origin_key ON chart_annotation(instrument_id,origin_key) WHERE origin_key IS NOT NULL;
-
-CREATE INDEX intraday_monitor_batch_day ON intraday_monitor_batch(trade_date DESC,slot_key DESC);
 
 CREATE INDEX intraday_monitor_event_day ON intraday_monitor_event(trade_date DESC,last_seen_at_ms DESC,event_id);
 
@@ -1320,8 +1315,6 @@ CREATE INDEX noon_close_by_date ON market_noon_close_review(trade_date DESC,revi
 CREATE INDEX noon_close_items_filter ON market_noon_close_item(review_id,board_key,transition,final_board_count DESC,instrument_id);
 
 CREATE INDEX noon_purge_by_date ON market_noon_purge(trade_date DESC,status);
-
-CREATE INDEX noon_snapshot_by_date ON market_noon_snapshot(trade_date DESC);
 
 CREATE UNIQUE INDEX one_accepted_batch ON sync_batch(job_id,capability,batch_key) WHERE status='accepted';
 
