@@ -7,7 +7,7 @@ import {
   LINE_ALERT_CHECK_FINISHED,
 } from "../lib/workbenchEvents";
 import { LINE_ALERTS_OPEN } from "../features/watchlist/lineAlertNotification";
-import { ErrorBox, Loading, Modal } from "./UI";
+import { ErrorBox, Loading, Modal, useToast } from "./UI";
 import { num } from "../lib/format";
 import { refreshTaskActivity } from "./taskActivity";
 import {
@@ -71,6 +71,7 @@ function AutomaticPriceAlertEditor({
   name?: string;
   onClose: () => void;
 }) {
+  const toast = useToast();
   const path = `/instruments/${encodeURIComponent(instrumentId)}/automatic-price-alerts`;
   const result = useApi<Row>(path);
   const [saved, setSaved] = useState<Row | null>(null);
@@ -156,13 +157,17 @@ function AutomaticPriceAlertEditor({
         setSaved(next);
         setDraft(automaticAlertDraft(next.rule));
         setDraftRevision(next.rule.revision);
-        setMessage(
-          !next.rule.enabled
-            ? "已关闭自动量价提醒。"
-            : next.task
-              ? "配置已保存，正在准备下一交易日参考位。"
-              : "自动量价提醒配置已保存。",
-        );
+        const successMessage = !next.rule.enabled
+          ? "已关闭自动量价提醒。"
+          : next.task
+            ? "配置已保存，正在准备下一交易日参考位。"
+            : "自动量价提醒配置已保存。";
+        if (resetMonitoring) {
+          setMessage(successMessage);
+        } else {
+          toast(successMessage);
+          onClose();
+        }
       }
     } catch (problem) {
       if (live.current) setError((problem as Error).message);

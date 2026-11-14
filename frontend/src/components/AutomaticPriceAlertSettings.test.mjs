@@ -130,6 +130,9 @@ globalThis.__automaticPriceHooks = {
   refreshTaskActivity() {
     calls.push(["tasks"]);
   },
+  toast(message) {
+    calls.push(["toast", message]);
+  },
 };
 const modules = {
   react: encode(
@@ -146,7 +149,7 @@ const modules = {
     "export const LINE_ALERTS_OPEN='workbench-open-today-line-alerts';",
   ),
   "./UI": encode(
-    "export const ErrorBox='ErrorBox',Loading='Loading',Modal='Modal';",
+    "export const ErrorBox='ErrorBox',Loading='Loading',Modal='Modal'; export const useToast=()=>globalThis.__automaticPriceHooks.toast;",
   ),
   "../lib/format": encode(
     "export const num=value=>value==null?'—':Number(value).toFixed(2);",
@@ -204,7 +207,7 @@ const render = (Component = Editor, id = instrumentId) => {
   const tree = Component({
     instrumentId: id,
     name: "襄阳轴承",
-    onClose() {},
+    onClose: () => calls.push(["close-editor"]),
     onViewAlerts: () => calls.push(["close-drawer", window.location.hash]),
   });
   const run = queued;
@@ -289,7 +292,11 @@ assert.deepEqual(JSON.parse(put[1].body), {
   max_risk_pct: 5,
   expected_revision: 0,
 });
-assert.match(text(tree), /正在准备下一交易日参考位/);
+assert.match(
+  calls.find((item) => item[0] === "toast")[1],
+  /正在准备下一交易日参考位/,
+);
+assert.equal(calls.filter((item) => item[0] === "close-editor").length, 1);
 assert.deepEqual(events, [instrumentId]);
 assert.ok(
   calls.some(
@@ -377,9 +384,21 @@ response = () =>
 button(tree, "保存设置").props.onClick();
 effects.forEach((item) => item?.cleanup?.());
 const count = updates;
+const closesBeforeLateSave = calls.filter(
+  (item) => item[0] === "close-editor",
+).length;
 resolve({ ...fixture(), rule: { ...fixture().rule, revision: 1 } });
 await tick();
 assert.equal(updates, count);
+assert.equal(
+  calls.filter((item) => item[0] === "close-editor").length,
+  closesBeforeLateSave,
+  "a late response cannot close another editor",
+);
+assert.equal(
+  calls.some((item) => item[0] === "toast"),
+  false,
+);
 
 reset();
 resultData = { ...fixture(), instrument_id: "600519.SH" };
@@ -532,6 +551,11 @@ assert.equal(
   true,
 );
 assert.match(text(tree), /正在准备下一交易日参考位/);
+assert.equal(
+  calls.some((item) => item[0] === "close-editor"),
+  false,
+  "baseline reset stays open so its status remains visible",
+);
 
 reset();
 resultData = {
@@ -558,6 +582,33 @@ assert.equal(calls.filter((item) => item[1]?.method === "PUT").length, 0);
 assert.ok(
   flatten(tree).some((item) => item.props.message?.includes("请先保存")),
 );
+
+// Failed requests and invalid receipts must preserve the editor and allow retry.
+for (const failedResponse of [
+  () => {
+    throw new Error("保存失败，请稍后重试");
+  },
+  { ...fixture(), instrument_id: "600519.SH" },
+]) {
+  reset();
+  resultData = fixture();
+  response = failedResponse;
+  render();
+  tree = render();
+  button(tree, "保存设置").props.onClick();
+  await tick();
+  tree = render();
+  assert.equal(
+    calls.some((item) => item[0] === "close-editor"),
+    false,
+  );
+  assert.equal(
+    calls.some((item) => item[0] === "toast"),
+    false,
+  );
+  assert.ok(flatten(tree).some((item) => item.type === "ErrorBox"));
+  assert.equal(button(tree, "保存设置").props.disabled, false);
+}
 console.log(
-  "automatic price alert settings: lazy GET, explicit opt-in, independent PUT, optimistic revision, event refresh, frozen basis and late-response safety passed",
+  "automatic price alert settings: save closes with toast, failures stay open, reset stays open, revision and late-response safety passed",
 );
