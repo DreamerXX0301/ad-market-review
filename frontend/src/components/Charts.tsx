@@ -754,6 +754,9 @@ export function CandleChart({
     [allLineLabels, hiddenLineIds],
   );
   const visibleLineIds = new Set(visibleLineLabels.map((line) => line.id));
+  const priceVolumeLines = allLineLabels.filter(
+    (line) => line.group === "price-volume",
+  );
   const lineRailWidth = visibleLineLabels.length
     ? chartLineRailWidth(plotWidth, entryFocus)
     : 0;
@@ -813,15 +816,14 @@ export function CandleChart({
       else if (line.group === "history") setShowHistoricalEvents(true);
     }
   };
-  const toggleAllLines = (show: boolean) => {
+  const togglePriceVolumeLines = (show: boolean) => {
     setPriceVolumeVisibility({
       scope: priceVolumeScope,
-      overrides: new Map(
-        allLineLabels
-          .filter((line) => line.group === "price-volume")
-          .map((line) => [line.id, show]),
-      ),
+      overrides: new Map(priceVolumeLines.map((line) => [line.id, show])),
     });
+  };
+  const toggleAllLines = (show: boolean) => {
+    togglePriceVolumeLines(show);
     setHiddenLineState({
       scope: lineScope,
       ids: show
@@ -1946,101 +1948,134 @@ export function CandleChart({
       >
         <div className="chart-toolbar">
           {controlledPeriod === undefined && (
-            <div className="segmented">
-              {(["D", "W", "M"] as const).map((v) => (
-                <button
-                  key={v}
-                  className={period === v ? "active" : ""}
-                  aria-pressed={period === v}
-                  onClick={() => {
-                    (onPeriodChange ?? setLocalPeriod)(v);
-                    if (entryFocus) setEntryLocateNonce((value) => value + 1);
-                  }}
-                >
-                  {v === "D" ? "日 K" : v === "W" ? "周 K" : "月 K"}
-                </button>
-              ))}
+            <div
+              className="chart-toolbar-group"
+              role="group"
+              aria-label="K 线周期"
+            >
+              <div className="segmented">
+                {(["D", "W", "M"] as const).map((v) => (
+                  <button
+                    key={v}
+                    className={period === v ? "active" : ""}
+                    aria-pressed={period === v}
+                    onClick={() => {
+                      (onPeriodChange ?? setLocalPeriod)(v);
+                      if (entryFocus) setEntryLocateNonce((value) => value + 1);
+                    }}
+                  >
+                    {v === "D" ? "日 K" : v === "W" ? "周 K" : "月 K"}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
-          {frozenMode ? (
-            <span
-              className="chart-index-basis"
-              title="报告内留存行情；不读取当前行情，不随个股复权偏好重算"
-            >
-              报告冻结图 · 未复权
-            </span>
-          ) : isIndex ? (
-            <span
-              className="chart-index-basis"
-              title="指数显示原始点位，不使用或修改个股默认复权口径"
-            >
-              指数原始点位
-            </span>
-          ) : (
-            <ChartSelect
-              label="K线复权口径"
-              value={priceBasis}
-              onChange={setPriceBasis}
-              options={[
-                { value: "none", label: "未复权", description: "来源原始价格" },
-                {
-                  value: "forward",
-                  label: "本地前复权",
-                  description:
-                    forwardOption?.available === false
-                      ? "公司行动条件不足，暂不可用"
-                      : "以当前观察日为锚换算历史价格",
-                  disabled: forwardOption?.available === false,
-                },
-              ]}
-            />
-          )}
-          {data &&
-            !frozenMode &&
-            !isIndex &&
-            actualPriceBasis.label !==
-              (priceBasis === "forward" ? "本地前复权" : "未复权") && (
-              <span
-                className="chart-index-basis"
-                title={actualPriceBasis.reason}
-              >
-                图表价格：{actualPriceBasis.label}
-              </span>
+          <div
+            className="chart-toolbar-group"
+            role="group"
+            aria-label="常用工具"
+          >
+            {priceVolumeLines.length > 0 && (
+              <ChartToggle
+                label="量价参考线"
+                checked={priceVolumeLines.some((line) =>
+                  visibleLineIds.has(line.id),
+                )}
+                onChange={togglePriceVolumeLines}
+                title="切换当前图的量价参考线，默认显示可在图表偏好中设置"
+              />
             )}
-          {period === "D" && !dataEndpoint && !frozenMode ? (
-            <ChartSelect
-              label="图表指标连续口径"
-              value={indicatorContinuity}
-              title="仅切换图表MA/MACD/KDJ/BOLL；不填停牌或缺失K线，策略与回测仍按严格市场交易日"
-              onChange={(value) =>
-                setIndicatorContinuity(value as "quotes" | "market_sessions")
-              }
-              options={[
-                {
-                  value: "quotes",
-                  label: "指标：报价序列",
-                  description: "按有效报价连续计算，缺失日不补K线",
-                },
-                {
-                  value: "market_sessions",
-                  label: "指标：严格交易日",
-                  description: "报价缺口中断指标预热；策略保持此口径",
-                },
-              ]}
-            />
-          ) : (
-            <span
-              className="chart-index-basis"
-              title={
-                period === "D"
-                  ? "板块日K指标采用严格市场交易日口径"
-                  : "周/月指标保留完整周期与报价覆盖约束"
-              }
-            >
-              指标：{period === "D" ? "严格交易日" : "完整周期"}
-            </span>
-          )}
-          <div className="ma-controls">
+            {supportsLimits && period === "D" && (
+              <ChartToggle
+                label="涨跌停标记"
+                title="显示已核验收盘涨跌停及地天、一字日形态；同日合并标注，不按涨幅或图上价格猜测"
+                checked={showLimits}
+                onChange={(value) => update({ showLimits: value })}
+              />
+            )}
+            {automaticTrendlines.available && (
+              <ChartToggle
+                label="自动趋势线"
+                checked={showAutomaticTrendlines}
+                onChange={setAutomaticTrendlineOverride}
+                title={automaticTrendlines.reason}
+              />
+            )}
+            <ChartAnnotationButton state={annotations} />
+            {waves && (
+              <div className="chart-wave-selectors">
+                <ChartToggle
+                  label="波浪结构"
+                  title={waves.notice}
+                  checked={showWaves}
+                  onChange={setWaveVisibilityOverride}
+                  color="#b292f0"
+                />
+                {showWaves && (
+                  <>
+                    <ChartSelect
+                      label="波浪结构显示范围"
+                      value={waveMode}
+                      onChange={(value) => changeWaveMode(value as WaveMode)}
+                      options={[
+                        { value: "latest", label: "最新结构" },
+                        { value: "turning", label: "仅转折" },
+                      ]}
+                    />
+                    {waveMode !== "turning" && (
+                      <label>
+                        结构日期
+                        <ChartSelect
+                          label="选择波浪结构日期"
+                          value={effectivePatternKey}
+                          onChange={setWavePatternKey}
+                          disabled={!candidates.length}
+                          options={[
+                            {
+                              value: "latest",
+                              label: candidates.length
+                                ? "最新已识别结构"
+                                : "尚未识别",
+                            },
+                            ...candidates.map((pattern) => ({
+                              value: pattern.pattern_id,
+                              label: `${pattern.direction === "up" ? "↑" : "↓"} ${pattern.start_date} → ${pattern.end_date}`,
+                              description: pattern.has_correction
+                                ? "含 ABC 修正"
+                                : "五浪候选",
+                            })),
+                          ]}
+                        />
+                      </label>
+                    )}
+                    {waveMode !== "turning" && (
+                      <button
+                        className="btn small"
+                        disabled={!waveWindow}
+                        onClick={() => {
+                          if (waveWindow)
+                            zoomTo(waveWindow.start, waveWindow.end);
+                        }}
+                        title={
+                          waveWindow
+                            ? "缩放到选中结构起止，并保留两端边距"
+                            : "选择一个已识别结构后可定位"
+                        }
+                      >
+                        <Maximize2 size={12} />
+                        定位结构
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+          <div
+            className="chart-toolbar-group ma-controls"
+            role="group"
+            aria-label="均线"
+          >
             {MA_WINDOWS.map((n, i) => (
               <ChartToggle
                 key={n}
@@ -2056,81 +2091,110 @@ export function CandleChart({
               />
             ))}
           </div>
-          {waves && (
-            <ChartToggle
-              label="波浪结构"
-              title={waves.notice}
-              checked={showWaves}
-              onChange={setWaveVisibilityOverride}
-              color="#b292f0"
-            />
-          )}
-          {waves && showWaves && (
-            <div className="chart-wave-selectors">
+          <div
+            className="chart-toolbar-group"
+            role="group"
+            aria-label="图表口径"
+          >
+            {frozenMode ? (
+              <span
+                className="chart-index-basis"
+                title="报告内留存行情；不读取当前行情，不随个股复权偏好重算"
+              >
+                报告冻结图 · 未复权
+              </span>
+            ) : isIndex ? (
+              <span
+                className="chart-index-basis"
+                title="指数显示原始点位，不使用或修改个股默认复权口径"
+              >
+                指数原始点位
+              </span>
+            ) : (
               <ChartSelect
-                label="波浪结构显示范围"
-                value={waveMode}
-                onChange={(value) => changeWaveMode(value as WaveMode)}
+                label="K线复权口径"
+                value={priceBasis}
+                onChange={setPriceBasis}
                 options={[
-                  { value: "latest", label: "最新结构" },
-                  { value: "turning", label: "仅转折" },
+                  {
+                    value: "none",
+                    label: "未复权",
+                    description: "来源原始价格",
+                  },
+                  {
+                    value: "forward",
+                    label: "本地前复权",
+                    description:
+                      forwardOption?.available === false
+                        ? "公司行动条件不足，暂不可用"
+                        : "以当前观察日为锚换算历史价格",
+                    disabled: forwardOption?.available === false,
+                  },
                 ]}
               />
-              {showWaves && waveMode !== "turning" && (
-                <label>
-                  结构日期
-                  <ChartSelect
-                    label="选择波浪结构日期"
-                    value={effectivePatternKey}
-                    onChange={setWavePatternKey}
-                    disabled={!candidates.length}
-                    options={[
-                      {
-                        value: "latest",
-                        label: candidates.length
-                          ? "最新已识别结构"
-                          : "尚未识别",
-                      },
-                      ...candidates.map((pattern) => ({
-                        value: pattern.pattern_id,
-                        label: `${pattern.direction === "up" ? "↑" : "↓"} ${pattern.start_date} → ${pattern.end_date}`,
-                        description: pattern.has_correction
-                          ? "含 ABC 修正"
-                          : "五浪候选",
-                      })),
-                    ]}
-                  />
-                </label>
-              )}
-              {showWaves && waveMode !== "turning" && (
-                <button
-                  className="btn small"
-                  disabled={!waveWindow}
-                  onClick={() => {
-                    if (waveWindow) zoomTo(waveWindow.start, waveWindow.end);
-                  }}
-                  title={
-                    waveWindow
-                      ? "缩放到选中结构起止，并保留两端边距"
-                      : "选择一个已识别结构后可定位"
-                  }
+            )}
+            {data &&
+              !frozenMode &&
+              !isIndex &&
+              actualPriceBasis.label !==
+                (priceBasis === "forward" ? "本地前复权" : "未复权") && (
+                <span
+                  className="chart-index-basis"
+                  title={actualPriceBasis.reason}
                 >
-                  <Maximize2 size={12} />
-                  定位结构
-                </button>
+                  图表价格：{actualPriceBasis.label}
+                </span>
               )}
-            </div>
-          )}
-          {automaticTrendlines.available && (
-            <div className="chart-auto-trends">
-              <ChartToggle
-                label="自动趋势线"
-                checked={showAutomaticTrendlines}
-                onChange={setAutomaticTrendlineOverride}
-                title={automaticTrendlines.reason}
+            {period === "D" && !dataEndpoint && !frozenMode ? (
+              <ChartSelect
+                label="图表指标连续口径"
+                value={indicatorContinuity}
+                title="仅切换图表MA/MACD/KDJ/BOLL；不填停牌或缺失K线，策略与回测仍按严格市场交易日"
+                onChange={(value) =>
+                  setIndicatorContinuity(value as "quotes" | "market_sessions")
+                }
+                options={[
+                  {
+                    value: "quotes",
+                    label: "指标：报价序列",
+                    description: "按有效报价连续计算，缺失日不补K线",
+                  },
+                  {
+                    value: "market_sessions",
+                    label: "指标：严格交易日",
+                    description: "报价缺口中断指标预热；策略保持此口径",
+                  },
+                ]}
               />
+            ) : (
+              <span
+                className="chart-index-basis"
+                title={
+                  period === "D"
+                    ? "板块日K指标采用严格市场交易日口径"
+                    : "周/月指标保留完整周期与报价覆盖约束"
+                }
+              >
+                指标：{period === "D" ? "严格交易日" : "完整周期"}
+              </span>
+            )}
+          </div>
+          <div
+            className="chart-toolbar-group"
+            role="group"
+            aria-label="显示设置"
+          >
+            <ChartLineControls
+              lines={allLineLabels}
+              visible={visibleLineLabels}
+              open={lineControlsOpen}
+              onOpen={setLineControlsOpen}
+              onToggle={toggleLine}
+              onAll={toggleAllLines}
+            />
+            {automaticTrendlines.available && (
               <details className="chart-auto-trend-layers">
-                <summary className="btn small">图层</summary>
+                <summary className="btn small">趋势图层</summary>
                 <div className="chart-auto-trend-layer-menu">
                   <ChartToggle
                     label="主线"
@@ -2154,33 +2218,16 @@ export function CandleChart({
                   />
                 </div>
               </details>
-            </div>
-          )}
-          {supportsLimits && period === "D" && (
-            <ChartToggle
-              label="涨跌停标记"
-              title="显示已核验收盘涨跌停及地天、一字日形态；同日合并标注，不按涨幅或图上价格猜测"
-              checked={showLimits}
-              onChange={(value) => update({ showLimits: value })}
-            />
-          )}
-          <button
-            className="btn small chart-preferences-button"
-            title="指数与个股的均线、波浪显示分别保存；修改后自动保存"
-            onClick={() => setPreferencesOpen(true)}
-          >
-            <Settings2 size={13} />
-            图表偏好
-          </button>
-          <ChartAnnotationButton state={annotations} />
-          <ChartLineControls
-            lines={allLineLabels}
-            visible={visibleLineLabels}
-            open={lineControlsOpen}
-            onOpen={setLineControlsOpen}
-            onToggle={toggleLine}
-            onAll={toggleAllLines}
-          />
+            )}
+            <button
+              className="btn small chart-preferences-button"
+              title="指数与个股的均线、波浪显示分别保存；修改后自动保存"
+              onClick={() => setPreferencesOpen(true)}
+            >
+              <Settings2 size={13} />
+              图表偏好
+            </button>
+          </div>
         </div>
         <div className="chart-view-bar">
           {automaticTrendlines.available && (

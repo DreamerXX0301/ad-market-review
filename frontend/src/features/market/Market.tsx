@@ -175,8 +175,8 @@ export function IndexCards({
     </div>
   );
 }
-function Breadth({ data }: { data: Row }) {
-  const breadth = data.breadth || {};
+function Breadth({ data }: { data?: Row | null }) {
+  const breadth = data?.breadth || {};
   const countsKnown = [breadth.up, breadth.down, breadth.flat].every(
     (count) => count != null,
   );
@@ -356,68 +356,79 @@ export function MarketOverview({
       {!indicesOnly && (
         <div
           {...intradayReadingProps("market")}
-          className="summary-strip market-overview-summary"
+          className="market-overview-context"
         >
-          <Stat
-            label="沪深京总成交额"
-            value={marketMoney(data?.total_amount)}
-            sub={
-              <span
-                className={tone(data?.amount_change)}
-                title={
-                  data?.amount_change_reason ||
-                  (data?.amount_previous_date
-                    ? `对比前一市场交易日 ${data.amount_previous_date}，${data.amount_scope || "沪深京已留存A股股票成交额"}的同口径差值`
-                    : "前一市场交易日的同口径金额尚未核验")
-                }
-              >
-                {amountChangeText(data?.amount_change)}
-              </span>
-            }
-          />
-          <Stat
-            label="涨停 / 跌停"
-            value={
-              <>
-                <span className="up">{integer(data?.limit_up_count)}</span>
-                <span className="stat-separator"> / </span>
-                <span className="down">{integer(data?.limit_down_count)}</span>
-              </>
-            }
-            sub="专门事件数据 · 缺失不推算"
-          />
-          <Stat
-            label="炸板池样本"
-            value={integer(data?.broken_count)}
-            sub="来源当日池 · 非开板总次数"
-          />
-          <Stat
-            label="最新行情覆盖"
-            value={integer(bootstrap?.data_summary?.stock_count)}
-            sub={
-              bootstrap?.data_date
-                ? "最近发布 " + bootstrap.data_date
-                : "等待首次初始化"
-            }
-          />
-          <div
-            className="market-overview-mobile-breadth"
-            aria-label="市场广度摘要"
-          >
-            <strong>市场广度</strong>
-            <span className="up">涨 {integer(data?.breadth?.up)}</span>
-            <span className="down">跌 {integer(data?.breadth?.down)}</span>
-            <span>平 {integer(data?.breadth?.flat)}</span>
+          <div className="summary-strip market-overview-summary">
+            <Stat
+              label="沪深京总成交额"
+              value={marketMoney(data?.total_amount)}
+              sub={
+                <span
+                  className={tone(data?.amount_change)}
+                  title={
+                    data?.amount_change_reason ||
+                    (data?.amount_previous_date
+                      ? `对比前一市场交易日 ${data.amount_previous_date}，${data.amount_scope || "沪深京已留存A股股票成交额"}的同口径差值`
+                      : "前一市场交易日的同口径金额尚未核验")
+                  }
+                >
+                  {amountChangeText(data?.amount_change)}
+                </span>
+              }
+            />
+            <Stat
+              label="涨停 / 跌停"
+              value={
+                <>
+                  <span className="up">{integer(data?.limit_up_count)}</span>
+                  <span className="stat-separator"> / </span>
+                  <span className="down">
+                    {integer(data?.limit_down_count)}
+                  </span>
+                </>
+              }
+              sub="专门事件数据 · 缺失不推算"
+            />
+            <Stat
+              label="炸板池样本"
+              value={integer(data?.broken_count)}
+              sub="来源当日池 · 非开板总次数"
+            />
+            <Stat
+              label="最新行情覆盖"
+              value={integer(bootstrap?.data_summary?.stock_count)}
+              sub={
+                bootstrap?.data_date
+                  ? "最近发布 " + bootstrap.data_date
+                  : "等待首次初始化"
+              }
+            />
+          </div>
+          <div className="market-overview-details">
+            <Breadth data={data} />
+            <Panel title="数据边界">
+              <div className="data-note">
+                <span className="note-dot" />
+                <div>
+                  <strong>盘后研究工作台</strong>
+                  <p>页面显示已发布的历史行情，当前没有实时行情订阅。</p>
+                </div>
+              </div>
+              <div className="data-note">
+                <span className="note-dot amber" />
+                <div>
+                  <strong>先核验，再形成结论</strong>
+                  <p>来源缺口保持未知，成交额与资金净流入分别核验。</p>
+                </div>
+              </div>
+              <Warnings items={data?.warnings} />
+            </Panel>
           </div>
         </div>
       )}
       <div
         {...intradayReadingProps("indexChart")}
-        className={
-          indicesOnly
-            ? "market-overview-plot"
-            : "market-layout market-overview-plot"
-        }
+        className="market-overview-plot"
       >
         <Panel title={selectedName}>
           <CandleChart
@@ -438,28 +449,6 @@ export function MarketOverview({
             }
           />
         </Panel>
-        {!indicesOnly && (
-          <div className="side-stack">
-            <Breadth data={data || {}} />
-            <Panel title="数据边界">
-              <div className="data-note">
-                <span className="note-dot" />
-                <div>
-                  <strong>盘后研究工作台</strong>
-                  <p>页面显示已发布的历史行情，当前没有实时行情订阅。</p>
-                </div>
-              </div>
-              <div className="data-note">
-                <span className="note-dot amber" />
-                <div>
-                  <strong>先核验，再形成结论</strong>
-                  <p>来源缺口保持未知，成交额与资金净流入分别核验。</p>
-                </div>
-              </div>
-              <Warnings items={data?.warnings} />
-            </Panel>
-          </div>
-        )}
       </div>
       {!indicesOnly && data && (
         <div {...intradayReadingProps("prior")}>

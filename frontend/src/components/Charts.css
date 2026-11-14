@@ -435,13 +435,6 @@
   color: var(--muted);
 }
 
-.chart-auto-trends {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-}
-
 .chart-auto-trend-key {
   display: flex;
   align-items: center;

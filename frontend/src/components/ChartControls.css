@@ -132,8 +132,26 @@
   opacity: 1;
 }
 .candle-chart .chart-toolbar {
-  gap: 8px;
+  gap: 8px 6px;
   padding: 12px 0 10px;
+}
+.chart-toolbar-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.chart-toolbar-group:empty {
+  display: none;
+}
+.chart-toolbar-group:not(:first-child) {
+  border-left: 1px solid var(--border-soft);
+  padding-left: 6px;
+}
+.candle-chart .chart-toolbar .chart-option-toggle {
+  padding-inline: 8px;
 }
 .candle-chart .chart-toolbar .segmented {
   min-height: 33px;
@@ -146,8 +164,6 @@
 }
 .candle-chart .chart-toolbar .ma-controls {
   gap: 3px;
-  padding-left: 6px;
-  border-left: 1px solid var(--border-soft);
 }
 .candle-chart .chart-toolbar .ma-controls .chart-option-toggle {
   padding-inline: 7px;
@@ -166,9 +182,19 @@
   .candle-chart .chart-toolbar {
     gap: 6px;
   }
-  .candle-chart .chart-toolbar .ma-controls {
+  .chart-toolbar-group:not(:first-child) {
     border-left: 0;
     padding-left: 0;
+  }
+  .candle-chart .chart-toolbar .ma-controls {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    width: 100%;
+  }
+  .candle-chart .chart-toolbar .ma-controls .chart-option-toggle {
+    min-width: 0;
+    padding-inline: 2px;
+    gap: 3px;
   }
   .candle-chart .chart-wave-selectors > label {
     max-width: 100%;
@@ -176,5 +202,10 @@
   .chart-choice-button span {
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+}
+@media (max-width: 359px) {
+  .candle-chart .chart-toolbar .ma-controls {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

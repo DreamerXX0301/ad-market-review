@@ -32,6 +32,14 @@ export function ChartLineControls({
   const ids = new Set(visible.map((line) => line.id));
   return (
     <div className={`chart-line-controls${open ? " open" : ""}`}>
+      <button
+        type="button"
+        className="btn small"
+        aria-expanded={open}
+        onClick={() => onOpen(!open)}
+      >
+        逐条 {visible.length}/{lines.length}
+      </button>
       <label
         className="chart-line-master"
         title="只切换本图显示，不删除划线，也不改变提醒和策略信号"
@@ -45,14 +53,6 @@ export function ChartLineControls({
         />
         全部标注
       </label>
-      <button
-        type="button"
-        className="btn small"
-        aria-expanded={open}
-        onClick={() => onOpen(!open)}
-      >
-        逐条 {visible.length}/{lines.length}
-      </button>
       {open && (
         <div
           className="chart-line-options"

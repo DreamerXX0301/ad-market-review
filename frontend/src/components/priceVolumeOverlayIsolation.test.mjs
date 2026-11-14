@@ -28,7 +28,12 @@ const compile = (value) =>
       target: ts.ScriptTarget.ES2022,
     },
   }).outputText;
-const actions = ["toggleLine", "toggleAllLines"]
+const actions = [
+  "priceVolumeLines",
+  "toggleLine",
+  "togglePriceVolumeLines",
+  "toggleAllLines",
+]
   .map((name) => {
     assert.ok(declarations.has(name));
     return `const ${declarations.get(name).getText(ast)};`;
@@ -64,7 +69,7 @@ const create = (lines) =>
     "annotations",
     "update",
     "setShowHistoricalEvents",
-    `${compile(actions)};return {toggleLine,toggleAllLines};`,
+    `${compile(actions)};return {toggleLine,togglePriceVolumeLines,toggleAllLines};`,
   )(
     lines,
     (value) => {
@@ -82,6 +87,19 @@ const create = (lines) =>
 
 const mixed = create([...automatic, manual]);
 const originalManualHidden = structuredClone(hiddenState);
+mixed.togglePriceVolumeLines(true);
+assert.deepEqual(
+  [...priceState.overrides],
+  automatic.map(({ id }) => [id, true]),
+);
+mixed.togglePriceVolumeLines(false);
+assert.deepEqual(
+  [...priceState.overrides],
+  automatic.map(({ id }) => [id, false]),
+);
+assert.deepEqual(hiddenState, originalManualHidden);
+assert.deepEqual(effects, []);
+priceState = state;
 mixed.toggleLine("price-volume:support", true);
 assert.deepEqual(
   [...priceState.overrides],
@@ -90,10 +108,13 @@ assert.deepEqual(
 );
 mixed.toggleLine("price-volume:breakout", true);
 mixed.toggleLine("price-volume:support", false);
-assert.deepEqual([...priceState.overrides], [
-  ["price-volume:support", false],
-  ["price-volume:breakout", true],
-]);
+assert.deepEqual(
+  [...priceState.overrides],
+  [
+    ["price-volume:support", false],
+    ["price-volume:breakout", true],
+  ],
+);
 assert.deepEqual(
   hiddenState,
   originalManualHidden,
