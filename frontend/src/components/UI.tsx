@@ -213,12 +213,14 @@ export function Stat({
 }
 export function Modal({
   title,
+  actions,
   children,
   onClose,
   wide = false,
   escapeUnderStock = false,
 }: {
   title: string;
+  actions?: ReactNode;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
@@ -345,6 +347,7 @@ export function Modal({
         >
           <div className="modal-title">
             <h2>{title}</h2>
+            {actions && <div className="modal-title-actions">{actions}</div>}
             <button
               ref={closeRef}
               className="icon-btn"

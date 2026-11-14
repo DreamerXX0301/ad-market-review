@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   ArrowUpRight,
+  BellRing,
   CalendarDays,
   ChevronRight,
   FileText,
@@ -15,6 +16,7 @@ import { useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { Modal, Loading, ErrorBox } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
+import type { StockChartTool } from "../../components/stockNavigation";
 import { dateTime } from "../../lib/format";
 import { groups, groupKeys, columns } from "./zodiacPresentation";
 import { MetricCell, Memberships } from "./ZodiacCells";
@@ -28,7 +30,7 @@ export default function ZodiacDetails({
 }: {
   item: Row;
   onClose: () => void;
-  onStock: () => void;
+  onStock: (tool?: StockChartTool) => void;
   onVerify: () => void;
   onEdit: (row: Row) => void;
 }) {
@@ -79,10 +81,23 @@ export default function ZodiacDetails({
               </span>
             </div>
           </div>
-          <button className="btn primary" onClick={onStock}>
-            <ArrowUpRight size={15} />
-            查看K线
-          </button>
+          <div
+            className="zodiac-detail-chart-actions"
+            aria-label="个股图表工具"
+          >
+            <button className="btn" onClick={() => onStock("annotations")}>
+              <Pencil size={15} />
+              划线
+            </button>
+            <button className="btn" onClick={() => onStock("automatic-alerts")}>
+              <BellRing size={15} />
+              自动提醒
+            </button>
+            <button className="btn primary" onClick={() => onStock()}>
+              <ArrowUpRight size={15} />
+              查看K线
+            </button>
+          </div>
         </div>
         <div className="zodiac-detail-dates">
           <CalendarDays size={13} />
@@ -171,7 +186,15 @@ export default function ZodiacDetails({
                     <div className="zodiac-event-line" key={event.id}>
                       <span>{event.date}</span>
                       <strong>{event.label}</strong>
-                      {event.state && <small>{event.state}</small>}
+                      {event.state && (
+                        <small>
+                          {event.state === "invalidated"
+                            ? "风险提醒"
+                            : event.state === "triggered"
+                              ? "已触发"
+                              : "待核验"}
+                        </small>
+                      )}
                     </div>
                   ))
                 ) : (

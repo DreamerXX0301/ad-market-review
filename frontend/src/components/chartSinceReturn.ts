@@ -12,18 +12,32 @@ const date = (value: unknown): value is string => {
 };
 
 /** A same-basis endpoint comparison within this chart's frozen observation date. */
-export function chartSinceReturn(bar: Row | undefined, data: Row | null) {
-  const end = date(data?.as_of) ? data.as_of : null;
+export function chartSinceReturn(
+  bar: Row | undefined,
+  data: Row | null,
+  selectedEnd?: string,
+) {
+  const anchor = date(data?.as_of) ? data.as_of : null;
+  const end = date(selectedEnd ?? anchor) ? (selectedEnd ?? anchor) : null;
   const start = date(bar?.date) ? bar.date : null;
   const result = { value: null as number | null, start, end, reason: "" };
-  if (!start || !end || start > end || !positive(bar?.close))
+  if (
+    !start ||
+    !end ||
+    !anchor ||
+    start > end ||
+    end > anchor ||
+    !positive(bar?.close)
+  )
     return { ...result, reason: "所选K线收盘或观察日期待核验。" };
   const bars: Row[] = Array.isArray(data?.bars) ? data.bars : [];
   const endpoints = bars.filter((item) => item.date === end);
   if (endpoints.length !== 1 || !positive(endpoints[0].close))
     return {
       ...result,
-      reason: "观察日没有唯一有效收盘价，不用较早报价代替。",
+      reason: selectedEnd
+        ? "终点没有唯一有效收盘价。"
+        : "观察日没有唯一有效收盘价，不用较早报价代替。",
     };
   if (bars.filter((item) => item.date === start).length !== 1)
     return { ...result, reason: "所选K线日期不唯一，端点待核验。" };
@@ -33,7 +47,7 @@ export function chartSinceReturn(bar: Row | undefined, data: Row | null) {
     return { ...result, reason: "当前图表价格口径尚未核验。" };
   if (forward && data?.adjustment?.usable !== true)
     return { ...result, reason: "本地前复权依据未通过，保持未知。" };
-  if (forward && data?.adjustment?.anchor !== end)
+  if (forward && data?.adjustment?.anchor !== anchor)
     return {
       ...result,
       reason: "前复权锚点与观察日不一致，不能混用其他时点价格。",

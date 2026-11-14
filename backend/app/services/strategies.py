@@ -44,7 +44,8 @@ def stored_period(period):
 
 
 def evaluator_for(definition,period,trade_rules=None,hot_filter=None,price_basis='none'):
-    if names(definition) & trend.FIELDS.keys():return trend.VERSION
+    trend_fields = names(definition) & trend.FIELDS.keys()
+    if trend_fields:return trend.version_for(trend_fields)
     if price_basis=='forward':return FORWARD_ENGINE_VERSION
     trees=[definition]+[tree for tree in (trade_rules or {}).values() if tree is not None]
     if any(names(tree)&{'volume_expand','volume_shrink'} for tree in trees):return 'workspace-v16-volume-comparison-v1'

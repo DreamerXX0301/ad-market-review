@@ -73,6 +73,16 @@
   flex: 0 0 auto;
   padding: 11px 16px;
 }
+.modal:has(.sector-chart-dialog-body) .modal-title-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+}
+.modal:has(.sector-chart-dialog-body) .modal-title-actions > .segmented button {
+  white-space: nowrap;
+}
 .modal:has(.sector-chart-dialog-body) > .sector-chart-dialog-body {
   gap: 12px;
   padding: 12px;
@@ -101,14 +111,57 @@
 .entry-single-chart {
   min-width: 0;
   overflow: visible;
+  padding-right: 30px;
 }
 .entry-single-stage {
   scroll-margin-top: 0;
   min-width: 0;
 }
-.entry-single-stage .chart-toolbar {
+.entry-chart-controls .chart-toolbar {
   padding: 8px 4px 5px;
   gap: 7px 10px;
+}
+.entry-chart-navigation {
+  position: fixed;
+  z-index: 6;
+  top: 50%;
+  right: max(9px, calc((100vw - 1740px) / 2 + 8px));
+  transform: translateY(-50%);
+  display: grid;
+  gap: 6px;
+}
+.entry-chart-navigation button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.entry-chart-navigation button:hover,
+.entry-chart-navigation button:focus-visible,
+.entry-chart-navigation button[aria-current="location"] {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+.single-page-stock-frame .drawer-body > .entry-single-chart {
+  padding-right: 30px;
+}
+.entry-chart-notes {
+  min-height: min(130px, 18vh);
+}
+@media (prefers-reduced-motion: reduce) {
+  .entry-chart-navigation button {
+    transition: none;
+  }
+}
+@media (min-width: 1840px) {
+  .entry-chart-navigation {
+    right: max(40px, calc((100vw - 2300px) / 2 + 8px));
+  }
 }
 .entry-single-stage .ohlc-strip {
   padding: 5px 5px 0;
@@ -116,7 +169,7 @@
   line-height: 1.6;
   min-height: 24px;
 }
-.entry-single-stage .chart-bottom {
+.entry-chart-notes .chart-bottom {
   padding: 6px 4px;
   margin-top: 0;
 }
@@ -124,7 +177,7 @@
   padding-top: 3px;
   padding-bottom: 3px;
 }
-.entry-single-stage .chart-wave-selectors {
+.entry-chart-controls .chart-wave-selectors {
   padding-top: 4px;
   padding-bottom: 4px;
 }
@@ -143,11 +196,11 @@
   .entry-page-bar .link {
     font-size: 10px;
   }
-  .entry-single-stage .chart-bottom {
+  .entry-chart-notes .chart-bottom {
     flex-wrap: wrap;
     gap: 5px;
   }
-  .entry-single-stage .chart-bottom > span {
+  .entry-chart-notes .chart-bottom > span {
     font-size: 8px;
   }
   .single-page-stock-frame .drawer-body {
@@ -156,10 +209,24 @@
   .single-page-stock-frame .drawer-body > .candle-chart {
     padding: 0 3px 6px;
   }
-  .entry-single-stage .chart-toolbar .ma-controls {
+  .single-page-stock-frame .drawer-body > .entry-single-chart {
+    padding-right: 26px;
+  }
+  .entry-single-chart {
+    padding-right: 26px;
+  }
+  .entry-chart-navigation {
+    right: 8px;
+    gap: 4px;
+  }
+  .entry-chart-navigation button {
+    width: 24px;
+    height: 26px;
+  }
+  .entry-chart-controls .chart-toolbar .ma-controls {
     gap: 5px;
   }
-  .entry-single-stage .chart-toolbar {
+  .entry-chart-controls .chart-toolbar {
     gap: 5px 7px;
   }
 }

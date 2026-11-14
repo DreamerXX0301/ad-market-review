@@ -1,9 +1,14 @@
 import type { Row } from "../../lib/api";
 import { num, textValue } from "../../lib/format";
 import {
+  horizontalZoneCondition,
+  horizontalZoneEvidenceText,
+} from "../strategies/historicalRules";
+import {
   sectorCheckLeaves,
   sectorFieldLabel,
   sectorPeriodLabel,
+  sectorRuleText,
 } from "./sectorPresentation";
 
 export default function SectorEvidence({
@@ -24,16 +29,17 @@ export default function SectorEvidence({
         {unknown ? `${unknown}项待核验 · ` : ""}查看{leaves.length}项判断依据
       </summary>
       <ul>
-        {leaves.map((check, index) =>
-          check.hidden ? (
+        {leaves.map((check, index) => {
+          const zone = horizontalZoneCondition(check.field);
+          const zoneEvidence = zone ? horizontalZoneEvidenceText(check) : "";
+          return check.hidden ? (
             <li key={index}>{check.description}</li>
           ) : (
             <li key={index}>
               <strong>
-                {sectorPeriodLabel(
-                  check.indicator_period || check.period || "D",
-                )}{" "}
-                · {sectorFieldLabel(check.field, fields)}
+                {zone
+                  ? sectorRuleText(check, fields)
+                  : `${sectorPeriodLabel(check.indicator_period || check.period || "D")} · ${sectorFieldLabel(check.field, fields)}`}
               </strong>
               ：
               {check.result === true
@@ -72,10 +78,11 @@ export default function SectorEvidence({
                   {check.evidence.line.confirmed_on}
                 </div>
               )}
+              {zoneEvidence && <div>{zoneEvidence}</div>}
               {check.reason && <div>{check.reason}</div>}
             </li>
-          ),
-        )}
+          );
+        })}
       </ul>
     </details>
   );

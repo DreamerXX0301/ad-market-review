@@ -36,6 +36,11 @@ def create_sync_request(payload: dict):
     if mode=='increment':
         from app.services.sync_workspace_followup import MARKER, VERSION as workspace_followup_version
         parameters[MARKER]=workspace_followup_version
+        from app.services.workspace_automation import (
+            SECTOR_AUTOMATION_MARKER, SECTOR_AUTOMATION_PLAN, SECTOR_AUTOMATION_VERSION, freeze_sector_settings,
+        )
+        parameters[SECTOR_AUTOMATION_MARKER] = SECTOR_AUTOMATION_VERSION
+        parameters[SECTOR_AUTOMATION_PLAN] = freeze_sector_settings()
         from app.services.sync_clock import safe_completion_date
         parameters['sync_completion_date']=safe_completion_date()
         from app.services.line_alert_retention import VERSION as line_retention_version

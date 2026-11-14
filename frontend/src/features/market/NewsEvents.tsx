@@ -41,6 +41,10 @@ type Stage = {
   status:
     "pending" | "missing" | "expired" | "complete" | "partial" | "unavailable";
   captured_at: string | null;
+  window_group?: "weekend" | "holiday" | null;
+  window_start_at?: string | null;
+  group_cutoff_at?: string | null;
+  reason?: string | null;
   items: Message[];
 };
 type NewsView = { date: string; retention_days: number; stages: Stage[] };
@@ -50,6 +54,7 @@ type TimelineEntry = {
   category: ReturnType<typeof classifyNews>;
   timestamp: number;
   time: string;
+  closedMarket: boolean;
 };
 type NewsFilterKey = (typeof newsFilters)[number]["key"];
 type CalendarEvent = Source & {
@@ -199,18 +204,30 @@ export default function NewsEvents({
       ? `/market/news-events/calendar?date=${date}&days=${days}`
       : null,
   );
-  const { timeline, featured } = useMemo(() => {
+  const { timeline, featured, closedMarket } = useMemo(() => {
     const entries = new Map<string, TimelineEntry>();
-    for (const { items } of news.data?.stages ?? []) {
+    const stages = news.data?.stages ?? [];
+    const windows = stages.filter(
+      (stage) => stage.window_group && stage.group_cutoff_at,
+    );
+    const closedMarket =
+      windows.find(
+        ({ status }) => status === "complete" || status === "partial",
+      ) ?? windows[0];
+    const start = Date.parse(closedMarket?.window_start_at ?? "");
+    const end = Date.parse(closedMarket?.group_cutoff_at ?? "");
+    for (const { items } of stages) {
       for (const item of items) {
         const key = JSON.stringify([item.source, item.id]);
         if (!entries.has(key)) {
+          const timestamp = Date.parse(item.published_at);
           entries.set(key, {
             key,
             item,
             category: classifyNews(item),
-            timestamp: Date.parse(item.published_at),
+            timestamp,
             time: timeLabel(item.published_at, date),
+            closedMarket: start < timestamp && timestamp <= end,
           });
         }
       }
@@ -218,7 +235,15 @@ export default function NewsEvents({
     const timeline = [...entries.values()].sort(
       (left, right) => right.timestamp - left.timestamp,
     );
-    return { timeline, featured: selectFeaturedNews(timeline) };
+    const featured = closedMarket
+      ? [
+          ...selectFeaturedNews(
+            timeline.filter((entry) => !entry.closedMarket),
+          ),
+          ...selectFeaturedNews(timeline.filter((entry) => entry.closedMarket)),
+        ]
+      : selectFeaturedNews(timeline);
+    return { timeline, featured, closedMarket };
   }, [news.data, date]);
   const { allInScope, featuredInScope } = useMemo(() => {
     if (newsFilter === "all" && !importantOnly) {
@@ -251,6 +276,34 @@ export default function NewsEvents({
   const relatedMessage =
     event && timeline.find(({ item }) => item.event_id === event.id);
   const activeRead = tab === "news" ? news : calendar;
+  const renderMessages = (messages: TimelineEntry[]) => (
+    <ul className="news-events-list news-events-timeline">
+      {messages.map(({ key, item, category, time }) => (
+        <li
+          key={key}
+          data-news-tone={category.tone}
+          data-news-move={category.move?.direction}
+          data-news-important={category.importance ? "true" : undefined}
+        >
+          <button
+            type="button"
+            aria-pressed={key === selection?.key}
+            onClick={() => setSelectedMessageKey(key)}
+          >
+            <span className="news-events-row news-events-meta">
+              <span className="news-events-secondary">
+                <time dateTime={item.published_at}>{time}</time>
+                {" · "}
+                {item.source}
+              </span>
+              <NewsLabels category={category} />
+            </span>
+            <strong>{item.title}</strong>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
 
   return (
     <div className="news-events">
@@ -376,35 +429,42 @@ export default function NewsEvents({
                     )}
                   </>
                 )}
-                {visibleMessages.length > 0 ? (
-                  <ul className="news-events-list news-events-timeline">
-                    {visibleMessages.map(({ key, item, category, time }) => (
-                      <li
-                        key={key}
-                        data-news-tone={category.tone}
-                        data-news-move={category.move?.direction}
-                        data-news-important={
-                          category.importance ? "true" : undefined
-                        }
-                      >
-                        <button
-                          type="button"
-                          aria-pressed={key === selection?.key}
-                          onClick={() => setSelectedMessageKey(key)}
-                        >
-                          <span className="news-events-row news-events-meta">
-                            <span className="news-events-secondary">
-                              <time dateTime={item.published_at}>{time}</time>
-                              {" · "}
-                              {item.source}
-                            </span>
-                            <NewsLabels category={category} />
-                          </span>
-                          <strong>{item.title}</strong>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                {closedMarket ? (
+                  <>
+                    {visibleMessages.some((entry) => !entry.closedMarket) &&
+                      renderMessages(
+                        visibleMessages.filter((entry) => !entry.closedMarket),
+                      )}
+                    <section className="news-events-weekend">
+                      <header className="news-events-weekend-header">
+                        <h3>
+                          {closedMarket.window_group === "weekend"
+                            ? "周末消息面"
+                            : "休市消息面"}
+                        </h3>
+                        <span>
+                          {timeLabel(closedMarket.window_start_at ?? "", date)}
+                          {" 至 "}
+                          {timeLabel(closedMarket.group_cutoff_at ?? "", date)}
+                        </span>
+                        {closedMarket.reason && <p>{closedMarket.reason}</p>}
+                      </header>
+                      {visibleMessages.some((entry) => entry.closedMarket) ? (
+                        renderMessages(
+                          visibleMessages.filter((entry) => entry.closedMarket),
+                        )
+                      ) : (
+                        <p className="news-events-filter-note">
+                          {closedMarket.status === "complete" ||
+                          closedMarket.status === "partial"
+                            ? "当前筛选下暂无消息。"
+                            : "本档消息暂未取得。"}
+                        </p>
+                      )}
+                    </section>
+                  </>
+                ) : visibleMessages.length > 0 ? (
+                  renderMessages(visibleMessages)
                 ) : timeline.length > 0 ? (
                   <Empty
                     title={

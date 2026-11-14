@@ -13,12 +13,14 @@ export default function SectorPolicyEditor({
   round,
   fields,
   period,
+  strategyDefaults = false,
   onClose,
   onSaved,
 }: {
   round: Row;
   fields: Row[];
   period: string;
+  strategyDefaults?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -61,7 +63,10 @@ export default function SectorPolicyEditor({
     setBusy(true);
     setError("");
     try {
-      await patch(`/sector-tracking-rounds/${round.round_id}/policy`, {
+      const endpoint = strategyDefaults
+        ? `/sector-strategies/${encodeURIComponent(round.strategy_id)}`
+        : `/sector-tracking-rounds/${encodeURIComponent(round.round_id)}/policy`;
+      await patch(endpoint, {
         policy: {
           ...policy,
           ...sectorPolicyFromTrees(alerts, exits),
@@ -79,7 +84,11 @@ export default function SectorPolicyEditor({
     }
   }
   return (
-    <Modal title={`${round.name} · 板块跟踪条件`} onClose={onClose} wide>
+    <Modal
+      title={`${round.name} · ${strategyDefaults ? "默认提醒与结束条件" : "板块提醒与结束条件"}`}
+      onClose={onClose}
+      wide
+    >
       <div className="modal-body">
         <div className="form-grid">
           <label>
@@ -133,7 +142,10 @@ export default function SectorPolicyEditor({
           />
         </section>
         <Warning>
-          入池当天为第0日；日/周/月指标分别按已核验周期计算。仅修改这个板块轮次；提醒不会自动结束，成分股也不会自动加入个股池。
+          入池当日为第0日，日/周/月指标按各自已核验周期计算。
+          {strategyDefaults
+            ? "保存后用于该策略之后新入池的板块。"
+            : "保存后用于当前板块轮次。"}
         </Warning>
         {error && <ErrorBox message={error} />}
       </div>

@@ -5,6 +5,12 @@ const source = await fs.readFile(new URL("./taskActivityPresentation.ts", import
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
 const { activityPresentation: view, activityPollDelay: delay, visibleActivity, activityNoticeExpiry, nextActivityNoticeDelay, activityClockNow } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
 assert.equal(view({ status: "queued", progress: 0 }).progressLabel, "0%");
+const offlineCheck = view({ status: "queued", stage: "工作进程离线", waiting_for_worker: true });
+assert.equal(offlineCheck.waitingForWorker, true);
+assert.equal(offlineCheck.statusLabel, "等待恢复");
+assert.equal(offlineCheck.stage, "工作进程离线");
+assert.equal(offlineCheck.tone, "warn");
+assert.equal(view({ status: "running", waiting_for_worker: true }).waitingForWorker, false);
 assert.equal(view({ status: "running", progress: 0 }).progress, 0);
 assert.equal(view({ status: "running" }).progress, null);
 for (const progress of [null, undefined, "20", NaN, Infinity, -1, 101]) assert.equal(view({ status: "running", progress, duration_ms: 999999 }).progress, null);

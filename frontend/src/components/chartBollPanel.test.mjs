@@ -17,13 +17,17 @@ const { chartPaneLayout } = await import(
   "data:text/javascript;base64," +
     Buffer.from(transpile(layoutSource)).toString("base64")
 );
+const provisionalSource = await fs.readFile(new URL("./chartProvisionalIndicators.ts", import.meta.url), "utf8");
+const provisionalUrl = "data:text/javascript;base64," + Buffer.from(ts.transpileModule(provisionalSource, {
+  compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+}).outputText).toString("base64");
 const bollSource = await fs.readFile(
   new URL("./chartBoll.ts", import.meta.url),
   "utf8",
 );
 const { bollCandleValues } = await import(
   "data:text/javascript;base64," +
-    Buffer.from(transpile(bollSource)).toString("base64")
+    Buffer.from(transpile(bollSource.replace('"./chartProvisionalIndicators"', JSON.stringify(provisionalUrl)))).toString("base64")
 );
 const distanceSource = await fs.readFile(
   new URL("./chartSessionDistance.ts", import.meta.url),
@@ -207,6 +211,8 @@ const formatterFactory = new Function(
   "percent",
   "supportsLimits",
   "limitTooltipHtml",
+  "volumeMarkers",
+  "divergences",
   transpile("return (" + formatters[0].getText(ast) + ");"),
 );
 const bar = {
@@ -244,6 +250,8 @@ const args = [
   (value) => value + "%",
   false,
   () => "",
+  null,
+  null,
 ];
 const params = [
   {

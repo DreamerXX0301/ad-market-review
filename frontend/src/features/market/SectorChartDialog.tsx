@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { post, requestKey, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { CandleChart } from "../../components/Charts";
+import MarketDatePicker, {
+  ChartMarketDatesContext,
+} from "../../components/MarketDatePicker";
 import {
   Badge,
   Empty,
@@ -20,7 +23,7 @@ import {
 
 export default function SectorChartDialog({
   topic,
-  date,
+  date: openedDate,
   pendingCloseDay,
   onClose,
   onMembers,
@@ -29,8 +32,16 @@ export default function SectorChartDialog({
   date: string;
   pendingCloseDay?: string;
   onClose: () => void;
-  onMembers?: () => void;
+  onMembers?: (chartDate: string) => void;
 }) {
+  const dates = useContext(ChartMarketDatesContext);
+  const [dateChoice, setDateChoice] = useState<{
+    scope: string;
+    value: string;
+  } | null>(null);
+  const scope = `${topic.topicCode}:${openedDate}`;
+  const date = dateChoice?.scope === scope ? dateChoice.value : openedDate;
+  const [period, setPeriod] = useState<"D" | "W" | "M">("D");
   const endpoint = sectorChartRequest(topic.topicCode, date);
   const chart = useApi<Row>(endpoint ? endpoint + "&period=D" : null);
   const [taskId, setTaskId] = useState("");
@@ -38,6 +49,8 @@ export default function SectorChartDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const mounted = useRef(true);
+  const requestedEndpoint = useRef(endpoint);
+  requestedEndpoint.current = endpoint;
   const task = useApi<Row>(
     taskId ? `/tasks/${encodeURIComponent(taskId)}` : null,
   );
@@ -86,7 +99,7 @@ export default function SectorChartDialog({
         date,
         request_key: requestKey(),
       });
-      if (!mounted.current) return;
+      if (!mounted.current || requestedEndpoint.current !== endpoint) return;
       if (result.cache_hit === true) chart.reload();
       else if (sectorTaskMatches(result, topic.topicCode, date)) {
         setTaskSnapshot(result);
@@ -96,12 +109,13 @@ export default function SectorChartDialog({
       } else
         setError("任务返回的板块或日期与本次选择不一致，已停止展示该任务。");
     } catch (reason) {
-      if (mounted.current)
+      if (mounted.current && requestedEndpoint.current === endpoint)
         setError(
           reason instanceof Error ? reason.message : "未能提交板块历史任务",
         );
     } finally {
-      if (mounted.current) setSubmitting(false);
+      if (mounted.current && requestedEndpoint.current === endpoint)
+        setSubmitting(false);
     }
   }
   const progress = taskSnapshot
@@ -115,20 +129,59 @@ export default function SectorChartDialog({
     chart.data.bars.length > 0;
   const busy = submitting || !!taskId || progress?.active;
   const paused = progress?.status === "paused";
-  const usingPublishedClose = pendingCloseDay && pendingCloseDay !== date;
+  const usingPublishedClose =
+    pendingCloseDay && pendingCloseDay !== date && date === openedDate;
   return (
-    <Modal title={`${topic.name} · 板块K线`} onClose={onClose} wide>
+    <Modal
+      title={`${topic.name} · 板块K线`}
+      onClose={onClose}
+      actions={
+        <>
+          <div className="segmented" role="group" aria-label="板块K线周期">
+            {(["D", "W", "M"] as const).map((value) => (
+              <button
+                type="button"
+                key={value}
+                className={value === period ? "active" : ""}
+                aria-pressed={value === period}
+                onClick={() => setPeriod(value)}
+              >
+                {value === "D" ? "日 K" : value === "W" ? "周 K" : "月 K"}
+              </button>
+            ))}
+          </div>
+          <MarketDatePicker
+            dates={dates}
+            value={date}
+            onChange={(value) => {
+              if (value === date) return;
+              requestedEndpoint.current = sectorChartRequest(
+                topic.topicCode,
+                value,
+              );
+              setTaskId("");
+              setTaskSnapshot(null);
+              setSubmitting(false);
+              setError("");
+              setDateChoice({ scope, value });
+            }}
+            scope="chart"
+          />
+        </>
+      }
+      wide
+    >
       <div className="modal-body sector-chart-dialog-body entry-page-scroll">
         {onMembers && (
-          <button className="btn small entry-members-link" onClick={onMembers}>
+          <button
+            className="btn small entry-members-link"
+            onClick={() => onMembers(date)}
+          >
             查看成分股
           </button>
         )}
         <div className="sector-chart-context">
           <div>
-            <Badge>
-              {date} · {usingPublishedClose ? "已发布收盘日" : "观察日期"}
-            </Badge>
             <span>{topic.topicCode}</span>
             <span>同花顺板块指数 · 原始指数点位</span>
           </div>
@@ -228,6 +281,8 @@ export default function SectorChartDialog({
             initialChart={{ endpoint, data: chart.data! }}
             height={680}
             entryFocus
+            controlledPeriod={period}
+            onPeriodChange={setPeriod}
           />
         ) : (
           !chart.error && (

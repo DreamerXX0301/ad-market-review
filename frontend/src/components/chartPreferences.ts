@@ -25,6 +25,11 @@ export type ChartPreferences = {
   showEventBaseline: boolean;
   stockShowAutomaticTrendlines: boolean;
   indexShowAutomaticTrendlines: boolean;
+  stockShowPriceVolumeLines: boolean;
+  indexShowPriceVolumeLines: boolean;
+  stockShowVolumeMarkers: boolean;
+  indexShowVolumeMarkers: boolean;
+  showIndicatorDivergences: boolean;
   stockShowAllTrendHistory: boolean;
   indexShowAllTrendHistory: boolean;
   stockShowWaves: boolean;
@@ -49,6 +54,11 @@ const defaults = (): ChartPreferences => ({
   showEventBaseline: true,
   stockShowAutomaticTrendlines: true,
   indexShowAutomaticTrendlines: true,
+  stockShowPriceVolumeLines: false,
+  indexShowPriceVolumeLines: false,
+  stockShowVolumeMarkers: true,
+  indexShowVolumeMarkers: true,
+  showIndicatorDivergences: true,
   stockShowAllTrendHistory: false,
   indexShowAllTrendHistory: false,
   stockShowWaves: true,
@@ -109,6 +119,16 @@ export function normalizeChartPreferences(value: unknown): ChartPreferences {
       input.version !== 4 || input.stockShowAutomaticTrendlines !== false,
     indexShowAutomaticTrendlines:
       input.version !== 4 || input.indexShowAutomaticTrendlines !== false,
+    stockShowPriceVolumeLines:
+      input.version === 4 && input.stockShowPriceVolumeLines === true,
+    indexShowPriceVolumeLines:
+      input.version === 4 && input.indexShowPriceVolumeLines === true,
+    stockShowVolumeMarkers:
+      input.version !== 4 || input.stockShowVolumeMarkers !== false,
+    indexShowVolumeMarkers:
+      input.version !== 4 || input.indexShowVolumeMarkers !== false,
+    showIndicatorDivergences:
+      input.version !== 4 || input.showIndicatorDivergences !== false,
     stockShowAllTrendHistory:
       input.version === 4 && input.stockShowAllTrendHistory === true,
     indexShowAllTrendHistory:

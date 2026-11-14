@@ -7,6 +7,7 @@ import {
   sectorSelectableFields,
 } from "./sectorPresentation";
 import { HIDDEN_INDICATOR_CONDITION_TEXT } from "../../lib/indicatorVisibility";
+import { horizontalZoneCondition } from "../strategies/historicalRules";
 import "./SectorWorkspace.css";
 
 export default function SectorRuleBuilder({
@@ -110,6 +111,7 @@ export default function SectorRuleBuilder({
   const selectedPeriod = value.period || spec?.fixed_period || period;
   const rightField = value.right_field != null;
   const lookback = sectorLeafEditorKind(spec) === "lookback";
+  const zone = horizontalZoneCondition(value.field);
   const numericFields = visibleFields.filter(
     (field) =>
       field.type === "number" &&
@@ -199,30 +201,32 @@ export default function SectorRuleBuilder({
         </label>
       ) : (
         <>
-          <label>
-            比较
-            <select
-              aria-label="板块比较符"
-              value={value.op || ""}
-              onChange={(event) =>
-                onChange({ ...value, op: event.target.value })
-              }
-            >
-              {(spec?.operators || [value.op])
-                .filter(Boolean)
-                .map((operator: string) => (
-                  <option key={operator} value={operator}>
-                    {operator === "=="
-                      ? "等于"
-                      : operator === "!="
-                        ? "不等于"
-                        : operator === "matches"
-                          ? "满足"
-                          : operator}
-                  </option>
-                ))}
-            </select>
-          </label>
+          {!zone && (
+            <label>
+              比较
+              <select
+                aria-label="板块比较符"
+                value={value.op || ""}
+                onChange={(event) =>
+                  onChange({ ...value, op: event.target.value })
+                }
+              >
+                {(spec?.operators || [value.op])
+                  .filter(Boolean)
+                  .map((operator: string) => (
+                    <option key={operator} value={operator}>
+                      {operator === "=="
+                        ? "等于"
+                        : operator === "!="
+                          ? "不等于"
+                          : operator === "matches"
+                            ? "满足"
+                            : operator}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
           {spec?.type === "boolean" ? (
             <label>
               状态
@@ -267,9 +271,11 @@ export default function SectorRuleBuilder({
               <label>
                 {rightField
                   ? "指标"
-                  : spec?.selection_only
-                    ? "阈值 (%)"
-                    : "阈值"}
+                  : zone
+                    ? `${zone.parameter} (%)`
+                    : spec?.selection_only
+                      ? "阈值 (%)"
+                      : "阈值"}
                 {rightField ? (
                   <select
                     aria-label="板块比较指标"
@@ -286,7 +292,7 @@ export default function SectorRuleBuilder({
                   </select>
                 ) : (
                   <input
-                    aria-label="板块数值阈值"
+                    aria-label={zone ? `${zone.parameter} (%)` : "板块数值阈值"}
                     type="number"
                     step={spec?.step || "any"}
                     min={spec?.min}
@@ -311,6 +317,7 @@ export default function SectorRuleBuilder({
       {lookback && (
         <small>固定日K，严格突破前N个市场交易日最高价，不含当日。</small>
       )}
+      {zone && <small>{zone.hint}</small>}
     </div>
   );
 }

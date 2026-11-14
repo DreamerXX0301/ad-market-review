@@ -66,6 +66,34 @@ def test_disabled_default_sql_only_and_save_never_reads_chart_under_transaction(
     assert configured['latest_baseline'] is None
 
 
+def test_next_session_preparation_reports_offline_and_restricted_worker_ignores_other_queue(automatic):
+    unrelated = tasks.create_task('topic_refresh', {})
+    result = configure()
+    task_id = result['task']['job_id']
+
+    def display():
+        return next(item for item in tasks.task_activity()['items'] if item['job_id'] == task_id)
+
+    offline = display()
+    assert offline['title'] == '准备自动提醒参考位'
+    assert offline['status'] == 'queued' and offline['waiting_for_worker'] is True
+    assert offline['stage'] == '工作进程离线'
+    core.set_setting('worker_heartbeat', {'at_ms': core.now_ms() + 60000})
+    assert display()['waiting_for_worker'] is True
+    core.set_setting('worker_heartbeat:automatic_price_alert_check', {'at_ms': core.now_ms()})
+    queued = display()
+    assert queued['status'] == 'queued' and not queued.get('waiting_for_worker')
+
+    job = tasks.claim_next('isolated-alert-worker', source_check_operation=alerts.OPERATION)
+    assert job['job_id'] == task_id
+    alerts.execute_check(job)
+    assert tasks.task_view(unrelated['job_id'])['status'] == 'queued'
+    assert tasks.task_view(task_id)['status'] == 'succeeded'
+    assert alerts.get_config('600001.SH')['latest_evaluation']['state'] == 'prepared'
+    assert alerts.list_alerts()['total'] == 0
+    assert tasks.claim_next('isolated-alert-worker', source_check_operation=alerts.OPERATION) is None
+
+
 def test_new_empty_database_reminder_reads_are_empty_without_market_or_business_clock(tmp_path, monkeypatch):
     monkeypatch.setenv('SHIXU_DATA_DIR', str(tmp_path))
     for key in ('SHIXU_SQLITE_PATH', 'SHIXU_PUBLISHED_DIR', 'SHIXU_RAW_DIR', 'SHIXU_WORK_DIR'):
@@ -76,7 +104,7 @@ def test_new_empty_database_reminder_reads_are_empty_without_market_or_business_
     assert alerts.list_alerts(scope='today')['total'] == 0
     assert alerts.alert_summary()['total'] == 0
     with core.connect() as connection:
-        assert connection.execute('PRAGMA user_version').fetchone()[0] == 45
+        assert connection.execute('PRAGMA user_version').fetchone()[0] == 46
         assert connection.execute('PRAGMA foreign_keys').fetchone()[0] == 1
         assert connection.execute('PRAGMA recursive_triggers').fetchone()[0] == 1
     with pytest.raises(HTTPException):

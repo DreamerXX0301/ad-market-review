@@ -13,12 +13,14 @@ import {
 /** These are local post-sync calculations. Creating a new network sync remains manual. */
 export default function StrategyAutomation({
   strategyId,
+  targetType = "stock",
 }: {
   strategyId: string;
+  targetType?: "stock" | "sector";
 }) {
-  const result = useApi<Row>(
-    strategyId ? `/strategies/${strategyId}/automation` : null,
-  );
+  const sector = targetType === "sector";
+  const endpoint = `/${sector ? "sector-strategies" : "strategies"}/${encodeURIComponent(strategyId)}/automation`;
+  const result = useApi<Row>(strategyId ? endpoint : null);
   const [draft, setDraft] = useState({
     refresh_after_sync: false,
     auto_track: false,
@@ -41,7 +43,7 @@ export default function StrategyAutomation({
     setSaving(true);
     setError("");
     try {
-      await api(`/strategies/${strategyId}/automation`, {
+      await api(endpoint, {
         method: "PUT",
         body: JSON.stringify(draft),
       });
@@ -61,7 +63,11 @@ export default function StrategyAutomation({
           同步后执行
         </>
       }
-      subtitle="手动盘后增量成功后，执行此策略的本地计算"
+      subtitle={
+        sector
+          ? "盘后板块行情发布后，执行此策略的本地筛选"
+          : "盘后行情发布后，执行此策略的本地筛选"
+      }
       actions={
         <Badge tone={result.data?.refresh_after_sync ? "good" : "neutral"}>
           {result.data?.refresh_after_sync ? "已启用" : "默认关闭"}
@@ -101,15 +107,23 @@ export default function StrategyAutomation({
               }
             />
             <span>
-              <strong>命中新股自动加入此策略跟踪池</strong>
+              <strong>
+                {sector
+                  ? "新命中板块自动加入此策略跟踪池"
+                  : "命中新股自动加入此策略跟踪池"}
+              </strong>
               <small>
-                已跟踪和手动忽略的股票不重复入池，原轮次基准不会重置。
+                {sector
+                  ? "按板块指数建立跟踪轮次，已跟踪的板块保留原入池点位。"
+                  : "已跟踪和手动忽略的股票不重复入池，原轮次基准不会重置。"}
               </small>
             </span>
           </label>
           <div className="automation-footer">
             <span>
-              首次初始化与每日增量仍由你点击开始；已有跟踪轮次在同步后核对。
+              {sector
+                ? "盘后行情发布后读取本地板块数据，已有轮次的提醒可在板块跟踪里复核。"
+                : "取数沿用数据中心的同步计划；已有跟踪轮次在同步后核对。"}
             </span>
             <button
               className="btn small"

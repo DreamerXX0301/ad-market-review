@@ -18,6 +18,8 @@
 | --- | --- |
 | `GET /intraday-monitor` | 今日总览、设置、worker状态、真实范围计数、最近批次、已加载股票与最近100张提醒卡；不取数 |
 | `GET /intraday-monitor/summary` | 当前服务日期、`server_now_ms/enabled/total/unread_count/items`，最多5条，不扫描股票历史 |
+| `GET /intraday-monitor/revision` | 返回上海日期与总览版本，读取批次和配置摘要。完整总览包含同一版本字段 |
+| `GET /intraday-monitor/board-observations?date=` | 按上海日期读取最近一档已留存盘中观察及必要的上一比较档，返回 `date/snapshot_id/observed_at/source_label/items/notice`。不请求行情或创建提醒 |
 | `GET /intraday-monitor/events?date=&limit=` | 按事件实际交易日读取，limit 1..500，默认200；独立返回date、chart_as_of、total、unread_count与items |
 | `PUT /intraday-monitor/settings` | 完整提交 `expected_revision/enabled/scopes/manual_enabled/automatic_enabled`；返回完整已保存配置；不立即采集 |
 | `POST /intraday-monitor/events/read` | 显式提交1..200个event_ids，仅将这些卡的当前版本标记已读；GET不修改已读 |
@@ -27,6 +29,10 @@
 股票/事件附当前已发布日的板型、30交易日与年内收益、近30交易日/近一年滚动/年内涨停次数、最近已确认涨停及距离；三种次数口径分开。缺覆盖保留null、原因和已确认下界，不填0。股级数值指标由worker对固定行情代际预热，HTTP只读SQLite小投影。行业概念每次按当前业务日读取，独立标明归属日及来源，不作为历史触发原因。页面支持股票/代码、行业概念、板型与单项指标区间筛选，并提供未知值选项；筛选先于排序分页，提醒列表明确已加载范围。
 
 股票行及提醒列表行包含 `search_pinyin` 和 `search_initials`，由显示名称生成。拼音和首字母匹配词的开头，名称、代码和提醒依据支持包含匹配。搜索沿用当前监控池及其筛选条件。
+
+「板况观察」仅将已核验盘中观察来源池与监控名单求交，显示封板、炸板、回封及跌停。回封须有相邻的已核验炸板池与封板池，并匹配两次可比正报价。板况沿用盘中观察实际采集时点，十分钟涨幅刷新不补齐板况，也不推断急板或首次封板时间。此视图不进入铃铛。
+
+监控股票将 `change_pct/latest_price/last_observed_at_ms` 并列展示。盘中涨幅按本次加载并筛选的股票全量排序后分页，未知排末。采样时间是北京时间收取数据时刻（缺报可仅有采样尝试时间），单股成交时间保持未知。可见页面每30秒检查总览版本和提醒列表，批次或设置变化后重新读取完整总览；约每2分钟兜底更新自选、划线和分类变化。无逐股采集请求。
 
 ## 调度与真实采集
 

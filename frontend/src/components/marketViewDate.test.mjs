@@ -127,6 +127,9 @@ const replacements = {
   react: encode(
     "export const {memo,useState,useEffect,useCallback,useMemo}=globalThis.__dateHooks;",
   ),
+  "./components/MarketDatePicker": encode(
+    "export const ChartMarketDatesContext={Provider:'chart-market-dates'};",
+  ),
   "./lib/api": encode(
     "export const useApi=globalThis.__dateApi;export const ApiPageActivity={Provider:'activity'};",
   ),
@@ -267,7 +270,7 @@ for (const route of ["auction", "intraday"]) {
   assert.equal(sectorDialog().date, "2026-10-29");
   assert.equal(sectorDialog().pendingCloseDay, "2026-10-30");
   assert.equal(shell().date, "2026-10-30");
-  sectorDialog().onMembers();
+  sectorDialog().onMembers(sectorDialog().date);
   render();
   assert.equal(sectorDialog().date, "2026-10-29");
   assert.equal(sectorDialog().initialScope, "latest");

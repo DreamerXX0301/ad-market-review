@@ -185,7 +185,11 @@ for (const fn of events.get("workbench-stock-drawer-visibility"))
   fn({ detail: { open: false } });
 backdrop = render();
 assert.notEqual(backdrop.props.style?.display, "none");
-backdrop.props.children.props.children[0].props.children[1].props.onClick();
+const modalClose = backdrop.props.children.props.children[0].props.children.find(
+  (child) => child?.props?.["aria-label"] === "关闭",
+);
+assert.ok(modalClose);
+modalClose.props.onClick();
 assert.equal(closeCount, 1);
 // A close-and-open-chart handoff must not restore focus to the list behind the drawer.
 drawer = element("new stock drawer");

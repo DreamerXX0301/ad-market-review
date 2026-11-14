@@ -235,7 +235,7 @@ function PolicyEditor({
         toast(
           applyActive
             ? `默认政策已保存 · 更新 ${saved.policy_application?.applied_count ?? 0} 个轮次，保留 ${saved.policy_application?.skipped_custom_count ?? 0} 个自定义轮次`
-            : "默认跟踪政策已保存，仅用于之后新入池轮次",
+            : "默认提醒与结束条件已保存，用于之后新入池轮次",
         );
       }
       if (row.round_id)
@@ -253,7 +253,7 @@ function PolicyEditor({
       title={
         row.round_id
           ? `提醒与结束条件 · ${row.name || row.code}`
-          : `默认跟踪政策 · ${strategy?.name || row.name}`
+          : `默认提醒与结束条件 · ${strategy?.name || row.name}`
       }
       onClose={onClose}
       wide
@@ -894,7 +894,7 @@ function StockTracking({
             onClick={() => setPolicy({ strategy_id: strategyId })}
           >
             <Settings2 size={14} />
-            默认跟踪政策
+            默认提醒与结束条件
           </button>
           <button className="btn primary" disabled={!!busy} onClick={review}>
             {busy === "review" ? <Spinner /> : <RefreshCw size={14} />}

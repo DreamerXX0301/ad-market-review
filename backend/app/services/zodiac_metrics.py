@@ -272,13 +272,31 @@ def detail(member_id):
 
 def retained_events(symbol, start, end):
     """Existing SQLite records and bounded local dragon-tiger objects only."""
+    from app.services.automatic_price_alerts import SOURCE as AUTOMATIC_SOURCE, TITLES as AUTOMATIC_TITLES
     from app.services.dragon_tiger import Store
+    from app.services.line_alerts import TITLES as MANUAL_TITLES
     from app.services.supplement_access import supplement_access
     result = []
     with connect() as c:
-        alerts = rows(c, "SELECT event_id,trade_date,rule,state FROM line_alert_event WHERE instrument_id=? AND trade_date BETWEEN ? AND ? ORDER BY trade_date DESC LIMIT 100", (symbol,start,end))
+        c.execute('BEGIN')
+        alerts = rows(c, """
+            SELECT * FROM (
+                SELECT event_id,trade_date,rule,state,created_at_ms,'manual_line' AS source_kind
+                FROM line_alert_event WHERE instrument_id=? AND trade_date BETWEEN ? AND ?
+                ORDER BY trade_date DESC,created_at_ms DESC,event_id DESC LIMIT 100
+            ) UNION ALL SELECT * FROM (
+                SELECT event_id,trade_date,rule,state,created_at_ms,? AS source_kind
+                FROM automatic_price_alert_event WHERE instrument_id=? AND trade_date BETWEEN ? AND ?
+                ORDER BY trade_date DESC,created_at_ms DESC,event_id DESC LIMIT 100
+            ) ORDER BY trade_date DESC,created_at_ms DESC,event_id DESC LIMIT 100
+        """, (symbol, start, end, AUTOMATIC_SOURCE, symbol, start, end))
         reports = rows(c, "SELECT report_id,data_cutoff FROM research_report WHERE instrument_id=? AND data_cutoff BETWEEN ? AND ? ORDER BY data_cutoff DESC LIMIT 30", (symbol,start,end))
-    result.extend({'id':r['event_id'],'date':r['trade_date'],'label':'划线提醒 · '+r['rule'],'state':r['state']} for r in alerts)
+    for alert in alerts:
+        automatic = alert['source_kind'] == AUTOMATIC_SOURCE
+        titles = AUTOMATIC_TITLES if automatic else MANUAL_TITLES
+        label = '自动提醒' if automatic else '手动画线'
+        result.append({'id': alert['event_id'], 'date': alert['trade_date'], 'label': f"{label} · {titles.get(alert['rule'], alert['rule'])}",
+                       'state': alert['state'], 'source_kind': alert['source_kind']})
     result.extend({'id':r['report_id'],'date':r['data_cutoff'],'label':'已保存个股研究（含当时获取资料）'} for r in reports)
     store = Store()
     with supplement_access():

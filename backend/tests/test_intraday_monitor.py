@@ -436,12 +436,18 @@ def test_real_worker_three_slots_persist_sha_states_and_merge_source_events_with
     preserved = {table: count(table) for table in ('tracking_round', 'line_alert_event', 'automatic_price_alert_event')}
     _, seeded = run_slot(env, '09:30:05', zone['lower'] - .5)
     assert seeded['event_count'] == 0 and seeded['valid_count'] == 1
+    seed_revision = env.client.get(BASE + '/revision').json()
+    assert seed_revision['date'] == env.day
+    assert seed_revision['revision'] == env.client.get(BASE).json()['revision']
     _, breakout = run_slot(env, '09:40:05', zone['upper'] + .5)
     events = env.client.get(BASE + '/events').json()
     assert events['date'] == env.day and events['chart_as_of'] == env.market.entry
     assert events['total'] == events['unread_count'] == 1
     event = events['items'][0]
     overview = env.client.get(BASE).json()
+    assert env.client.get(BASE + '/revision').json()['revision'] == overview['revision']
+    assert overview['revision'] != seed_revision['revision']
+    assert overview['stocks'][0]['latest_price'] > zone['upper']
     for item in (overview['stocks'][0], overview['events']['items'][0], event):
         assert item['instrument_id'] == SYMBOL and item['name'] == '日出东方'
         assert (item['search_pinyin'], item['search_initials']) == ('richudongfang', 'rcdf')

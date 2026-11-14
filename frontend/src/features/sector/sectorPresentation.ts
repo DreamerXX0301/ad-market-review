@@ -2,6 +2,10 @@ import {
   HIDDEN_INDICATOR_CONDITION_TEXT,
   isHiddenIndicatorField,
 } from "../../lib/indicatorVisibility";
+import {
+  horizontalZoneCondition,
+  historyRuleSummary,
+} from "../strategies/historicalRules";
 
 export type SectorRow = Record<string, any>;
 export const sectorPeriodLabel = (value: string) =>
@@ -17,7 +21,9 @@ export const sectorKindLabel = (value: string) =>
 export const sectorFieldLabel = (field: string, fields: SectorRow[]) =>
   isHiddenIndicatorField(field)
     ? HIDDEN_INDICATOR_CONDITION_TEXT
-    : fields.find((item) => item.field === field)?.label || field;
+    : fields.find((item) => item.field === field)?.label ||
+      horizontalZoneCondition(field)?.label ||
+      field;
 export function sectorConditionHidden(value: SectorRow): boolean {
   return [value?.field, value?.right_field, value?.right_event_field].some(
     isHiddenIndicatorField,
@@ -163,6 +169,8 @@ export function sectorRuleText(
   if (sectorConditionHidden(value)) return HIDDEN_INDICATOR_CONDITION_TEXT;
   const spec = fields.find((field) => field.field === value.field);
   const period = value.period || spec?.fixed_period || defaultPeriod;
+  if (horizontalZoneCondition(value.field))
+    return historyRuleSummary({ ...value, period });
   if (value.field === "close_breakout_high")
     return `日K收盘价突破前${value.value ?? "N"}个交易日最高价`;
   const right = value.right_field

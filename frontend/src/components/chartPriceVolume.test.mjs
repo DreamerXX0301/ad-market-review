@@ -352,6 +352,13 @@ assert.match(shortHtml, /近20个完整交易日结构/);
 assert.match(shortHtml, /公式基准/);
 assert.match(shortHtml, /不是确认支撑或个人成本止损/);
 assert.match(shortHtml, /试算参数/);
+const [shortSummary, shortEvidence] = shortHtml.split("<details");
+assert.match(shortSummary, /短线风险线/);
+assert.match(shortSummary, /10\.00 元/);
+assert.match(shortSummary, /距收盘 -4\.76%/);
+assert.doesNotMatch(shortSummary, /优先近20个|支撑类提醒以|最近20日没有/);
+assert.match(shortEvidence, /最近20日没有距离上限内的确认支撑/);
+assert.match(shortEvidence, /支撑类提醒以设置中已保存近端基准为准/);
 const shortWithZone = render(
   { ...shortView, resistance: null, breakout: null },
   { low: 7.29, high: 7.328 },
@@ -359,6 +366,7 @@ const shortWithZone = render(
 assert.match(shortWithZone, /7\.29–7\.33 元/);
 assert.match(shortWithZone, /水平压力区/);
 assert.match(shortWithZone, /近20根完整日K暂无有效的单点压力及突破参考/);
+assert.match(shortWithZone.split("<details")[0], /突破位待核验/);
 assert.doesNotMatch(shortWithZone, /class="chart-price-volume-level breakout"/);
 const onlyPriorBreakout = render({
   ...shortView,

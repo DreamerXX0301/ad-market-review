@@ -36,6 +36,19 @@ const {
 );
 const first = newHistoryRule(),
   second = newHistoryRule();
+const zoneRule = {
+  field: "horizontal_support_close_near",
+  op: "matches",
+  period: "M",
+  value: 0.5,
+};
+assert.equal(
+  historyRuleSummary(zoneRule),
+  "完整月K · 收盘靠近水平支撑区 · 容差 0.5%",
+);
+assert.equal(validateVisualRule(zoneRule), null);
+assert.match(validateVisualRule({ ...zoneRule, value: 10.1 }), /0% 到 10%/);
+assert.match(validateVisualRule(zoneRule, "where"), /仅用于选股条件/);
 first.history_event.window.from = 8;
 assert.equal(
   second.history_event.window.from,

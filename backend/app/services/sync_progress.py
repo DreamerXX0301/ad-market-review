@@ -22,6 +22,7 @@ def _chain(connection, root):
     pending = [root['job_id']]
     seen = set()
     items, waiting, problems = [], [], []
+    increment_roots = []
     while pending and len(seen) < 32:
         identifier = pending.pop(0)
         if identifier in seen:
@@ -31,6 +32,8 @@ def _chain(connection, root):
         if row is None:
             problems.append('后续任务记录缺失，请到任务记录核查')
             continue
+        if row['kind'] == 'increment':
+            increment_roots.append(row)
         item = _activity_view(connection, row)
         if row['status'] == 'paused':
             paused = connection.execute("SELECT occurred_at_ms FROM job_event WHERE job_id=? AND stage='paused' ORDER BY seq DESC LIMIT 1", (identifier,)).fetchone()
@@ -80,12 +83,11 @@ def _chain(connection, root):
     # older increments that ran selection before sector collection.
     from .workspace_progress import children
     identifiers = {item['job_id'] for item in items}
-    for item in list(items):
-        if item['kind'] == 'increment':
-            for child in children(connection, item):
-                if child['job_id'] not in identifiers:
-                    items.append(child)
-                    identifiers.add(child['job_id'])
+    for increment_root in increment_roots:
+        for child in children(connection, increment_root):
+            if child['job_id'] not in identifiers:
+                items.append(child)
+                identifiers.add(child['job_id'])
     return items, waiting, list(dict.fromkeys(problems))
 
 

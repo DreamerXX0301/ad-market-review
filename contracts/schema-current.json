@@ -1,7 +1,7 @@
 {
   "source": "repository migrations applied to disposable in-memory SQLite",
   "runtime_initialization": "python -m app.cli migrate",
-  "migration_version": 45,
+  "migration_version": 46,
   "migrations": [
     {
       "name": "001_initial.sql",
@@ -178,6 +178,10 @@
     {
       "name": "045_intraday_monitor.sql",
       "sha256": "9d259d28ec6100d831d71949673b722354a31014611c7f852c50585cb37cb6fe"
+    },
+    {
+      "name": "046_news_closed_market_window.sql",
+      "sha256": "7052051bfa1c8c724c5c28846b6c951309736894afc922244730dbb8a18bab8f"
     }
   ],
   "counts": {
@@ -186,7 +190,7 @@
     "view": 1,
     "trigger": 159
   },
-  "schema_sha256": "d274c15b984006630d82e22a92b3260b14e2effbc7d055fb59d49f84002d1755",
+  "schema_sha256": "ab3cb06a3fd3708b4edc0ea9ed89f2e69b6c548e71ae79ed6fcb8ab0a9b73829",
   "tables": {
     "_schema_migration": {
       "columns": [
@@ -4451,6 +4455,22 @@
           "name": "content_sha256",
           "type": "TEXT",
           "notnull": 1,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "window_group",
+          "type": "TEXT",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "group_cutoff_at",
+          "type": "TEXT",
+          "notnull": 0,
           "dflt_value": null,
           "pk": 0
         }

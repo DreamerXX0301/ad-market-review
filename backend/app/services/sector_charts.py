@@ -12,6 +12,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 
+from app.analytics.chart_indicators import FORMING_PERIOD_VERSION, forming_period_indicators
 from app.analytics.indicators import aggregate_weekly, enrich_bars, INDICATOR_VERSION
 from app.analytics.monthly import aggregate_monthly, enrich_monthly_bars
 from app.analytics.waves import candidate_waves
@@ -34,7 +35,7 @@ _chart_views = ChartReadCache(entries=8, bytes_limit=12 * 1024 * 1024)
 
 
 def _view_key(plan, calendar, period):
-    return (str(_root().resolve()), digest(plan), digest(calendar), period, INDICATOR_VERSION)
+    return (str(_root().resolve()), digest(plan), digest(calendar), period, INDICATOR_VERSION, FORMING_PERIOD_VERSION)
 
 
 def _revalidate_view(evidence):
@@ -634,16 +635,19 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
     key = _view_key(plan, calendar, period) if cacheable else None
     remembered = _chart_views.read(key, _revalidate_view) if key is not None else None
     if remembered is not None:
-        return attach_chart_session_distance(remembered, calendar, same_snapshot=market.status().get('snapshot_id') == plan['snapshot_id'])
+        same_snapshot = market.status().get('snapshot_id') == plan['snapshot_id']
+        if not same_snapshot:
+            remembered = {**remembered, 'provisional_indicators': None}
+        return attach_chart_session_distance(remembered, calendar, same_snapshot=same_snapshot)
     base = {'instrument': plan['instrument'], 'period': period, 'as_of': plan['as_of'],
             'bars': [], 'snapshot_id': plan['snapshot_id'], 'available': False,
             'requested_price_basis': 'none', 'price_basis': 'none',
             'price_basis_options': [{'value': 'none', 'label': '指数原始点位（不复权）', 'available': True, 'reason': None}],
             'adjustment': {'usable': False, 'reason': '板块指数没有个股复权语义，使用来源指数点位'},
-            'indicator_gaps': [], 'waves': None, 'volume_unit': '来源单位（未核验）',
+            'indicator_gaps': [], 'provisional_indicators': None, 'waves': None, 'volume_unit': '来源单位（未核验）',
             'amount_unit': 'CNY', 'price_unit': '点', 'quality': 'unknown',
             'warnings': [SCOPE, '成交量单位采用来源原值，未核验为股或手；成交额单位为CNY。'],
-            'indicator_version': INDICATOR_VERSION+'+'+NORMALIZATION_VERSION,
+            'indicator_version': INDICATOR_VERSION+'+'+NORMALIZATION_VERSION+(('+'+FORMING_PERIOD_VERSION) if period != 'D' else ''),
             'breadth_scope': None, 'coverage': {}, 'scope': SCOPE,
             'unavailable_reason': '该板块所选日完整K线尚未下载，请手动同步这个板块；读取不会联网'}
     try: cached = _read_chart_cache(market, plan, calendar, cache_projection=cacheable)
@@ -654,17 +658,20 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
     record, pointer = cached
     # The shared aggregators add numeric volume/amount. NaN deliberately
     # propagates missing optional data through sums; never replace it with0.
-    rows = [{**row, 'volume': row['volume'] if row['volume'] is not None else float('nan'),
-             'amount': row['amount'] if row['amount'] is not None else float('nan')}
-            for row in record['bars']]
-    if period == 'W': rows = aggregate_weekly(rows, calendar, plan['as_of'])
-    if period == 'M': bars = enrich_monthly_bars(aggregate_monthly(rows, calendar, plan['as_of']), include_chart_extremes=True)
+    daily_rows = [{**row, 'volume': row['volume'] if row['volume'] is not None else float('nan'),
+                   'amount': row['amount'] if row['amount'] is not None else float('nan')}
+                  for row in record['bars']]
+    rows = daily_rows
+    if period == 'W': rows = aggregate_weekly(daily_rows, calendar, plan['as_of'])
+    if period == 'M':
+        rows = aggregate_monthly(daily_rows, calendar, plan['as_of'])
+        bars = enrich_monthly_bars(rows, include_chart_extremes=True)
     else: bars = enrich_bars(rows, calendar if period == 'D' else None, include_chart_extremes=True)
     bars = json_clean(bars)
     warnings = list(base['warnings'])
     if not record['complete']: warnings.append(record['coverage']['notice'])
-    if period == 'M': warnings.append('月K按日线聚合，形成中、首月边界或缺日报价不计完整预热；MACD/KDJ需要35根可比月柱。')
-    if period == 'W': warnings.append('周K按日线聚合，形成中或缺日报价会阻断完整周与指标预热。')
+    if period == 'M': warnings.append('月K按日线聚合，MACD/KDJ需要35根连续可比周期。形成中的末月有独立的图表预览。')
+    if period == 'W': warnings.append('周K按日线聚合，形成中的末周有独立的图表预览，缺日报价会重新预热。')
     result = {**base, 'available': True, 'unavailable_reason': None, 'bars': bars,
             'quality': 'complete' if record['complete'] else 'partial', 'warnings': warnings,
             'coverage': record['coverage'], 'fetched_at': record.get('fetched_at'),
@@ -677,6 +684,8 @@ def read_sector_chart(market, topic_code, as_of, period='D'):
             'waves': candidate_waves(bars, threshold_pct=2.0 if period == 'D' else 4.0 if period == 'W' else 8.0)}
 
     same_snapshot = market.status().get('snapshot_id') == plan['snapshot_id']
+    if same_snapshot:
+        result['provisional_indicators'] = forming_period_indicators(rows, daily_rows, calendar, plan['as_of'], period)
     evidence = getattr(cached, 'view_evidence', None)
     if key is not None and same_snapshot and evidence is not None:
         _chart_views.remember(key, result, evidence)

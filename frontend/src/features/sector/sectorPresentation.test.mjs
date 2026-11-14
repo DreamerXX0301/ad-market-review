@@ -5,30 +5,28 @@ const source = await fs.readFile(
   new URL("./sectorPresentation.ts", import.meta.url),
   "utf8",
 );
-const visibilitySource = await fs.readFile(
-  new URL("../../lib/indicatorVisibility.ts", import.meta.url),
-  "utf8",
-);
-const visibilityCode = ts.transpileModule(visibilitySource, {
+const compile = (source) => ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
     target: ts.ScriptTarget.ES2022,
   },
 }).outputText;
-const visibilityModule =
-  "data:text/javascript;base64," +
-  Buffer.from(visibilityCode).toString("base64");
-const compiled = ts
-  .transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022,
-    },
-  })
-  .outputText.replaceAll(
-    '"../../lib/indicatorVisibility"',
-    JSON.stringify(visibilityModule),
+const moduleUrl = (source) =>
+  "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+let compiled = compile(source);
+for (const dependency of [
+  "../../lib/indicatorVisibility",
+  "../strategies/historicalRules",
+]) {
+  const code = await fs.readFile(
+    new URL(dependency + ".ts", import.meta.url),
+    "utf8",
   );
+  compiled = compiled.replace(
+    JSON.stringify(dependency),
+    JSON.stringify(moduleUrl(compile(code))),
+  );
+}
 const {
   sectorDefaultLeaf,
   sectorStrategyBody,
@@ -43,8 +41,27 @@ const {
   sectorMembersEndpoint,
   sectorCheckLeaves,
   sectorSelectableFields,
-} = await import(
-  "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
+} = await import(moduleUrl(compiled));
+const zoneRule = {
+  field: "horizontal_support_close_near",
+  op: "matches",
+  value: 0.5,
+  period: "W",
+};
+const zoneFields = [{
+  field: zoneRule.field,
+  type: "number",
+  operators: ["matches"],
+  constant_only: true,
+  selection_only: true,
+  min: 0,
+  max: 10,
+}];
+assert.equal(validateSectorRule(zoneRule, zoneFields), null);
+assert.match(validateSectorRule({ ...zoneRule, value: 20 }, zoneFields), /超出允许范围/);
+assert.equal(
+  sectorRuleText(zoneRule, zoneFields),
+  "完整周K · 收盘靠近水平支撑区 · 容差 0.5%",
 );
 const fields = [
   {

@@ -250,7 +250,7 @@ const plainStrategy = createStockNavigation(trackingRows, {
   scopeKey: "strategy-plain",
   label: "选股",
 });
-for (const source of ["market", "members"]) {
+for (const source of ["market", "members", "zodiac"]) {
   const ordinary = createStockNavigation(
     [
       {
@@ -275,6 +275,14 @@ for (const source of ["market", "members"]) {
   assert.equal(selectedOrdinary.asOf, "2026-10-16");
   assert.equal(stockNavigationPosition(ordinary, selectedOrdinary.id).total, 2);
   assert.equal(stepStockSelection(selectedOrdinary, 1).id, "600002.SH");
+  if (source === "zodiac") {
+    const stepped = stepStockSelection(
+      { ...selectedOrdinary, initialChartTool: "automatic-alerts" },
+      1,
+    );
+    assert.equal(stepped.asOf, "2026-10-16");
+    assert.equal(stepped.initialChartTool, undefined);
+  }
   assert.ok(!("eventBaseline" in ordinary.items[0]));
   assert.ok(
     !("historicalChecks" in ordinary.items[0]),

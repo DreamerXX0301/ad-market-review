@@ -47,7 +47,10 @@ const manual = {
   price: 10,
 };
 const frozen = structuredClone([...automatic, manual]);
-const state = { scope: "prior-chart", ids: new Set(["price-volume:stop"]) };
+const state = {
+  scope: "prior-chart",
+  overrides: new Map([["price-volume:stop", true]]),
+};
 let priceState = state,
   hiddenState = { scope: "manual-scope", ids: new Set([manual.id]) };
 const effects = [];
@@ -81,13 +84,16 @@ const mixed = create([...automatic, manual]);
 const originalManualHidden = structuredClone(hiddenState);
 mixed.toggleLine("price-volume:support", true);
 assert.deepEqual(
-  [...priceState.ids],
-  ["price-volume:support"],
+  [...priceState.overrides],
+  [["price-volume:support", true]],
   "a new chart cannot reuse old automatic visibility",
 );
 mixed.toggleLine("price-volume:breakout", true);
 mixed.toggleLine("price-volume:support", false);
-assert.deepEqual([...priceState.ids], ["price-volume:breakout"]);
+assert.deepEqual([...priceState.overrides], [
+  ["price-volume:support", false],
+  ["price-volume:breakout", true],
+]);
 assert.deepEqual(
   hiddenState,
   originalManualHidden,
@@ -106,9 +112,9 @@ assert.deepEqual(
 
 const automaticOnly = create(automatic);
 automaticOnly.toggleAllLines(true);
-assert.equal(priceState.ids.size, 3);
+assert.deepEqual([...priceState.overrides.values()], [true, true, true]);
 automaticOnly.toggleAllLines(false);
-assert.equal(priceState.ids.size, 0);
+assert.deepEqual([...priceState.overrides.values()], [false, false, false]);
 assert.deepEqual(
   effects,
   [],
@@ -135,6 +141,7 @@ const chartScope = new Function(
   "period",
   "dataEndpoint",
   "priceVolumeProfile = 'structure'",
+  "showPriceVolumeByDefault = false",
   `return (${scope.initializer.getText(ast)});`,
 );
 const data = {
@@ -176,6 +183,7 @@ const switches = [
   chartScope("000678.SZ", data, undefined, "W", undefined),
   chartScope("000678.SZ", data, undefined, "D", "/different-chart"),
   chartScope("000678.SZ", data, undefined, "D", undefined, "short_week_v1"),
+  chartScope("000678.SZ", data, undefined, "D", undefined, "structure", true),
 ];
 assert.ok(switches.every((value) => value !== base));
 
@@ -209,7 +217,7 @@ const savedManualState = structuredClone(hiddenState);
 const priorEffects = structuredClone(effects);
 handler("structure");
 assert.equal(chosen, "structure");
-assert.deepEqual(priceState, { scope: "", ids: new Set() });
+assert.deepEqual(priceState, { scope: "", overrides: new Map() });
 assert.deepEqual(hiddenState, savedManualState);
 assert.deepEqual(effects, priorEffects);
 console.log(

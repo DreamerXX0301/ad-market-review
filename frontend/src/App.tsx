@@ -13,6 +13,7 @@ const IntradayMonitor = lazyView(
   () => import("./features/monitor/IntradayMonitor"),
 );
 import { isCalendarDate } from "./components/marketDate";
+import { ChartMarketDatesContext } from "./components/MarketDatePicker";
 import { intradayChartSelection } from "./components/intradayChartNavigation";
 import {
   completedReviewDate,
@@ -31,7 +32,10 @@ import {
   stepStockSelection,
   trackingEventBaseline,
 } from "./components/stockNavigation";
-import type { StockNavigation } from "./components/stockNavigation";
+import type {
+  StockChartTool,
+  StockNavigation,
+} from "./components/stockNavigation";
 const MarketOverview = lazyView(() =>
   import("./features/market/Market").then((m) => ({
     default: m.MarketOverview,
@@ -153,6 +157,7 @@ export default function App() {
       intradaySnapshotId?: string;
       eventBaseline?: ChartEventBaseline;
       navigation?: StockNavigation;
+      initialChartTool?: StockChartTool;
     } | null>(null),
     [context, setContext] = useState<Record<string, Row>>({}),
     [sector, setSector] = useState<SectorSelection | null>(null),
@@ -188,7 +193,10 @@ export default function App() {
           : choice,
       );
   }, [responseToday]);
-  const dates = [...(bootstrap.data?.market_dates || [])].sort();
+  const dates = useMemo(
+    () => [...(bootstrap.data?.market_dates || [])].sort(),
+    [bootstrap.data?.market_dates],
+  );
   const latestDate = bootstrap.data?.data_date || dates.at(-1) || "";
   const date = marketViewDate(route, dateChoice, latestDate, today);
   const marketSnapshotId = bootstrap.data?.market_snapshot_id;
@@ -310,14 +318,18 @@ export default function App() {
         : dates;
   const noonChartAsOf = noonChartDate(dates, date);
   const openStock = useCallback(
-    (id: string, navigation?: StockNavigation) => {
+    (
+      id: string,
+      navigation?: StockNavigation,
+      initialChartTool?: StockChartTool,
+    ) => {
       const chartDay = noonPublishedClose || noonChartAsOf;
       if (isIntradayReview(route) && !chartDay) {
         notify("该观察日期之前没有已发布收盘行情，不能打开历史图表。", "error");
         return;
       }
-      setStock(
-        stockSelectionForOpen(
+      setStock({
+        ...stockSelectionForOpen(
           id,
           navigation,
           isIntradayReview(route)
@@ -326,7 +338,8 @@ export default function App() {
               ? date || undefined
               : undefined,
         ),
-      );
+        initialChartTool,
+      });
     },
     [route, date, noonChartAsOf, noonPublishedClose, notify],
   );
@@ -688,222 +701,228 @@ export default function App() {
   }
   return (
     <ApiPageActivity.Provider value={!incrementBlocked}>
-      <ToastContext.Provider value={notify}>
-        <AppShell
-          route={route}
-          onNavigate={navigate}
-          date={date}
-          onDate={setDate}
-          onResetDate={resetDate}
-          today={today}
-          dateFixed={
-            dateChoice?.mode === "manual" ||
-            ((isIntradayReview(route) || route === "news-events") &&
-              dateChoice !== null)
-          }
-          datePublished={dates.includes(date)}
-          dates={shellDates}
-          dataDate={bootstrap.data?.data_date}
-          dataLoading={bootstrap.loading}
-          dataError={!!bootstrap.error}
-          theme={theme}
-          onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-          onStock={openSearchedStock}
-          onSector={(row) => {
-            const next = globalSectorSelection(
-              row,
-              date,
-              latestDate,
-              marketRoutes.has(route),
-              today,
-            );
-            if (!next) {
-              notify("请先完成行情初始化，核验板块观察日期。", "error");
-              return;
+      <ChartMarketDatesContext.Provider value={dates}>
+        <ToastContext.Provider value={notify}>
+          <AppShell
+            route={route}
+            onNavigate={navigate}
+            date={date}
+            onDate={setDate}
+            onResetDate={resetDate}
+            today={today}
+            dateFixed={
+              dateChoice?.mode === "manual" ||
+              ((isIntradayReview(route) || route === "news-events") &&
+                dateChoice !== null)
             }
-            setStock(null);
-            setSector(next);
-          }}
-        >
-          <ReadonlyPreviewBanner
-            enabled={import.meta.env.VITE_READONLY_PREVIEW === "1"}
-          />
-          {bootstrap.data?.instance_label && (
-            <div className="readonly-preview-banner" role="status">
-              <strong>{bootstrap.data.instance_label}</strong>
-              <span>此环境可验证 AI 配置与会话，使用独立业务库。</span>
-            </div>
-          )}
-          {bootstrap.error && (
-            <ErrorBox
-              message={"本机 API 暂未就绪：" + bootstrap.error}
-              retry={bootstrap.reload}
+            datePublished={dates.includes(date)}
+            dates={shellDates}
+            dataDate={bootstrap.data?.data_date}
+            dataLoading={bootstrap.loading}
+            dataError={!!bootstrap.error}
+            theme={theme}
+            onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+            onStock={openSearchedStock}
+            onSector={(row) => {
+              const next = globalSectorSelection(
+                row,
+                date,
+                latestDate,
+                marketRoutes.has(route),
+                today,
+              );
+              if (!next) {
+                notify("请先完成行情初始化，核验板块观察日期。", "error");
+                return;
+              }
+              setStock(null);
+              setSector(next);
+            }}
+          >
+            <ReadonlyPreviewBanner
+              enabled={import.meta.env.VITE_READONLY_PREVIEW === "1"}
             />
-          )}{" "}
-          {visited.map((key) => (
-            <div className="workspace-page" key={key} hidden={key !== route}>
-              <ApiPageActivity.Provider
-                value={key === route && visible && !incrementBlocked}
-              >
-                <MarketPrefetchContext.Provider
-                  value={key === route ? marketPrefetch : null}
+            {bootstrap.data?.instance_label && (
+              <div className="readonly-preview-banner" role="status">
+                <strong>{bootstrap.data.instance_label}</strong>
+                <span>此环境可验证 AI 配置与会话，使用独立业务库。</span>
+              </div>
+            )}
+            {bootstrap.error && (
+              <ErrorBox
+                message={"本机 API 暂未就绪：" + bootstrap.error}
+                retry={bootstrap.reload}
+              />
+            )}{" "}
+            {visited.map((key) => (
+              <div className="workspace-page" key={key} hidden={key !== route}>
+                <ApiPageActivity.Provider
+                  value={key === route && visible && !incrementBlocked}
                 >
-                  <RetainedPage active={key === route}>
-                    {page(key)}
-                  </RetainedPage>
-                </MarketPrefetchContext.Provider>
-              </ApiPageActivity.Provider>
-            </div>
-          ))}
-        </AppShell>
-        {sector &&
-          (sector.topic.noon_members_snapshot_id ? (
-            <NoonSectorDialog
-              key={`${sector.topic.noon_members_snapshot_id}:${sector.topic.topic_code}`}
-              topic={sector.topic}
-              snapshotId={sector.topic.noon_members_snapshot_id}
-              initialView={sector.view}
-              onClose={() => setSector(null)}
-              closeChartDate={noonSectorPublishedClose || undefined}
-              onStock={(id, asOf) => {
-                setStock(
-                  noonSectorPublishedClose
-                    ? stockSelectionForOpen(
-                        id,
-                        undefined,
-                        noonSectorPublishedClose,
-                      )
-                    : {
-                        id,
-                        asOf,
-                        noonSnapshotId: sector.topic.noon_members_snapshot_id,
-                      },
-                );
-              }}
-            />
-          ) : sector.view === "chart" ? (
-            <SectorChartDialog
-              topic={{
-                topicCode: sector.topic.topic_code,
-                name: sector.topic.name,
-                proxy: false,
-                notice:
+                  <MarketPrefetchContext.Provider
+                    value={key === route ? marketPrefetch : null}
+                  >
+                    <RetainedPage active={key === route}>
+                      {page(key)}
+                    </RetainedPage>
+                  </MarketPrefetchContext.Provider>
+                </ApiPageActivity.Provider>
+              </div>
+            ))}
+          </AppShell>
+          {sector &&
+            (sector.topic.noon_members_snapshot_id ? (
+              <NoonSectorDialog
+                key={`${sector.topic.noon_members_snapshot_id}:${sector.topic.topic_code}`}
+                topic={sector.topic}
+                snapshotId={sector.topic.noon_members_snapshot_id}
+                initialView={sector.view}
+                onClose={() => setSector(null)}
+                closeChartDate={noonSectorPublishedClose || undefined}
+                onStock={(id, asOf) => {
+                  setStock(
+                    noonSectorPublishedClose
+                      ? stockSelectionForOpen(
+                          id,
+                          undefined,
+                          noonSectorPublishedClose,
+                        )
+                      : {
+                          id,
+                          asOf,
+                          noonSnapshotId: sector.topic.noon_members_snapshot_id,
+                        },
+                  );
+                }}
+              />
+            ) : sector.view === "chart" ? (
+              <SectorChartDialog
+                topic={{
+                  topicCode: sector.topic.topic_code,
+                  name: sector.topic.name,
+                  proxy: false,
+                  notice:
+                    sector.topic.noon_scope_notice ||
+                    `当前目录中的${sector.topic.kind === "industry" ? "行业" : "概念"}板块；历史成分需单独核验`,
+                }}
+                date={sector.date}
+                pendingCloseDay={sector.pendingCloseDay}
+                onClose={() => setSector(null)}
+                onMembers={(chartDate) =>
+                  setSector({ ...sector, date: chartDate, view: "members" })
+                }
+              />
+            ) : (
+              <SectorMembersDialog
+                topic={sector.topic}
+                date={sector.date}
+                businessDate={latestDate}
+                publishedDates={dates.length ? dates : undefined}
+                contextNotice={
                   sector.topic.noon_scope_notice ||
-                  `当前目录中的${sector.topic.kind === "industry" ? "行业" : "概念"}板块；历史成分需单独核验`,
-              }}
-              date={sector.date}
-              pendingCloseDay={sector.pendingCloseDay}
-              onClose={() => setSector(null)}
-              onMembers={() => setSector({ ...sector, view: "members" })}
-            />
-          ) : (
-            <SectorMembersDialog
-              topic={sector.topic}
-              date={sector.date}
-              businessDate={latestDate}
-              publishedDates={dates.length ? dates : undefined}
-              contextNotice={
-                sector.topic.noon_scope_notice ||
-                (sector.pendingCloseDay &&
-                sector.pendingCloseDay !== sector.date
-                  ? `从 ${sector.pendingCloseDay} 的盘面打开。下方单独标明成员采集日和已发布行情日。`
-                  : undefined)
-              }
-              initialScope={
-                !sector.topic.noon_snapshot_date && sector.date === latestDate
-                  ? "latest"
-                  : "historical"
-              }
-              onClose={() => setSector(null)}
-              onChart={(asOf) =>
-                setSector({
-                  ...sector,
-                  date:
-                    sector.topic.noon_chart_as_of &&
-                    (asOf || sector.date) > sector.topic.noon_chart_as_of
-                      ? sector.topic.noon_chart_as_of
-                      : asOf || sector.date,
-                  view: "chart",
-                })
-              }
-              onStock={(id, quoteDate, navigation) =>
-                setStock(
-                  stockSelectionForOpen(
-                    id,
-                    navigation,
-                    sector.topic.noon_chart_as_of &&
-                      quoteDate > sector.topic.noon_chart_as_of
-                      ? sector.topic.noon_chart_as_of
-                      : quoteDate,
-                  ),
+                  (sector.pendingCloseDay &&
+                  sector.pendingCloseDay !== sector.date
+                    ? `从 ${sector.pendingCloseDay} 的盘面打开。下方单独标明成员采集日和已发布行情日。`
+                    : undefined)
+                }
+                initialScope={
+                  !sector.topic.noon_snapshot_date && sector.date === latestDate
+                    ? "latest"
+                    : "historical"
+                }
+                onClose={() => setSector(null)}
+                onChart={(asOf) =>
+                  setSector({
+                    ...sector,
+                    date:
+                      sector.topic.noon_chart_as_of &&
+                      (asOf || sector.date) > sector.topic.noon_chart_as_of
+                        ? sector.topic.noon_chart_as_of
+                        : asOf || sector.date,
+                    view: "chart",
+                  })
+                }
+                onStock={(id, quoteDate, navigation) =>
+                  setStock(
+                    stockSelectionForOpen(
+                      id,
+                      navigation,
+                      sector.topic.noon_chart_as_of &&
+                        quoteDate > sector.topic.noon_chart_as_of
+                        ? sector.topic.noon_chart_as_of
+                        : quoteDate,
+                    ),
+                  )
+                }
+              />
+            ))}
+          {stock && (
+            <StockDrawer
+              id={stock.id}
+              asOf={stock.asOf}
+              latestMarketDate={latestDate}
+              noonSnapshotId={stock.noonSnapshotId}
+              intradaySnapshotId={stock.intradaySnapshotId}
+              eventBaseline={stock.eventBaseline}
+              navigation={stock.navigation}
+              initialChartTool={stock.initialChartTool}
+              onStep={(direction) =>
+                setStock((current) =>
+                  current ? stepStockSelection(current, direction) : null,
                 )
               }
+              onClose={() => setStock(null)}
+              onResearch={(id) => {
+                setStock(null);
+                navigate("research", { instrument_id: id });
+              }}
             />
-          ))}
-        {stock && (
-          <StockDrawer
-            id={stock.id}
-            asOf={stock.asOf}
-            noonSnapshotId={stock.noonSnapshotId}
-            intradaySnapshotId={stock.intradaySnapshotId}
-            eventBaseline={stock.eventBaseline}
-            navigation={stock.navigation}
-            onStep={(direction) =>
-              setStock((current) =>
-                current ? stepStockSelection(current, direction) : null,
-              )
-            }
-            onClose={() => setStock(null)}
-            onResearch={(id) => {
-              setStock(null);
-              navigate("research", { instrument_id: id });
+          )}
+          <IncrementProgressDialog
+            onBlockedChange={setIncrementBlocked}
+            onAuctionFinished={(task) => {
+              setDateChoice((choice) =>
+                completedReviewDate(choice, task.target_date, today),
+              );
+              auctionDates.reload();
+              window.dispatchEvent(new Event("workbench-auction-unlocked"));
+              navigate("auction");
+            }}
+            onNoonFinished={(task) => {
+              setDateChoice((choice) =>
+                completedReviewDate(choice, task.target_date, today),
+              );
+              noonDates.reload();
+              window.dispatchEvent(new Event("workbench-noon-unlocked"));
+              navigate("noon");
+            }}
+            onFinished={() => {
+              window.dispatchEvent(new Event("workbench-increment-unlocked"));
+              refreshTaskActivity();
+              window.dispatchEvent(
+                new CustomEvent("workbench-route", { detail: "data" }),
+              );
             }}
           />
-        )}
-        <IncrementProgressDialog
-          onBlockedChange={setIncrementBlocked}
-          onAuctionFinished={(task) => {
-            setDateChoice((choice) =>
-              completedReviewDate(choice, task.target_date, today),
-            );
-            auctionDates.reload();
-            window.dispatchEvent(new Event("workbench-auction-unlocked"));
-            navigate("auction");
-          }}
-          onNoonFinished={(task) => {
-            setDateChoice((choice) =>
-              completedReviewDate(choice, task.target_date, today),
-            );
-            noonDates.reload();
-            window.dispatchEvent(new Event("workbench-noon-unlocked"));
-            navigate("noon");
-          }}
-          onFinished={() => {
-            window.dispatchEvent(new Event("workbench-increment-unlocked"));
-            refreshTaskActivity();
-            window.dispatchEvent(
-              new CustomEvent("workbench-route", { detail: "data" }),
-            );
-          }}
-        />
-        {toast && (
-          <div className={"toast " + toast.kind}>
-            {toast.kind === "error" ? (
-              <XCircle size={18} />
-            ) : (
-              <CheckCircle2 size={18} />
-            )}
-            <span>{toast.message}</span>
-            <button
-              className="icon-btn"
-              aria-label="关闭消息"
-              onClick={() => setToast(null)}
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
-      </ToastContext.Provider>
+          {toast && (
+            <div className={"toast " + toast.kind}>
+              {toast.kind === "error" ? (
+                <XCircle size={18} />
+              ) : (
+                <CheckCircle2 size={18} />
+              )}
+              <span>{toast.message}</span>
+              <button
+                className="icon-btn"
+                aria-label="关闭消息"
+                onClick={() => setToast(null)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+        </ToastContext.Provider>
+      </ChartMarketDatesContext.Provider>
     </ApiPageActivity.Provider>
   );
 }

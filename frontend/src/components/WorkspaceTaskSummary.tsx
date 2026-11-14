@@ -17,10 +17,15 @@ export default function WorkspaceTaskSummary({
         {workspace.state === "running" ? "，后续数量以实际执行回执为准" : ""}
       </p>
       {workspace.strategies?.map((row: Row) => (
-        <p key={row.strategy_id}>
-          <b>{row.name || row.strategy_id}</b> ·{" "}
+        <p key={`${row.target_type ?? "stock"}:${row.strategy_id}`}>
+          <b>{row.name || row.strategy_id}</b>
+          {row.target_type === "sector" ? "（板块）" : ""} ·{" "}
           {row.error ||
             `命中 ${row.matched ?? "—"}，待核验 ${row.unknown ?? "—"}，新入池 ${row.added_count ?? "—"}`}
+          {row.ignored_count > 0 && `，保持移除 ${row.ignored_count}`}
+          {row.tracking_review &&
+            `；跟踪核对 ${row.tracking_review.reviewed ?? "—"} 条`}
+          {row.tracking_skipped_reason && `；${row.tracking_skipped_reason}`}
         </p>
       ))}
       {workspace.tracking && (

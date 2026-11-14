@@ -575,6 +575,11 @@ assert.deepEqual(
     indexPanels: ["volume", "kdj", "macd", "breadth"],
     stockShowBoll: false,
     indexShowBoll: false,
+    stockShowPriceVolumeLines: false,
+    indexShowPriceVolumeLines: false,
+    stockShowVolumeMarkers: true,
+    indexShowVolumeMarkers: true,
+    showIndicatorDivergences: true,
   },
 );
 assert.deepEqual(

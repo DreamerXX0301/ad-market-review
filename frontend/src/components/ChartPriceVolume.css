@@ -1,5 +1,5 @@
 .chart-price-volume {
-  margin: 6px 0 10px;
+  margin: 6px 0 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -10,8 +10,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 14px;
-  padding: 8px 12px;
+  gap: 4px 10px;
+  padding: 5px 10px;
   color: var(--muted);
 }
 .chart-price-volume-heading > strong {
@@ -30,12 +30,6 @@
   background: var(--surface);
   font: inherit;
 }
-.chart-price-volume-scope {
-  margin: 0;
-  padding: 0 12px 8px;
-  color: var(--muted);
-  line-height: 1.6;
-}
 .chart-price-volume-ratio {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
@@ -44,7 +38,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 .chart-price-volume-levels {
   display: grid;
@@ -57,16 +51,16 @@
 .chart-price-volume-pressure-values > .chart-price-volume-level {
   flex: 1 1 0;
 }
-.chart-price-volume-level > strong.chart-price-volume-pressure-zone {
+.chart-price-volume-value > strong.chart-price-volume-pressure-zone {
   color: var(--amber, #e0b966);
 }
 .chart-price-volume-level {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
-  padding: 9px 12px;
+  padding: 5px 10px;
   border: 0;
   border-right: 1px solid var(--border);
   background: transparent;
@@ -84,28 +78,39 @@ button.chart-price-volume-level:hover,
 button.chart-price-volume-level:focus-visible {
   background: var(--surface-hover, var(--blue-bg));
 }
-button.chart-price-volume-level[aria-pressed="false"] > strong {
+button.chart-price-volume-level[aria-pressed="false"] strong {
   opacity: 0.6;
 }
-.chart-price-volume-level > strong {
-  font-size: 16px;
+.chart-price-volume-name,
+.chart-price-volume-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1px 7px;
+}
+.chart-price-volume-value > strong {
+  font-size: 15px;
   font-variant-numeric: tabular-nums;
 }
-.chart-price-volume-level > small,
+.chart-price-volume-value > small,
 .chart-price-volume-name {
   color: var(--muted);
 }
-.chart-price-volume-level.stop > strong {
+.chart-price-volume-name > .chart-price-volume-far {
+  color: var(--amber, #e0b966);
+  font-size: 11px;
+}
+.chart-price-volume-level.stop strong {
   color: var(--amber, #e0b966);
 }
-.chart-price-volume-level.support > strong {
+.chart-price-volume-level.support strong {
   color: var(--down, #39bd9b);
 }
-.chart-price-volume-level.resistance > strong,
-.chart-price-volume-level.breakout > strong {
+.chart-price-volume-level.resistance strong,
+.chart-price-volume-level.breakout strong {
   color: var(--up, #ed6865);
 }
-.chart-price-volume-level > strong.chart-price-volume-unavailable {
+.chart-price-volume-value > strong.chart-price-volume-unavailable {
   color: var(--muted);
   font-size: 13px;
 }
@@ -114,7 +119,7 @@ button.chart-price-volume-level[aria-pressed="false"] > strong {
   color: var(--muted);
 }
 .chart-price-volume-evidence > summary {
-  padding: 6px 12px;
+  padding: 3px 10px;
   cursor: pointer;
 }
 .chart-price-volume-evidence-grid {

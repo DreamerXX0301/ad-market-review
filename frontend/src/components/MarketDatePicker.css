@@ -9,6 +9,14 @@
   background: var(--surface);
   height: 34px;
 }
+.chart-stage-date {
+  display: flex;
+  justify-content: flex-end;
+}
+.modal-title-actions {
+  margin-inline-start: auto;
+  margin-inline-end: 9px;
+}
 .date-picker {
   display: inline-flex;
   width: 100%;

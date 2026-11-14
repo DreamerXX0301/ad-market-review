@@ -39,6 +39,44 @@ def compare(current, previous):
     return changes.build_changes(current, previous, current_row=raw_row(current), previous_row=raw_row(previous))
 
 
+def test_monitor_board_projection_reads_only_same_day_verified_pools(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    import sqlite3
+    from app import core
+
+    path = tmp_path / 'observations.sqlite3'
+
+    @contextmanager
+    def connection():
+        db = sqlite3.connect(path)
+        db.row_factory = sqlite3.Row
+        try:
+            for sql in ('PRAGMA foreign_keys=ON', 'PRAGMA recursive_triggers=ON', 'PRAGMA busy_timeout=10000'):
+                db.execute(sql)
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    monkeypatch.setattr(core, 'connect', connection)
+    with connection() as db:
+        db.execute('''CREATE TABLE market_intraday_capture (
+            trade_date TEXT, slot TEXT, snapshot_id TEXT, payload_json TEXT, content_sha256 TEXT)''')
+        prior = raw_row(frame('1400', [A], [C]))
+        current = raw_row(frame('1430', [B, C], [A], [D]))
+        for row in (prior, current):
+            db.execute('INSERT INTO market_intraday_capture VALUES (:trade_date,:slot,:snapshot_id,:payload_json,:content_sha256)', row)
+    result = changes.read_monitor_boards(DAY)
+    assert result['observed_at'] == DAY + 'T14:30:30+08:00'
+    assert {row['instrument_id']: row['type'] for row in result['items']} == {
+        A: 'broken', B: 'sealed', C: 'resealed', D: 'limit_down'}
+    assert not changes.read_monitor_boards('2026-11-06')['items']
+    with connection() as db:
+        db.execute("UPDATE market_intraday_capture SET content_sha256='bad' WHERE slot='1430'")
+    damaged = changes.read_monitor_boards(DAY)
+    assert damaged['snapshot_id'] is None and not damaged['items']
+
+
 def test_exact_pool_changes_and_intersections_are_separate_and_immutable():
     prior, current = frame('1400', [A, B], [C]), frame('1430', [B, C], [A], [D])
     original = deepcopy((prior, current))

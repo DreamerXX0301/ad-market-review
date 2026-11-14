@@ -110,6 +110,14 @@ def sector_strategy_create(payload:dict=Body(...)):return sector_strategies.crea
 def sector_strategy_get(strategy_id:str):return sector_strategies.get_strategy(strategy_id)
 @router.patch('/sector-strategies/{strategy_id}')
 def sector_strategy_update(strategy_id:str,payload:dict=Body(...)):return sector_strategies.update_strategy(strategy_id,payload)
+@router.get('/sector-strategies/{strategy_id}/automation')
+def sector_automation_get(strategy_id:str):
+    from app.services.workspace_automation import get_sector_settings
+    return get_sector_settings(strategy_id)
+@router.put('/sector-strategies/{strategy_id}/automation')
+def sector_automation_set(strategy_id:str,payload:dict=Body(...)):
+    from app.services.workspace_automation import configure_sector
+    return configure_sector(strategy_id,payload)
 @router.post('/sector-strategies/{strategy_id}/runs')
 def sector_strategy_run(strategy_id:str,payload:dict=Body(default={}),response_decision:str|None=None):return sector_strategies.run_strategy(strategy_id,payload,response_decision=response_decision)
 @router.get('/sector-strategy-runs')

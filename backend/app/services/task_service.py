@@ -248,6 +248,7 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
         strategy = connection.execute('SELECT name FROM '+table+' WHERE strategy_id=?', (strategy_id,)).fetchone()
         strategy_name = strategy['name'] if strategy else None
     operation = parameters.get('operation')
+    preparing_price_baseline = operation == 'automatic_price_alert_check' and parameters.get('origin') == 'configuration'
     title = {
         'initialise': '首次初始化', 'increment': '盘后增量', 'research': '个股研究',
         'backtest': '策略回测', 'topic_init': '本地题材导入',
@@ -255,7 +256,7 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
         'tracking_review': '板块跟踪核对' if target == 'sector' else '个股跟踪核对',
         'selection': '板块策略筛选' if target == 'sector' else '个股策略选股',
         'source_check': {'sector_chart': '单板块历史K线', 'sector_charts': '板块K线尾部增量' if parameters.get('mode') == 'increment' else '全库板块历史K线',
-                         'market_supplement': '盘面补充', 'dragon_tiger':'龙虎榜补齐', 'local_storage_conversion':'本地存储升级', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','automatic_price_alert_check':'自动量价提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
+                         'market_supplement': '盘面补充', 'dragon_tiger':'龙虎榜补齐', 'local_storage_conversion':'本地存储升级', 'local_coverage_check':'本地数据核验','line_alert_check':'个股划线提醒核验','automatic_price_alert_check':'准备自动提醒参考位' if preparing_price_baseline else '自动量价提醒核验','listing_status_check':'上市身份核验','quote_gap_source_check':'报价缺口来源核验', 'strategy_batch': '板块策略批量筛选' if target == 'sector' else '个股策略批量选股',
                          'strategy_batch_tracking': '板块命中自动入池' if target == 'sector' else '个股命中自动入池',
                          'noon_snapshot': '午评快照采集', 'intraday_snapshot': '盘中快照采集', 'intraday_monitor': '关注池盘中监控', 'auction_snapshot': '盘前竞价终态采集'}.get(operation, '数据来源任务'),
     }.get(item['kind'], '后台任务')
@@ -276,6 +277,17 @@ def _activity_view(connection, row, *, expand_batch=True, parameters=None):
         'target_date': item['target_date'], 'created_at_ms': item['created_at_ms'],
         'finished_at_ms': item['finished_at_ms'],
     }
+    if preparing_price_baseline and item['status'] == 'queued':
+        receipt['message'] = '配置已保存，将用已发布行情准备下一交易日参考位。'
+    if operation == 'automatic_price_alert_check' and item['status'] == 'queued':
+        observed = now_ms()
+        online = connection.execute("""SELECT 1 FROM platform_setting
+            WHERE key IN ('worker_heartbeat','worker_heartbeat:automatic_price_alert_check')
+            AND json_type(value_json,'$.at_ms')='integer' AND json_extract(value_json,'$.at_ms') BETWEEN ? AND ?
+            LIMIT 1""", (observed - 45000, observed)).fetchone()
+        if online is None:
+            receipt.update(waiting_for_worker=True, stage='工作进程离线',
+                           message='任务已保存，工作进程恢复后会继续处理。')
     if item['kind']=='source_check' and operation=='auction_snapshot':
         from .auction_automation import activity_fields
         receipt.update(activity_fields(connection,item['job_id'],parameters=parameters))
@@ -481,12 +493,15 @@ def change_task(identifier: str, action: str):
     return task_view(identifier)
 
 
-def claim_next(owner: str):
-    """Only recover existing authorized running work after its lease expires."""
+def claim_next(owner: str, *, source_check_operation: str | None = None):
+    """Claim existing work, optionally restricted to one source-check operation."""
     with connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         running = connection.execute("SELECT * FROM job WHERE status='running' LIMIT 1").fetchone()
         if running:
+            if source_check_operation and (running['kind'] != 'source_check'
+                    or json.loads(running['parameters_json']).get('operation') != source_check_operation):
+                return None
             if running["lease_expires_at_ms"] is not None and running["lease_expires_at_ms"] < now_ms():
                 recoverable_selection = running['kind']=='selection' and json.loads(running['parameters_json']).get('operation')=='strategy_batch_item'
                 if running['kind'] in ('selection','tracking_review') and not recoverable_selection:
@@ -501,7 +516,7 @@ def claim_next(owner: str):
                     append_event(connection, running["job_id"], "recovery", "恢复已授权的中断任务，复用原任务与幂等批次")
                     return dict(connection.execute("SELECT * FROM job WHERE job_id=?", (running["job_id"],)).fetchone())
             else:return None
-        queued = _next_queued(connection)
+        queued = _next_queued(connection, source_check_operation)
         # A legacy queue may predate the creation guard. Do not let a second
         # initialization replace an already published main dataset, and do not
         # block unrelated queued work behind that obsolete request.
@@ -509,7 +524,7 @@ def claim_next(owner: str):
             reason = initialization_state(connection)['reason']
             connection.execute("UPDATE job SET status='failed',phase='initialization_blocked',finished_at_ms=?,error_summary=?,lease_owner=NULL,lease_expires_at_ms=NULL WHERE job_id=?", (now_ms(), reason, queued['job_id']))
             append_event(connection, queued['job_id'], 'initialization_blocked', reason, 'warning')
-            queued = _next_queued(connection)
+            queued = _next_queued(connection, source_check_operation)
         if not queued:
             return None
         if json.loads(queued['parameters_json']).get('operation') in ('strategy_batch','strategy_batch_item','strategy_batch_tracking','line_alert_check','automatic_price_alert_check','listing_status_check','quote_gap_source_check','noon_snapshot','auction_snapshot','intraday_snapshot','intraday_monitor'):
@@ -519,10 +534,11 @@ def claim_next(owner: str):
         return dict(connection.execute("SELECT * FROM job WHERE job_id=?", (queued["job_id"],)).fetchone())
 
 
-def _next_queued(connection):
+def _next_queued(connection, source_check_operation=None):
     # Batch parents summarize only after their persisted children are terminal.
     # Explicit rowid ordering keeps siblings ordered even within one millisecond.
     return connection.execute("""SELECT j.* FROM job j WHERE j.status='queued'
+        AND (? IS NULL OR (j.kind='source_check' AND json_extract(j.parameters_json,'$.operation')=?))
         AND NOT (j.kind='source_check' AND json_extract(j.parameters_json,'$.operation')='strategy_batch'
             AND EXISTS (SELECT 1 FROM json_each(j.parameters_json,'$.items') i
                 LEFT JOIN job child ON child.job_id=json_extract(i.value,'$.job_id')
@@ -540,7 +556,7 @@ def _next_queued(connection):
         AND (coalesce(json_extract(j.parameters_json,'$.operation'),'')!='strategy_batch_tracking'
             OR EXISTS (SELECT 1 FROM job selected WHERE selected.job_id=json_extract(j.parameters_json,'$.selection_job_id')
                 AND selected.status IN ('succeeded','no_change','partial','failed','cancelled')))
-        ORDER BY j.created_at_ms,j.rowid LIMIT 1""").fetchone()
+        ORDER BY j.created_at_ms,j.rowid LIMIT 1""", (source_check_operation, source_check_operation)).fetchone()
 
 
 def progress(identifier: str, stage: str, percent: int, message=None, details=None, *, lease_owner=None):

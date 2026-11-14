@@ -1,7 +1,8 @@
 """Independent, low-priority and bounded capture in the single market worker."""
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
+from bisect import bisect_left
 import json
 import logging
 import os
@@ -65,6 +66,11 @@ def _verified_trade_day(connection, day):
         LIMIT 1""", (day, day, day)).fetchone()
     if captured is not None:
         return True
+    days = _calendar_days(connection, day)
+    return day in days if days else None
+
+
+def _calendar_days(connection, day):
     candidates = connection.execute("""SELECT value_json FROM platform_setting WHERE key IN (?,?,?)
         ORDER BY updated_at_ms DESC""", TRADE_CALENDAR_KEYS)
     for candidate in candidates:
@@ -78,8 +84,35 @@ def _verified_trade_day(connection, day):
                 and all(isinstance(value, str) for value in saved['days'])):
             days = saved['days']
             if days[0] <= day <= days[-1]:
-                return day in days
+                return days
     return None
+
+
+def closed_market_window(connection, day):
+    days = _calendar_days(connection, day)
+    if not days:
+        return None
+    index = bisect_left(days, day)
+    if index == 0 or index >= len(days) or days[index] != day:
+        return None
+    previous, current = date.fromisoformat(days[index - 1]), date.fromisoformat(day)
+    distance = (current - previous).days
+    if distance < 2:
+        return None
+    if distance == 3 and previous.weekday() == 4 and current.weekday() == 0:
+        return 'weekend', previous
+    return 'holiday', previous
+
+
+def _previous_increment_finished(connection, previous_day, cutoff):
+    floor = datetime.combine(previous_day, time(15), CHINA)
+    row = connection.execute("""SELECT j.finished_at_ms FROM dataset_snapshot s JOIN job j USING(job_id)
+        WHERE s.module='daily_raw' AND s.state='published' AND s.data_end=?
+        AND j.kind='increment' AND j.status IN ('succeeded','partial','no_change')
+        AND j.finished_at_ms>=s.published_at_ms AND j.finished_at_ms>=? AND j.finished_at_ms<?
+        ORDER BY j.finished_at_ms LIMIT 1""", (previous_day.isoformat(), int(floor.timestamp() * 1000),
+                                               int(cutoff.timestamp() * 1000))).fetchone()
+    return datetime.fromtimestamp(row[0] / 1000, CHINA) if row else None
 
 
 def _published_increment(connection, day):
@@ -169,12 +202,18 @@ class NewsScheduler:
             slot_ready = slot is not None and (slot != 'after_close' or close_ready)
             flash_possible = flash_wanted and slot_ready and (close_ready or observed.weekday() < 5)
             trade_day = (True if close_ready else _verified_trade_day(connection, day)) if flash_possible else False
-            trade_state = _receipt(connection, TRADE_CALENDAR_RECEIPT) if trade_day is None else {}
             calendar_ready = calendar_wanted and slot_ready
             calendar_state = _receipt(connection, EVENT_CALENDAR_RECEIPT) if calendar_ready else {}
             previous_day = _previous_published_day(connection, day) if flash_possible else None
-        if trade_day is None:
-            trade_day = self._refresh_trade_day(day, slot, trade_state)
+            verify_gap = (trade_day is True and previous_day
+                          and (observed.date() - date.fromisoformat(previous_day)).days > 1
+                          and _calendar_days(connection, day) is None)
+            refresh_calendar = trade_day is None or verify_gap
+            trade_state = _receipt(connection, TRADE_CALENDAR_RECEIPT) if refresh_calendar else {}
+        if refresh_calendar:
+            verified = self._refresh_trade_day(day, slot, trade_state)
+            if trade_day is None:
+                trade_day = verified
         if trade_day:
             self._flash(day, slot, previous_day)
         if calendar_ready:
@@ -223,18 +262,32 @@ class NewsScheduler:
         cutoff = observed.replace(microsecond=0)
         older = news_events.last_snapshot(before_at=cutoff.isoformat(), statuses=('complete', 'partial'))
         floor = cutoff - timedelta(days=7)
-        if older:
-            start = datetime.fromisoformat(older['cutoff_at'])
-        elif previous_day:
-            start = datetime.combine(datetime.fromisoformat(previous_day).date(), CLOSE_START, CHINA)
-        else:
-            start = cutoff - timedelta(days=1)
-        gap = None
-        if not older:
-            gap = '首次或中断后采集，本档以前没有可衔接的消息简报'
+        group = group_cutoff = gap = start = None
+        if not older or older['trade_date'] < day:
+            with connect() as connection:
+                closed = closed_market_window(connection, day)
+                if closed:
+                    group, previous = closed
+                    group_cutoff = min(cutoff, datetime.combine(observed.date(), AUCTION_ADMISSION_END, CHINA))
+                    start = _previous_increment_finished(connection, previous, group_cutoff)
+        if start is None:
+            if older:
+                start = datetime.fromisoformat(older['cutoff_at'])
+                if group:
+                    gap = '上个交易日的盘后增量完成时间待核验，从最近留存消息的截止时间衔接'
+            else:
+                if group or previous_day:
+                    prior = previous if group else date.fromisoformat(previous_day)
+                    start = datetime.combine(prior, CLOSE_START, CHINA)
+                else:
+                    start = cutoff - timedelta(days=1)
+                gap = ('上个交易日的盘后增量完成时间和消息衔接均待核验，暂从上个交易日 17:00 采集'
+                       if group else '首次或中断后采集，本档以前没有可衔接的消息简报')
         if start < floor:
             start = floor
-            gap = '上个简报距离超过七天，较早消息覆盖待核验'
+            gap = '采集范围最多七天，较早消息覆盖待核验'
+        if group and start >= group_cutoff:
+            group = group_cutoff = None
         if self._admit(day, slot) is None:
             return
         try:
@@ -244,11 +297,14 @@ class NewsScheduler:
         captured = self._admit(day, slot)
         if captured is None:
             return
-        if gap and result['status'] == 'complete':
-            result.update(status='partial', reason=gap)
+        if gap:
+            if result['status'] == 'complete':
+                result['status'] = 'partial'
+            result['reason'] = '；'.join(filter(None, (result.get('reason'), gap)))
         deadline = datetime.combine(observed.date(), ADMISSION_END[slot], CHINA)
         try:
             news_events.publish_snapshot(day, slot, cutoff_at=cutoff.isoformat(), window_start_at=start.isoformat(),
+                                         window_group=group, group_cutoff_at=group_cutoff,
                                          captured_at=captured.isoformat(), latest_write_at=deadline.isoformat(), **result)
         except (sqlite3.Error, ValueError, TimeoutError) as error:
             LOGGER.warning('消息简报未能归档 %s %s', slot, type(error).__name__)

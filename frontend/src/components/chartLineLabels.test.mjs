@@ -74,6 +74,6 @@ assert.deepEqual(newWindow.current, { start: 70, end: 100 });
 const actions = [], instance = { current: { dispatchAction: value => actions.push(value) } };
 const reset = new Function("zoomWindow", "instance", "userZoomed", compile(zooms[0].getText(ast)) + ";return zoomTo;")(newWindow, instance, user);
 reset(76, 100); assert.deepEqual(newWindow.current, { start: 76, end: 100 });
-assert.deepEqual(actions, [{ type: "dataZoom", start: 76, end: 100 }]);
-assert.ok(source.includes("zoomOnMouseWheel: true") && source.includes("moveOnMouseWheel: false"));
+assert.deepEqual(actions, [{ type: "dataZoom", dataZoomIndex: 0, start: 76, end: 100 }]);
+assert.ok(source.includes('zoomOnMouseWheel: entryFocus ? "ctrl" : true') && source.includes("moveOnMouseWheel: false"));
 console.log("Chart labels: short rail text, visibility, collision/overflow, readable D/W/M, intact seeds and manual zoom/resize/reset passed");

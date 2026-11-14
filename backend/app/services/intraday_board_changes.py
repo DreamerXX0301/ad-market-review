@@ -347,6 +347,64 @@ def read_noon_row(connection, day):
         AND length(CAST(payload_json AS BLOB))<=?''', (day, 8 * 1024 * 1024)).fetchone()
 
 
+def read_monitor_boards(day=None):
+    """Read the latest saved board-pool positives, without running the market view."""
+    from fastapi import HTTPException
+    from app.core import connect
+    from app.services.intraday_service import MAX_PAYLOAD, baseline_for_slot, decode_snapshot, day_value, now_china
+
+    day = day_value(day) if day is not None else now_china().date().isoformat()
+    body = {'date': day, 'snapshot_id': None, 'observed_at': None,
+            'source_label': '扶摇 · 盘中观察', 'items': [],
+            'notice': '暂无本日已核验的盘中板况。盘中观察与十分钟报价采样各有采集时点。'}
+    with connect() as connection:
+        connection.execute('BEGIN')
+        row = connection.execute('''SELECT * FROM market_intraday_capture
+            WHERE trade_date=? AND snapshot_id IS NOT NULL AND slot GLOB '[0-9][0-9][0-9][0-9]'
+              AND length(CAST(payload_json AS BLOB))<=? ORDER BY slot DESC LIMIT 1''',
+            (day, MAX_PAYLOAD)).fetchone()
+        if not row:
+            return body
+    read_cache = {}
+    try:
+        current = decode_snapshot(row, read_context=read_cache)
+    except (HTTPException, ValueError):
+        return {**body, 'notice': '最新盘中板况快照未通过核验。'}
+    binding = _read_binding(current, row, read_cache)
+    if not binding:
+        return {**body, 'notice': '最新盘中观察没有可核验的板况来源回执。'}
+    baseline = baseline_for_slot(current['slot'], current['version'])
+    previous_row = None
+    if baseline:
+        with connect() as connection:
+            previous_row = (read_noon_row(connection, day) if baseline == 'noon'
+                            else connection.execute('''SELECT * FROM market_intraday_capture
+                WHERE trade_date=? AND slot=? AND snapshot_id IS NOT NULL
+                  AND length(CAST(payload_json AS BLOB))<=?''', (day, baseline, MAX_PAYLOAD)).fetchone())
+    previous = None
+    if previous_row is not None:
+        try:
+            previous = (noon_frame(previous_row, read_cache=read_cache) if baseline == 'noon'
+                        else decode_snapshot(previous_row, read_context=read_cache))
+        except (HTTPException, ValueError):
+            pass
+    pools = _pools(current)
+    earlier = _read_binding(previous, previous_row, read_cache) if previous else None
+    resealed = set()
+    if (earlier and earlier['slot'] == baseline and earlier['date'] == day
+            and earlier['collected_end_at'] < binding['collected_start_at']):
+        prior_broken = _pools(previous)['limit_break'][0]
+        current_quotes, old_quotes = frame_quotes(current, read_cache), frame_quotes(previous, read_cache)
+        resealed = {code for code in prior_broken.keys() & pools['limit_up'][0].keys()
+                    if code in current_quotes and code in old_quotes
+                    and current_quotes[code]['prev_close'] == old_quotes[code]['prev_close']}
+    items = [{'instrument_id': code, 'type': 'resealed' if code in resealed else kind}
+             for pool, kind in (('limit_up', 'sealed'), ('limit_break', 'broken'), ('limit_down', 'limit_down'))
+             for code in sorted(pools[pool][0])]
+    return {**body, 'snapshot_id': binding['snapshot_id'], 'observed_at': binding['collected_end_at'],
+            'items': items, 'notice': '显示该档来源池已核验样本。回封依据相邻两档；缺席不代表未触板。'}
+
+
 def attach_changes(snapshots, rows, noon_row=None, *, read_cache=None, cache_market=None):
     from app.services.intraday_service import MODERN_VERSIONS, baseline_for_slot
     from app.services.pane_read_cache import read_block

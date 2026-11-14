@@ -43,6 +43,7 @@ export default function SectorTracking({
     [members, setMembers] = useState<Row | null>(null),
     [chart, setChart] = useState<Row | null>(null),
     [policy, setPolicy] = useState<Row | null>(null),
+    [defaultPolicy, setDefaultPolicy] = useState<Row | null>(null),
     [remove, setRemove] = useState<Row | null>(null),
     [reason, setReason] = useState(""),
     [busy, setBusy] = useState(""),
@@ -60,6 +61,9 @@ export default function SectorTracking({
       `/sector-tracking-events?event_type=alert&limit=500${strategyId ? `&strategy_id=${encodeURIComponent(strategyId)}` : ""}`,
     );
   const date = result.data?.business_date || "",
+    chosenStrategy = list(strategies.data).find(
+      (strategy) => strategy.strategy_id === strategyId,
+    ),
     rounds = list(result.data),
     byRound = new Map(rounds.map((round) => [round.round_id, round]));
   const rows = (
@@ -132,10 +136,23 @@ export default function SectorTracking({
         <p>
           跟踪板块指数自身 · 行情观察日 {date || "待核验"} · 成分股仅展开查看
         </p>
-        <button className="btn primary" disabled={!!busy} onClick={review}>
-          {busy === "review" ? <Spinner /> : <RefreshCw size={14} />}
-          复核板块跟踪
-        </button>
+        <div className="button-group">
+          <button
+            type="button"
+            className="btn"
+            disabled={!chosenStrategy || !list(fields.data).length}
+            title={
+              chosenStrategy ? "用于这条策略之后新入池的板块" : "先选择板块策略"
+            }
+            onClick={() => setDefaultPolicy(chosenStrategy || null)}
+          >
+            <Settings2 size={14} /> 默认提醒与结束条件
+          </button>
+          <button className="btn primary" disabled={!!busy} onClick={review}>
+            {busy === "review" ? <Spinner /> : <RefreshCw size={14} />}
+            复核板块跟踪
+          </button>
+        </div>
       </div>
       <Panel
         title="板块策略跟踪池"
@@ -427,6 +444,16 @@ export default function SectorTracking({
             "D"
           }
           onClose={() => setPolicy(null)}
+          onSaved={refresh}
+        />
+      )}
+      {defaultPolicy && (
+        <SectorPolicyEditor
+          round={defaultPolicy}
+          period={defaultPolicy.period}
+          fields={list(fields.data)}
+          strategyDefaults
+          onClose={() => setDefaultPolicy(null)}
           onSaved={refresh}
         />
       )}

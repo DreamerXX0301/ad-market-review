@@ -82,7 +82,7 @@ export default function ActiveTaskBanner({
             key={task.job_id || task.request_key}
           >
             <span className="active-task-symbol">
-              {view.active ? (
+              {view.active && !view.waitingForWorker ? (
                 <LoaderCircle className="active-task-spinner" size={19} />
               ) : view.tone === "good" ? (
                 <CheckCircle2 size={19} />
@@ -103,12 +103,12 @@ export default function ActiveTaskBanner({
                     : view.stage}
                 </span>
                 {view.countLabel && <span>{view.countLabel}</span>}
-                <b>{view.progressLabel}</b>
+                {!view.waitingForWorker && <b>{view.progressLabel}</b>}
               </div>
               {task.message && (
                 <small className="active-task-message">{task.message}</small>
               )}
-              {view.active && (
+              {view.active && !view.waitingForWorker && (
                 <progress
                   aria-label={`${view.title}进度`}
                   max={100}

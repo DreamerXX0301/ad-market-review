@@ -1088,9 +1088,12 @@
   color: var(--workbench-type-muted, var(--muted));
   font-size: var(--workbench-type-caption, 11px);
 }
-.zodiac-detail-hero > button {
+.zodiac-detail-chart-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-left: auto;
-  flex-shrink: 0;
+  justify-content: flex-end;
 }
 .zodiac-detail-dates {
   display: flex;
@@ -1503,8 +1506,9 @@
   .zodiac-detail-hero {
     flex-wrap: wrap;
   }
-  .zodiac-detail-hero > button {
+  .zodiac-detail-chart-actions {
     width: 100%;
+    margin-left: 0;
     margin-top: 2px;
   }
   .zodiac-detail-year {

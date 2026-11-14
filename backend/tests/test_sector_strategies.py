@@ -55,6 +55,78 @@ def create(**extra):
     return strategies.create_strategy({'name': '板块条件样本', 'definition': leaf(), **extra})
 
 
+def test_sector_automation_api_and_newly_frozen_scope(workspace):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.routers.workspace import router
+    from app.services import workspace_automation as automation
+    strategy_id = create()['strategy_id']
+    other_id = create()['strategy_id']
+    app = FastAPI(); app.include_router(router)
+    path = f'/api/v1/sector-strategies/{strategy_id}/automation'
+    with TestClient(app) as client:
+        assert client.get(path).json() == {'strategy_id': strategy_id, 'refresh_after_sync': False, 'auto_track': False}
+        assert client.get('/api/v1/sector-strategies/missing/automation').status_code == 404
+        assert client.put(path, json={'auto_track': True}).status_code == 422
+        assert client.put(path, json={'refresh_after_sync': 'true'}).status_code == 422
+        assert client.put(path, json={'refresh_after_sync': True, 'auto_track': True}).json()['auto_track']
+        assert client.put(f'/api/v1/sector-strategies/{other_id}/automation', json={'refresh_after_sync': True}).status_code == 200
+    strategies.update_strategy(other_id, {'archived': True})
+    assert automation.freeze_sector_settings() == [{'strategy_id': strategy_id, 'auto_track': True}]
+    with core.connect() as connection:
+        assert not connection.execute("SELECT 1 FROM platform_setting WHERE key LIKE 'strategy-execution:%'").fetchone()
+
+
+def test_post_data_sector_execution_skips_policy_expansion_and_keeps_exact_receipts(workspace, monkeypatch):
+    from app.services import sector_tracking, sync_workspace_followup as phase, workspace_automation as automation
+    from app.services import sync_progress, workspace_progress
+    monkeypatch.setattr(sector_tracking, 'get_market', lambda: workspace.market)
+    monkeypatch.setattr(phase, 'guard', lambda *_: None)  # Dependency gate tested separately.
+    cached(workspace)
+    added_id = create()['strategy_id']
+    removed_id = create()['strategy_id']
+    scan_id = create()['strategy_id']
+    late_id = create()['strategy_id']
+    for sid in (added_id, removed_id, scan_id):
+        automation.configure_sector(sid, {'refresh_after_sync': True, 'auto_track': sid != scan_id})
+    initial = strategies.run_strategy(removed_id, {'request_key': 'manual-sector-selection'})
+    entered = sector_tracking.add_tracking({'run_id': initial['run_id'], 'target_ids': [CODE]})
+    sector_tracking.remove_tracking(entered['items'][0]['round_id'], {})
+    root = tasks.create_task('increment', {phase.MARKER: phase.VERSION,
+        automation.SECTOR_AUTOMATION_MARKER: automation.SECTOR_AUTOMATION_VERSION,
+        automation.SECTOR_AUTOMATION_PLAN: automation.freeze_sector_settings()}, request_key='sector-opt-in')
+    old_root = tasks.create_task('increment', {phase.MARKER: phase.VERSION}, request_key='before-sector-opt-in')
+    for job in (root, old_root): tasks.finish(job['job_id'], 'succeeded')
+    automation.configure_sector(scan_id, {'auto_track': True})
+    automation.configure_sector(late_id, {'refresh_after_sync': True, 'auto_track': True})
+
+    assert automation.run_after_sync(old_root['job_id']) == []
+    runs = automation.run_after_sync(root['job_id'])
+    assert {r['strategy_id'] for r in runs} == {added_id, removed_id, scan_id}
+    assert not any('error' in r for r in runs), runs
+    counts = {r['strategy_id']: (r['added_count'], r['ignored_count']) for r in runs}
+    assert counts == {added_id: (1, 0), removed_id: (0, 1), scan_id: (0, 0)}
+    assert automation.run_after_sync(root['job_id']) == runs
+    task_view = sync_progress.session(task_id=root['job_id'])
+    assert sum(item.get('workspace_child') is True and item['target_type'] == 'sector'
+               for item in task_view['tasks']) == 4
+    with core.connect() as connection:
+        persisted_root = connection.execute('SELECT * FROM job WHERE job_id=?', (root['job_id'],)).fetchone()
+        children = workspace_progress.children(connection, persisted_root)
+        assert sorted(child['kind'] for child in children) == ['selection'] * 3 + ['tracking_review']
+        assert all(child['parent_task_id'] == root['job_id'] for child in children)
+        tasks.append_event(connection, root['job_id'], 'workspace_followup', 'done', details={'results': runs})
+        report = workspace_progress.summary(connection, persisted_root, children)
+        assert report['completed_strategies'] == 3
+        assert report['tracking'] is None
+        rows = {row['strategy_id']: row for row in report['strategies']}
+        assert rows[added_id]['target_type'] == 'sector' and rows[added_id]['tracking_review']
+        assert rows[removed_id]['ignored_count'] == 1
+        assert not connection.execute('SELECT 1 FROM tracking_round').fetchone()
+        assert connection.execute("SELECT count(*) FROM sector_tracking_round WHERE status='tracking'").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM job_event WHERE job_id=? AND stage='sector_workspace_tracking_chunk'", (root['job_id'],)).fetchone()[0] == 2
+
+
 def test_sector_specs_reject_stock_identity_and_source_events():
     fields = {item['field']: item for item in conditions.specs()}
     assert not ({'limit_up', 'prev_limit_up', 'is_st', 'board', 'turnover_ratio_pct', 'topic_ids'} & fields.keys())

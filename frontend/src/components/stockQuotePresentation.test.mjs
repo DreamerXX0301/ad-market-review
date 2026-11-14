@@ -184,6 +184,7 @@ const scopeValues = {
   ],
   useRef: (current) => ({ current }),
   useEffect: () => {},
+  useContext: () => [],
   useApi: (path) => {
     requests.push(path);
     return { data: detail };

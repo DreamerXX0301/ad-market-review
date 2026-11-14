@@ -12,6 +12,7 @@ const levelNames = {
   resistance: "压力参考",
   breakout: "突破参考",
 } as const;
+const toggleLevels = ["stop", "support", "breakout"] as const;
 const signalTone = (state: string) =>
   ["expanded_breakout", "retest_holding"].includes(state)
     ? "up"
@@ -37,10 +38,16 @@ export default function ChartPriceVolume({
   pressureZone?: { low: number; high: number };
 }) {
   if (!view) return null;
+  const shortTerm = view.profile === "short_week_v1";
+  const hasPressureReference = !!(view.resistance || view.breakout);
+  const hasReferenceLines = toggleLevels.some((key) => view[key]);
+  const showReferenceLines = toggleLevels.some(
+    (key) => view[key] && visibleIds.has(`price-volume:${key}`),
+  );
   const price = (value: number | null) =>
     value == null ? "待核验" : `${num(value)} ${view.unit}`;
   const levelLabel = (key: keyof typeof levelNames) =>
-    key === "stop" && view.profile === "short_week_v1"
+    key === "stop" && shortTerm
       ? "短线风险线"
       : key === "support" && view.supportScope === "historical_120"
         ? "历史结构支撑（120根）"
@@ -72,28 +79,26 @@ export default function ChartPriceVolume({
       key === "support" && view.referencePrice != null && !level;
     const content = (
       <>
-        <span className="chart-price-volume-name">{levelLabel(key)}</span>
-        <strong
-          className={!level ? "chart-price-volume-unavailable" : undefined}
-        >
-          {noSupport ? "暂无确认支撑" : price(level?.price ?? null)}
-        </strong>
-        <small>
-          {level?.distancePct != null
-            ? `距参考收盘 ${percent(level.distancePct)}`
-            : noSupport
-              ? view.supportReason || "当前结构窗口暂无有效支撑"
-              : key === "breakout" && view.atr.value == null
-                ? "缺少可比波动数据"
-                : "暂无可核验价位"}
-        </small>
-        {key === "support" && level && view.profile === "short_week_v1" && (
-          <small>
-            {view.supportDistanceState === "far"
-              ? "距离较远，不能替代短线风险线"
-              : "结构观察，不等于短线风险线"}
-          </small>
-        )}
+        <span className="chart-price-volume-name">
+          {levelLabel(key)}
+          {key === "support" &&
+            level &&
+            view.supportDistanceState === "far" && (
+              <small className="chart-price-volume-far">距离较远</small>
+            )}
+        </span>
+        <span className="chart-price-volume-value">
+          <strong
+            className={!level ? "chart-price-volume-unavailable" : undefined}
+          >
+            {noSupport ? "暂无确认支撑" : price(level?.price ?? null)}
+          </strong>
+          {level?.distancePct != null && (
+            <small title="距参考收盘">
+              距收盘 {percent(level.distancePct)}
+            </small>
+          )}
+        </span>
       </>
     );
     return key !== "resistance" && level ? (
@@ -153,36 +158,19 @@ export default function ChartPriceVolume({
           {view.volume.ratio != null && ` · ${num(view.volume.ratio)} 倍`}
         </span>
         <div className="chart-price-volume-actions">
-          {onToggleAll && (view.stop || view.support || view.breakout) && (
+          {onToggleAll && hasReferenceLines && (
             <button
               type="button"
               className="btn small"
-              aria-pressed={(["stop", "support", "breakout"] as const).some(
-                (key) => view[key] && visibleIds.has(`price-volume:${key}`),
-              )}
-              onClick={() =>
-                onToggleAll(
-                  !(["stop", "support", "breakout"] as const).some(
-                    (key) => view[key] && visibleIds.has(`price-volume:${key}`),
-                  ),
-                )
-              }
+              aria-pressed={showReferenceLines}
+              onClick={() => onToggleAll(!showReferenceLines)}
             >
-              {(["stop", "support", "breakout"] as const).some(
-                (key) => view[key] && visibleIds.has(`price-volume:${key}`),
-              )
-                ? "隐藏参考线"
-                : "显示参考线"}
+              {showReferenceLines ? "隐藏参考线" : "显示参考线"}
             </button>
           )}
           {actions}
         </div>
       </div>
-      <p className="chart-price-volume-scope">
-        {view.profile === "short_week_v1"
-          ? `优先近20个完整交易日结构，必要时查找120根内历史支撑 · 风险线按本图收盘重算，距收盘最多 ${num(view.maxRiskPct)}%；支撑类提醒以设置中已保存近端基准为准。`
-          : "最近120根完整K线的历史结构观察；结构失效参考未绑定个人成本或持股期限。"}
-      </p>
       <div className="chart-price-volume-levels">
         {renderLevel("stop")}
         {renderLevel("support")}
@@ -191,33 +179,28 @@ export default function ChartPriceVolume({
           role="group"
           aria-label="压力与突破参考"
         >
-          {view.resistance || view.breakout ? (
+          {hasPressureReference ? (
             <div className="chart-price-volume-pressure-values">
               {view.resistance && renderLevel("resistance")}
               {renderLevel("breakout")}
             </div>
           ) : (
             <div className="chart-price-volume-level">
-              <span className="chart-price-volume-name">压力与突破参考</span>
-              {pressureZone ? (
-                <>
+              <span className="chart-price-volume-name">
+                {pressureZone ? "水平压力区" : "压力与突破参考"}
+              </span>
+              <span className="chart-price-volume-value">
+                {pressureZone ? (
                   <strong className="chart-price-volume-pressure-zone">
                     {num(pressureZone.low)}–{num(pressureZone.high)} {view.unit}
                   </strong>
-                  <small>水平压力区</small>
-                </>
-              ) : (
-                <strong className="chart-price-volume-unavailable">
-                  {view.referencePrice == null ? "待核验" : "暂无确认压力"}
-                </strong>
-              )}
-              <small>
-                {view.referencePrice == null
-                  ? view.reason || "暂无可核验收盘行情"
-                  : view.profile === "short_week_v1"
-                    ? "近20根完整日K暂无有效的单点压力及突破参考"
-                    : "当前结构窗口暂无有效的单点压力及突破参考"}
-              </small>
+                ) : (
+                  <strong className="chart-price-volume-unavailable">
+                    {view.referencePrice == null ? "待核验" : "暂无确认压力"}
+                  </strong>
+                )}
+                {pressureZone && <small>突破位待核验</small>}
+              </span>
             </div>
           )}
         </div>
@@ -231,6 +214,33 @@ export default function ChartPriceVolume({
               参考收盘 {price(view.referencePrice)}
               {view.reason && ` · ${view.reason}`}
             </p>
+            <p>
+              {shortTerm
+                ? `优先近20个完整交易日结构，必要时查找120根内历史支撑。风险线按本图收盘重算，距收盘最多 ${num(view.maxRiskPct)}%。支撑类提醒以设置中已保存近端基准为准。`
+                : "按最近120根完整K线观察历史结构，结构失效参考未绑定个人成本或持股期限。"}
+            </p>
+            {view.referencePrice != null && !view.support && (
+              <p>{view.supportReason || "当前结构窗口暂无有效支撑"}</p>
+            )}
+            {shortTerm && view.support && (
+              <p>
+                {view.supportDistanceState === "far"
+                  ? "距离较远，不能替代短线风险线"
+                  : "结构观察，不等于短线风险线"}
+              </p>
+            )}
+            {!hasPressureReference && (
+              <p>
+                {view.referencePrice == null
+                  ? "暂无可核验收盘行情"
+                  : shortTerm
+                    ? "近20根完整日K暂无有效的单点压力及突破参考"
+                    : "当前结构窗口暂无有效的单点压力及突破参考"}
+              </p>
+            )}
+            {view.resistance && !view.breakout && view.atr.value == null && (
+              <p>缺少可比波动数据，突破参考待核验。</p>
+            )}
             {(["support", "resistance"] as const).map((key) => {
               const level = view[key];
               return level ? (
@@ -271,9 +281,7 @@ export default function ChartPriceVolume({
             </p>
           </div>
           <div>
-            <strong>
-              {view.profile === "short_week_v1" ? "短线风险与波动" : "波动缓冲"}
-            </strong>
+            <strong>{shortTerm ? "短线风险与波动" : "波动缓冲"}</strong>
             <p>
               14{view.cycle}平均真实波幅 {price(view.atr.value)}。
             </p>

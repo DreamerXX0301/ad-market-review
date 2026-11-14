@@ -16,7 +16,8 @@ STAGE_GRACE_END = {'auction': time(9, 2), 'noon': time(12, 35)}
 STATUSES = ('complete', 'partial', 'unavailable')
 EVENT_STATUSES = ('confirmed', 'tentative', 'postponed', 'cancelled')
 MAX_ITEMS = 500
-_SNAPSHOT_META = 'trade_date,stage,status,cutoff_at,window_start_at,captured_at,reason,content_sha256'
+_SNAPSHOT_META = ('trade_date,stage,status,cutoff_at,window_start_at,captured_at,reason,content_sha256,'
+                  'window_group,group_cutoff_at')
 
 
 def now_china():
@@ -178,7 +179,7 @@ def last_snapshot(stage=None, *, before_at=None, statuses=None):
 
 
 def publish_snapshot(day, stage, *, cutoff_at, status, items, window_start_at=None, captured_at=None,
-                     reason=None, latest_write_at=None):
+                     reason=None, latest_write_at=None, window_group=None, group_cutoff_at=None):
     day = _day(day)
     if stage not in STAGES or status not in STATUSES:
         raise ValueError('消息档位或归档状态无效')
@@ -188,21 +189,27 @@ def publish_snapshot(day, stage, *, cutoff_at, status, items, window_start_at=No
     cutoff = _time(cutoff_at)
     capture = _time(captured_at) if captured_at is not None else now
     start = _time(window_start_at) if window_start_at is not None else None
+    group_cutoff = _time(group_cutoff_at) if group_cutoff_at is not None else None
     deadline = _time(latest_write_at) if latest_write_at is not None else None
     if cutoff.date() != day or cutoff > capture or capture > now or (start is not None and start >= cutoff):
         raise ValueError('消息归档日期或时间边界无效')
     if day < now.date() - timedelta(days=RETENTION_DAYS - 1):
         raise ValueError('消息归档已超出留存范围')
+    if ((window_group, group_cutoff) != (None, None)
+            and (window_group not in ('weekend', 'holiday') or start is None or group_cutoff is None
+                 or group_cutoff.date() != day or not start < group_cutoff <= cutoff)):
+        raise ValueError('休市消息分组时间无效')
     body, proof = _payload(items, lambda item: _news_item(item, start, cutoff, capture),
                            sort_key=lambda item: (item['published_at'], item['id']), reverse=True)
     reason = _text(reason, '归档说明', 600, optional=True)
     with connect() as connection:
         _begin_write(connection, deadline)
         result = connection.execute('''INSERT INTO market_news_snapshot
-            (trade_date,stage,status,cutoff_at,window_start_at,captured_at,reason,payload_json,content_sha256)
-            VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(trade_date,stage) DO NOTHING''',
+            (trade_date,stage,status,cutoff_at,window_start_at,captured_at,reason,payload_json,content_sha256,
+             window_group,group_cutoff_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(trade_date,stage) DO NOTHING''',
             (day.isoformat(), stage, status, cutoff.isoformat(), start.isoformat() if start else None,
-             capture.isoformat(), reason, body, proof))
+             capture.isoformat(), reason, body, proof, window_group, group_cutoff.isoformat() if group_cutoff else None))
         retained = connection.execute(f'''SELECT {_SNAPSHOT_META} FROM market_news_snapshot
             WHERE trade_date=? AND stage=?''', (day.isoformat(), stage)).fetchone()
         _check_deadline(deadline)
@@ -309,7 +316,8 @@ def read_view(day=None):
         if row is None:
             stages.append(_missing_stage(stage, day, now))
             continue
-        fields = {key: row[key] for key in ('stage', 'status', 'cutoff_at', 'window_start_at', 'captured_at', 'reason')}
+        fields = {key: row[key] for key in ('stage', 'status', 'cutoff_at', 'window_start_at', 'captured_at', 'reason',
+                                         'window_group', 'group_cutoff_at')}
         try:
             items = _cached('news-' + stage.replace('_', '-'), stamp,
                             (row['captured_at'], row['content_sha256']), lambda: _news_payload(row), now)

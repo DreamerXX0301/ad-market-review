@@ -1,7 +1,7 @@
 .automatic-price-alert-settings {
   padding: 18px 22px;
   display: grid;
-  gap: 15px;
+  gap: 12px;
 }
 .automatic-price-alert-intro {
   margin: 0;
@@ -28,9 +28,35 @@
   font-size: 12px;
   line-height: 1.6;
 }
+.automatic-price-alert-quick {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2, var(--surface));
+}
+.automatic-price-alert-quick > div {
+  display: grid;
+  gap: 3px;
+  margin-right: auto;
+}
+.automatic-price-alert-custom > summary {
+  width: fit-content;
+  padding: 5px 0;
+  cursor: pointer;
+  color: var(--blue, #79a9ff);
+}
+.automatic-price-alert-fields {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
 .automatic-price-alert-enabled {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 14px;
+  padding: 2px 0;
 }
 .automatic-price-alert-profile {
   display: grid;
@@ -84,12 +110,25 @@
 .automatic-price-alert-volume {
   font-size: 13px;
 }
+.automatic-price-alert-status-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.automatic-price-alert-status-row .automatic-price-alert-status {
+  flex: 1 1 250px;
+  min-width: 0;
+}
+.automatic-price-alert-status-row > button {
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
 .automatic-price-alert-status {
-  display: grid;
-  gap: 4px;
-  padding: 11px;
-  border-radius: 8px;
-  background: var(--surface-2, var(--surface));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
   font-size: 12px;
   color: var(--muted);
 }
@@ -119,6 +158,9 @@
   border-top: 1px solid var(--border);
   padding-top: 14px;
 }
+.automatic-price-alert-actions > button[hidden] {
+  display: none;
+}
 .automatic-price-alert-message {
   margin: 0;
   color: var(--blue, #79a9ff);
@@ -130,5 +172,8 @@
   }
   .automatic-price-alert-modes {
     grid-template-columns: 1fr;
+  }
+  .automatic-price-alert-quick > button {
+    width: 100%;
   }
 }

@@ -49,6 +49,16 @@ assert.deepEqual(effectiveChartPanels(defaults, true), [
 ]);
 assert.equal(effectiveChartBoll(defaults, false), false);
 assert.equal(effectiveChartBoll(defaults, true), false);
+assert.equal(defaults.stockShowPriceVolumeLines, false);
+assert.equal(defaults.indexShowPriceVolumeLines, false);
+assert.equal(defaults.stockShowVolumeMarkers, true);
+assert.equal(defaults.indexShowVolumeMarkers, true);
+const volumePreference = normalizeChartPreferences({
+  version: 4,
+  stockShowVolumeMarkers: false,
+});
+assert.equal(volumePreference.stockShowVolumeMarkers, false);
+assert.equal(volumePreference.indexShowVolumeMarkers, true);
 
 function browserStorage(entries = []) {
   const values = new Map(entries);
@@ -62,6 +72,19 @@ function browserStorage(entries = []) {
   };
   return { values, writes, storage };
 }
+
+const referenceDisk = browserStorage([
+  [CHART_PREFERENCES_KEY, JSON.stringify({ version: 4, stockMas: [5, 10] })],
+]);
+const referenceStore = createChartPreferenceStore(referenceDisk.storage);
+referenceStore.update({ indexShowPriceVolumeLines: true });
+const reloadedReferences = createChartPreferenceStore(referenceDisk.storage);
+assert.equal(reloadedReferences.getSnapshot().preferences.indexShowPriceVolumeLines, true);
+assert.equal(reloadedReferences.getSnapshot().preferences.stockShowPriceVolumeLines, false);
+assert.deepEqual(reloadedReferences.getSnapshot().preferences.stockMas, [5, 10]);
+assert.equal(normalizeChartPreferences({version: 4, indexShowPriceVolumeLines: "true"}).indexShowPriceVolumeLines, false);
+referenceStore.reset();
+assert.equal(referenceStore.getSnapshot().preferences.indexShowPriceVolumeLines, false);
 
 const oldValues = {
   stockMas: [],

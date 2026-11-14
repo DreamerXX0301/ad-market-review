@@ -15,6 +15,18 @@ def summary():
     return service.read_summary()
 
 
+@router.get('/revision')
+def revision():
+    return service.read_revision()
+
+
+@router.get('/board-observations')
+def board_observations(date: str | None = None):
+    from app.services.intraday_board_changes import read_monitor_boards
+
+    return read_monitor_boards(date)
+
+
 @router.get('/events')
 def events(date: str | None = None, limit: int = Query(200, ge=1, le=500)):
     return service.read_events(date, limit)

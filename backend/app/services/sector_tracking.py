@@ -1,4 +1,4 @@
-"""Independent sector-index rounds, immutable entry anchors and manual review.
+"""Independent sector-index rounds, immutable entry anchors and review.
 
 No stocks enter the stock tracking pool. Index point comparisons have no
 individual-stock adjustment semantics; missing exact-day quotes stay unknown.
@@ -385,18 +385,20 @@ def list_events(strategy_id=None, event_type=None, business_date=None, limit=100
             'business_date': day, 'target_type': 'sector'}
 
 
-def _review_impl(payload, context, job_id):
+def _review_impl(payload, context, job_id, *, transaction_guard=None, current_day_only=False):
     stats = {'reviewed': 0, 'alerts': 0, 'ended': 0, 'expired': 0, 'unknown': 0, 'skipped': 0}
     with connect() as connection:
         _guard(connection, context)
         sql = "SELECT * FROM sector_tracking_round WHERE status='tracking'"; args = []
         if payload.get('strategy_id'): sql += ' AND strategy_id=?'; args.append(payload['strategy_id'])
+        if current_day_only: sql += ' AND entry_business_date<=?'; args.append(context['day'])
         if payload.get('round_ids'):
             sql += ' AND round_id IN ('+','.join('?' for _ in payload['round_ids'])+')'; args += payload['round_ids']
         active = rows(connection, sql, args)
     memo = {}
     for initial_row in active:
-        dates = [day for day in context['calendar'] if initial_row['entry_business_date'] <= day <= context['day']]
+        dates = ([context['day']] if current_day_only else
+                 [day for day in context['calendar'] if initial_row['entry_business_date'] <= day <= context['day']])
         for day in dates:
             with connect() as connection:
                 check_api_task(job_id, connection); _guard(connection, context)
@@ -431,6 +433,7 @@ def _review_impl(payload, context, job_id):
             key = f"{row['round_id']}:{day}:review:{revision}:{input_key}"
             with connect() as connection:
                 connection.execute('BEGIN IMMEDIATE'); check_api_task(job_id, connection); _guard(connection, context)
+                if transaction_guard: transaction_guard(connection)
                 live = one(connection, 'SELECT * FROM sector_tracking_round WHERE round_id=?', (row['round_id'],))
                 if live['status'] != 'tracking': break
                 live_policy, live_revision = _policy_at(connection, live, day)
@@ -465,7 +468,7 @@ def _review_impl(payload, context, job_id):
     return {'business_date': context['day'], 'target_type': 'sector', **stats}
 
 
-def review_tracking(payload=None):
+def review_tracking(payload=None, *, transaction_guard=None, current_day_only=False):
     payload = {} if payload is None else payload
     if not isinstance(payload, dict) or set(payload)-{'strategy_id','round_ids','round_id','request_key'}:
         fail('板块核对只接受策略、轮次及请求标识')
@@ -482,9 +485,11 @@ def review_tracking(payload=None):
     context = _context(); identifier = new_id('job'); owner = api_lease_owner()
     request_key = payload.pop('request_key', None) or new_id('sector-review')
     parameters = {'target_type': 'sector', **payload}
+    if current_day_only: parameters['scope'] = 'current_business_date'
     parameters_hash = digest([parameters, context['day'], context['snapshot_id']])
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE'); _guard(connection, context)
+        if transaction_guard: transaction_guard(connection)
         old = connection.execute('SELECT * FROM job WHERE request_key=?', (request_key,)).fetchone()
         if old:
             if old['kind'] != 'tracking_review' or old['parameters_hash'] != parameters_hash:
@@ -502,9 +507,10 @@ def review_tracking(payload=None):
         log(connection, identifier, 'info', 'reviewing', '开始核对板块指数跟踪；成员不会加入个股池')
     stop = start_api_heartbeat(identifier, owner)
     try:
-        result = _review_impl(payload, context, identifier)
+        result = _review_impl(payload, context, identifier, transaction_guard=transaction_guard, current_day_only=current_day_only)
         with connect() as connection:
             connection.execute('BEGIN IMMEDIATE'); check_api_task(identifier, connection); _guard(connection, context)
+            if transaction_guard: transaction_guard(connection)
             connection.execute("UPDATE job SET status='succeeded',phase='completed',finished_at_ms=?,accepted_batches=100 WHERE job_id=?", (now_ms(), identifier))
             log(connection, identifier, 'info', 'completed', '板块跟踪核对完成', result)
         return result

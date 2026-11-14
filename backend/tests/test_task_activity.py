@@ -115,7 +115,9 @@ def test_activity_revisions_follow_saved_snapshots_for_exact_days(isolated):
         payload = core.dumps({'date': historical, 'version': 'auction-discovery-v1', 'state': 'partial'})
         connection.execute('INSERT INTO market_auction_discovery VALUES(?,?,?,?,?,?)',
                            (historical, job_id, 'auction-proof', stamp, core.digest(payload), payload))
-        connection.execute('INSERT INTO market_news_snapshot VALUES(?,?,?,?,?,?,?,?,?)',
+        connection.execute('''INSERT INTO market_news_snapshot
+                           (trade_date,stage,status,cutoff_at,window_start_at,captured_at,reason,payload_json,content_sha256)
+                           VALUES(?,?,?,?,?,?,?,?,?)''',
                            (historical, 'auction', 'partial', stamp_text, None, stamp_text, None, '[]', core.digest([])))
         noon_id = noon['job_id']
         connection.execute('INSERT INTO market_noon_capture VALUES(?,?,?,?)', (historical, noon_id, noon_id, stamp))

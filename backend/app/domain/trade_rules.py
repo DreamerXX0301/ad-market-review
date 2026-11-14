@@ -1,8 +1,9 @@
 """Versioned research buy/sell predicates, independent from pool selection."""
 from app.domain.conditions import names, validate
+from app.analytics.strategy_trendlines import FIELDS as STRUCTURE_FIELDS
 
 UNAVAILABLE = {
-    'trendline_pullback', 'trendline_breakout',
+    *STRUCTURE_FIELDS,
     'topic_ids', 'limit_up', 'prev_limit_up', 'limit_up_count_1y', 'limit_up_1y',
     'turnover_ratio_pct', 'trading_age', 'tracking_change_pct',
     'close_below_entry', 'close_above_entry_high', 'close_below_entry_low',

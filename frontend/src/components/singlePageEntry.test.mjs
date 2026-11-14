@@ -186,7 +186,7 @@ for (let height = 150; height <= 1400; height++) {
       assert.ok(Math.abs(layout.paneTops[i] - (bottom + 22)) < 1e-8);
       assert.ok(
         layout.paneHeights[i] >=
-          { volume: 96, boll: 145, kdj: 104, macd: 104 }[key],
+          { volume: 96, boll: 145, kdj: 140, macd: 140 }[key],
       );
       bottom = layout.paneTops[i] + layout.paneHeights[i];
     });
@@ -202,9 +202,17 @@ const all = layoutFor(620, panes);
 const fitted = layoutFor(620, panes, true);
 assert.equal(fitted.actualHeight, 620);
 assert.ok(fitted.actualHeight < all.actualHeight);
+const desktop = layoutFor(730, panes, true);
+assert.equal(desktop.actualHeight, 730);
+assert.ok(desktop.mainHeight >= 220);
+assert.ok(desktop.paneHeights[0] >= 54, "volume bars have room below their annotations");
+assert.ok(desktop.paneHeights[1] >= 86, "BOLL candles and bands stay readable");
+assert.ok(desktop.paneHeights.slice(2).every((height) => height >= 105));
+assert.ok(fitted.paneHeights[0] >= 47 && fitted.paneHeights[1] >= 78);
+assert.ok(fitted.paneHeights.slice(2).every((height) => height >= 83));
 const tiny = layoutFor(360, panes, true);
 assert.ok(tiny.mainHeight >= 135);
-assert.ok(tiny.paneTops[3] + tiny.paneHeights[3] <= tiny.actualHeight - 50);
+assert.ok(tiny.paneTops[3] + tiny.paneHeights[3] <= tiny.actualHeight - 46 + 1e-8);
 assert.equal(all.paneTops.length, 4);
 assert.ok(
   all.paneHeights[1] > all.paneHeights[2],

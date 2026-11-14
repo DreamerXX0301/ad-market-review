@@ -37,6 +37,7 @@ import {
   Warnings,
 } from "../../components/UI";
 import { CandleChart, EChart } from "../../components/Charts";
+import MarketDatePicker from "../../components/MarketDatePicker";
 import "./Market.css";
 import "./MarketOverview.css";
 import "./GainerLeaderboard.css";
@@ -272,6 +273,13 @@ export function MarketOverview({
 }) {
   const pageActive = usePageActive();
   const [selected, setSelected] = useState("000001.SH");
+  const [chartDateChoice, setChartDateChoice] = useState<{
+    parentDate: string;
+    value: string;
+  } | null>(null);
+  const chartDate =
+    chartDateChoice?.parentDate === date ? chartDateChoice.value : date;
+  useEffect(() => setChartDateChoice(null), [date]);
   const path = date
     ? `/market/${indicesOnly ? "indices" : "overview"}?date=${date}`
     : null;
@@ -411,15 +419,23 @@ export function MarketOverview({
             : "market-layout market-overview-plot"
         }
       >
-        <Panel
-          title={selectedName}
-          subtitle={date + " · 盘面观察日"}
-          actions={<Badge>真实历史行情</Badge>}
-        >
+        <Panel title={selectedName}>
           <CandleChart
             instrumentId={selected}
-            asOf={date || undefined}
+            instrumentKind="index"
+            asOf={chartDate || undefined}
             height={indicesOnly ? 710 : 625}
+            entryFocus={indicesOnly && pageActive}
+            dateControls={
+              <MarketDatePicker
+                value={chartDate}
+                dates={bootstrap?.market_dates || []}
+                scope="chart"
+                onChange={(value) =>
+                  setChartDateChoice({ parentDate: date, value })
+                }
+              />
+            }
           />
         </Panel>
         {!indicesOnly && (

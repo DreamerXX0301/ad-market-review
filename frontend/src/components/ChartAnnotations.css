@@ -2,14 +2,14 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--blue) 5%, var(--surface));
-  padding: 14px;
-  margin: 10px 0 16px;
+  padding: 9px 12px;
+  margin: 6px 0 8px;
 }
 .chart-annotation-heading {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 .chart-annotation-heading > div {
   display: flex;
@@ -37,9 +37,8 @@
 .chart-annotation-form {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
-  gap: 9px;
-  max-width: 920px;
+  align-items: center;
+  gap: 6px 8px;
 }
 .chart-line-types {
   display: inline-flex;
@@ -48,7 +47,7 @@
   padding: 3px;
   border: 1px solid var(--border);
   border-radius: 9px;
-  margin: 0 0 12px;
+  margin: 0;
   background: var(--surface2);
 }
 .chart-line-types legend {
@@ -62,7 +61,7 @@
   display: flex;
   align-items: center;
   position: relative;
-  padding: 7px 17px;
+  padding: 5px 11px;
   border: 1px solid transparent;
   border-radius: 6px;
   cursor: pointer;
@@ -100,8 +99,8 @@
 }
 .chart-line-alert-settings {
   display: grid;
-  gap: 12px;
-  padding-top: 14px;
+  gap: 8px;
+  padding-top: 8px;
 }
 .chart-line-alert-rules {
   display: grid;
@@ -147,31 +146,37 @@
   font-size: 12px;
 }
 .chart-annotation-form .chart-line-price-input input {
-  width: 140px;
-  height: 38px;
-  font-size: 18px;
+  width: 110px;
+  height: 34px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.chart-annotation-form .chart-line-name-input {
-  flex: 1 1 140px;
-  max-width: 230px;
+.chart-line-details {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
 }
-.chart-annotation-form .chart-line-name-input input {
-  width: 100%;
-  height: 38px;
+.chart-line-details .chart-line-name-input {
+  flex: 1 1 140px;
+  max-width: 300px;
+}
+.chart-line-details .chart-line-name-input input {
+  min-width: 0;
+  width: min(100%, 205px);
+  height: 34px;
   font-size: 12px;
 }
 .chart-line-pick,
 .chart-line-actions > .btn {
-  height: 38px;
-  min-height: 38px;
+  height: 34px;
+  min-height: 34px;
 }
 .chart-line-actions {
   display: flex;
   align-items: stretch;
-  gap: 8px;
-  margin-left: auto;
+  gap: 6px;
 }
 .chart-line-actions .btn.small {
   min-width: 84px;
@@ -245,28 +250,64 @@
   text-overflow: ellipsis;
   overflow: hidden;
 }
-.chart-annotation-form label {
-  display: grid;
+.chart-annotation-form .chart-line-price-input,
+.chart-line-details .chart-line-name-input {
+  display: flex;
+  align-items: center;
   gap: 5px;
   color: var(--muted);
   font-size: 11px;
 }
-.chart-annotation-form input {
-  width: 140px;
-  min-height: 34px;
-}
-.chart-annotation-form select {
-  min-height: 34px;
-}
 .chart-annotation-help {
-  margin: 10px 0 0;
+  margin: 5px 0;
   line-height: 1.6;
+}
+.chart-annotation-pick-note {
+  margin: 5px 0 0;
+  color: var(--blue);
+  font-size: 12px;
+}
+.chart-annotation-secondary {
+  display: flex;
+  align-items: start;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 5px;
+}
+.chart-annotation-disclosure {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chart-annotation-disclosure[open] {
+  flex-basis: 100%;
+}
+.chart-annotation-disclosure > summary {
+  width: fit-content;
+  padding: 4px 1px;
+  cursor: pointer;
+  color: var(--text);
+}
+.chart-annotation-disclosure > summary > svg {
+  vertical-align: -2px;
+}
+.chart-annotation-disclosure > summary > span {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.chart-annotation-disclosure-body {
+  margin-top: 3px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
 }
 .chart-annotation-list {
   display: grid;
   gap: 6px;
   padding: 0;
-  margin: 10px 0 0;
+  margin: 4px 0 0;
   list-style: none;
   max-height: 225px;
   overflow: auto;
@@ -303,20 +344,12 @@
   padding: 0 4px;
   background: color-mix(in srgb, var(--blue) 14%, transparent);
 }
-.chart-auto-levels {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 16px;
-  background: var(--surface2);
-}
 .chart-auto-levels-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
-.chart-auto-levels-actions > strong,
 .chart-auto-levels-actions > label {
   display: flex;
   align-items: center;
@@ -324,12 +357,11 @@
   font-size: 12px;
 }
 .chart-auto-levels-actions > label {
-  margin-left: auto;
   color: var(--muted);
 }
 .chart-auto-levels-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 8px;
   margin: 12px 0;
 }
@@ -355,8 +387,8 @@
 .chart-auto-levels-list [data-type="resistance"] strong {
   color: #f17c80;
 }
-.chart-auto-levels > .btn {
-  margin: 10px 8px 0 0;
+.chart-auto-levels .chart-annotation-disclosure-body > .btn {
+  margin: 4px 8px 0 0;
 }
 .chart-line-origin {
   color: var(--muted);
@@ -369,35 +401,23 @@
   .chart-line-alert-rules {
     grid-template-columns: 1fr;
   }
-  .chart-line-types > label {
-    flex: 1;
-    flex-wrap: wrap;
-  }
   .chart-line-types {
     display: flex;
+    flex-basis: 100%;
+    width: fit-content;
   }
-  .chart-annotation-form .chart-line-name-input {
-    flex-basis: 150px;
-    max-width: none;
-  }
-  .chart-line-actions {
-    flex: 1 1 100%;
-    margin-left: 0;
-  }
-  .chart-line-actions > .btn {
+  .chart-line-types > label {
     flex: 1;
+    justify-content: center;
   }
-  .chart-annotation-heading {
-    flex-wrap: wrap;
+  .chart-line-pick,
+  .chart-line-actions > .btn {
+    min-height: 36px;
   }
   .chart-annotation-heading > div {
-    flex-basis: 100%;
+    column-gap: 5px;
   }
-  .chart-annotation-form label {
-    flex: 1;
-  }
-  .chart-annotation-form input {
-    width: 100%;
-    min-width: 105px;
+  .chart-annotation-form .chart-line-price-input input {
+    width: 88px;
   }
 }

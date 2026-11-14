@@ -22,6 +22,8 @@ import {
   withConditionComparison,
   eventPriceTargetText,
   eventPriceOffsetError,
+  horizontalZoneCondition,
+  horizontalZoneEvidenceText,
 } from "./historicalRules";
 import type { ComparisonObject } from "./historicalRules";
 import {
@@ -82,6 +84,8 @@ export function fieldLabel(field: string, provided?: string): string {
   if (field === "boll_signal") return "BOLL 收口与方向";
   if (field === "volume_expand") return "成交量大于前一周期（放量）";
   if (field === "volume_shrink") return "成交量小于前一周期（缩量）";
+  const zone = horizontalZoneCondition(field);
+  if (zone) return `${zone.label}（${zone.parameter}%）`;
   if (provided && provided !== field) return provided;
   const labels: Record<string, string> = {
     volume: "成交量",
@@ -203,6 +207,19 @@ export function summarizeChecks(
         return `近期热点题材 / 行业 · ${c.result === true ? "满足" : c.result === false ? "未满足" : "待核验"}${c.reason ? "；" + c.reason : ""}`;
       if (isHiddenConditionRule(c)) return HIDDEN_CONDITION_TEXT;
       if (c.type === "history_event") return historyCheckText(c);
+      if (horizontalZoneCondition(c.field)) {
+        const state =
+          c.result === true ? "满足" : c.result === false ? "未满足" : "待核验";
+        return [
+          historyRuleSummary(c),
+          state,
+          c.observed_date,
+          horizontalZoneEvidenceText(c),
+          conditionReasonText(c.reason),
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      }
       if (c.field === HIGHER_LOWS_FIELD) {
         const state =
           c.result === true ? "满足" : c.result === false ? "未满足" : "待核验";
@@ -530,6 +547,9 @@ export default function Conditions({
   );
   const visibleFields = groups.flatMap((group) => group.fields);
   const grouped = new Map(groups.map((group) => [group.label, group.fields]));
+  const horizontalZoneFields = [...new Set(conditions.map((c) => c.field))]
+    .map(horizontalZoneCondition)
+    .filter((zone) => zone != null);
   return (
     <div className="conditions">
       {conditions.map((c, i) => {
@@ -551,6 +571,7 @@ export default function Conditions({
         const isNewHigh = c.field === "close_breakout_high";
         const isBoll = c.field === "boll_signal";
         const isHigherLows = c.field === HIGHER_LOWS_FIELD;
+        const zone = horizontalZoneCondition(c.field);
         const field = fields.find((f) => f.field === c.field) || {
           type: "number",
           operators: [">=", ">", "<=", "<", "==", "!="],
@@ -837,16 +858,22 @@ export default function Conditions({
                 ) : (
                   <input
                     aria-label={
-                      isYearlyLimitCount
-                        ? `条件${i + 1}近一年涨停次数`
-                        : "条件数值"
+                      zone
+                        ? `${zone.parameter} (%)`
+                        : isYearlyLimitCount
+                          ? `条件${i + 1}近一年涨停次数`
+                          : "条件数值"
                     }
                     type="number"
                     step={field.step ?? "any"}
                     min={field.min}
                     max={field.max}
                     placeholder={
-                      isYearlyLimitCount ? "输入次数，例如 3" : undefined
+                      zone
+                        ? `${zone.parameter} (%)`
+                        : isYearlyLimitCount
+                          ? "输入次数，例如 3"
+                          : undefined
                     }
                     value={c.value ?? ""}
                     onChange={(e) =>
@@ -889,6 +916,11 @@ export default function Conditions({
           </div>
         );
       })}
+      {horizontalZoneFields.map((zone) => (
+        <small className="muted" key={zone.label}>
+          {zone.label} · {zone.hint}
+        </small>
+      ))}
       {conditions.some(
         (condition) =>
           condition.field === "volume" && condition.right_field === "volume",

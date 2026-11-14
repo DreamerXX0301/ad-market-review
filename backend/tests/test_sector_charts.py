@@ -199,6 +199,14 @@ def test_chart_reuses_shared_analytics_and_never_uses_member_quotes(local, perio
     assert chart['instrument']['instrument_id'] == CODE and chart['price_unit'] == '点'
     assert chart['price_basis_options'] == [{'value': 'none', 'label': '指数原始点位（不复权）', 'available': True, 'reason': None}]
     assert '未核验' in chart['volume_unit']
+    preview = chart['provisional_indicators']
+    if period == 'D':
+        assert preview is None
+    else:
+        assert chart['bars'][-1]['complete'] is False
+        assert preview['date'] == DAY and preview['warmup_bars'] >= 35
+        assert all(preview['values'][key] is not None for key in ('ma5', 'macd_dif', 'kdj_k'))
+        assert charts.read_sector_chart(market, CODE, DAY, period)['provisional_indicators'] == preview
     raw = result['record']['bars']
     if period == 'D': expected = enrich_bars(raw, market.calendar())
     elif period == 'W': expected = enrich_bars(aggregate_weekly(raw, market.calendar(), DAY))
@@ -274,6 +282,8 @@ def test_missing_volume_amount_propagate_unknown_instead_of_zero_or_json_nan(loc
     assert chart['available'] and chart['bars'][-1]['volume'] is None
     assert chart['bars'][-1]['amount'] is None
     assert chart['quality'] == 'partial'
+    if period != 'D':
+        assert chart['provisional_indicators']['values']['macd_dif'] is not None
     json.dumps(chart, allow_nan=False)
 
 

@@ -36,7 +36,7 @@ _PERSIST_SIZES = OrderedDict()
 
 def _summary_scope(plan, calendar, include_higher_lows=False, boll_configs_by_period=None, trend_fields=None):
     """All immutable input scopes, plus the local derived-algorithm contract."""
-    from app.analytics.strategy_trendlines import VERSION as trend_version
+    from app.analytics.strategy_trendlines import version_for as trend_version_for
     return {'contract': SUMMARY_CONTRACT, 'evaluator': EVALUATOR_VERSION,
         'indicators': INDICATOR_VERSION, 'normalization': charts.NORMALIZATION_VERSION,
         'source_root': str(charts._root().resolve()), 'snapshot_id': plan['snapshot_id'],
@@ -44,7 +44,8 @@ def _summary_scope(plan, calendar, include_higher_lows=False, boll_configs_by_pe
         'catalog_identity': plan['instrument'], 'request_signature': plan['request_signature'],
         'calendar_sha256': digest(calendar),
         **({'higher_lows_version':'higher-lows-v1'} if include_higher_lows else {}),
-        **({'trendline_contract':trend_version,'trendline_fields':{p:sorted(fields) for p,fields in trend_fields.items()}} if trend_fields else {}),
+        **({'trendline_contract':trend_version_for(set().union(*trend_fields.values())),
+            'trendline_fields':{p:sorted(fields) for p,fields in trend_fields.items()}} if trend_fields else {}),
         **({'boll_contract':_boll_scope(boll_configs_by_period)} if boll_configs_by_period else {})}
 
 
@@ -238,7 +239,8 @@ def _evaluator(value):
     from app.domain.conditions import names
     trees=[value['definition']]+value.get('policy',{}).get('alerts',[])+value.get('policy',{}).get('exits',[])
     from app.analytics import strategy_trendlines as trend
-    if names(value['definition']) & trend.FIELDS.keys():return trend.VERSION
+    trend_fields = names(value['definition']) & trend.FIELDS.keys()
+    if trend_fields:return trend.version_for(trend_fields)
     if any('boll_signal' in names(tree) for tree in trees):return 'sector-index-dwm-boll-signal-v3'
     return 'sector-index-dwm-higher-lows-v2' if any('higher_lows' in names(tree) for tree in trees) else EVALUATOR_VERSION
 
@@ -605,7 +607,7 @@ def list_runs(sid=None, limit=50):
     return {'items': data, 'total': len(data), 'target_type': 'sector'}
 
 
-def run_strategy(sid, payload=None, *, queued_job=None, response_decision=None):
+def run_strategy(sid, payload=None, *, queued_job=None, response_decision=None, transaction_guard=None):
     if response_decision not in (None, 'matched', 'unmatched', 'unknown'): fail('板块结果筛选无效')
     payload = payload or {}
     if not isinstance(payload, dict) or set(payload)-{'request_key', 'date', 'business_date'}: fail('选板只接受请求标识和当前业务日')
@@ -615,6 +617,7 @@ def run_strategy(sid, payload=None, *, queued_job=None, response_decision=None):
     market = get_market(); state = market.status()
     with connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
+        if transaction_guard: transaction_guard(connection)
         from .increment_access import require_business_unlocked
         require_business_unlocked(connection)
         old_job = connection.execute('SELECT * FROM job WHERE request_key=?', (request_key,)).fetchone()
@@ -682,6 +685,7 @@ def run_strategy(sid, payload=None, *, queued_job=None, response_decision=None):
         final_market_snapshot = get_market().status().get('snapshot_id')
         with connect() as connection:
             connection.execute('BEGIN IMMEDIATE'); check_task(connection)
+            if transaction_guard: transaction_guard(connection)
             if current(connection) != day or freeze_inputs(connection) != (deps, primary) or final_market_snapshot != state.get('snapshot_id'):
                 fail('主行情业务日或代际已变化，本次未保存混合输入结果，请重新运行', 409)
             insert(connection, 'sector_selection_run', {'run_id': rid, 'job_id': job_id, 'strategy_id': sid,

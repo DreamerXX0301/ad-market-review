@@ -92,6 +92,13 @@ const batchLabels: Record<string, string> = {
   failed: "未完成",
   skipped: "已跳过",
 };
+const boardObservations = {
+  sealed: { label: "涨停封板", tone: "danger" },
+  broken: { label: "炸板", tone: "warn" },
+  resealed: { label: "较上一档回封", tone: "danger" },
+  limit_down: { label: "跌停", tone: "good" },
+} as const;
+type BoardObservationType = keyof typeof boardObservations;
 
 export function monitorSettingsValue(value?: Row | null): Row | null {
   return value &&
@@ -512,7 +519,8 @@ function initialMonitorView() {
     typeof window === "undefined"
       ? null
       : new URLSearchParams(window.location?.search || "").get("monitor_view");
-  return value && ["events", "stocks", "heat", "settings"].includes(value)
+  return value &&
+    ["events", "stocks", "boards", "heat", "settings"].includes(value)
     ? value
     : "events";
 }
@@ -533,6 +541,15 @@ export default function IntradayMonitor({
     day ? `${PATH}/events?date=${day}&limit=200` : null,
   );
   const [view, setView] = useState(initialMonitorView);
+  const revision = useApi<{ date: string; revision: string }>(
+    active ? `${PATH}/revision` : null,
+  );
+  const boards = useApi<Row>(
+    active && day && view === "boards"
+      ? `${PATH}/board-observations?date=${day}`
+      : null,
+  );
+  const [boardObservation, setBoardObservation] = useState("");
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState("all");
   const [filters, setFilters] = useState<MonitorListFilters>(() => ({
@@ -557,15 +574,49 @@ export default function IntradayMonitor({
   }, [data?.settings, dirty]);
   const reloadOverview = overview.reload;
   const reloadEvents = events.reload;
+  const reloadBoards = boards.reload;
+  const reloadRevision = revision.reload;
+  const lastCheckedRevision = useRef<typeof revision.data>(null);
+  useEffect(() => {
+    const next = revision.data;
+    if (!active || !next || next === lastCheckedRevision.current) return;
+    if (overview.loading || !data?.revision) return;
+    lastCheckedRevision.current = next;
+    if (next.date !== day || next.revision !== data.revision) reloadOverview();
+  }, [
+    active,
+    data?.revision,
+    day,
+    overview.loading,
+    revision.data,
+    reloadOverview,
+  ]);
+  const pollsSinceFullRefresh = useRef(0);
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      reloadOverview();
+      reloadRevision();
+      pollsSinceFullRefresh.current += 1;
+      // Local list edits can arrive between batches without changing their receipt.
+      if (pollsSinceFullRefresh.current >= 4 && !overview.loading) {
+        pollsSinceFullRefresh.current = 0;
+        reloadOverview();
+      }
       reloadEvents();
+      if (view === "boards" && day) reloadBoards();
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [active, reloadOverview, reloadEvents]);
+  }, [
+    active,
+    day,
+    view,
+    overview.loading,
+    reloadOverview,
+    reloadEvents,
+    reloadBoards,
+    reloadRevision,
+  ]);
 
   const settings = monitorSettingsValue(data?.settings);
   const settingsChanged = !!(
@@ -592,6 +643,29 @@ export default function IntradayMonitor({
     chartAsOf,
   );
   const visibleStocks = filterMonitorRows(stocks, query, filters, chartAsOf);
+  const boardSnapshot = day && boards.data?.date === day ? boards.data : null;
+  const visibleBoardObservations: Row[] = [];
+  if (view === "boards" && Array.isArray(boardSnapshot?.items)) {
+    const stocksById = new Map(
+      visibleStocks.map((row) => [row.instrument_id, row]),
+    );
+    for (const row of boardSnapshot.items) {
+      const stock = stocksById.get(row?.instrument_id);
+      if (
+        !stock ||
+        !Object.hasOwn(boardObservations, row.type) ||
+        (boardObservation && row.type !== boardObservation)
+      )
+        continue;
+      visibleBoardObservations.push({
+        ...stock,
+        board_observation_type: row.type,
+        board_observed_at_ms: Date.parse(
+          row.observed_at || boardSnapshot.observed_at || "",
+        ),
+      });
+    }
+  }
   const filterIssue = monitorFilterIssue(filters);
   const topicSuggestions = [
     ...new Set(
@@ -627,6 +701,7 @@ export default function IntradayMonitor({
   const refresh = () => {
     overview.reload();
     events.reload();
+    if (view === "boards" && day) boards.reload();
   };
   const change = (key: string, value: boolean) => {
     if (!draft) return;
@@ -868,6 +943,7 @@ export default function IntradayMonitor({
               {[
                 ["events", "今日提醒"],
                 ["stocks", "监控股票"],
+                ["boards", "板况观察"],
                 ["heat", "池内热点"],
                 ["settings", "采集设置"],
               ].map(([key, title]) => (
@@ -977,6 +1053,24 @@ export default function IntradayMonitor({
                     </button>
                   </>
                 )}
+                {view === "boards" && (
+                  <select
+                    aria-label="筛选板况"
+                    value={boardObservation}
+                    onChange={(event) =>
+                      setBoardObservation(event.target.value)
+                    }
+                  >
+                    <option value="">全部板况</option>
+                    {Object.entries(boardObservations).map(
+                      ([type, observation]) => (
+                        <option key={type} value={type}>
+                          {observation.label}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                )}
               </div>
             )}
             {view !== "settings" && (
@@ -1082,6 +1176,7 @@ export default function IntradayMonitor({
                       setFilters({ ...emptyFilters });
                       setQuery("");
                       setPhase("all");
+                      setBoardObservation("");
                     }}
                   >
                     重置筛选
@@ -1215,8 +1310,8 @@ export default function IntradayMonitor({
               <>
                 <p className="intraday-monitor-caption">
                   当前匹配 {visibleStocks.length} 只 · 已加载 {stocks.length} /{" "}
-                  {num(data?.counts?.stocks, 0)}{" "}
-                  只；同一股票只采样一次，多个策略与价位共用报价。
+                  {num(data?.counts?.stocks, 0)} 只 ·
+                  盘中涨幅取本交易日最近一轮采样，可点表头排序。
                 </p>
                 <div className="intraday-monitor-compact-table intraday-monitor-stocks-table">
                   <Table
@@ -1226,6 +1321,28 @@ export default function IntradayMonitor({
                     onStockNavigate={chartAsOf ? openStock : undefined}
                     columns={[
                       { key: "name", title: "股票" },
+                      {
+                        key: "change_pct",
+                        title: "盘中涨幅",
+                        sortable: true,
+                        description:
+                          "按最近一轮核验采样的涨幅排序，缺报排在末尾",
+                        render: (value) => (
+                          <span className={tone(value)}>{percent(value)}</span>
+                        ),
+                      },
+                      {
+                        key: "latest_price",
+                        title: "最近采样价",
+                        render: (value) => num(value, 4),
+                      },
+                      {
+                        key: "last_observed_at_ms",
+                        title: "采样时间",
+                        description:
+                          "北京时间。缺报时显示采样尝试时间（如有），报价仍为空",
+                        render: (value) => <TableTime value={value} />,
+                      },
                       ...metadataColumns,
                       {
                         key: "origins",
@@ -1246,23 +1363,6 @@ export default function IntradayMonitor({
                       },
                       { key: "strategy_count", title: "跟踪策略数" },
                       { key: "level_count", title: "有效价位数" },
-                      {
-                        key: "latest_price",
-                        title: "最近采样价",
-                        render: (value) => num(value, 4),
-                      },
-                      {
-                        key: "change_pct",
-                        title: "盘中涨幅",
-                        render: (value) => (
-                          <span className={tone(value)}>{percent(value)}</span>
-                        ),
-                      },
-                      {
-                        key: "last_observed_at_ms",
-                        title: "采样时间",
-                        render: (value) => <TableTime value={value} />,
-                      },
                       factsColumn,
                       {
                         key: "state",
@@ -1313,6 +1413,62 @@ export default function IntradayMonitor({
                 onTopic={openHeatTopic}
                 onStock={openStock}
               />
+            )}
+            {view === "boards" && (
+              <>
+                {boards.error && (
+                  <ErrorBox message={boards.error} retry={boards.reload} />
+                )}
+                {boards.loading && !boardSnapshot ? (
+                  <Loading />
+                ) : (
+                  <>
+                    <p className="intraday-monitor-caption">
+                      {boardSnapshot?.observed_at
+                        ? `观察时间 ${monitorTime(Date.parse(boardSnapshot.observed_at))} · ${boardSnapshot.source_label || "盘中观察"} · `
+                        : ""}
+                      {boardSnapshot?.notice || "仅列出已有来源证据的板况。"}
+                    </p>
+                    <div className="intraday-monitor-compact-table">
+                      <Table
+                        rows={visibleBoardObservations}
+                        rowKey="instrument_id"
+                        pageSize={20}
+                        onStockNavigate={chartAsOf ? openStock : undefined}
+                        columns={[
+                          { key: "name", title: "股票" },
+                          {
+                            key: "board_observation_type",
+                            title: "已核验板况",
+                            render: (value) => {
+                              const observation =
+                                boardObservations[
+                                  value as BoardObservationType
+                                ];
+                              return (
+                                <Badge tone={observation.tone}>
+                                  {observation.label}
+                                </Badge>
+                              );
+                            },
+                          },
+                          {
+                            key: "board_observed_at_ms",
+                            title: "观察时间",
+                            render: (value) => <TableTime value={value} />,
+                          },
+                          ...metadataColumns,
+                        ]}
+                        emptyTitle={
+                          boardSnapshot?.observed_at
+                            ? "当前筛选暂无已核验板况"
+                            : "当天暂无可核验的板况快照"
+                        }
+                      />
+                    </div>
+                  </>
+                )}
+              </>
             )}
             {view === "settings" && (
               <div className="intraday-monitor-settings">

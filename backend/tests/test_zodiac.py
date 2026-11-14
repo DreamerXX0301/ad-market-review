@@ -360,6 +360,30 @@ def test_detail_rechecks_revision_after_retained_evidence_reads(annual, monkeypa
     assert refreshed['history'][-1]['action'] == 'edit'
 
 
+def test_retained_alerts_identify_source_and_respect_membership_date(annual):
+    market, client = annual
+    member = add(client).json()['items'][0]['item']
+    member_path = '/api/v1/zodiac-pool-members/' + member['member_id']
+    advance(market, 72)
+    ended = client.post(member_path + '/end', json=command(client, revision=member['revision'], end_reason='结束'))
+    assert ended.status_code == 200, ended.text
+    advance(market, 75)
+    with core.connect() as db:
+        db.execute("""INSERT INTO line_alert_event VALUES
+            ('manual','drawn-line',1,'600001.SH','support','support_reclaim',?,'triggered','fixture-job','{}',1)""", (market.days[70],))
+        for identifier, symbol, index in [('auto', '600001.SH', 72), ('future', '600001.SH', 73),
+                                           ('before-entry', '600001.SH', 69), ('other-stock', '000001.SZ', 71)]:
+            db.execute("""INSERT INTO automatic_price_alert_event VALUES
+                (?,?,1,?,'stop_breakdown',?,'invalidated','fixture-job','{}',1)""", (identifier, identifier, symbol, market.days[index]))
+    response = client.get(member_path + '/metrics')
+    assert response.status_code == 200, response.text
+    retained = [event for event in response.json()['retained_events'] if event.get('source_kind')]
+    assert [event['id'] for event in retained] == ['auto', 'manual']
+    assert [event['source_kind'] for event in retained] == ['automatic_price_volume', 'manual_line']
+    assert retained[0]['label'].startswith('自动提醒 · ')
+    assert retained[1]['label'] == '手动画线 · 回踩支撑后站回'
+
+
 def test_full_capacity_pagination_and_bounded_market_reads(annual, monkeypatch):
     market, client = annual
     template = market.data['600001.SH']

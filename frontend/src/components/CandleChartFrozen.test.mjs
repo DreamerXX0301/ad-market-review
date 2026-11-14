@@ -7,19 +7,20 @@ import { jsx, jsxs } from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 const encode = (source) =>
   "data:text/javascript;base64," + Buffer.from(source).toString("base64");
-async function helper(name) {
-  const text = await fs.readFile(new URL(name, import.meta.url), "utf8");
-  return import(
-    encode(
+async function helperUrl(name) {
+  let text = await fs.readFile(new URL(name, import.meta.url), "utf8");
+  if (name === "./chartBoll.ts")
+    text = text.replace('"./chartProvisionalIndicators"', JSON.stringify(await helperUrl("./chartProvisionalIndicators.ts")));
+  return encode(
       ts.transpileModule(text, {
         compilerOptions: {
           module: ts.ModuleKind.ES2022,
           target: ts.ScriptTarget.ES2022,
         },
       }).outputText,
-    )
   );
 }
+const helper = async (name) => import(await helperUrl(name));
 const preferences = await helper("./chartPreferences.ts");
 const { chartAutomaticTrendlines } = await helper(
   "./chartAutomaticTrendlines.ts",
@@ -28,6 +29,9 @@ const { chartPriceVolume, priceVolumeLineLabels } = await helper(
   "./chartPriceVolumePresentation.ts",
 );
 const { chartBoll, bollCandleValues } = await helper("./chartBoll.ts");
+const { chartProvisionalIndicators } = await helper("./chartProvisionalIndicators.ts");
+const { chartIndicatorCrosses } = await helper("./chartIndicatorCrosses.ts");
+const oscillatorHelpers = await helper("./chartDivergence.ts");
 const { annotationColors, lineLabel, savedLineSettings, levelOriginLabel } =
   await helper("./chartAnnotations.ts");
 const lineLabels = await helper("./chartLineLabelLayout.ts");
@@ -84,6 +88,7 @@ const scopeValues = {
   React,
   _jsx: jsx,
   _jsxs: jsxs,
+  _Fragment: React.Fragment,
   ...React,
   useState: (initial) => {
     const value = typeof initial === "function" ? initial() : initial;
@@ -97,6 +102,9 @@ const scopeValues = {
   ...preferences,
   ...(await helper("./noonChartPreview.ts")),
   chartAutomaticTrendlines,
+  chartIndicatorCrosses,
+  chartProvisionalIndicators,
+  ...oscillatorHelpers,
   chartPriceVolume,
   priceVolumeLineLabels,
   chartBoll: (data) => {
@@ -148,6 +156,7 @@ const scopeValues = {
     };
   },
   chartPalette: () => ({
+    movingAverages: ["#1", "#2", "#3", "#4", "#5", "#6"],
     text: "#fff",
     axisText: "#9aacc3",
     line: "#333",
@@ -162,6 +171,7 @@ const scopeValues = {
   }),
   maColors: ["#1", "#2", "#3", "#4", "#5", "#6"],
   defaultChartWindow: () => ({ start: 0, end: 100 }),
+  useSinglePageEntry: () => ({ height: 620, activeSection: 1 }),
   singlePageDefaultWindow: (_period, bars) => ({
     start: 0,
     end: 100,
@@ -355,6 +365,31 @@ assert.ok(
   ),
 );
 assert.ok(!option.series.some((row) => row.name === "支撑压力与事件参照"));
+const crossingChart = structuredClone(trendChart);
+crossingChart.bars.forEach((bar, i) => {
+  bar.kdj_k = [50, 55, 45][i];
+  bar.kdj_d = 50;
+  bar.macd_dif = [0, -1, 1][i];
+  bar.macd_dea = 0;
+});
+const crossingInput = crossingChart.bars;
+const crosses = (bars, period = "D", gaps = []) =>
+  chartIndicatorCrosses(bars, new Set(gaps), period, "kdj");
+assert.deepEqual(crosses(crossingInput).map((p) => p.rising), [true, false]);
+assert.deepEqual(crosses(crossingInput, "D", [crossingInput[1].date]).map((p) => p.rising), [false]);
+assert.deepEqual(crosses(crossingInput.map((bar, i) => ({ ...bar, kdj_k: i === 1 ? null : bar.kdj_k }))), []);
+assert.deepEqual(crosses(crossingInput.map((bar, i) => ({ ...bar, intraday_provisional: i === 1 }))), []);
+assert.deepEqual(crosses(crossingInput.map((bar, i) => ({ ...bar, complete: i < 2 })), "W").map((p) => p.rising), [true]);
+assert.deepEqual(crosses(crossingInput.map((bar, i) => ({ ...bar, complete: true, monthly_quote_coverage_complete: i !== 1 })), "M"), []);
+settings.stockPanels = ["kdj", "macd"];
+renderToStaticMarkup(jsx(Chart, { instrumentId: "000001.SZ", frozenChartsByPeriod: { D: crossingChart } }));
+const crossingSeries = option.series.filter((row) => row.id?.startsWith("indicator-cross:"));
+assert.deepEqual(crossingSeries.map((row) => row.id), ["indicator-cross:kdj", "indicator-cross:macd"]);
+assert.ok(crossingSeries.every((row) => row.symbol === "triangle" && row.symbolSize === 9 && !row.label.show));
+assert.deepEqual(crossingSeries.map((row) => row.data.map((point) => point.symbolRotate)), [[0, 180], [180, 0]]);
+paths.pop();
+annotations.pop();
+settings.stockPanels = [];
 const layered = structuredClone(trendChart);
 const overlay = layered.automatic_trendlines;
 overlay.near_items = [
@@ -387,6 +422,7 @@ overlay.events = [
     line: overlay.items[1],
   },
 ];
+assert.equal(chartAutomaticTrendlines(layered, "000001.SZ", "D").events.length, 1);
 const layeredHtml = renderToStaticMarkup(
   jsx(Chart, {
     instrumentId: "000001.SZ",
@@ -397,6 +433,8 @@ const layeredHtml = renderToStaticMarkup(
 assert.match(layeredHtml, /近端上升支撑线/);
 assert.match(layeredHtml, /水平支撑区/);
 assert.match(layeredHtml, /盘中越过压力，收盘回落/);
+assert.match(layeredHtml, /<div class="chart-view-bar">.*当前价位.*<details class="chart-trend-history"><summary[^>]*>穿线记录.*聚焦近期/);
+assert.doesNotMatch(layeredHtml, /<details[^>]*class="chart-trend-history"[^>]*open/);
 const zoneAreas = option.series.find((row) => row.name === "水平观察区")
   .markArea.data;
 assert.equal(zoneAreas.length, 1);
@@ -417,8 +455,9 @@ const historyMarker = option.series.find(
   (row) => row.name === "盘中越过压力，收盘回落",
 );
 assert.deepEqual(historyMarker.markPoint.data[0].coord, ["2026-10-22", 11]);
+assert.equal(historyMarker.id, "trend-event:0");
 assert.deepEqual(historyMarker.data, []);
-assert.match(layeredHtml, /aria-pressed="false">显示全部旧线/);
+assert.match(layeredHtml, /<\/details><button aria-pressed="false">全部旧线/);
 settings.stockShowAllTrendHistory = true;
 const allHistoryHtml = renderToStaticMarkup(
   jsx(Chart, {
@@ -427,7 +466,7 @@ const allHistoryHtml = renderToStaticMarkup(
     showDataNotes: false,
   }),
 );
-assert.match(allHistoryHtml, /aria-pressed="true">显示全部旧线/);
+assert.match(allHistoryHtml, /<\/details><button aria-pressed="true">全部旧线/);
 assert.deepEqual(
   option.series.find((row) => row.name === "盘中越过压力，收盘回落").data,
   [null, 12, 11],
@@ -507,7 +546,8 @@ const liveMarkup = renderToStaticMarkup(
     showDataNotes: false,
   }),
 );
-assert.match(liveMarkup, /图表价格：未复权/);
+assert.doesNotMatch(liveMarkup, /图表价格：未复权/);
+assert.match(liveMarkup, /未复权 · 1 根日K/);
 chartData.price_basis = "forward_event_affine";
 const forwardMarkup = renderToStaticMarkup(
   jsx(Chart, {

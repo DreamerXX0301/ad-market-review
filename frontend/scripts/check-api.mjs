@@ -45,6 +45,11 @@ function coverage(name, d) {
     );
 }
 function validLineAlert(event, asOf) {
+  const automatic = event?.source_kind === "automatic_price_volume";
+  const rules = automatic
+    ? ["support_reclaim", "close_breakout", "support_breakdown", "stop_breakdown"]
+    : ["support_reclaim", "support_breakdown", "pressure_close_breakout", "pressure_touch"];
+  const risk = ["support_breakdown", "stop_breakdown"].includes(event?.rule);
   return (
     event &&
     typeof event.event_id === "string" &&
@@ -53,12 +58,7 @@ function validLineAlert(event, asOf) {
     Number.isSafeInteger(event.annotation_revision) &&
     event.annotation_revision >= 1 &&
     ["support", "resistance"].includes(event.line_type) &&
-    [
-      "support_reclaim",
-      "support_breakdown",
-      "pressure_close_breakout",
-      "pressure_touch",
-    ].includes(event.rule) &&
+    rules.includes(event.rule) &&
     isDate(event.trade_date) &&
     event.trade_date <= asOf &&
     numeric(event.line_price) &&
@@ -83,8 +83,10 @@ function validLineAlert(event, asOf) {
       "missing_current_quote",
     ].includes(event.watchlist_add_state) &&
     numeric(event.created_at_ms) &&
-    (event.rule !== "support_breakdown" ||
-      (event.state === "invalidated" && event.added_to_watchlist === false))
+    event.state === (risk ? "invalidated" : "triggered") &&
+    (!(risk || automatic) || event.added_to_watchlist === false) &&
+    (!automatic || (event.price_basis === "none" &&
+      event.anchor_date === null && event.watchlist_add_state === "disabled"))
   );
 }
 try {
@@ -1134,8 +1136,12 @@ try {
           typeof item.time === "string" &&
           /^\d{2}:\d{2}$/.test(item.time),
       ) &&
+      typeof automatic.auction?.enabled === "boolean" &&
+      typeof automatic.auction?.legacy_configuration === "boolean" &&
       data.automatic_schedule ===
-        (automatic.noon.enabled || automatic.after_close.enabled),
+        (automatic.noon.enabled ||
+          automatic.after_close.enabled ||
+          (automatic.auction.enabled && !automatic.auction.legacy_configuration)),
   );
   const sources = await get("/sources");
   page("data sources", sources);

@@ -20,7 +20,10 @@ export type StockSelection = {
   id: string;
   asOf?: string;
   navigation?: StockNavigation;
+  initialChartTool?: StockChartTool;
 };
+
+export type StockChartTool = "annotations" | "automatic-alerts";
 
 type NavigationRow = {
   instrument_id?: unknown;
@@ -101,9 +104,14 @@ export function stockNavigationPosition(
 ) {
   if (
     !navigation ||
-    !["strategy", "tracking", "watchlist", "market", "members"].includes(
-      navigation.source,
-    )
+    ![
+      "strategy",
+      "tracking",
+      "watchlist",
+      "market",
+      "members",
+      "zodiac",
+    ].includes(navigation.source)
   )
     return null;
   const index = navigation.items.findIndex(

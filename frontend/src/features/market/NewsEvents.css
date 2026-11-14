@@ -74,6 +74,22 @@
   color: var(--muted);
   font-size: var(--workbench-type-label, 12px);
 }
+.news-events-weekend-header {
+  padding: 10px 16px;
+  border-block: 1px solid var(--border-soft);
+  background: var(--surface2);
+}
+.news-events-weekend-header h3 {
+  margin: 0 0 3px;
+  font-size: var(--workbench-type-body, 14px);
+}
+.news-events-weekend-header span,
+.news-events-weekend-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--workbench-type-label, 12px);
+  font-variant-numeric: tabular-nums;
+}
 .news-events-workspace {
   display: grid;
   align-items: start;

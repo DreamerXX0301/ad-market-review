@@ -13,8 +13,10 @@ import { refreshTaskActivity } from "./taskActivity";
 import {
   automaticAlertConfig,
   automaticAlertDraft,
+  automaticAlertDraftMatches,
   automaticAlertPayload,
   automaticPriceAlertModes,
+  quickAutomaticAlert,
 } from "./automaticPriceAlertPresentation";
 import type {
   AutomaticAlertDraft,
@@ -26,12 +28,14 @@ export default function AutomaticPriceAlertSettings({
   instrumentId,
   name,
   onViewAlerts,
+  initialOpen = false,
 }: {
   instrumentId: string;
   name?: string;
   onViewAlerts?: () => void;
+  initialOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   return (
     <>
       <button type="button" className="btn small" onClick={() => setOpen(true)}>
@@ -78,11 +82,19 @@ function AutomaticPriceAlertEditor({
   const [draft, setDraft] = useState<AutomaticAlertDraft | null>(null);
   const [draftRevision, setDraftRevision] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const live = useRef(true);
   const inFlight = useRef(false);
   const config = automaticAlertConfig(saved || result.data, instrumentId);
+  const quick =
+    !customOpen &&
+    config &&
+    draft &&
+    automaticAlertDraftMatches(draft, config.rule)
+      ? quickAutomaticAlert(config.rule)
+      : null;
   useEffect(() => {
     live.current = true;
     return () => {
@@ -109,23 +121,21 @@ function AutomaticPriceAlertEditor({
       window.removeEventListener(AUTOMATIC_PRICE_ALERTS_CHANGED, refresh);
     };
   }, [result.reload]);
-  const save = async (resetMonitoring = false) => {
-    if (!draft || !config || inFlight.current) return;
+  const save = async (
+    nextDraft: AutomaticAlertDraft | null,
+    resetMonitoring = false,
+  ) => {
+    if (!nextDraft || !config || result.loading || inFlight.current) return;
     if (draftRevision !== config.rule.revision) {
       setError("配置已在其他位置更新，请重新读取后再保存");
       return;
     }
     let payload;
     try {
-      payload = automaticAlertPayload(draft, config);
+      payload = automaticAlertPayload(nextDraft, config);
       if (
         resetMonitoring &&
-        (draft.enabled !== config.rule.enabled ||
-          draft.profile !== config.rule.profile ||
-          draft.max_risk_pct !== config.rule.max_risk_pct ||
-          draft.require_volume !== config.rule.require_volume ||
-          [...draft.modes].sort().join() !==
-            [...config.rule.modes].sort().join())
+        !automaticAlertDraftMatches(nextDraft, config.rule)
       ) {
         throw new Error("请先保存或重新读取表单改动，再重新设定短线基准");
       }
@@ -146,6 +156,8 @@ function AutomaticPriceAlertEditor({
       });
       const next = automaticAlertConfig(response, instrumentId);
       if (!next) throw new Error("配置回执与当前股票不匹配，请重新读取");
+      if (next.rule.enabled !== nextDraft.enabled)
+        throw new Error("提醒开关状态未更新，请重新读取后再试");
       notifyReadChanges([{ scope: "price_alerts" }]);
       window.dispatchEvent(
         new CustomEvent(AUTOMATIC_PRICE_ALERTS_CHANGED, {
@@ -160,7 +172,7 @@ function AutomaticPriceAlertEditor({
         const successMessage = !next.rule.enabled
           ? "已关闭自动量价提醒。"
           : next.task
-            ? "配置已保存，正在准备下一交易日参考位。"
+            ? "配置已保存，下一交易日参考位已安排准备。"
             : "自动量价提醒配置已保存。";
         if (resetMonitoring) {
           setMessage(successMessage);
@@ -178,187 +190,241 @@ function AutomaticPriceAlertEditor({
   };
   const evaluation = config?.latest_evaluation;
   const baseline = config?.latest_baseline;
+  const modeSummary = (settings: AutomaticAlertDraft) =>
+    settings.modes
+      .map((mode) => {
+        if (mode === "stop_breakdown" && settings.profile === "short_week_v1")
+          return "短线风险线跌破";
+        if (mode === "close_breakout" && settings.require_volume)
+          return "放量收盘突破";
+        return automaticPriceAlertModes[mode].title;
+      })
+      .join("、");
   return (
     <Modal title={`${name || instrumentId} · 自动量价提醒`} onClose={onClose}>
       <div className="automatic-price-alert-settings">
         <p className="automatic-price-alert-intro">
-          盘后数据发布后按收盘确认；使用前一市场交易日已确定价位，保存后新交易日起生效；与手动画线独立。
+          按日 K 收盘确认。启用后从下一交易日起检查。
         </p>
         {result.loading && !config ? (
           <Loading />
         ) : config && draft ? (
           <>
-            <label className="automatic-price-alert-enabled">
-              <input
-                type="checkbox"
-                checked={draft.enabled}
-                disabled={busy}
-                onChange={(event) =>
-                  setDraft({ ...draft, enabled: event.target.checked })
-                }
-              />
-              <span>
-                <strong>启用这只股票的自动提醒</strong>
-                <small>每日准备次日价位，结构未变时价位可能不变</small>
-              </span>
-            </label>
-            <div className="automatic-price-alert-profile">
-              <label>
-                <span>提醒参考模式</span>
-                <select
-                  aria-label="提醒参考模式"
-                  value={draft.profile}
-                  disabled={busy}
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      profile: event.target
-                        .value as AutomaticAlertDraft["profile"],
+            <div className="automatic-price-alert-status-row">
+              <div className="automatic-price-alert-status" role="status">
+                <strong>{config.rule.enabled ? "已启用" : "当前关闭"}</strong>
+                {(config.rule.enabled || config.rule.modes.length > 0) && (
+                  <span>
+                    {config.rule.profile === "short_week_v1"
+                      ? `一周短线 · 距离上限 ${num(config.rule.max_risk_pct)}%`
+                      : "历史结构"}
+                    {config.rule.modes.length > 0 &&
+                      ` · ${modeSummary(automaticAlertDraft(config.rule))}`}
+                  </span>
+                )}
+                {evaluation && (
+                  <span>
+                    {evaluation.state === "prepared"
+                      ? "已准备次日参考位"
+                      : evaluation.state === "completed"
+                        ? "最近核验完成"
+                        : "最近核验状态待确认"}{" "}
+                    · {evaluation.target_date} · {evaluation.reason}
+                  </span>
+                )}
+              </div>
+              {config.rule.enabled && (
+                <button
+                  type="button"
+                  className="btn small"
+                  title="关闭后保留已保存的条件"
+                  disabled={busy || result.loading}
+                  onClick={() =>
+                    void save({
+                      ...automaticAlertDraft(config.rule),
+                      enabled: false,
                     })
                   }
                 >
-                  <option value="short_week_v1">一周短线</option>
-                  <option value="structure">历史结构</option>
-                </select>
-              </label>
-              {draft.profile === "short_week_v1" ? (
-                <>
+                  关闭自动提醒
+                </button>
+              )}
+            </div>
+            {quick && (
+              <div className="automatic-price-alert-quick">
+                {!quick.usesSavedRule && (
+                  <div>
+                    <strong>一周短线 · {quick.draft.max_risk_pct}%</strong>
+                    <small>{modeSummary(quick.draft)}</small>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={busy || result.loading}
+                  onClick={() => void save(quick.draft)}
+                >
+                  {busy ? "保存中…" : quick.label}
+                </button>
+              </div>
+            )}
+            <details
+              className="automatic-price-alert-custom"
+              onToggle={(event) => setCustomOpen(event.currentTarget.open)}
+            >
+              <summary>自定义提醒</summary>
+              <div className="automatic-price-alert-fields">
+                <label className="automatic-price-alert-enabled">
+                  <input
+                    type="checkbox"
+                    checked={draft.enabled}
+                    disabled={busy}
+                    onChange={(event) =>
+                      setDraft({ ...draft, enabled: event.target.checked })
+                    }
+                  />
+                  <span>
+                    <strong>启用这只股票的自动提醒</strong>
+                  </span>
+                </label>
+                <div className="automatic-price-alert-profile">
                   <label>
-                    <span>风险距离上限（%）</span>
-                    <input
-                      type="number"
-                      aria-label="风险距离上限百分比"
-                      min={0.5}
-                      max={20}
-                      step={0.01}
-                      value={
-                        Number.isFinite(draft.max_risk_pct)
-                          ? draft.max_risk_pct
-                          : ""
-                      }
+                    <span>提醒参考模式</span>
+                    <select
+                      aria-label="提醒参考模式"
+                      value={draft.profile}
                       disabled={busy}
                       onChange={(event) =>
                         setDraft({
                           ...draft,
-                          max_risk_pct:
-                            event.target.value === ""
-                              ? NaN
-                              : Number(event.target.value),
+                          profile: event.target
+                            .value as AutomaticAlertDraft["profile"],
                         })
                       }
-                    />
+                    >
+                      <option value="short_week_v1">一周短线</option>
+                      <option value="structure">历史结构</option>
+                    </select>
                   </label>
-                  <div
-                    className="automatic-price-alert-risk-presets"
-                    role="group"
-                    aria-label="风险距离快捷选择"
-                  >
-                    {[3, 5, 8].map((value) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className="btn small"
-                        disabled={busy}
-                        aria-pressed={draft.max_risk_pct === value}
-                        onClick={() =>
-                          setDraft({ ...draft, max_risk_pct: value })
-                        }
+                  {draft.profile === "short_week_v1" ? (
+                    <>
+                      <label>
+                        <span>风险距离上限（%）</span>
+                        <input
+                          type="number"
+                          aria-label="风险距离上限百分比"
+                          min={0.5}
+                          max={20}
+                          step={0.01}
+                          value={
+                            Number.isFinite(draft.max_risk_pct)
+                              ? draft.max_risk_pct
+                              : ""
+                          }
+                          disabled={busy}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              max_risk_pct:
+                                event.target.value === ""
+                                  ? NaN
+                                  : Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <div
+                        className="automatic-price-alert-risk-presets"
+                        role="group"
+                        aria-label="风险距离快捷选择"
                       >
-                        {value}%
-                      </button>
-                    ))}
-                  </div>
-                  <small>
-                    从启用或重新设定时的收盘准备基准，后续风险线只抬高不下调；失守后保持，需重新设定才重置。这是收盘监控参考，不是个人成本止损，也不保证成交损失。
-                  </small>
-                </>
-              ) : (
-                <small>
-                  沿用历史结构和ATR缓冲，参考位可能较远；已有历史规则不会自动转换成短线模式。
-                </small>
-              )}
-            </div>
-            <div
-              className="automatic-price-alert-modes"
-              role="group"
-              aria-label="自动量价提醒条件"
-            >
-              {(
-                Object.keys(automaticPriceAlertModes) as AutomaticAlertMode[]
-              ).map((mode) => (
-                <label key={mode} data-risk={mode.endsWith("breakdown")}>
+                        {[3, 5, 8].map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            className="btn small"
+                            disabled={busy}
+                            aria-pressed={draft.max_risk_pct === value}
+                            onClick={() =>
+                              setDraft({ ...draft, max_risk_pct: value })
+                            }
+                          >
+                            {value}%
+                          </button>
+                        ))}
+                      </div>
+                      <small>
+                        从启用或重新设定时的收盘准备基准，后续风险线只抬高不下调；失守后保持，需重新设定才重置。这是收盘监控参考，不是个人成本止损，也不保证成交损失。
+                      </small>
+                    </>
+                  ) : (
+                    <small>
+                      沿用历史结构和ATR缓冲，参考位可能较远；已有历史规则不会自动转换成短线模式。
+                    </small>
+                  )}
+                </div>
+                <div
+                  className="automatic-price-alert-modes"
+                  role="group"
+                  aria-label="自动量价提醒条件"
+                >
+                  {(
+                    Object.keys(
+                      automaticPriceAlertModes,
+                    ) as AutomaticAlertMode[]
+                  ).map((mode) => (
+                    <label key={mode} data-risk={mode.endsWith("breakdown")}>
+                      <input
+                        type="checkbox"
+                        checked={draft.modes.includes(mode)}
+                        disabled={busy}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            modes: event.target.checked
+                              ? [...draft.modes, mode]
+                              : draft.modes.filter((item) => item !== mode),
+                          })
+                        }
+                      />
+                      <span>
+                        <strong>
+                          {mode === "stop_breakdown"
+                            ? draft.profile === "short_week_v1"
+                              ? "短线风险线跌破"
+                              : "结构失效参考跌破"
+                            : automaticPriceAlertModes[mode].title}
+                        </strong>
+                        <small>
+                          {mode === "stop_breakdown"
+                            ? "收盘跌破已保存的事前风险参考位"
+                            : automaticPriceAlertModes[mode].hint}
+                        </small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <label className="automatic-price-alert-volume">
                   <input
                     type="checkbox"
-                    checked={draft.modes.includes(mode)}
-                    disabled={busy}
+                    checked={draft.require_volume}
+                    disabled={busy || !draft.modes.includes("close_breakout")}
                     onChange={(event) =>
                       setDraft({
                         ...draft,
-                        modes: event.target.checked
-                          ? [...draft.modes, mode]
-                          : draft.modes.filter((item) => item !== mode),
+                        require_volume: event.target.checked,
                       })
                     }
                   />
                   <span>
-                    <strong>
-                      {mode === "stop_breakdown"
-                        ? draft.profile === "short_week_v1"
-                          ? "短线风险线跌破"
-                          : "结构失效参考跌破"
-                        : automaticPriceAlertModes[mode].title}
-                    </strong>
+                    突破需放量确认
                     <small>
-                      {mode === "stop_breakdown"
-                        ? "收盘跌破已保存的事前风险参考位"
-                        : automaticPriceAlertModes[mode].hint}
+                      仅用于收盘突破，成交量至少为此前20日均量的1.5倍；不影响失守和止损提醒
                     </small>
                   </span>
                 </label>
-              ))}
-            </div>
-            <label className="automatic-price-alert-volume">
-              <input
-                type="checkbox"
-                checked={draft.require_volume}
-                disabled={busy || !draft.modes.includes("close_breakout")}
-                onChange={(event) =>
-                  setDraft({ ...draft, require_volume: event.target.checked })
-                }
-              />
-              <span>
-                突破需放量确认
-                <small>
-                  仅用于收盘突破，成交量至少为此前20日均量的1.5倍；不影响失守和止损提醒
-                </small>
-              </span>
-            </label>
-            <div className="automatic-price-alert-status" role="status">
-              <strong>
-                {config.rule.enabled ? "已启用" : "当前关闭"} · 日K收盘确认
-              </strong>
-              <span>
-                已保存模式：
-                {config.rule.profile === "short_week_v1"
-                  ? `一周短线 · 距离上限 ${num(config.rule.max_risk_pct)}%`
-                  : "历史结构"}
-              </span>
-              <span>
-                {config.rule.effective_after_date
-                  ? `保存业务日 ${config.rule.effective_after_date}，后续新交易日起生效`
-                  : "尚未启用，不会自动创建提醒"}
-              </span>
-              {evaluation && (
-                <span>
-                  {evaluation.state === "prepared"
-                    ? "已准备次日参考位"
-                    : evaluation.state === "completed"
-                      ? "最近核验完成"
-                      : "最近核验状态待确认"}{" "}
-                  · {evaluation.target_date} · {evaluation.reason}
-                </span>
-              )}
-            </div>
+              </div>
+            </details>
             {baseline && (
               <details className="automatic-price-alert-basis">
                 <summary>已保存的下一交易日参考位 · {baseline.as_of}</summary>
@@ -405,7 +471,7 @@ function AutomaticPriceAlertEditor({
                           type="button"
                           className="btn small"
                           disabled={busy}
-                          onClick={() => void save(true)}
+                          onClick={() => void save(draft, true)}
                         >
                           重新设定短线基准
                         </button>
@@ -443,8 +509,9 @@ function AutomaticPriceAlertEditor({
           <button
             type="button"
             className="btn primary"
-            disabled={busy || !config || !draft || result.loading}
-            onClick={() => void save()}
+            hidden={!!quick}
+            disabled={!!quick || busy || !config || !draft || result.loading}
+            onClick={() => void save(draft)}
           >
             {busy ? "保存中…" : "保存设置"}
           </button>

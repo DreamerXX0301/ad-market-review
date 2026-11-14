@@ -33,11 +33,14 @@ export function activityPresentation(task: Task) {
     typeof raw === "number" && Number.isFinite(raw) && raw >= 0 && raw <= 100;
   const progress = completed.has(status) ? 100 : measured ? raw : null;
   const stage = task.stage || task.phase;
+  const waitingForWorker =
+    status === "queued" && task.waiting_for_worker === true;
   const count = task.actual_completed_batches,
     total = task.actual_total_batches;
   return {
     active: activeTaskStatuses.has(status),
-    statusLabel: labels[status] || "状态待确认",
+    waitingForWorker,
+    statusLabel: waitingForWorker ? "等待恢复" : labels[status] || "状态待确认",
     progress,
     progressLabel:
       progress === null ? "进度待回报" : `${Number(progress.toFixed(1))}%`,
@@ -57,7 +60,10 @@ export function activityPresentation(task: Task) {
     tone:
       status === "failed"
         ? "danger"
-        : status === "partial" || status === "paused" || status === "cancelled"
+        : waitingForWorker ||
+            status === "partial" ||
+            status === "paused" ||
+            status === "cancelled"
           ? "warn"
           : completed.has(status)
             ? "good"

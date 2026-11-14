@@ -46,6 +46,7 @@
 -- 043_automatic_price_alerts.sql sha256=f44663961a5ec827339789b42c0b12154c9c00b9f010c2faba11706044837e9d
 -- 044_short_week_price_alerts.sql sha256=4c525ea85519eaf93a037d25c7d7e6757cd62f7057f7657b9c1505a4e3556127
 -- 045_intraday_monitor.sql sha256=9d259d28ec6100d831d71949673b722354a31014611c7f852c50585cb37cb6fe
+-- 046_news_closed_market_window.sql sha256=7052051bfa1c8c724c5c28846b6c951309736894afc922244730dbb8a18bab8f
 PRAGMA foreign_keys=ON;
 PRAGMA recursive_triggers=ON;
 BEGIN IMMEDIATE;
@@ -599,7 +600,11 @@ CREATE TABLE market_news_snapshot (
     reason TEXT,
     payload_json TEXT NOT NULL CHECK(json_valid(payload_json) AND json_type(payload_json)='array'
         AND length(CAST(payload_json AS BLOB))<=2097152),
-    content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'), window_group TEXT
+    CHECK(window_group IN ('weekend','holiday')), group_cutoff_at TEXT
+    CHECK((window_group IS NULL AND group_cutoff_at IS NULL)
+        OR (window_group IS NOT NULL AND group_cutoff_at IS NOT NULL AND window_start_at IS NOT NULL
+            AND window_start_at<group_cutoff_at AND group_cutoff_at<=cutoff_at)),
     PRIMARY KEY (trade_date, stage)
 ) STRICT;
 

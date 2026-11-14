@@ -170,6 +170,64 @@ def test_reuse_real_cutoffs_and_wait_for_exact_increment(monkeypatch, clock):
     assert news_events.get_snapshot_meta(DAY, 'after_close')['status'] == 'complete'
 
 
+@pytest.mark.parametrize('first_slot', ['auction', 'noon'])
+def test_monday_collects_from_actual_friday_increment_even_with_friday_news(monkeypatch, clock, first_slot):
+    monkeypatch.setenv('SHIXU_NEWS_CLS_LOCAL_AUTHORIZED', '1')
+    confirm_calendar()
+    friday = '2026-11-06'
+    finished = datetime.fromisoformat(friday + 'T17:01:09.975000+08:00')
+    milliseconds = int(finished.timestamp() * 1000)
+    with monkeypatch.context() as stamps:
+        stamps.setattr('app.infrastructure.publication.now_ms', lambda: milliseconds - 350)
+        stamps.setattr(task_service, 'now_ms', lambda: milliseconds)
+        publish_price('increment', friday)
+    news_events.publish_snapshot(friday, 'after_close', cutoff_at=friday + 'T17:18:37+08:00',
+                                 captured_at=friday + 'T17:18:42+08:00', status='complete', items=[])
+    calls = []
+
+    def collect(*args):
+        calls.append(args)
+        return {'status': 'complete', 'items': [], 'reason': None}
+
+    worker = scheduler.NewsScheduler(clock=lambda: clock[0], collector=collect)
+    clock[0] = at('09:00:05' if first_slot == 'auction' else '12:30:05')
+    worker.tick()
+    assert calls == [('flash', finished.isoformat(), clock[0].isoformat())]
+    receipt = news_events.get_snapshot_meta(DAY, first_slot)
+    assert receipt['window_group'] == 'weekend'
+    assert receipt['group_cutoff_at'] == at('09:00:05' if first_slot == 'auction' else '09:02:00').isoformat()
+    assert receipt['window_start_at'] == finished.isoformat()
+    assert receipt['status'] == 'complete'
+    if first_slot == 'auction':
+        clock[0] = at('12:30:05')
+        worker.next_check = 0
+        worker.tick()
+        assert calls[-1] == ('flash', at('09:00:05').isoformat(), clock[0].isoformat())
+        assert news_events.get_snapshot_meta(DAY, 'noon')['window_group'] is None
+
+
+def test_holiday_requires_verified_calendar_and_uses_real_receipt_fallback(monkeypatch, clock):
+    monkeypatch.setenv('SHIXU_NEWS_CLS_LOCAL_AUTHORIZED', '1')
+    previous = '2026-11-05'
+    core.set_setting(scheduler.TRADE_CALENDAR_KEYS[0], {
+        'state': 'ready', 'source_id': 'fuyao', 'source_sha256': 'a' * 64,
+        'days': [previous, DAY, '2026-11-10'],
+    })
+    cutoff = previous + 'T17:30:00+08:00'
+    news_events.publish_snapshot(previous, 'after_close', cutoff_at=cutoff,
+                                 captured_at=cutoff, status='complete', items=[])
+    worker = scheduler.NewsScheduler(clock=lambda: clock[0], collector=lambda *args: {
+        'status': 'complete', 'items': [], 'reason': None})
+    worker.tick()
+    receipt = news_events.get_snapshot_meta(DAY, 'auction')
+    assert receipt['window_group'] == 'holiday'
+    assert (receipt['window_start_at'], receipt['status']) == (cutoff, 'partial')
+    assert '盘后增量完成时间待核验' in receipt['reason']
+    with core.connect() as connection:
+        assert scheduler.closed_market_window(connection, '2026-11-07') is None
+        assert scheduler.closed_market_window(connection, '2026-11-10') is None
+
+
 def test_calendar_can_run_without_flash_or_verified_trading_day_and_retries_once(monkeypatch, clock):
     monkeypatch.setenv('SHIXU_EVENT_CALENDAR_ENABLED', '1')
     calls = []

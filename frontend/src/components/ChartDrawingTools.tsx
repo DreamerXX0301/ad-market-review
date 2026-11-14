@@ -29,6 +29,7 @@ export function useChartAnnotations(
   instrumentId: string,
   data: Row | null,
   enabled: boolean,
+  initiallyOpen = false,
 ) {
   const path = enabled
     ? `/instruments/${encodeURIComponent(instrumentId)}/annotations`
@@ -43,7 +44,7 @@ export function useChartAnnotations(
   const membership = useWatchlistMembership(enabled && !isIndex);
   const defaults = (type: ChartLineType = "support") =>
     isIndex ? quietLineSettings(type) : newLineSettings(type);
-  const [open, setOpen] = useState(false),
+  const [open, setOpen] = useState(initiallyOpen),
     [drawing, setDrawing] = useState(false),
     [show, setShow] = useState(true),
     [price, setPrice] = useState(""),
@@ -314,6 +315,7 @@ export function ChartAnnotationPanel({
   onDisplayAllChange?: (visible: boolean) => void;
 }) {
   const typeGroup = useId();
+  const priceInput = useRef<HTMLInputElement>(null);
   if (!state.enabled || !state.open) return null;
   const activeScope = state.editing || state.scope;
   const available = state.views.filter((view) => view.price != null);
@@ -337,7 +339,7 @@ export function ChartAnnotationPanel({
       <div className="chart-annotation-heading">
         <div>
           <strong>{state.isIndex ? "指数划线与支撑压力" : "划线与提醒"}</strong>
-          <span>
+          <span className="chart-annotation-price-basis">
             {activeScope?.price_basis === "none"
               ? "未复权 · 日／周／月共享"
               : `前复权 · 锚定 ${activeScope?.anchor_date || "待核验"}`}
@@ -354,9 +356,10 @@ export function ChartAnnotationPanel({
               (onDisplayAllChange || state.setShow)(e.target.checked)
             }
           />
-          显示本图划线
+          显示划线
         </label>
         <button
+          type="button"
           className="icon-btn"
           aria-label="收起水平线工具"
           onClick={() => {
@@ -367,125 +370,6 @@ export function ChartAnnotationPanel({
           <X size={15} />
         </button>
       </div>
-      <div className="chart-auto-levels">
-        <div className="chart-auto-levels-actions">
-          <strong>
-            <Sparkles size={14} /> 自动支撑压力
-          </strong>
-          <label>
-            回看
-            <select
-              aria-label="支撑压力回看范围"
-              value={state.lookback}
-              disabled={state.busy}
-              onChange={(event) => {
-                state.setLookback(Number(event.target.value));
-                state.setPreview(null);
-                state.setSelectedCandidates([]);
-              }}
-            >
-              {[60, 120, 240].map((value) => (
-                <option key={value} value={value}>
-                  {value}根当前周期K线
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className="btn small"
-            disabled={state.busy || !state.scope || state.result.loading}
-            onClick={() => void state.calculateLevels()}
-          >
-            {state.busy
-              ? "处理中…"
-              : state.preview
-                ? "重新计算候选"
-                : "计算候选并预览"}
-          </button>
-        </div>
-        <p className="chart-annotation-help">
-          按当前图表周期、观察日和价格口径，从本地行情寻找已确认历史分型。先预览勾选，再保存；重算不会改动已保存的线。
-        </p>
-        {state.preview && (
-          <>
-            <p className="chart-annotation-help">
-              观察 {state.preview.parameters.as_of} ·{" "}
-              {
-                (
-                  { D: "日K", W: "完整周K", M: "完整月K" } as Record<
-                    string,
-                    string
-                  >
-                )[state.preview.parameters.period]
-              }{" "}
-              ·
-              {state.preview.parameters.price_basis === "none"
-                ? "未复权"
-                : "本地前复权"}{" "}
-              · 完整报价 {state.preview.complete_bars}根
-              {state.preview.reference_price != null && (
-                <>
-                  {" "}
-                  · 参考收盘 {num(state.preview.reference_price, 4)}（
-                  {state.preview.reference_date}）
-                </>
-              )}
-            </p>
-            <div className="chart-auto-levels-list">
-              {(state.preview.items || []).map((item: Row) => (
-                <label key={item.candidate_id} data-type={item.line_type}>
-                  <input
-                    type="checkbox"
-                    disabled={state.busy || item.saved}
-                    checked={
-                      item.saved ||
-                      state.selectedCandidates.includes(item.candidate_id)
-                    }
-                    onChange={(event) =>
-                      state.setSelectedCandidates((old) =>
-                        event.target.checked
-                          ? [...old, item.candidate_id]
-                          : old.filter((id) => id !== item.candidate_id),
-                      )
-                    }
-                  />
-                  <span>
-                    {item.line_type === "support" ? "支撑" : "压力"}{" "}
-                    <strong>{num(item.price, 4)}</strong>
-                  </span>
-                  <small>
-                    {item.touches}处分型 · 最近 {item.last_pivot_date} ·{" "}
-                    {item.confirmed_on}确认{item.saved ? " · 已保存" : ""}
-                  </small>
-                </label>
-              ))}
-            </div>
-            {state.preview.reason && (
-              <p className="chart-annotation-help">{state.preview.reason}</p>
-            )}
-            <p className="chart-annotation-help">{state.preview.notice}</p>
-            {!!state.preview.items?.length && (
-              <button
-                className="btn small primary"
-                disabled={state.busy || !state.selectedCandidates.length}
-                onClick={state.saveLevels}
-              >
-                保存所选支撑压力线（{state.selectedCandidates.length}）
-              </button>
-            )}
-            <button
-              className="btn small"
-              disabled={state.busy}
-              onClick={() => {
-                state.setPreview(null);
-                state.setSelectedCandidates([]);
-              }}
-            >
-              收起候选
-            </button>
-          </>
-        )}
-      </div>
       {state.editing && (
         <p className="chart-annotation-help">
           正在修改原保存线价（
@@ -495,36 +379,43 @@ export function ChartAnnotationPanel({
           ）；图上换算价仅用于显示，保存不更换原锚。
         </p>
       )}
-      <fieldset className="chart-line-types" disabled={state.busy}>
-        <legend>线的用途</legend>
-        {(["support", "resistance", "reference"] as ChartLineType[]).map(
-          (type) => (
-            <label
-              key={type}
-              className={state.settings.line_type === type ? "selected" : ""}
-              data-type={type}
-            >
-              <input
-                type="radio"
-                name={typeGroup}
-                value={type}
-                checked={state.settings.line_type === type}
-                onChange={() => {
-                  state.setSettings(state.defaults(type));
-                  state.setColor(defaultLineColor(type));
-                }}
-              />
-              <span>{lineTypeLabels[type]}</span>
-            </label>
-          ),
-        )}
-      </fieldset>
-      <div className="chart-annotation-form">
+      <form
+        className="chart-annotation-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!state.busy && state.scope && !state.result.loading) state.save();
+        }}
+      >
+        <fieldset className="chart-line-types" disabled={state.busy}>
+          <legend>线的用途</legend>
+          {(["support", "resistance", "reference"] as ChartLineType[]).map(
+            (type) => (
+              <label
+                key={type}
+                className={state.settings.line_type === type ? "selected" : ""}
+                data-type={type}
+              >
+                <input
+                  type="radio"
+                  name={typeGroup}
+                  value={type}
+                  checked={state.settings.line_type === type}
+                  onChange={() => {
+                    state.setSettings(state.defaults(type));
+                    state.setColor(defaultLineColor(type));
+                  }}
+                />
+                <span>{lineTypeLabels[type]}</span>
+              </label>
+            ),
+          )}
+        </fieldset>
         <label className="chart-line-price-input">
           线价
           <input
             aria-label="水平线价格"
             type="number"
+            ref={priceInput}
             min="0.0001"
             step="any"
             value={state.price}
@@ -534,6 +425,8 @@ export function ChartAnnotationPanel({
           />
         </label>
         <button
+          type="button"
+          aria-pressed={state.drawing}
           className={`btn small chart-line-pick${state.drawing ? " primary" : ""}`}
           disabled={state.busy || !state.scope}
           onClick={() => {
@@ -548,47 +441,17 @@ export function ChartAnnotationPanel({
           <Crosshair size={14} />
           {state.drawing ? "点击主图选价" : "点图选价"}
         </button>
-        <label className="chart-line-name-input">
-          备注（选填）
-          <input
-            aria-label="水平线名称"
-            maxLength={40}
-            value={state.label}
-            onChange={(e) => state.setLabel(e.target.value)}
-            placeholder="给这条线起个名字"
-            disabled={state.busy}
-          />
-        </label>
-        <div className="chart-line-colors" role="group" aria-label="水平线颜色">
-          {selectableAnnotationColors.map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={state.color === value ? "selected" : ""}
-              style={
-                {
-                  "--line-color": annotationColors[value],
-                } as import("react").CSSProperties
-              }
-              aria-label={`选择${({ blue: "蓝", amber: "金", red: "红", green: "绿", violet: "紫" } as Record<string, string>)[value]}色线`}
-              aria-pressed={state.color === value}
-              disabled={state.busy}
-              onClick={() => state.setColor(value)}
-            >
-              <span />
-            </button>
-          ))}
-        </div>
         <div className="chart-line-actions">
           <button
+            type="submit"
             className="btn small primary chart-line-save"
-            onClick={state.save}
             disabled={state.busy || !state.scope || state.result.loading}
           >
             {state.busy ? "保存中…" : state.editing ? "保存修改" : "保存划线"}
           </button>
           {state.editing && (
             <button
+              type="button"
               className="btn small"
               disabled={state.busy}
               onClick={() => {
@@ -603,102 +466,11 @@ export function ChartAnnotationPanel({
             </button>
           )}
         </div>
-      </div>
-      {!state.isIndex && state.settings.line_type !== "reference" && (
-        <div className="chart-line-alert-settings">
-          <div className="chart-line-alert-rules">
-            {lineTypeModes[state.settings.line_type].map((mode) => {
-              const rule = lineAlertRules[mode as keyof typeof lineAlertRules];
-              return (
-                <label key={mode} title={rule.hint}>
-                  <input
-                    type="checkbox"
-                    checked={state.settings.alert_modes.includes(mode)}
-                    disabled={state.busy}
-                    onChange={(event) =>
-                      state.setSettings((old) => ({
-                        ...old,
-                        alert_modes: event.target.checked
-                          ? [...old.alert_modes, mode]
-                          : old.alert_modes.filter((item) => item !== mode),
-                      }))
-                    }
-                  />
-                  <span>
-                    <strong>
-                      {mode === "support_breakdown"
-                        ? "支撑失守提醒（风险）"
-                        : rule.title}
-                    </strong>
-                    <small>
-                      {
-                        (
-                          {
-                            support_reclaim: "回踩后收盘不低于支撑",
-                            support_breakdown: "收盘跌破，不自动入自选",
-                            pressure_close_breakout: "从未站上到收盘严格站上",
-                            pressure_touch: "日内最低至最高价包含线价",
-                          } as Record<string, string>
-                        )[mode]
-                      }
-                    </small>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-          <label className="chart-line-auto-watchlist">
-            <input
-              type="checkbox"
-              checked={state.settings.auto_watchlist}
-              disabled={state.busy || !state.settings.alert_modes.length}
-              onChange={(event) =>
-                state.setSettings((old) => ({
-                  ...old,
-                  auto_watchlist: event.target.checked,
-                }))
-              }
-            />
-            触发后自动加入自选
-            <small>
-              {state.isWatchlisted
-                ? "已在自选，保留原加入日与基准"
-                : "保存后核验当前行情日，命中才加入；失守不加入"}
-            </small>
-          </label>
-          {!state.settings.alert_modes.length && (
-            <small className="muted">
-              未勾选提醒条件，这条线仅显示在图上。
-            </small>
-          )}
-        </div>
-      )}
-      {state.isIndex && (
-        <p className="chart-annotation-help">
-          指数线仅保存与展示点位，不创建个股提醒或自动加入自选。
+      </form>
+      {state.drawing && (
+        <p className="chart-annotation-pick-note" role="status">
+          点击主图选价，或按 Esc 取消。
         </p>
-      )}
-      {state.drawing ? (
-        <p className="chart-annotation-help">
-          点击蜡烛主图选价，再保存；Esc 退出定位。
-        </p>
-      ) : (
-        <details className="chart-annotation-explainer">
-          <summary>
-            {state.isIndex ? "划线口径与使用说明" : "盘后核验 · 口径与使用说明"}
-          </summary>
-          <p>
-            {state.isIndex ? (
-              "指数保存后跨日／周／月共享，仅按原始点位显示，不执行个股提醒。"
-            ) : (
-              <>
-                保存后核验当前已发布完整日K，之后每次手动行情更新继续检查。提醒记录保存在“我的自选池
-                ·
-                划线提醒”。移出自选后提醒仍保留；取消全部提醒条件可停用。同为前复权时，旧锚线按已核验公司行动换算到当前图；原线价、原锚及提醒证据保留。不同价格口径或缺少区间依据时不显示，并在列表说明原因。
-              </>
-            )}
-          </p>
-        </details>
       )}
       {(state.error || state.result.error) && (
         <p className="error-text" role="alert">
@@ -710,127 +482,418 @@ export function ChartAnnotationPanel({
           )}
         </p>
       )}
-      {state.lines.length > 0 && (
-        <ul className="chart-annotation-list">
-          {state.views.map((view) => {
-            const line = view.line;
-            return (
-              <li key={line.annotation_id}>
-                <i style={{ background: annotationColors[line.color] }} />
-                <span
-                  className="chart-line-type-label"
-                  data-type={savedLineSettings(line).line_type}
-                >
-                  {lineTypeLabels[savedLineSettings(line).line_type]}
-                </span>
-                <span>{line.label || "未命名"}</span>
-                {line.origin?.algorithm && (
-                  <span
-                    className="chart-line-origin"
-                    title={`${levelOriginLabel(line)} · ${line.origin.algorithm} · ${line.origin.snapshot_id}`}
-                  >
-                    {levelOriginLabel(line)}
-                  </span>
-                )}
-                <strong title={`原保存线价 · ${line.anchor_date || "未复权"}`}>
-                  {num(line.price, 4)}
-                </strong>
-                <span className="chart-line-rule-summary">
-                  {savedLineSettings(line)
-                    .alert_modes.map(
-                      (mode) =>
-                        lineAlertRules[mode as keyof typeof lineAlertRules]
-                          .title,
-                    )
-                    .join(" / ") || "不提醒"}
-                  {line.auto_watchlist &&
-                  savedLineSettings(line).alert_modes.length > 0
-                    ? " · 触发入自选"
-                    : ""}
-                  {line.first_alert_date
-                    ? ` · 首次提醒 ${line.first_alert_date}，此后继续60个交易日`
-                    : savedLineSettings(line).alert_modes.length > 0
-                      ? " · 未提醒，持续监控"
-                      : ""}
-                </span>
-                <small title={view.reason}>
-                  {view.price != null
-                    ? (
-                        displayedIds
-                          ? displayedIds.has(line.annotation_id)
-                          : state.show
+      <div className="chart-annotation-secondary">
+        <details className="chart-annotation-disclosure">
+          <summary>
+            {state.isIndex || state.settings.line_type === "reference"
+              ? "备注与颜色"
+              : "提醒、备注与颜色"}
+            {!state.isIndex && (
+              <span>
+                {state.settings.alert_modes.length
+                  ? state.settings.alert_modes
+                      .map(
+                        (mode) =>
+                          lineAlertRules[mode as keyof typeof lineAlertRules]
+                            .title,
                       )
-                      ? view.converted
-                        ? `本图 ${num(view.price, 4)} · 已换算`
-                        : "本图可见"
-                      : "已隐藏"
-                    : view.reason}
-                </small>
-                {onDisplayChange && (
-                  <label
-                    className="chart-line-display-control"
-                    title="只切换本图显示，不删除原线或更改提醒"
-                  >
-                    <input
-                      type="checkbox"
-                      aria-label={`显示水平线 ${line.label || num(line.price)}`}
-                      checked={
-                        view.price != null &&
-                        (displayedIds
-                          ? displayedIds.has(line.annotation_id)
-                          : state.show)
-                      }
-                      disabled={view.price == null}
-                      onChange={(event) =>
-                        onDisplayChange(
-                          line.annotation_id,
-                          event.target.checked,
-                        )
-                      }
-                    />
-                    显示
-                  </label>
-                )}
-                <button
-                  className="icon-btn"
-                  aria-label={`编辑水平线 ${line.label || num(line.price)}`}
+                      .join(" / ")
+                  : "不提醒"}
+                {state.settings.alert_modes.length > 0 &&
+                  state.settings.auto_watchlist &&
+                  " · 触发入自选"}
+              </span>
+            )}
+          </summary>
+          <div className="chart-annotation-disclosure-body">
+            <div className="chart-line-details">
+              <label className="chart-line-name-input">
+                备注（选填）
+                <input
+                  aria-label="水平线名称"
+                  maxLength={40}
+                  value={state.label}
+                  onChange={(e) => state.setLabel(e.target.value)}
+                  placeholder="给这条线起个名字"
                   disabled={state.busy}
-                  onClick={() => {
-                    state.setEditing(line);
-                    state.setDrawing(false);
-                    state.setPrice(String(line.price));
-                    state.setLabel(line.label);
-                    state.setColor(line.color);
-                    state.setSettings(savedLineSettings(line));
+                />
+              </label>
+              <div
+                className="chart-line-colors"
+                role="group"
+                aria-label="水平线颜色"
+              >
+                {selectableAnnotationColors.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={state.color === value ? "selected" : ""}
+                    style={
+                      {
+                        "--line-color": annotationColors[value],
+                      } as import("react").CSSProperties
+                    }
+                    aria-label={`选择${({ blue: "蓝", amber: "金", red: "红", green: "绿", violet: "紫" } as Record<string, string>)[value]}色线`}
+                    aria-pressed={state.color === value}
+                    disabled={state.busy}
+                    onClick={() => state.setColor(value)}
+                  >
+                    <span />
+                  </button>
+                ))}
+              </div>
+            </div>
+            {!state.isIndex && state.settings.line_type !== "reference" && (
+              <div className="chart-line-alert-settings">
+                <div className="chart-line-alert-rules">
+                  {lineTypeModes[state.settings.line_type].map((mode) => {
+                    const rule =
+                      lineAlertRules[mode as keyof typeof lineAlertRules];
+                    return (
+                      <label key={mode} title={rule.hint}>
+                        <input
+                          type="checkbox"
+                          checked={state.settings.alert_modes.includes(mode)}
+                          disabled={state.busy}
+                          onChange={(event) =>
+                            state.setSettings((old) => ({
+                              ...old,
+                              alert_modes: event.target.checked
+                                ? [...old.alert_modes, mode]
+                                : old.alert_modes.filter(
+                                    (item) => item !== mode,
+                                  ),
+                            }))
+                          }
+                        />
+                        <span>
+                          <strong>
+                            {mode === "support_breakdown"
+                              ? "支撑失守提醒（风险）"
+                              : rule.title}
+                          </strong>
+                          <small>
+                            {
+                              (
+                                {
+                                  support_reclaim: "回踩后收盘不低于支撑",
+                                  support_breakdown: "收盘跌破，不自动入自选",
+                                  pressure_close_breakout:
+                                    "从未站上到收盘严格站上",
+                                  pressure_touch: "日内最低至最高价包含线价",
+                                } as Record<string, string>
+                              )[mode]
+                            }
+                          </small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <label className="chart-line-auto-watchlist">
+                  <input
+                    type="checkbox"
+                    checked={state.settings.auto_watchlist}
+                    disabled={state.busy || !state.settings.alert_modes.length}
+                    onChange={(event) =>
+                      state.setSettings((old) => ({
+                        ...old,
+                        auto_watchlist: event.target.checked,
+                      }))
+                    }
+                  />
+                  触发后自动加入自选
+                  <small>
+                    {state.isWatchlisted
+                      ? "已在自选，保留原加入日与基准"
+                      : "保存后核验当前行情日，命中才加入；失守不加入"}
+                  </small>
+                </label>
+                {!state.settings.alert_modes.length && (
+                  <small className="muted">
+                    未勾选提醒条件，这条线仅显示在图上。
+                  </small>
+                )}
+              </div>
+            )}
+            {state.isIndex && (
+              <p className="chart-annotation-help">
+                指数线仅保存与展示点位，不创建个股提醒或自动加入自选。
+              </p>
+            )}
+            <details className="chart-annotation-explainer">
+              <summary>
+                {state.isIndex
+                  ? "划线口径与使用说明"
+                  : "盘后核验 · 口径与使用说明"}
+              </summary>
+              <p>
+                {state.isIndex ? (
+                  "指数保存后跨日／周／月共享，仅按原始点位显示，不执行个股提醒。"
+                ) : (
+                  <>
+                    保存后核验当前已发布完整日K，之后每次手动行情更新继续检查。提醒记录保存在“我的自选池
+                    ·
+                    划线提醒”。移出自选后提醒仍保留；取消全部提醒条件可停用。同为前复权时，旧锚线按已核验公司行动换算到当前图；原线价、原锚及提醒证据保留。不同价格口径或缺少区间依据时不显示，并在列表说明原因。
+                  </>
+                )}
+              </p>
+            </details>
+          </div>
+        </details>
+        <details className="chart-annotation-disclosure chart-auto-levels">
+          <summary>
+            <Sparkles size={13} /> 自动支撑压力
+            {state.preview && (
+              <span>已计算 {state.preview.items?.length || 0} 条</span>
+            )}
+          </summary>
+          <div className="chart-annotation-disclosure-body">
+            <div className="chart-auto-levels-actions">
+              <label>
+                回看
+                <select
+                  aria-label="支撑压力回看范围"
+                  value={state.lookback}
+                  disabled={state.busy}
+                  onChange={(event) => {
+                    state.setLookback(Number(event.target.value));
+                    state.setPreview(null);
+                    state.setSelectedCandidates([]);
                   }}
                 >
-                  <Pencil size={13} />
-                </button>
+                  {[60, 120, 240].map((value) => (
+                    <option key={value} value={value}>
+                      {value}根当前周期K线
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="btn small"
+                disabled={state.busy || !state.scope || state.result.loading}
+                onClick={() => void state.calculateLevels()}
+              >
+                {state.busy
+                  ? "处理中…"
+                  : state.preview
+                    ? "重新计算候选"
+                    : "计算候选并预览"}
+              </button>
+            </div>
+            <p className="chart-annotation-help">
+              按当前图表周期、观察日和价格口径，从本地行情寻找已确认历史分型。先预览勾选，再保存；重算不会改动已保存的线。
+            </p>
+            {state.preview && (
+              <>
+                <p className="chart-annotation-help">
+                  观察 {state.preview.parameters.as_of} ·{" "}
+                  {
+                    (
+                      { D: "日K", W: "完整周K", M: "完整月K" } as Record<
+                        string,
+                        string
+                      >
+                    )[state.preview.parameters.period]
+                  }{" "}
+                  ·
+                  {state.preview.parameters.price_basis === "none"
+                    ? "未复权"
+                    : "本地前复权"}{" "}
+                  · 完整报价 {state.preview.complete_bars}根
+                  {state.preview.reference_price != null && (
+                    <>
+                      {" "}
+                      · 参考收盘 {num(state.preview.reference_price, 4)}（
+                      {state.preview.reference_date}）
+                    </>
+                  )}
+                </p>
+                <div className="chart-auto-levels-list">
+                  {(state.preview.items || []).map((item: Row) => (
+                    <label key={item.candidate_id} data-type={item.line_type}>
+                      <input
+                        type="checkbox"
+                        disabled={state.busy || item.saved}
+                        checked={
+                          item.saved ||
+                          state.selectedCandidates.includes(item.candidate_id)
+                        }
+                        onChange={(event) =>
+                          state.setSelectedCandidates((old) =>
+                            event.target.checked
+                              ? [...old, item.candidate_id]
+                              : old.filter((id) => id !== item.candidate_id),
+                          )
+                        }
+                      />
+                      <span>
+                        {item.line_type === "support" ? "支撑" : "压力"}{" "}
+                        <strong>{num(item.price, 4)}</strong>
+                      </span>
+                      <small>
+                        {item.touches}处分型 · 最近 {item.last_pivot_date} ·{" "}
+                        {item.confirmed_on}确认{item.saved ? " · 已保存" : ""}
+                      </small>
+                    </label>
+                  ))}
+                </div>
+                {state.preview.reason && (
+                  <p className="chart-annotation-help">
+                    {state.preview.reason}
+                  </p>
+                )}
+                <p className="chart-annotation-help">{state.preview.notice}</p>
+                {!!state.preview.items?.length && (
+                  <button
+                    className="btn small primary"
+                    disabled={state.busy || !state.selectedCandidates.length}
+                    onClick={state.saveLevels}
+                  >
+                    保存所选支撑压力线（{state.selectedCandidates.length}）
+                  </button>
+                )}
                 <button
-                  className="icon-btn danger-text"
-                  aria-label={`删除水平线 ${line.label || num(line.price)}`}
+                  className="btn small"
                   disabled={state.busy}
-                  onClick={() =>
-                    void state.mutate(
-                      () =>
-                        api(
-                          `/instruments/${encodeURIComponent(line.instrument_id)}/annotations/${encodeURIComponent(line.annotation_id)}`,
-                          { method: "DELETE" },
-                        ),
-                      "水平线已移除",
-                    )
-                  }
+                  onClick={() => {
+                    state.setPreview(null);
+                    state.setSelectedCandidates([]);
+                  }}
                 >
-                  <Trash2 size={14} />
+                  收起候选
                 </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {!state.result.loading && !state.lines.length && (
-        <p className="muted">尚未保存水平线，输入价格或点图定位即可添加。</p>
-      )}
+              </>
+            )}
+          </div>
+        </details>
+        {state.lines.length > 0 && (
+          <details className="chart-annotation-disclosure chart-saved-lines">
+            <summary>
+              已保存划线 <span>{state.lines.length} 条</span>
+            </summary>
+            <ul className="chart-annotation-list">
+              {state.views.map((view) => {
+                const line = view.line;
+                return (
+                  <li key={line.annotation_id}>
+                    <i style={{ background: annotationColors[line.color] }} />
+                    <span
+                      className="chart-line-type-label"
+                      data-type={savedLineSettings(line).line_type}
+                    >
+                      {lineTypeLabels[savedLineSettings(line).line_type]}
+                    </span>
+                    <span>{line.label || "未命名"}</span>
+                    {line.origin?.algorithm && (
+                      <span
+                        className="chart-line-origin"
+                        title={`${levelOriginLabel(line)} · ${line.origin.algorithm} · ${line.origin.snapshot_id}`}
+                      >
+                        {levelOriginLabel(line)}
+                      </span>
+                    )}
+                    <strong
+                      title={`原保存线价 · ${line.anchor_date || "未复权"}`}
+                    >
+                      {num(line.price, 4)}
+                    </strong>
+                    <span className="chart-line-rule-summary">
+                      {savedLineSettings(line)
+                        .alert_modes.map(
+                          (mode) =>
+                            lineAlertRules[mode as keyof typeof lineAlertRules]
+                              .title,
+                        )
+                        .join(" / ") || "不提醒"}
+                      {line.auto_watchlist &&
+                      savedLineSettings(line).alert_modes.length > 0
+                        ? " · 触发入自选"
+                        : ""}
+                      {line.first_alert_date
+                        ? ` · 首次提醒 ${line.first_alert_date}，此后继续60个交易日`
+                        : savedLineSettings(line).alert_modes.length > 0
+                          ? " · 未提醒，持续监控"
+                          : ""}
+                    </span>
+                    <small title={view.reason}>
+                      {view.price != null
+                        ? (
+                            displayedIds
+                              ? displayedIds.has(line.annotation_id)
+                              : state.show
+                          )
+                          ? view.converted
+                            ? `本图 ${num(view.price, 4)} · 已换算`
+                            : "本图可见"
+                          : "已隐藏"
+                        : view.reason}
+                    </small>
+                    {onDisplayChange && (
+                      <label
+                        className="chart-line-display-control"
+                        title="只切换本图显示，不删除原线或更改提醒"
+                      >
+                        <input
+                          type="checkbox"
+                          aria-label={`显示水平线 ${line.label || num(line.price)}`}
+                          checked={
+                            view.price != null &&
+                            (displayedIds
+                              ? displayedIds.has(line.annotation_id)
+                              : state.show)
+                          }
+                          disabled={view.price == null}
+                          onChange={(event) =>
+                            onDisplayChange(
+                              line.annotation_id,
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        显示
+                      </label>
+                    )}
+                    <button
+                      className="icon-btn"
+                      aria-label={`编辑水平线 ${line.label || num(line.price)}`}
+                      disabled={state.busy}
+                      onClick={() => {
+                        state.setEditing(line);
+                        state.setDrawing(false);
+                        state.setPrice(String(line.price));
+                        state.setLabel(line.label);
+                        state.setColor(line.color);
+                        state.setSettings(savedLineSettings(line));
+                        priceInput.current?.focus();
+                      }}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      className="icon-btn danger-text"
+                      aria-label={`删除水平线 ${line.label || num(line.price)}`}
+                      disabled={state.busy}
+                      onClick={() =>
+                        void state.mutate(
+                          () =>
+                            api(
+                              `/instruments/${encodeURIComponent(line.instrument_id)}/annotations/${encodeURIComponent(line.annotation_id)}`,
+                              { method: "DELETE" },
+                            ),
+                          "水平线已移除",
+                        )
+                      }
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        )}
+      </div>
     </section>
   );
 }

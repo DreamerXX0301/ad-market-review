@@ -305,6 +305,8 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 - `GET /sector-strategy-fields` 返回 `{items,total,target_type:"sector",unknown_policy}`；不是股票字段列表。
 - `GET/POST /sector-strategies`、`GET/PATCH /sector-strategies/{id}`：name、period=D/W/M、sector_kind=all/industry/concept、definition、policy、archived；版本独立持久化。
+- `GET/PUT /sector-strategies/{id}/automation` 返回 `strategy_id/refresh_after_sync/auto_track`，两个开关默认关闭，自动入池需开启重新筛选。新盘后增量冻结已启用的板块策略范围和自动入池授权，完成同日数据及来源核验后才使用本地板块行情执行。之后关闭设置会收窄授权，旧冻结任务不扩展范围。命中只加入当前板块策略跟踪池，保留手动移除意图及原轮次；已提交的入池分块按原回执幂等恢复。启用自动入池的板块策略核对其现存轮次的当前业务日，不补跑历史。
+- 同步进度将此轮板块筛选和核对关联到该增量，并在 `workspace.strategies` 中标记 `target_type=sector`。每条板块结果可包含 `ignored_count`、`tracking_skipped_reason` 和 `tracking_review`；顶层 `workspace.tracking` 仍为个股核对回执。
 - 板块条件仅 all/any 与白名单叶，逐叶周期；量额/MA/MACD/KDJ/BOLL收口与方向/新高/底部抬高可用，股票 ST、涨停、题材成员、换手和 history_event 不支持。固定日线 N 新高不变成 N 周/月。
 - `POST /sector-strategies/{id}/runs {request_key?}` 读取本地板块证据实际求值，有可轮询真实 selection 任务；请求返回运行结果。只接受当前业务日，不从盘面历史日期入池。
 - `GET /sector-strategy-runs?strategy_id=&limit=`、`GET /sector-strategy-runs/{id}?decision=`：返回冻结版本、目录签名、输入 SHA、cache_refs 及候选。候选含 target_type=sector、target_id/topic_code/topic_id、sector_kind/name、decision/close_price/metrics_by_period/checks/coverage。
@@ -397,6 +399,8 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 自动规则与 `chart_annotation`、手动规则 clock 和手动提醒保留政策独立。043迁移不为旧股票自动启用规则。`GET /instruments/{id}/automatic-price-alerts` 只查SQLite，返回 `instrument_id/rule/latest_evaluation/latest_baseline`；未配置返回disabled、revision=0、rule_id=null，不取行情或排队。`PUT` 接受完整 `{enabled,modes,require_volume,expected_revision}`，版本冲突409；只支持已留存个股，默认关闭，启用至少选一项。修改后从保存时已发布业务日之后生效，不追溯产生旧触发。响应另含 `task`，配置保存和基准准备任务排队在同一短事务，唯一worker在事务外读取行情。
 
+配置触发的活动摘要显示「准备自动提醒参考位」。自动量价任务排队且45秒内无有效工作进程心跳时，摘要返回 `waiting_for_worker:true`，状态仍为 `queued`。工作进程恢复后继续消费原任务。
+
 044新增 `profile:structure|short_week_v1` 和 `max_risk_pct`。已有规则迁移为structure/5，不改旧规则版本、历史证据和基准；旧客户端PUT省略新增字段仍按structure/5。未配置股票的GET默认short_week_v1/5，但保持关闭。新客户端PUT显式提交模式与风险距离上限（0.5至20的百分数，最多两位小数）；任一模式/风险参数修改递增revision、清除旧baseline与专用pin，并仅为启用规则准备新基准。GET的algorithm为实际计算版本；原表algorithm字段保持043兼容值，实际模型由持久化profile冻结，旧任务缺profile仍使用原structure算法。
 
 一周短线使用 `short-week-risk-levels-v1`，结构限近20根完整日K，超出风险距离的真实支撑保留在历史结构观察、不充作近端支撑；没有近端支撑时明确未知。初始短线风险线取真实近端结构下留0.25ATR14、收盘减1ATR14、收盘乘(1-max_risk_pct/100)中最高的有效价格；它是可配置风险参考，不表示该价位存在市场支撑，也不绑定个人持仓成本。每次配置开启/修改后首次有效基准确定监控起点；后续基准按前一日已持久化风险线与本次公式参考取较高者，只抬高不放宽。收盘跌破后风险线state=breached，保持原价及失守状态，不因后续恢复再次重复stop_breakdown或自动重开新一轮；用户修改配置或关闭后重新启用才重置。缺失精确相邻交易日基准或公司行动不可比时不跨段沿用名义价位。
@@ -445,3 +449,5 @@ PUT可额外传 `reset_monitoring:true` 显式重新设定已启用的一周短�
 个股和板块选股支持 `trendline_pullback`（回踩上升支撑）与 `trendline_breakout`（收盘突破压力）。条件为 `{"field":"trendline_pullback","op":"matches","value":0.5,"period":"D"}`，value 为 0–10 的百分数，默认编辑值 0.5，period 可选 D/W/M 或继承策略默认周期。首版仅用于外层选股/选板条件，支持现有 all/any、个股历史事件的并列组合和当前热点范围。回测、跟踪、历史事件内部及买卖规则暂不接受这两个字段。当前热点范围保持当前成员代理口径。
 
 `strategy-confirmed-trendlines-v1` 以观察日最近完整周期为信号周期，从前一周期及之前最多 120 根连续可比 K 线取主线，至少需要 12 根历史和 1 根信号 K 线。左右各 2 根确认分型。沿用图表主线的两锚点排序与未穿越校验，将前一周期线价延伸一根到信号周期。回踩要求正斜率、前收在线上或上方、信号周期最低价落入上下容差内且收盘在线上或上方。突破要求前收在线上或下方、信号周期收盘严格超过线价加缓冲。完整输入无合格线时为 false，缺少足够连续可比输入时为 unknown。个股复用策略价格口径，板块使用缓存的来源指数原价，和成员覆盖无关。checks 保留线型、锚点与确认日期、投影价、OHLC 判定用价、完整周期日期及缺口。
+
+`horizontal_support_close_near` 和 `horizontal_resistance_breakout` 使用 `strategy-confirmed-horizontal-zones-v1`，仅用于个股／板块选股条件，可与同周期量能、KDJ、MACD 组合。沿用图表的水平区聚类，在信号周期之前的完整行情及已确认拐点上冻结区间。靠近支撑要求收盘不低于区间下沿、且距离上沿最多 `value` 百分比；突破要求前收不高于压力区上沿、当期收盘严格高于上沿加 `value` 缓冲。`value` 为 0–10，默认编辑值 0.5。checks 返回区间上下沿、参与日期范围、触点数、前收和信号收盘；覆盖不足为 unknown。两个条件不用于回测、跟踪规则、买卖规则或历史事件内部。

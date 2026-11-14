@@ -15,7 +15,10 @@ import type { Row } from "../../lib/api";
 import { ErrorBox, Loading, useToast } from "../../components/UI";
 import CopyStockCode from "../../components/CopyStockCode";
 import { createStockNavigation } from "../../components/stockNavigation";
-import type { StockNavigation } from "../../components/stockNavigation";
+import type {
+  StockChartTool,
+  StockNavigation,
+} from "../../components/stockNavigation";
 import { MemberMetricCoverage } from "../topics/MemberHistoryCells";
 import { percent, tone } from "../../lib/format";
 import { nextColumnSort, poolSort, sortableFields } from "./zodiacInteractions";
@@ -56,7 +59,11 @@ const ZodiacDetails = lazyView(() => import("./ZodiacDetails"));
 export default function Zodiac({
   onStock,
 }: {
-  onStock: (id: string, navigation?: StockNavigation) => void;
+  onStock: (
+    id: string,
+    navigation?: StockNavigation,
+    initialChartTool?: StockChartTool,
+  ) => void;
 }) {
   const notify = useToast(),
     active = usePageActive();
@@ -195,18 +202,24 @@ export default function Zodiac({
         item,
       });
   }
-  function openStock(row: Row) {
-    const navigation = (data?.navigation || []).filter(
+  function openStock(row: Row, initialChartTool?: StockChartTool) {
+    const navigation: Row[] = (data?.navigation || []).filter(
       (r: Row) => r.metrics_as_of === row.metrics_as_of,
     );
+    const ordered = navigation.some(
+      (item) => item.instrument_id === row.instrument_id,
+    )
+      ? navigation
+      : [...navigation, row];
     onStock(
       row.instrument_id,
-      createStockNavigation(navigation, {
+      createStockNavigation(ordered, {
         source: "zodiac",
         scopeKey: `zodiac:${year}:${status}:${params}`,
         label: yearLabel(year),
         asOf: row.metrics_as_of,
       }),
+      initialChartTool,
     );
   }
   function selectYear(next: number) {
@@ -817,7 +830,10 @@ export default function Zodiac({
         <ZodiacDetails
           item={detail}
           onClose={() => setDetail(null)}
-          onStock={() => openStock(detail)}
+          onStock={(tool) => {
+            setDetail(null);
+            openStock(detail, tool);
+          }}
           onVerify={() => void verify(detail)}
           onEdit={(row) => {
             setDetail(null);

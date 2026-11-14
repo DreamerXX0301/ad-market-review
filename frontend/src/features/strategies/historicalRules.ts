@@ -1,4 +1,43 @@
 export type RuleNode = Record<string, any>;
+const horizontalZoneConditions: Record<
+  string,
+  { label: string; parameter: string; hint: string }
+> = {
+  horizontal_support_close_near: {
+    label: "收盘靠近水平支撑区",
+    parameter: "容差",
+    hint: "使用上一完整周期的支撑区。收盘落在区间内，或在上沿上方且距离不超过容差。",
+  },
+  horizontal_resistance_breakout: {
+    label: "收盘突破水平压力区",
+    parameter: "缓冲",
+    hint: "使用上一完整周期的压力区。前一收盘在上沿或以下，本期收盘须高于上沿加缓冲后的价位。",
+  },
+};
+export const horizontalZoneCondition = (field: string) =>
+  Object.hasOwn(horizontalZoneConditions, field)
+    ? horizontalZoneConditions[field]
+    : undefined;
+
+export function horizontalZoneEvidenceText(check: RuleNode): string {
+  const { zone, previous_close, signal_close } = check.evidence || {};
+  const previous =
+    check.field === "horizontal_resistance_breakout" &&
+    Number.isFinite(previous_close)
+      ? `前一收盘 ${previous_close.toFixed(4)}`
+      : "";
+  const close = Number.isFinite(signal_close)
+    ? `本期收盘 ${signal_close.toFixed(4)}`
+    : "";
+  const range =
+    Number.isFinite(zone?.lower_price) && Number.isFinite(zone?.upper_price)
+      ? `事前区间 ${zone.lower_price.toFixed(4)}–${zone.upper_price.toFixed(4)}${zone.end_date ? ` · 截至 ${zone.end_date}` : ""}`
+      : check.result === false
+        ? "事前未找到符合条件的区间"
+        : "";
+  return [range, previous, close].filter(Boolean).join(" · ");
+}
+
 export const HIDDEN_CONDITION_TEXT = "已隐藏的指标条件（保留原配置）";
 export const isHiddenConditionField = (field: unknown): boolean =>
   field === "kdj_j";
@@ -640,6 +679,9 @@ export function historyRuleSummary(
     node.period && !node.right_event_field
       ? `${({ D: "日K", W: "完整周K", M: "完整月K" } as Record<string, string>)[node.period] || node.period} · `
       : "";
+  const zone = horizontalZoneCondition(node.field);
+  if (zone)
+    return `${cycle}${zone.label} · ${zone.parameter} ${Number.isFinite(node.value) ? `${node.value}%` : "未填写"}`;
   return `${cycle}${node.right_event_field ? "观察日收盘价（日K）" : label(node.field)} ${operators[node.op] || node.op} ${value}${node.field === "close_breakout_high" ? "个交易日" : ""}`;
 }
 export function historyCheckText(check: RuleNode): string {
@@ -694,6 +736,17 @@ export function validateVisualRule(
   if (bollError) return bollError;
   const higherLowsError = validateHigherLowsRule(node, context);
   if (higherLowsError) return higherLowsError;
+  const zone = horizontalZoneCondition(node.field);
+  if (zone) {
+    if (context !== "current") return `${zone.label}仅用于选股条件`;
+    if (
+      node.op !== "matches" ||
+      !Number.isFinite(node.value) ||
+      node.value < 0 ||
+      node.value > 10
+    )
+      return `${zone.parameter}请输入 0% 到 10% 之间的数值`;
+  }
   if (Object.hasOwn(node, "right_event_change_pct")) {
     if (!node.right_event_field || context !== "then")
       return "事件价百分比偏移仅用于历史事件的今日事件价比较";

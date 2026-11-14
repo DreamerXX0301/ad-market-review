@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import ts from "typescript";
 
+const provisionalSource = await fs.readFile(new URL("./chartProvisionalIndicators.ts", import.meta.url), "utf8");
+const provisionalUrl = "data:text/javascript;base64," + Buffer.from(ts.transpileModule(provisionalSource, {
+  compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+}).outputText).toString("base64");
 const source = await fs.readFile(
   new URL("./chartBoll.ts", import.meta.url),
   "utf8",
 );
-const compiled = ts.transpileModule(source, {
+const compiled = ts.transpileModule(source.replace('"./chartProvisionalIndicators"', JSON.stringify(provisionalUrl)), {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
     target: ts.ScriptTarget.ES2022,
@@ -203,6 +207,28 @@ for (const period of ["W", "M"]) {
   assert.equal(chartBoll(aggregate)[20].middle, null);
   assert.equal(chartBoll(aggregate)[39].middle, null);
   assert.equal(chartBoll(aggregate)[40].middle, 10);
+
+  const preview = fixture([...Array(19).fill(10), 14], {
+    complete: true,
+    weekly_quote_coverage_complete: true,
+    monthly_quote_coverage_complete: true,
+  });
+  preview.period = period;
+  const last = preview.bars.at(-1);
+  last.complete = false;
+  last[period === "W" ? "week_closed" : "month_closed"] = false;
+  last.monthly_indicator_eligible = false;
+  last.monthly_price_comparable = false;
+  last.price_continuity = false;
+  last.indicator_reset_reason = "当前月尚未完成，仅展示聚合OHLC";
+  last.indicator_warmup_bars = 0;
+  preview.provisional_indicators = { date: preview.as_of, warmup_bars: 20, values: { ma5: 10.8 } };
+  assert.equal(chartBoll(preview).at(-1).middle, 10.2);
+  assert.equal(last.complete, false);
+  last.close = 18;
+  assert.equal(chartBoll(preview).at(-1).middle, 10.4);
+  preview.provisional_indicators.date = preview.bars.at(-2).date;
+  assert.equal(chartBoll(preview).at(-1).middle, null);
 }
 
 // Explicitly invalid input breaks the window rather than being skipped,

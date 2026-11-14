@@ -40,6 +40,7 @@ import {
   savedRunNotice,
 } from "../strategies/strategyResultPresentation";
 import useSavedStrategyRun from "../strategies/useSavedStrategyRun";
+import StrategyAutomation from "../strategies/StrategyAutomation";
 import StrategyBatchToolbar, {
   useBatchStrategySelection,
 } from "../strategies/StrategyBatchToolbar";
@@ -487,6 +488,13 @@ export default function SectorStrategies({
                 使用已留存板块K线；缺报价或预热不足标记待核验。板块与个股策略、结果及跟踪池分别保存。
               </div>
             </Panel>
+          )}
+          {chosen && (
+            <StrategyAutomation
+              key={chosen.strategy_id}
+              strategyId={chosen.strategy_id}
+              targetType="sector"
+            />
           )}
           {error && <ErrorBox message={error} />}
           {saved.error && (

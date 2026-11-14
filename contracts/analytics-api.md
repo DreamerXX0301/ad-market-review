@@ -226,6 +226,7 @@ match接受latest、earliest、any。any仅投影整体result=true时已冻结�
 - `near_items` 复用主线字段，用最近 35 根可比柱的拐点形成近端线，各方向最多一条，并排除与主线近似重合的线。`zones` 含 `lower_price/upper_price/start_date/end_date/line_type/touches`，来自确认拐点的邻近价位聚集，属于水平观察区。`events` 记录近期穿线，带 `scope/state/date/price/line`，其中 `line` 使用前一完整柱已确认的旧线，止于事件日。`price` 为穿线当天的线价。事件只在图上展示。
 - bar 含 date/OHLCV/amount、MA5/10/20/30/60/250、MACD DIF/DEA/柱、KDJ K/D/J；预热不足为 null。前端不另算一套指标。
 - 周/月从日线聚合，形成中和不完整周期带状态；策略信号只读已闭合可比周期，图表可显示形成中柱。缺交易日报价不补 K 线。
+- 个股、主要指数与板块的普通图表可用顶层 `provisional_indicators={date,values,warmup_bars}` 展示周/月形成中的末柱。`date` 等于观察日及末柱报价日，`values` 仅含图表 MA/MACD/KDJ 数值，预热不足的值为 `null`。只基于当前行情代际、截至观察日的已发布且覆盖完整可比日线及相邻的完整周期种子计算。前端可用该末柱收盘预览 BOLL。字段缺失或为 `null` 时不补算；此字段不改 `bars`、周期完成状态或任何信号和研究冻结口径。
 - `trading_day_distance={anchor_date,basis:"market_calendar",state:"available"|"unknown",reason}` 为图表自己的市场日历距离证据；`anchor_date`固定本图`as_of`，不是电脑当前日期。每根bar追加`trading_days_to_as_of:number|null`，计算区间为`(bar.date,as_of]`，同日为0。停牌、缺报价不减少市场日间隔，不按K线根数、自然日或工作日猜算；已知的后续日历不会越过本图观察日参与计数。日历缺失、日期无效、重复、无序、观察日不在已留存日历或读取期间行情代际变化时状态保持unknown且距离为null；单根报价日不在该日历时该根距离为null。
 - 日K悬停提示和OHLC栏显示“距行情截止日 YYYY-MM-DD · N个交易日”。周/月以聚合柱`date`的末根实际报价日计距，标为“末根报价距行情截止日”，不将周/月柱数当交易日，也不改变形成中、完整周期和缺口状态。板块缓存图复用同一字段与本次已留存市场日历，读取不联网；新生成研究冻结图保存自己的距离证据，旧报告缺字段时前端显示待核验，不请求当前日历补写历史报告。该字段仅供展示，不参与选股、跟踪、回测或指标计算。
 - 默认 `none` 原价；显式 forward 仅对已核验事件做观察日锚定的本地仿射变换。证据不足回退原价并说明；不是完整分红/股数收益账户。

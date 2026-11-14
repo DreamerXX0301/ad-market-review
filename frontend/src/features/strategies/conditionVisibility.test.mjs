@@ -67,6 +67,63 @@ const fields = [
 const onChange = () => {
   throw new Error("render must not mutate a rule");
 };
+const zoneField = {
+  field: "horizontal_resistance_breakout",
+  label: "收盘突破水平压力区（缓冲%）",
+  type: "number",
+  operators: ["matches"],
+  constant_only: true,
+  selection_only: true,
+  min: 0,
+  max: 10,
+  step: 0.1,
+  default: 0.5,
+};
+const zoneRule = {
+  field: zoneField.field,
+  op: "matches",
+  value: 0.5,
+  period: "W",
+};
+const zoneFields = [...fields, zoneField];
+const renderZone = (scope, rules) =>
+  renderToStaticMarkup(
+    createElement(conditions.default, {
+      conditions: rules,
+      fields: zoneFields,
+      period: "D",
+      scope,
+      onChange,
+    }),
+  );
+const zoneHtml = renderZone("selection", [zoneRule]);
+assert.match(zoneHtml, /收盘突破水平压力区（缓冲%）/);
+assert.match(
+  zoneHtml,
+  /aria-label="缓冲 \(%\)" type="number" step="0\.1" min="0" max="10"/,
+);
+assert.match(zoneHtml, /<option value="W" selected="">完整周K<\/option>/);
+assert.doesNotMatch(
+  renderZone("alert", [{ field: "close", op: ">", value: 1 }]),
+  /水平压力区/,
+);
+assert.equal(
+  conditions.summarizeChecks({
+    ...zoneRule,
+    observed_date: "2026-10-30",
+    result: true,
+    evidence: {
+      zone: {
+        lower_price: 11.0389,
+        upper_price: 11.061,
+        end_date: "2026-10-23",
+      },
+      previous_close: 10.88,
+      signal_close: 11.63,
+    },
+  }),
+  "完整周K · 收盘突破水平压力区 · 缓冲 0.5% · 满足 · 2026-10-30 · 事前区间 11.0389–11.0610 · 截至 2026-10-23 · 前一收盘 10.8800 · 本期收盘 11.6300",
+);
 for (const period of ["D", "W", "M"])
   for (const scope of [
     "selection",

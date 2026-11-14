@@ -3,15 +3,49 @@ import type { RefObject } from "react";
 import { chartSessionDistance } from "./chartSessionDistance";
 import { stockMetricDate } from "./stockExtraMetrics";
 
+export function focusEntrySection(
+  target: HTMLElement | null,
+  behavior: ScrollBehavior = "smooth",
+  toTop = false,
+) {
+  if (!target) return;
+  if (behavior === "smooth") target.focus({ preventScroll: true });
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+    behavior = "auto";
+  const scroller = target.closest<HTMLElement>(".entry-page-scroll");
+  if (scroller) {
+    const top = toTop
+      ? 0
+      : scroller.scrollTop +
+        target.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top;
+    scroller.scrollTo({ top: Math.max(0, top), behavior });
+    return;
+  }
+  const header = target
+    .closest(".app-main")
+    ?.querySelector<HTMLElement>(".topbar");
+  const top = toTop
+    ? 0
+    : window.scrollY +
+      target.getBoundingClientRect().top -
+      (header?.offsetHeight || 0);
+  window.scrollTo({ top: Math.max(0, top), behavior });
+}
+
 /** Single scroll page: place the first settled view at the chart, never after user input. */
 export function useSinglePageEntry(
   root: RefObject<HTMLDivElement | null>,
+  controls: RefObject<HTMLElement | null>,
   stage: RefObject<HTMLElement | null>,
+  notes: RefObject<HTMLElement | null>,
   token: string,
   enabled: boolean,
   ready: boolean,
+  showToolsInitially = false,
 ) {
   const [height, setHeight] = useState(620);
+  const [activeSection, setActiveSection] = useState(1);
   const readyRef = useRef(ready);
   readyRef.current = ready;
   const checkRef = useRef<(() => void) | null>(null);
@@ -20,18 +54,51 @@ export function useSinglePageEntry(
     const chart = root.current,
       anchor = stage.current;
     const scroller = chart.closest<HTMLElement>(".entry-page-scroll");
-    if (!scroller) return;
+    const header =
+      !scroller &&
+      chart.closest(".app-main")?.querySelector<HTMLElement>(".topbar");
     const interactionRoot =
-      scroller.closest<HTMLElement>(".stock-drawer,.modal") || scroller;
+      scroller?.closest<HTMLElement>(".stock-drawer,.modal") ||
+      scroller ||
+      chart.closest(".workspace-page") ||
+      chart;
+    const scrollOwner = scroller || window;
     let done = false,
       userMoved = false,
       disposed = false;
     let firstFrame = 0,
-      secondFrame = 0;
+      secondFrame = 0,
+      scrollFrame = 0;
     anchor.dataset.entryAnchor = "waiting";
+    setActiveSection(showToolsInitially ? 0 : 1);
+    const markPosition = () => {
+      scrollFrame = 0;
+      if (!done && !userMoved) return;
+      const viewportTop =
+        scroller?.getBoundingClientRect().top ??
+        (header ? header.offsetHeight : 0);
+      const viewportBottom =
+        scroller?.getBoundingClientRect().bottom ?? window.innerHeight;
+      const notesPassed =
+        (notes.current?.getBoundingClientRect().top ?? Infinity) <=
+        viewportTop + 26;
+      const chartPassed =
+        anchor.getBoundingClientRect().top <= viewportTop + 26;
+      const notesTop = notes.current?.getBoundingClientRect().top ?? Infinity;
+      setActiveSection(
+        notesPassed || notesTop < viewportBottom - 100
+          ? 2
+          : chartPassed
+            ? 1
+            : 0,
+      );
+    };
+    const trackScroll = () => {
+      if (!scrollFrame) scrollFrame = requestAnimationFrame(markPosition);
+    };
     const settled = () =>
       readyRef.current &&
-      scroller.dataset.detailLoading !== "true" &&
+      scroller?.dataset.detailLoading !== "true" &&
       !chart.querySelector('[data-summary-loading="true"]');
     const stop = () => {
       userMoved = true;
@@ -61,13 +128,13 @@ export function useSinglePageEntry(
       firstFrame = requestAnimationFrame(() => {
         secondFrame = requestAnimationFrame(() => {
           if (disposed || done || userMoved || !settled()) return;
-          const target =
-            scroller.scrollTop +
-            anchor.getBoundingClientRect().top -
-            scroller.getBoundingClientRect().top;
-          scroller.scrollTo({ top: Math.max(0, target), behavior: "auto" });
+          focusEntrySection(
+            showToolsInitially ? controls.current || anchor : anchor,
+            "auto",
+          );
           done = true;
           anchor.dataset.entryAnchor = "positioned";
+          trackScroll();
         });
       });
     };
@@ -77,20 +144,24 @@ export function useSinglePageEntry(
       const overhead =
         anchor.getBoundingClientRect().height -
         (plot?.getBoundingClientRect().height || 0);
+      const viewportHeight =
+        scroller?.clientHeight ??
+        window.innerHeight - (header ? header.offsetHeight : 0);
       const next = Math.max(
         480,
-        Math.min(1400, Math.floor(scroller.clientHeight - overhead - 12)),
+        Math.min(1400, Math.floor(viewportHeight - overhead - 12)),
       );
       setHeight((previous) => (previous === next ? previous : next));
       align();
     };
     checkRef.current = measure;
     const resize = new ResizeObserver(measure);
-    resize.observe(scroller);
+    if (scroller) resize.observe(scroller);
+    if (header) resize.observe(header);
     resize.observe(chart);
     resize.observe(anchor);
     const attributes = new MutationObserver(measure);
-    attributes.observe(scroller, {
+    attributes.observe(scroller || chart, {
       attributes: true,
       subtree: true,
       attributeFilter: ["data-summary-loading", "data-detail-loading"],
@@ -105,24 +176,29 @@ export function useSinglePageEntry(
     });
     interactionRoot.addEventListener("pointerdown", stop, true);
     interactionRoot.addEventListener("keydown", key, true);
+    scrollOwner.addEventListener("scroll", trackScroll, { passive: true });
+    window.addEventListener("resize", measure);
     measure();
     return () => {
       disposed = true;
       checkRef.current = null;
       cancelAnimationFrame(firstFrame);
       cancelAnimationFrame(secondFrame);
+      cancelAnimationFrame(scrollFrame);
       resize.disconnect();
       attributes.disconnect();
       interactionRoot.removeEventListener("wheel", stop, true);
       interactionRoot.removeEventListener("touchstart", stop, true);
       interactionRoot.removeEventListener("pointerdown", stop, true);
       interactionRoot.removeEventListener("keydown", key, true);
+      scrollOwner.removeEventListener("scroll", trackScroll);
+      window.removeEventListener("resize", measure);
     };
-  }, [root, stage, enabled, token]);
+  }, [root, controls, stage, notes, enabled, token, showToolsInitially]);
   useEffect(() => {
     checkRef.current?.();
   }, [ready, height]);
-  return height;
+  return { height, activeSection };
 }
 
 /** All requested panes stay in one canvas; short windows can still scroll the same page. */
@@ -132,26 +208,46 @@ export function singlePagePaneLayout(
   fitToWindow = false,
 ) {
   const gap = 22;
+  const plotInsets = fitToWindow ? 70 : 75;
   const minimumMainHeight = fitToWindow ? 135 : 300;
+  const hasOscillator = chosen.some((key) => key === "kdj" || key === "macd");
+  const oscillatorMinimum = Math.min(72, Math.max(53, (height - 480) / 8 + 53));
   const minimums = chosen.map((key) => {
-    if (fitToWindow) return key === "boll" ? 70 : key === "volume" ? 32 : 40;
+    if (key === "kdj" || key === "macd")
+      return fitToWindow ? oscillatorMinimum : 140;
+    if (fitToWindow) {
+      return key === "boll" ? 68 : key === "volume" ? 39 : 34;
+    }
     return key === "boll" ? 145 : key === "volume" ? 96 : 104;
   });
   const paneMinimum = minimums.reduce((sum, value) => sum + value, 0);
   const actualHeight = Math.max(
     480,
     Math.floor(height),
-    75 + gap * chosen.length + paneMinimum + minimumMainHeight,
+    plotInsets + gap * chosen.length + paneMinimum + minimumMainHeight,
   );
-  const available = actualHeight - 75 - gap * chosen.length;
+  const available = actualHeight - plotInsets - gap * chosen.length;
+  const compactMainShare =
+    0.34 + 0.045 * Math.min(1, Math.max(0, (height - 620) / 110));
+  const mainShare = fitToWindow
+    ? hasOscillator
+      ? compactMainShare
+      : 0.48
+    : 0.62;
   const mainHeight = chosen.length
     ? Math.min(
         available - paneMinimum,
-        Math.max(minimumMainHeight, available * (fitToWindow ? 0.55 : 0.62)),
+        Math.max(minimumMainHeight, available * mainShare),
       )
     : available;
   const extra = Math.max(0, available - mainHeight - paneMinimum);
-  const weights = chosen.map((key) => (key === "boll" ? 2 : 1));
+  const weights = chosen.map((key) => {
+    if (fitToWindow) {
+      if (key === "kdj" || key === "macd") return 3.6;
+      return key === "boll" ? 2 : key === "volume" ? 1.65 : 1;
+    }
+    return key === "boll" ? 2 : 1;
+  });
   const totalWeight = weights.reduce((sum, value) => sum + value, 0);
   const paneHeights = minimums.map(
     (value, i) => value + (extra * weights[i]) / (totalWeight || 1),

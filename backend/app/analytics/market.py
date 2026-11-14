@@ -936,14 +936,16 @@ class MarketData:
         from .chart_annotation_projection import annotation_projection_evidence
         annotation_projection = {} if ai_projection else annotation_projection_evidence(raw, as_of, status.get('snapshot_id'))
         if price_basis not in ('none','forward'):raise ValueError('价格口径仅支持none/forward')
-        rows=forward if price_basis=='forward' else raw
+        daily_rows=forward if price_basis=='forward' else raw
         actual_basis='forward_event_affine' if price_basis=='forward' and adjustment.get('usable') else 'none'
-        if period=='W':rows=aggregate_weekly(rows,calendar,as_of)
+        rows=daily_rows
+        if period=='W':rows=aggregate_weekly(daily_rows,calendar,as_of)
         if period=='M':
             from .monthly import aggregate_monthly,enrich_monthly_bars
-            bars=enrich_monthly_bars(aggregate_monthly(rows,calendar,as_of),include_chart_extremes=True)
+            rows=aggregate_monthly(daily_rows,calendar,as_of)
+            bars=enrich_monthly_bars(rows,include_chart_extremes=True)
         else:bars=enrich_bars(rows,calendar if period=='D' else None,include_chart_extremes=True)
-        from .chart_indicators import display_indicators,indicator_gaps,quote_gaps
+        from .chart_indicators import FORMING_PERIOD_VERSION,display_indicators,forming_period_indicators,indicator_gaps,quote_gaps
         bars,actual_continuity=display_indicators(bars,rows,indicator_continuity,period)
         gaps=indicator_gaps(bars)
         missing_quotes=quote_gaps(raw,calendar)
@@ -958,7 +960,10 @@ class MarketData:
         warnings=[w for w in status.get('warnings',[]) if not (actual_basis=='forward_event_affine' and '未复权' in w and ('指标' in w or '重启' in w))]
         if price_basis=='forward':warnings.append('本地事件前复权以当前观察日为锚，仅用于价格研究；不等于已处理回测持仓分红、送股或税费。' if adjustment.get('usable') else adjustment.get('reason','复权条件不足，保留未复权价格'))
         from .waves import candidate_waves
-        if period=='M':warnings.append('月K由已留存日行情聚合；首月或本月不完整、缺报价和公司行动会阻断指标预热。MACD/KDJ需要35根连续完整可比月柱。')
+        if period=='M':
+            warnings.append('月K由已留存日行情聚合，MACD/KDJ需要35根连续可比周期。')
+            if not ai_projection:
+                warnings.append('形成中的末月可在日报价和指标预热已核验时显示图表预览。')
         same_snapshot = self.status().get('snapshot_id') == status.get('snapshot_id')
         if not same_snapshot and ai_projection:
             raise ValueError('读取期间行情代际变化，请重试')
@@ -972,6 +977,11 @@ class MarketData:
 
         if ai_projection:
             return result
+        result['provisional_indicators'] = forming_period_indicators(
+            rows, daily_rows, calendar, as_of, period, stock=instrument.get('kind') == 'stock',
+        ) if same_snapshot else None
+        if period != 'D':
+            result['indicator_version'] += '+' + FORMING_PERIOD_VERSION
         from .chart_session_distance import attach_chart_session_distance
         return attach_chart_session_distance(result, calendar, same_snapshot=same_snapshot)
 

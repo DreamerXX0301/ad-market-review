@@ -67,6 +67,39 @@ export function automaticAlertDraft(rule: Row): AutomaticAlertDraft {
     max_risk_pct: rule.max_risk_pct ?? 5,
   };
 }
+export function automaticAlertDraftMatches(
+  draft: AutomaticAlertDraft,
+  rule: Row,
+) {
+  return (
+    draft.enabled === rule.enabled &&
+    draft.profile === rule.profile &&
+    draft.max_risk_pct === rule.max_risk_pct &&
+    draft.require_volume === rule.require_volume &&
+    draft.modes.length === rule.modes.length &&
+    draft.modes.every((mode) => rule.modes.includes(mode))
+  );
+}
+
+export function quickAutomaticAlert(rule: Row) {
+  if (rule.enabled) return null;
+  if (rule.modes.length)
+    return {
+      label: "按已存设置启用",
+      usesSavedRule: true,
+      draft: { ...automaticAlertDraft(rule), enabled: true },
+    };
+  if (rule.revision !== 0 || rule.rule_id != null) return null;
+  const draft: AutomaticAlertDraft = {
+    enabled: true,
+    profile: "short_week_v1",
+    max_risk_pct: 5,
+    modes: ["support_reclaim", "close_breakout", "stop_breakdown"],
+    require_volume: true,
+  };
+  return { label: "启用一周短线", usesSavedRule: false, draft };
+}
+
 export function automaticAlertPayload(draft: AutomaticAlertDraft, config: Row) {
   if (draft.enabled && !draft.modes.length)
     throw new Error("启用提醒时请至少选择一种条件");

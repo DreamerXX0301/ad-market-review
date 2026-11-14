@@ -158,9 +158,9 @@
   border-radius: 8px;
   font-size: var(--chart-type-label, 10px);
 }
-.candle-chart .chart-wave-selectors {
-  gap: 8px 12px;
-  padding: 7px 0;
+.candle-chart .chart-toolbar .chart-wave-selectors {
+  gap: 5px 8px;
+  padding: 0;
 }
 @media (max-width: 700px) {
   .candle-chart .chart-toolbar {

@@ -322,6 +322,32 @@ def slot_at(at, *, creation=False):
     return None
 
 
+def _view_revision(connection, at, config, head, latest, worker_alive, scheduler, busy):
+    from .intraday_monitor_metadata import METADATA_KEY, POOL_KEY
+
+    projections = [tuple(row) for row in connection.execute('''SELECT key,updated_at_ms FROM platform_setting
+        WHERE key IN (?,?) ORDER BY key''', (METADATA_KEY, POOL_KEY))]
+    batch = [latest[key] for key in ('batch_id', 'status', 'completed_at_ms')] if latest else None
+    return digest([at.date().isoformat(), config['revision'], head, batch, worker_alive,
+                   scheduler, bool(busy), projections])
+
+
+def read_revision():
+    """Probe the date and latest persisted changes without decoding quotes or metadata."""
+    at = now_china()
+    day = at.date().isoformat()
+    with connect() as connection:
+        connection.execute('BEGIN')
+        config = _config(connection)
+        head = _head(connection)
+        latest = connection.execute('''SELECT batch_id,status,completed_at_ms FROM intraday_monitor_batch
+            WHERE trade_date=? ORDER BY slot_key DESC LIMIT 1''', (day,)).fetchone()
+        scheduler = _json(connection, STATUS_KEY, {})
+        busy = connection.execute("SELECT 1 FROM job WHERE status='running' LIMIT 1").fetchone()
+        return {'date': day, 'revision': _view_revision(
+            connection, at, config, head, latest, _worker_alive(connection, at), scheduler, busy)}
+
+
 def read_view():
     at = now_china()
     day = at.date().isoformat()
@@ -341,6 +367,7 @@ def read_view():
             'SELECT instrument_id,count(*) FROM intraday_monitor_event WHERE trade_date=? GROUP BY instrument_id', (day,))}
         scheduler = _json(connection, STATUS_KEY, {})
         busy = connection.execute("SELECT job_id,kind FROM job WHERE status='running' LIMIT 1").fetchone()
+        revision = _view_revision(connection, at, config, head, latest, worker_alive, scheduler, busy)
     if head:
         universe = _names(universe, get_market())
     stocks = []
@@ -379,7 +406,7 @@ def read_view():
             state = 'blocked'
     batch = {key: latest[key] for key in ('batch_id', 'trade_date', 'slot_key', 'status', 'started_at_ms',
              'completed_at_ms', 'requested_count', 'valid_count', 'unknown_count', 'level_unknown_count', 'event_count', 'reason')} if latest else None
-    return {'date': day, 'chart_as_of': head['business_date'] if head else None, 'settings': config,
+    return {'date': day, 'revision': revision, 'chart_as_of': head['business_date'] if head else None, 'settings': config,
             'status': {'state': state, 'reason': reason, 'worker_alive': worker_alive, 'can_enable': allowed},
             'counts': counts, 'last_batch': batch, 'stocks': _decorate(stocks, head),
             'events': {**events, 'items': _decorate(events['items'], head)},

@@ -417,7 +417,9 @@ assert.deepEqual(
   "view filters do not mutate source facts",
 );
 const eventPath = `/intraday-monitor/events?date=${day}&limit=200`;
+const revisionPath = "/intraday-monitor/revision";
 const overview = {
+  revision: "batch-one",
   date: day,
   chart_as_of: chartDay,
   settings,
@@ -474,6 +476,7 @@ globalThis.__monitor = {
   active: true,
   data: {
     "/intraday-monitor": overview,
+    [revisionPath]: { date: day, revision: "batch-one" },
     [eventPath]: {
       date: day,
       chart_as_of: chartDay,
@@ -555,13 +558,16 @@ try {
   assert.equal(state.calls.length, 0, "rendering only reads saved data");
   assert.equal(timers.at(-1).interval, 30_000);
   timers.at(-1).callback();
-  assert.equal(state.reloads.length, 2);
+  assert.deepEqual(state.reloads, [revisionPath, eventPath]);
+  state.data[revisionPath] = { date: day, revision: "batch-two" };
+  result = render();
+  assert.equal(state.reloads.at(-1), "/intraday-monitor");
   globalThis.document.visibilityState = "hidden";
   timers.at(-1).callback();
-  assert.equal(state.reloads.length, 2, "hidden page does not poll");
+  assert.equal(state.reloads.length, 3, "hidden page does not poll");
   globalThis.document.visibilityState = "visible";
   button(result.tree, "刷新已保存结果").props.onClick();
-  assert.equal(state.reloads.length, 4);
+  assert.equal(state.reloads.length, 5);
   assert.equal(state.calls.length, 0, "refresh cannot create a capture");
 
   // The same independent filters are wired to both event and stock tables.
@@ -703,6 +709,16 @@ try {
     state.tables.at(-1).rows.map((row) => row.instrument_id),
     [stockA.instrument_id],
   );
+  const stockColumns = state.tables.at(-1).columns;
+  assert.deepEqual(
+    stockColumns.slice(0, 4).map((column) => column.key),
+    ["name", "change_pct", "latest_price", "last_observed_at_ms"],
+  );
+  const sampledChange = stockColumns[1];
+  assert.equal(sampledChange.sortable, true, "sort stays available with missing samples");
+  assert.match(text(sampledChange.render(0)), /^0(?:\.00)?%$/);
+  assert.equal(text(sampledChange.render(null)), "—");
+  assert.match(result.html, /本交易日最近一轮采样/);
   assert.match(result.html, /限定分组：机器人/);
   assert.equal(
     find(result.tree, (node) => node.props["aria-label"] === "指标最小值").props
@@ -716,10 +732,53 @@ try {
     "heat and group drilldown never create network or tracking mutations",
   );
   button(result.tree, "重置筛选").props.onClick();
+  const boardPath = `/intraday-monitor/board-observations?date=${day}`;
+  state.data[boardPath] = {
+    date: day,
+    observed_at: `${day}T10:00:05+08:00`,
+    source_label: "扶摇 · 盘中观察",
+    notice: "仅核验已留存的板况快照",
+    items: [
+      { instrument_id: stockA.instrument_id, type: "resealed" },
+      { instrument_id: stockB.instrument_id, type: "broken" },
+      { instrument_id: "000001.SZ", type: "limit_down" },
+      { instrument_id: stockC.instrument_id, type: "unknown" },
+    ],
+  };
+  result = render();
+  button(result.tree, "板况观察").props.onClick();
+  result = render();
+  assert.match(result.html, /较上一档回封/);
+  assert.match(result.html, /炸板/);
+  assert.match(result.html, /扶摇 · 盘中观察/);
+  assert.match(result.html, /10:00:05/);
+  assert.deepEqual(
+    state.tables.at(-1).rows.map((row) => row.instrument_id),
+    [stockA.instrument_id, stockB.instrument_id],
+    "only known observations belonging to the monitoring set may appear",
+  );
+  find(
+    result.tree,
+    (node) => node.props["aria-label"] === "筛选板况",
+  ).props.onChange({ target: { value: "broken" } });
+  result = render();
+  assert.deepEqual(
+    state.tables.at(-1).rows.map((row) => row.instrument_id),
+    [stockB.instrument_id],
+  );
+  timers.at(-1).callback();
+  assert.equal(state.reloads.at(-1), boardPath);
+  assert.equal(state.calls.length, beforeHeatCalls);
+  state.data[boardPath] = { ...state.data[boardPath], date: chartDay };
+  result = render();
+  assert.match(result.html, /当天暂无可核验的板况快照/);
+  assert.equal(state.tables.at(-1).rows.length, 0);
   state.data["/intraday-monitor"] = beforeHeat;
   result = render();
   button(result.tree, "今日提醒").props.onClick();
   result = render();
+  timers.at(-1).callback();
+  assert.notEqual(state.reloads.at(-1), boardPath, "other views do not poll boards");
 
   const table = state.tables.at(-1);
   const contaminated = {

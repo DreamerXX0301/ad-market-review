@@ -1,4 +1,5 @@
 import type { Row } from "../lib/api";
+import { chartProvisionalIndicators } from "./chartProvisionalIndicators";
 
 export const BOLL_PERIOD = 20;
 export const BOLL_STD_MULTIPLIER = 2;
@@ -44,9 +45,13 @@ export function bollCandleValues(bar: Row): (number | "-")[] {
  * variance. Even a pre-warmed/truncated response needs 20 actual comparable
  * returned bars. No source data, strategy fields or server indicators change.
  */
-export function chartBoll(data: Row | null | undefined): BollPoint[] {
+export function chartBoll(
+  data: Row | null | undefined,
+  showForming = true,
+): BollPoint[] {
   const bars: Row[] = Array.isArray(data?.bars) ? data.bars : [];
   const period = data?.period;
+  const provisional = showForming ? chartProvisionalIndicators(data) : null;
   const quoteMode = period === "D" && data?.indicator_continuity === "quotes";
   const basis = data?.price_basis;
   let chartReason = "";
@@ -77,9 +82,12 @@ export function chartBoll(data: Row | null | undefined): BollPoint[] {
       warmupBars: 0,
       reason: "",
     };
-    const count = quoteMode
-      ? bar.display_indicator_warmup_bars
-      : (bar.display_indicator_warmup_bars ?? bar.indicator_warmup_bars);
+    const forming = provisional !== null && provisional.date === bar.date;
+    const count = forming
+      ? provisional.warmupBars
+      : quoteMode
+        ? bar.display_indicator_warmup_bars
+        : (bar.display_indicator_warmup_bars ?? bar.indicator_warmup_bars);
     let reason = chartReason;
     if (!reason && (!validDate(bar.date) || bar.date > data!.as_of))
       reason = "K线日期无效或晚于观察日，BOLL保持未知";
@@ -91,6 +99,7 @@ export function chartBoll(data: Row | null | undefined): BollPoint[] {
       reason = "K线与图表价格口径不一致，BOLL重新预热";
     if (
       !reason &&
+      !forming &&
       ((period === "W" && bar.week_closed === false) ||
         (period === "M" && bar.month_closed === false))
     )
@@ -105,18 +114,21 @@ export function chartBoll(data: Row | null | undefined): BollPoint[] {
     if (
       !reason &&
       period !== "D" &&
-      (bar.complete !== true ||
-        bar.week_closed === false ||
-        bar.month_closed === false ||
+      ((!forming &&
+        (bar.complete !== true ||
+          bar.week_closed === false ||
+          bar.month_closed === false ||
+          bar.monthly_indicator_eligible === false ||
+          bar.monthly_price_comparable === false)) ||
         bar.weekly_quote_coverage_complete === false ||
         bar.monthly_quote_coverage_complete === false ||
-        bar.monthly_price_comparable === false ||
-        bar.monthly_indicator_eligible === false ||
         bar.corporate_action === true)
     )
       reason = "形成中、报价不完整或价格不可比的周/月K，不纳入BOLL预热";
     if (!reason && (!finite(count) || !Number.isInteger(count) || count < 1))
       reason = "连续可比K线预热依据待核验，BOLL保持未知";
+    if (!reason && forming && count < BOLL_PERIOD)
+      reason = `形成中周期暂算 BOLL 需要${BOLL_PERIOD}根连续可比周期，当前${count}根`;
 
     if (reason) {
       closes = [];
@@ -135,12 +147,14 @@ export function chartBoll(data: Row | null | undefined): BollPoint[] {
     // periods and strict daily mode retain their server-declared boundaries.
     const declaredReset =
       bar.corporate_action === true ||
-      (!quoteMode &&
+      (!forming &&
+        !quoteMode &&
         (bar.price_continuity === false ||
           !!bar.indicator_reset_reason ||
           !!bar.weekly_continuity_reset_reason ||
           !!bar.monthly_continuity_reset_reason));
-    const counterReset = previousCount !== null && count !== previousCount + 1;
+    const counterReset =
+      !forming && previousCount !== null && count !== previousCount + 1;
     if (declaredReset || counterReset) {
       closes = [];
       segmentReason =

@@ -4,6 +4,7 @@ The phase lives on the increment ledger because selection/tracking calculations
 already own the sole running-job slot. It is not a second nested worker job.
 """
 import json
+from contextlib import nullcontext
 
 from app.core import connect
 from app.services import task_service as tasks
@@ -161,18 +162,18 @@ def verify_publications(root_id, state):
     return proof
 
 
-def guard(root_id):
-    with connect() as connection:
-        root = connection.execute('SELECT * FROM job WHERE job_id=?', (root_id,)).fetchone()
+def guard(root_id, connection=None):
+    with (connect() if connection is None else nullcontext(connection)) as db:
+        root = db.execute('SELECT * FROM job WHERE job_id=?', (root_id,)).fetchone()
         if root is None:
             raise ValueError('同步根任务不存在')
         from .sync_progress import chain_stop_action
-        stop = chain_stop_action(connection, root)
+        stop = chain_stop_action(db, root)
         if stop == 'pause':
             raise tasks.TaskPaused()
         if stop:
             raise tasks.TaskCancelled()
-        state = dependency_state(connection, root)
+        state = dependency_state(db, root)
     if state['state'] != 'ready':
         raise ValueError(state.get('reason') or '原任务数据依赖尚未完整完成')
 

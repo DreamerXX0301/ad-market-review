@@ -1,10 +1,13 @@
 """Regression checks for action gaps, explicit basis and delayed swing candidates."""
 from copy import deepcopy
 from datetime import date,timedelta
+from math import sin
 import pytest
 from app.analytics.market import MarketData
 from app.analytics.adjustments import continuous_prices
+from app.analytics.chart_indicators import DISPLAY_FIELDS
 from app.analytics.indicators import enrich_bars,aggregate_weekly
+from app.analytics.monthly import aggregate_monthly,enrich_monthly_bars
 from app.analytics.waves import candidate_waves
 
 
@@ -177,3 +180,94 @@ def test_weekly_chart_reports_same_gap_even_with_explicit_forward_basis():
     assert result['price_basis']=='forward_event_affine'
     assert resumed['missing_market_sessions_before']==10 and resumed['macd_dif'] is None
     assert any('缺少10个' in row['reason'] for row in result['indicator_gaps'])
+
+
+def forming_chart_fixture():
+    calendar = market_weekdays('2021-01-04', '2026-11-06')
+    rows = []
+    for index, day in enumerate(calendar):
+        close = 10 + index * .01 + sin(index / 11)
+        rows.append({'date': day, 'open': close - .1, 'low': close - .2,
+                     'high': close + .2, 'close': close, 'volume': 100,
+                     'amount': 100 * close, 'corporate_action': False,
+                     'corporate_action_coverage_known': True})
+
+    class FormingMarket(ChartMarket):
+        def calendar(self): return calendar
+        def actions(self, *args, **kwargs): return []
+
+    return FormingMarket(rows)
+
+
+@pytest.mark.parametrize('period', ['W', 'M'])
+def test_forming_chart_preview_uses_only_observed_quotes_and_leaves_strict_rows_unchanged(period):
+    market = forming_chart_fixture()
+    day = '2026-10-14'
+    rows = market.bars('600000.SH', day)
+    if period == 'W':
+        periods = aggregate_weekly(rows, market.calendar(), day)
+        strict = enrich_bars(periods, include_chart_extremes=True)
+    else:
+        periods = aggregate_monthly(rows, market.calendar(), day)
+        strict = enrich_monthly_bars(periods, include_chart_extremes=True)
+    actual = market.chart('600000.SH', period, day)
+    last = actual['bars'][-1]
+    preview = actual['provisional_indicators']
+    assert not last['complete'] and last['date'] == preview['date'] == day
+    assert [{field: bar.get(field) for field in expected} for bar, expected in zip(actual['bars'], strict)] == strict
+    if period == 'W':
+        reference = last
+    else:
+        assert last['macd_dif'] is None and not last['monthly_indicator_eligible']
+        reference = enrich_monthly_bars([*periods[:-1], {**periods[-1], 'complete': True}])[-1]
+    assert preview['warmup_bars'] == reference['indicator_warmup_bars'] >= 35
+    assert preview['values'] == {field: reference[field] for field in DISPLAY_FIELDS}
+    assert all(preview['values'][field] is not None for field in ('ma5', 'macd_dif', 'kdj_k'))
+    future = next(row for row in market.rows if row['date'] == '2026-10-15')
+    future.update(open=5000, low=4999, high=5001, close=5000)
+    assert market.chart('600000.SH', period, day)['provisional_indicators'] == preview
+    assert market.chart('600000.SH', 'D', day)['provisional_indicators'] is None
+    assert market.chart('600000.SH', period, '2026-10-30')['provisional_indicators'] is None
+
+
+@pytest.mark.parametrize('period', ['W', 'M'])
+@pytest.mark.parametrize('problem', [
+    'missing', 'duplicate', 'action', 'unknown_action_coverage',
+    'missing_prior_period', 'incomplete_prior_period',
+])
+def test_forming_chart_preview_requires_daily_coverage_continuity_and_comparable_prices(period, problem):
+    market = forming_chart_fixture()
+    day = '2026-10-14'
+    affected = '2026-10-13'
+    if problem == 'missing':
+        market.rows[:] = [row for row in market.rows if row['date'] != affected]
+    elif problem == 'missing_prior_period':
+        start = '2026-10-05' if period == 'W' else '2026-09-01'
+        end = '2026-10-09' if period == 'W' else '2026-09-30'
+        market.rows[:] = [row for row in market.rows if not start <= row['date'] <= end]
+    elif problem == 'incomplete_prior_period':
+        affected = '2026-10-08' if period == 'W' else '2026-09-25'
+        market.rows[:] = [row for row in market.rows if row['date'] != affected]
+    else:
+        affected_index = next(i for i, row in enumerate(market.rows) if row['date'] == affected)
+        if problem == 'duplicate':
+            market.rows.insert(affected_index, dict(market.rows[affected_index]))
+        elif problem == 'action':
+            market.rows[affected_index]['corporate_action'] = True
+        else:
+            market.rows[affected_index]['corporate_action_coverage_known'] = False
+    result = market.chart('600000.SH', period, day)
+    assert result['bars'][-1]['date'] == day
+    assert result['provisional_indicators'] is None
+
+
+def test_forming_week_does_not_count_an_unknown_first_week_as_complete_warmup():
+    market = forming_chart_fixture()
+    calendar = [day for day in market.calendar() if day >= '2026-09-16']
+    market.calendar = lambda: calendar
+    market.rows[:] = [row for row in market.rows if row['date'] in calendar]
+    chart = market.chart('600000.SH', 'W', '2026-10-14')
+    assert chart['bars'][-1]['indicator_warmup_bars'] == 5
+    preview = chart['provisional_indicators']
+    assert preview['warmup_bars'] == 4
+    assert preview['values'] == dict.fromkeys(DISPLAY_FIELDS)

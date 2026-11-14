@@ -27,7 +27,8 @@ export function shortChartLineLabel(line: ChartLineLabel) {
   );
 }
 
-export function chartLineRailWidth(width: number) {
+export function chartLineRailWidth(width: number, compact = false) {
+  if (compact) return width > 0 && width < 560 ? 70 : 80;
   return width > 0 && width < 560 ? 92 : 112;
 }
 
