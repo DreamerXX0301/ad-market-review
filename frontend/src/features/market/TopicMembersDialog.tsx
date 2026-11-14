@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { Search, X } from "lucide-react";
 import { list, useApi } from "../../lib/api";
+import { makeFuzzyMatcher, SEARCH_HINT } from "../../lib/fuzzySearch";
 import type { Row } from "../../lib/api";
 import type { Column } from "../../components/UI";
 import {
@@ -89,7 +91,12 @@ export function TopicMembersContent({
   const items = list(data).map((row) =>
     row.board === "unknown" ? { ...row, board: null } : row,
   );
-  const filtered = filterMarketMembers(items, query, board);
+  const filtered = filterMarketMembers(
+    items,
+    query,
+    board,
+    makeFuzzyMatcher(query),
+  );
   const snapshotDay =
     data?.membership_snapshot_day || data?.membership_observed_date;
   const columns: Column[] = [
@@ -310,16 +317,25 @@ export function TopicMembersContent({
         </details>
         <div className="member-dialog-toolbar">
           <div className="result-toolbar member-dialog-search-row">
-            <label className="member-dialog-field member-dialog-field-search">
-              <span>搜索成分股</span>
+            <div className="board-list-search">
+              <Search aria-hidden="true" size={14} />
               <input
                 aria-label="搜索分类成分股"
-                className="search-input"
-                placeholder="搜索成员名称、代码…"
+                placeholder={SEARCH_HINT}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
-            </label>
+              {query && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="清除成分股搜索"
+                  onClick={() => setQuery("")}
+                >
+                  <X aria-hidden="true" size={14} />
+                </button>
+              )}
+            </div>
             <span className="muted">
               {result.loading
                 ? "正在读取成分股…"

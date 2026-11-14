@@ -73,6 +73,7 @@ let source = ts
   )
   .outputText.replace(/^import ["'][^"']+\.css["'];?$/gm, "");
 const modules = {
+  "../../lib/fuzzySearch":new URL("../../lib/fuzzySearch.ts",import.meta.url).href,
   react: hooks,
   "../../lib/api": api,
   "../../components/UI": ui,
@@ -270,7 +271,7 @@ assert.deepEqual(
   [],
 );
 assert.deepEqual(filterMonitorRows([eventB], "乙股票"), [eventB]);
-assert.deepEqual(filterMonitorRows([sunrise], "cdf"), []);
+assert.deepEqual(filterMonitorRows([sunrise], "cdf"), [sunrise]);
 const zero = { ...event, change_pct: 0, limit_up_1y: 8, limit_up_ytd: 0 };
 const unknown = {
   ...eventB,

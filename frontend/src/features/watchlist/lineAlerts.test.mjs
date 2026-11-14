@@ -21,6 +21,10 @@ const compile = async (path, replacements = {}) => {
     .outputText.replace(/import "[^"]+\.css";/g, "");
   for (const [key, value] of Object.entries({
     react: import.meta.resolve("react"),
+    "../../lib/fuzzySearch": new URL(
+      "../../lib/fuzzySearch.ts",
+      import.meta.url,
+    ).href,
     "react/jsx-runtime": import.meta.resolve("react/jsx-runtime"),
     "lucide-react": import.meta.resolve("lucide-react"),
     ...replacements,
@@ -32,10 +36,13 @@ const compile = async (path, replacements = {}) => {
   return encoded(source);
 };
 const helpersURL = await compile("./lineAlertPresentation.ts");
+const filteringURL = await compile("./lineAlertFiltering.ts", {
+  "./lineAlertPresentation": helpersURL,
+});
+const { filterLineAlerts } = await import(filteringURL);
 const {
   lineAlertView,
   lineAlertInScope,
-  filterLineAlerts,
   lineAlertWatchlistState,
   lineCheckRefreshKeys,
   lineAlertPrice,
@@ -220,6 +227,7 @@ const lineUIURL = await compile("./WatchlistLineAlerts.tsx", {
     },
   ),
   "./lineAlertPresentation": helpersURL,
+  "./lineAlertFiltering": filteringURL,
   "../../components/UI": ui,
   "../../lib/format": format,
   "../../lib/api": api,
@@ -414,7 +422,9 @@ assert.equal(
 assert.match(support, /支撑失守提醒（风险）/);
 assert.match(support, /保存后核验当前行情日，命中才加入/);
 assert.match(support, /aria-label="支撑压力回看范围"/);
-const quickDrawing = support.match(/<form class="chart-annotation-form">.*?<\/form>/)?.[0];
+const quickDrawing = support.match(
+  /<form class="chart-annotation-form">.*?<\/form>/,
+)?.[0];
 assert.ok(quickDrawing);
 assert.match(quickDrawing, /水平线价格/);
 assert.match(quickDrawing, /点图选价/);
@@ -428,7 +438,10 @@ assert.match(
   support,
   /<details class="chart-annotation-disclosure"><summary>提醒、备注与颜色<span>回踩收回 · 触发入自选/,
 );
-assert.match(support, /<details class="chart-annotation-disclosure chart-auto-levels">/);
+assert.match(
+  support,
+  /<details class="chart-annotation-disclosure chart-auto-levels">/,
+);
 assert.equal((support.match(/aria-label="选择.色线"/g) || []).length, 3);
 assert.match(support, /划线与提醒/);
 assert.doesNotMatch(support, /选择[蓝金]色线/);
@@ -555,7 +568,10 @@ assert.match(projectedPanel, /保存不更换原锚/);
 assert.equal(originalLine.price, 12.5);
 assert.equal(originalLine.anchor_date, "2026-10-21");
 assert.match(projectedPanel, /未提醒，持续监控/);
-assert.match(projectedPanel, /<details class="chart-annotation-disclosure chart-saved-lines">/);
+assert.match(
+  projectedPanel,
+  /<details class="chart-annotation-disclosure chart-saved-lines">/,
+);
 const reminded = { ...originalLine, first_alert_date: "2026-10-22" };
 const remindedPanel = renderToStaticMarkup(
   createElement(ChartAnnotationPanel, {
@@ -591,6 +607,7 @@ const hotBrowseURL = await compile("../../components/HotBrowseFilter.tsx", {
 });
 const watchURL = await compile("./Watchlist.tsx", {
   "./lineAlertPresentation": helpersURL,
+  "./lineAlertFiltering": filteringURL,
   "./lineAlertNotification": encoded(
     "export const LINE_ALERTS_OPEN='workbench-open-today-line-alerts';",
   ),

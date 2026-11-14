@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge, Panel as BasePanel } from "../../components/UI";
 import type { Row } from "../../lib/api";
 import { amount, integer, num, percent, tone } from "../../lib/format";
+import { makeFuzzyMatcher, SEARCH_HINT } from "../../lib/fuzzySearch";
 import { noonLines, noonNumber, noonRows } from "./noonPresentation";
 import {
   noonConfirmedHeight,
@@ -1249,13 +1250,12 @@ export function NoonDirections({
   const scope = `${snapshotId || ""}:${mode}:${kind}:${query}`;
   const identity = (row: Row) =>
     `${row.kind}:${row.instrument_id || row.topic_code}`;
+  const matches = makeFuzzyMatcher(query);
   const rows = noonSortRows(
     noonRows(value[mode]).filter(
       (row) =>
         (kind === "all" || row.kind === kind) &&
-        `${row.name || ""} ${row.instrument_id || row.topic_code || ""}`
-          .toLowerCase()
-          .includes(query.trim().toLowerCase()),
+        matches(row.name, row.instrument_id, row.topic_code, row.topic_id),
     ),
     "change_pct",
     mode === "current_laggards" ? "asc" : "desc",
@@ -1327,7 +1327,7 @@ export function NoonDirections({
           <input
             className="search-input"
             aria-label="搜索午间板块"
-            placeholder="板块名称 / 代码"
+            placeholder={SEARCH_HINT}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />

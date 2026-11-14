@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 /** Evidence metadata is display-only; no fetching, inference or source upgrading. */
 export const researchRows = (value: unknown): Record<string, any>[] =>
   Array.isArray(value)
@@ -36,7 +37,7 @@ export function researchEvidencePage(
     pageSize?: number;
   } = {},
 ) {
-  const query = (options.query || "").trim().toLocaleLowerCase();
+  const matches = makeFuzzyMatcher(options.query || "");
   const filtered = evidence
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => {
@@ -52,14 +53,7 @@ export function researchEvidencePage(
         return false;
       if (options.dateState === "dated" && !dated) return false;
       if (options.dateState === "undated" && dated) return false;
-      return (
-        !query ||
-        [item.title, item.source, item.report_period, item.kind].some(
-          (value) =>
-            typeof value === "string" &&
-            value.toLocaleLowerCase().includes(query),
-        )
-      );
+      return matches(item.title, item.source, item.report_period, item.kind);
     });
   const pageSize = Math.max(1, Math.floor(options.pageSize || 8));
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));

@@ -12,7 +12,6 @@ import { list } from "../../lib/api";
 import { Empty, ErrorBox, Loading, Modal, Table } from "../../components/UI";
 import { dateTime, num } from "../../lib/format";
 import {
-  filterLineAlerts,
   lineAlertBasis,
   lineAlertInScope,
   isAutomaticPriceAlert,
@@ -22,6 +21,7 @@ import {
   lineAlertView,
   lineAlertWatchlistState,
 } from "./lineAlertPresentation";
+import { filterLineAlerts } from "./lineAlertFiltering";
 import "./WatchlistLineAlerts.css";
 import WatchlistButton from "./WatchlistButton";
 import CopyStockCode from "../../components/CopyStockCode";
@@ -323,7 +323,7 @@ export default function WatchlistLineAlerts({
           <Search size={15} />
           <input
             aria-label="搜索行情提醒"
-            placeholder="股票、代码、提醒条件"
+            placeholder="名称、代码、拼音、提醒条件"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />

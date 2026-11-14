@@ -259,7 +259,7 @@ export default function TopicBrowser({
             <input
               type="search"
               aria-label="搜索联合成员股票"
-              placeholder="搜索结果中的股票名称或代码"
+              placeholder="名称 / 代码 / 拼音 / 首字母"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />

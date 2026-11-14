@@ -13,12 +13,14 @@ from app.services.market_top_amount import _window, _instance_ref
 from app.services.sector_history import sector_prices_for_date, NORMALIZATION_VERSION
 
 VERSION = 'sector-index-top10-active-seven-sessions-v1'
+DEFAULT_ACTIVITY_SESSIONS = 7
+ACTIVITY_VERSIONS = {DEFAULT_ACTIVITY_SESSIONS: VERSION, 10: 'sector-index-top10-active-ten-sessions-v1'}
 _cache = OrderedDict()
 _lock = threading.RLock()
 CACHE_LIMIT = 32
 METRICS = ('change_pct', 'amount')
 _CODE = re.compile(r'\d{6}\.(?:TI|SH|SZ)')
-SCOPE = '最近7个市场交易日含观察日；同来源、同指数代码、同分类及同行业层级的本地已留存指数榜。上涨前10仅正涨幅，成交额前10独立统计；不是完整历史全市场目录、主线确认或资金净流入。不完整样本的已观察次数不是完整榜次数下界，补齐竞争者后排名与次数可能改变'
+_SCOPE = '最近{sessions}个市场交易日含观察日；同来源、同指数代码、同分类及同行业层级的本地已留存指数榜。上涨前10仅正涨幅，成交额前10独立统计；不是完整历史全市场目录、主线确认或资金净流入。不完整样本的已观察次数不是完整榜次数下界，补齐竞争者后排名与次数可能改变'
 
 
 def clear_sector_activity_cache():
@@ -107,11 +109,11 @@ def _daily(record, day):
     return output
 
 
-def _facts(market, status, day, reference, current_prices, price_reader):
-    dates, calendar_known = _window(market, day)
+def _facts(market, status, day, reference, current_prices, price_reader, *, sessions):
+    dates, calendar_known = _window(market, day, sessions=sessions)
     document = reference.get('_supplement', {})
     document = document if isinstance(document, dict) else {}
-    key = (id(market), status.get('snapshot_id'), day, tuple(dates), VERSION, _signature(document, dates))
+    key = (id(market), status.get('snapshot_id'), day, tuple(dates), ACTIVITY_VERSIONS[sessions], _signature(document, dates))
     with _lock:
         cached = _cache.get(key)
         if cached is not None and cached['instance']() is market:
@@ -136,13 +138,15 @@ def _facts(market, status, day, reference, current_prices, price_reader):
     return result, dates, calendar_known
 
 
-def decorate_sector_activity(market, status, day, rows, reference, current_prices=None, *, price_reader=None):
+def decorate_sector_activity(market, status, day, rows, reference, current_prices=None, *, sessions=DEFAULT_ACTIVITY_SESSIONS, price_reader=None):
+    scope = _SCOPE.format(sessions=sessions)
+    field = f'sector_activity_{sessions}d'
     if any(row.get('quote_basis') == 'provider_index' and _group(row) and _identity(row) for row in rows):
         facts, dates, calendar_known = _facts(market, status, day, reference, current_prices,
-                                             price_reader or sector_prices_for_date)
+                                             price_reader or sector_prices_for_date, sessions=sessions)
     else:
         facts = {}
-        dates, calendar_known = _window(market, day)
+        dates, calendar_known = _window(market, day, sessions=sessions)
     output = []
     summaries = {}
     for row in rows:
@@ -153,7 +157,7 @@ def decorate_sector_activity(market, status, day, rows, reference, current_price
             available = [observed for observed in dates if group and (group, metric) in facts.get(observed, {})]
             missing = [observed for observed in dates if observed not in available]
             incomplete = [observed for observed in dates if not group or facts.get(observed, {}).get((group, metric), {}).get('complete') is not True]
-            complete = bool(group) and calendar_known and len(dates) == 7 and not incomplete
+            complete = bool(group) and calendar_known and len(dates) == sessions and not incomplete
             appearances = []
             for observed in available:
                 entry = next((item for item in facts[observed][group, metric]['items'] if item['topic_code'] == identity), None)
@@ -162,17 +166,17 @@ def decorate_sector_activity(market, status, day, rows, reference, current_price
             count = len(appearances) if appearances else 0 if complete else None
             state = 'complete' if complete else 'observed_partial' if appearances else 'unknown'
             basis = '同类正涨幅前10' if metric == 'change_pct' else '同类成交额前10'
-            reason = (None if complete else '缺少同源、同类、同行业层级的完整7日本地榜；仅展示已观察次数，补齐竞争者后排名与次数可能改变，不是次数下界')
+            reason = (None if complete else f'缺少同源、同类、同行业层级的完整{sessions}日本地榜；仅展示已观察次数，补齐竞争者后排名与次数可能改变，不是次数下界')
             if group is None:
                 reason = '本行是成员样本派生或来源/代码/层级口径未核验；不与来源指数榜混算'
             elif group[2] == 'industry' and group[3] is None:
                 basis = '来源行业层级未知目录 · ' + basis
                 reason = (reason + '；' if reason else '') + '行业层级未核验，独立成组，不视为一级行业排名'
-            label = ('持续活跃 · ' if count >= 2 else '近7日 · ') + str(count) + '次' if complete else ('已观察'+str(count)+'次 · 样本不完整' if count is not None else '待核验')
+            label = ('持续活跃 · ' if count >= 2 else f'近{sessions}日 · ') + str(count) + '次' if complete else ('已观察'+str(count)+'次 · 样本不完整' if count is not None else '待核验')
             annotation = {'count': count, 'dates': [item['date'] for item in appearances], 'ranks': appearances,
-                          'observed_days': len(available), 'expected_days': 7, 'complete': complete,
+                          'observed_days': len(available), 'expected_days': sessions, 'complete': complete,
                           'state': state, 'label': label, 'reason': reason, 'window_start': dates[0] if dates else None,
-                          'window_end': day, 'scope': SCOPE, 'basis': basis, 'metric': metric,
+                          'window_end': day, 'scope': scope, 'basis': basis, 'metric': metric,
                           'group_kind': group[2] if group else row.get('kind'), 'group_level': group[3] if group else None,
                           'quote_basis': 'provider_index' if group else 'unknown', 'source': group[0] if group else None}
             annotations[metric] = annotation
@@ -180,7 +184,7 @@ def decorate_sector_activity(market, status, day, rows, reference, current_price
                 summaries[group, metric] = {'source': group[0], 'kind': group[2], 'level': group[3],
                                             'metric': metric, 'observed_days': len(available), 'complete': complete,
                                             'missing_dates': missing, 'incomplete_dates': incomplete, 'reason': reason}
-        output.append({**row, 'sector_activity_7d': annotations})
-    summary = {'algorithm_version': VERSION, 'expected_days': 7, 'window_start': dates[0] if dates else None,
-               'window_end': day, 'scope': SCOPE, 'metrics': list(METRICS), 'groups': list(summaries.values())}
+        output.append({**row, field: annotations})
+    summary = {'algorithm_version': ACTIVITY_VERSIONS[sessions], 'expected_days': sessions, 'window_start': dates[0] if dates else None,
+               'window_end': day, 'scope': scope, 'metrics': list(METRICS), 'groups': list(summaries.values())}
     return output, summary

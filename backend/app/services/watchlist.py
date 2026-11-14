@@ -4,6 +4,7 @@ import math
 import re
 
 from app.core import connect, get_market, now_ms
+from app.services.search_matching import list_identity_match
 from app.services.tracking_quotes import watchlist_quotes
 from app.services.stock_memberships import current_memberships
 from app.services.workspace_common import code_info, current, e8, fail, freeze_inputs, identities, js, money, obj, rows
@@ -196,7 +197,7 @@ def list_ids():
 
 
 def list_items(query=''):
-    query = query.strip().lower()
+    query = query.strip()
     if len(query) > 200:
         fail('搜索内容过长')
     with connect() as connection:
@@ -225,7 +226,16 @@ def list_items(query=''):
                    current_industries=[tag for tag in tags if tag['kind'] == 'industry'],
                    current_topics_observed_date=day)
     if query:
-        selected = [row for row in selected if query in ' '.join([*(str(row.get(key) or '') for key in ('name', 'code', 'instrument_id', 'source_name')), *(tag['name'] for tag in row['current_topics'])]).lower()]
+        matches, suggestions = [], []
+        for row in selected:
+            match = list_identity_match(query, row['name'], (row['code'], row['instrument_id']),
+                                        [row.get('source_name'), *row['current_topics']])
+            if match:
+                if match['is_suggestion']:
+                    suggestions.append({**row, 'search_match': match})
+                else:
+                    matches.append(row)
+        selected = matches or suggestions
     from app.services.market_alerts import latest_by_stock
     selected_symbols = [row['instrument_id'] for row in selected]
     with connect() as connection:

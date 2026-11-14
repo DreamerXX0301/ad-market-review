@@ -18,7 +18,7 @@ const compile = (source) =>
   }).outputText;
 const load = async (path) =>
   import(
-    encode(compile(await fs.readFile(new URL(path, import.meta.url), "utf8")))
+    encode(compile(await fs.readFile(new URL(path, import.meta.url), "utf8")).replace('"../../lib/fuzzySearch"', JSON.stringify(new URL("../lib/fuzzySearch.ts", import.meta.url).href)))
   );
 const { availableSortLevels, moveSortLevel, sortTableRowsByLevels } =
   await load("./multiTableSort.ts");

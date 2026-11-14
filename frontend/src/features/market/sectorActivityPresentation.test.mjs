@@ -31,6 +31,10 @@ const source = (
   await fs.readFile(new URL("./SectorActivity.tsx", import.meta.url), "utf8")
 )
   .replace('"./amountActivityPresentation"', JSON.stringify(helper))
+  .replace(
+    '"../../lib/api"',
+    JSON.stringify(encode("export const sectorActivitySessions=10;")),
+  )
   .replace('import "./AmountActivity.css";', "");
 const { SectorActivityCell, SectorActivityCoverage } = await import(
   encode(compile(source, true))
@@ -39,8 +43,8 @@ const base = {
   count: 3,
   state: "complete",
   complete: true,
-  expected_days: 7,
-  observed_days: 7,
+  expected_days: 10,
+  observed_days: 10,
   ranks: [{ date: "2026-10-22", rank: 2, value: 8.3 }],
   window_start: "2026-10-14",
   window_end: "2026-10-22",
@@ -74,19 +78,19 @@ html = renderToStaticMarkup(
 );
 assert.ok(
   html.includes("已观察2次") &&
-    html.includes("已观察3/7日") &&
+    html.includes("已观察3/10日") &&
     html.includes("待核验"),
 );
 html = renderToStaticMarkup(createElement(SectorActivityCell, {}));
 assert.ok(html.includes("待核验") && !html.includes("0次"));
 const summary = {
-  expected_days: 7,
+  expected_days: 10,
   groups: [
     {
       kind: "industry",
       level: 1,
       metric: "change_pct",
-      observed_days: 7,
+      observed_days: 10,
       complete: true,
     },
     {
@@ -120,9 +124,9 @@ html = renderToStaticMarkup(
     level: "1",
   }),
 );
-assert.ok(html.includes("核验范围7/7日") && html.includes("已观察2/7日"));
+assert.ok(html.includes("核验范围10/10日") && html.includes("已观察2/10日"));
 assert.ok(
-  !html.includes("已观察6/7日") && !html.includes("已观察5/7日"),
+  !html.includes("已观察6/10日") && !html.includes("已观察5/10日"),
   "industry layers and concepts have separate coverage",
 );
 assert.ok(html.includes("样本不完整") && html.includes("不随下方排序改变"));
@@ -134,10 +138,10 @@ const market = await fs.readFile(
   "utf8",
 );
 assert.ok(
-  market.includes('.concat(isQuoteBoard ? ["sector_activity_7d"] : [])'),
+  market.includes(".concat(isQuoteBoard ? [sectorActivityField] : [])"),
   "fund-flow rows do not silently inherit index ranking counts",
 );
 assert.ok(market.includes('defaultSort={{ key: "amount", order: "desc" }}'));
 console.log(
-  "sector seven-day rise/amount rankings: separate labels/layers, observed partial samples, folded dates and unchanged live sorting passed",
+  "sector ten-day rise/amount rankings: separate labels/layers, observed partial samples, folded dates and unchanged live sorting passed",
 );

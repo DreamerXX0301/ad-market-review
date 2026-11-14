@@ -429,8 +429,8 @@ await missing;
 assert.equal(requests.length, beforeMissingBody, "an unarchived day does not start a page prefetch");
 
 const sectorDay = "2026-10-16";
-const sectorPath = `/market/sectors?date=${sectorDay}&limit=1000`;
-const warmedSector = prefetchHistoricalReads("/market/sectors?date=2026-10-27&limit=1000", [sectorDay, "2026-10-15"], "snapshot-1", eligible.signal, () => true);
+const sectorPath = `/market/sectors?date=${sectorDay}&limit=1000&sector_activity_sessions=10`;
+const warmedSector = prefetchHistoricalReads("/market/sectors?date=2026-10-27&limit=1000&sector_activity_sessions=10", [sectorDay, "2026-10-15"], "snapshot-1", eligible.signal, () => true);
 const beforeSectorBody = requests.length;
 await prefetchHistoricalReads("/market/indices?date=2026-10-27", [sectorDay], "snapshot-1", eligible.signal, () => true);
 assert.equal(requests.length, beforeSectorBody, "a second page cannot start another background chain concurrently");

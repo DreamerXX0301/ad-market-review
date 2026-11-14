@@ -43,7 +43,7 @@ class LocalRanks:
         return deepcopy(self.records.get(day, {'date': day, 'complete': False, 'items': []}))
 
     def panel(self, day):
-        pytest.fail('seven-day activity must not compute seven full market/indicator panels')
+        pytest.fail('sector activity must not compute full historical market/indicator panels')
 
     def reference(self):
         return {'_supplement': {'target_date': self.days[-1], 'sector_index_history': deepcopy(self.records)}}
@@ -56,12 +56,12 @@ def clear_cache():
     activity.clear_sector_activity_cache()
 
 
-def decorate(market, day, rows=None, reference=None, current=None):
+def decorate(market, day, rows=None, reference=None, current=None, **options):
     return activity.decorate_sector_activity(
         market, {'snapshot_id': market.snapshot}, day,
         deepcopy(market.records.get(day, {}).get('items', [])) if rows is None else rows,
         market.reference() if reference is None else reference,
-        market.records.get(day) if current is None else current, price_reader=market.reader)
+        market.records.get(day) if current is None else current, price_reader=market.reader, **options)
 
 
 def test_fixed_positive_change_and_amount_rankings_include_observation_and_never_request_future():
@@ -87,6 +87,42 @@ def test_fixed_positive_change_and_amount_rankings_include_observation_and_never
     assert summary['metrics'] == ['change_pct', 'amount']
     assert market.calls == market.days[2:8], 'the current verified proof is reused and future dates stay unread'
     assert set(first['amount']['ranks'][0]) == {'date', 'rank', 'value'}
+
+
+def test_ten_session_opt_in_counts_the_three_older_sessions_and_keeps_legacy_window():
+    market = LocalRanks()
+    day = market.days[10]
+    older = market.days[1:4]
+    for observed in older:
+        market.records[observed]['items'][11]['change_pct'] = 50
+
+    legacy_rows, legacy_summary = decorate(market, day)
+    market.calls.clear()
+    rows, summary = decorate(market, day, sessions=10)
+    assert market.calls == market.days[1:10]
+    assert summary['algorithm_version'] == 'sector-index-top10-active-ten-sessions-v1'
+    assert summary['expected_days'] == 10
+    assert summary['window_start'] == older[0] and summary['window_end'] == day
+    assert '最近10个市场交易日' in summary['scope']
+    price_rank = rows[11]['sector_activity_10d']['change_pct']
+    assert price_rank['dates'] == older
+    assert price_rank['count'] == 3 and price_rank['complete'] is True
+    assert rows[11]['sector_activity_10d']['amount']['count'] == 0
+    assert rows[11]['sector_activity_10d']['amount']['label'] == '近10日 · 0次'
+    assert rows[0]['sector_activity_10d']['amount']['dates'] == market.days[1:11]
+    assert rows[0]['sector_activity_10d']['amount']['count'] == 10
+    assert 'sector_activity_7d' not in rows[0]
+
+    del market.records[older[1]]
+    rows, summary = decorate(market, day, sessions=10)
+    partial = rows[11]['sector_activity_10d']['change_pct']
+    assert partial['count'] == 2 and partial['state'] == 'observed_partial'
+    assert partial['expected_days'] == 10 and partial['observed_days'] == 9
+    assert '完整10日本地榜' in partial['reason']
+    assert all(group['missing_dates'] == [older[1]] for group in summary['groups'])
+    assert decorate(market, day) == (legacy_rows, legacy_summary)
+    assert legacy_summary['algorithm_version'] == 'sector-index-top10-active-seven-sessions-v1'
+    assert legacy_rows[11]['sector_activity_7d']['change_pct']['count'] == 0
 
 
 def test_exact_source_code_kind_and_industry_level_not_names_or_members_determine_identity():

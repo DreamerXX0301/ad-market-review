@@ -18,7 +18,7 @@ globalThis.__topicManagerHooks = {
 const source = (await fs.readFile(new URL("./StockTopicManager.tsx", import.meta.url), "utf8"))
   .replace('import { useState } from "react";', 'const { useState } = globalThis.__topicManagerHooks;')
   .replace('import { list, post, useApi } from "../lib/api";', 'const { list, post, useApi } = globalThis.__topicManagerHooks;');
-const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText.replaceAll('"react/jsx-runtime"', JSON.stringify(import.meta.resolve("react/jsx-runtime")));
+const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText.replaceAll('"../lib/fuzzySearch"', JSON.stringify(new URL("../lib/fuzzySearch.ts", import.meta.url).href)).replaceAll('"react/jsx-runtime"', JSON.stringify(import.meta.resolve("react/jsx-runtime")));
 const { default: Manager } = await import("data:text/javascript;base64," + Buffer.from(compiled).toString("base64"));
 const props = { instrumentId: "600001.SH", currentIds: new Set(["existing"]), onSaved: () => saved++, onClose: () => {} };
 function render() { cursor = 0; return Manager(props); }

@@ -1,12 +1,14 @@
 # 午间行业与概念详情
 
-午评“主线与板块对照”采用左侧方向榜单、右侧午间成员的联动布局，窄内容区改为上下排列。左侧切换本次领涨、偏弱和同来源代码跨日对照，可按行业/概念及名称/代码筛选、表头排序，跨日名单每页12项。默认选中当前范围第一项；点行或“成分股”切换右侧，名称和右侧“板块K线”按钮仍打开板块图。昨日人工主线样本独立保留在下方，不混入板块成员。
+午评“主线与板块对照”采用左侧方向榜单、右侧午间成员的联动布局，窄内容区改为上下排列。左侧切换本次领涨、偏弱和同来源代码跨日对照，可按行业/概念及名称/代码/拼音/首字母筛选、表头排序，跨日名单每页12项。默认选中当前范围第一项；点行或“成分股”切换右侧，名称和右侧“板块K线”按钮仍打开板块图。昨日人工主线样本独立保留在下方，不混入板块成员。
 
 右侧与原成员弹窗共用同一展示和筛选逻辑，只按所选板块读取一个有界成员分页；午间涨幅及成员摘要直接显示，完整指数报价与采集时间可折叠查看。快照或来源代码切换时重置成员筛选和页码，旧请求的结果不得显示到新板块；范围为空时清空右侧。两者使用同一份午评快照身份，和盘后行业与概念详情分开。缺少身份或代码时成员保持不可用，不能改读当前成员或盘后成员。页面读取不取数，不新增实时轮询或自动任务。
 
 成员页并列展示午间报价日与成员名单留存日；旧名单日期不表示股票价格停留在旧日。上市板块使用全部、主板、创业板、科创板、北交所、待核验六个快捷按钮，切换回第一页，保留搜索、排序及同一快照身份；它只筛选本份成员，不改变来源事实或上方总体汇总。
 
 `GET /api/v1/market/noon/{snapshot_id}/sector-members?topic_code=884001.TI&board=all&query=&sort=change_pct&direction=desc&page=1&limit=50`：本地只读，严格核验正文SHA与来源代码；`board`接受all/main/chinext/star/beijing/unknown。排序为name/instrument_id/change_pct/latest_price/amount/volume；缺值双向排末尾。服务端先筛选排序全部已存成员，再分页；默认50、最大100。返回`version=noon-sector-view-v1,snapshot_id,content_sha256,date,collected_start_at,collected_end_at,quote_as_of,sector_quote,quote_scope=noon_snapshot,formal_chart_as_of,membership_as_of,membership_source_sha256,members_complete,state,unavailable_reason,total,quote_coverage,board_counts,matched,page,pages,limit,items,notice`。
+
+成员查询按同份快照留存的证券名称与代码匹配，支持拼音和首字母前缀；未留存名称时仍可匹配原代码。不会用近似名称猜测证券，也不会用当前目录补历史名称。
 
 `items`中的latest_price/change_pct/open/high/low/amount/volume/quote_at仅来自同份`payload.stocks`，缺报保留身份、板别及缺口，绝不退回昨日或今天收盘。成员名单日、股票行情日、实际采集区间与逐条报价时刻分开：来源无逐条时刻则仍未知，不能声称同秒或精确11:30行情。`current_events`只引用本份已核验三池，不以涨跌幅猜涨跌停。
 

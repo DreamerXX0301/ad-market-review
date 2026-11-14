@@ -5,6 +5,7 @@ from decimal import Decimal,ROUND_HALF_UP
 from fastapi import HTTPException
 from app.core import connect,get_market,now_ms,new_id
 from app.domain.conditions import validate,evaluate,metrics_for,names,specs
+from app.services.search_matching import list_identity_match, normalized
 from app.services.workspace_common import *
 
 
@@ -69,13 +70,17 @@ def _override_batch(c,selected,day):
     return grouped
 
 
+def _topic_kind(row, metadata):
+    return 'manual' if row['origin'] == 'manual' else metadata.get('kind', 'concept')
+
+
 def topic_view(c,r,with_members=False,catalog=None,known_master=None,day=None,overrides=None):
     day=day or current(c)
     catalog=_catalog_map() if catalog is None else catalog
     if overrides is None:overrides=_override_batch(c,[r],day)[r['topic_id']]
     meta=catalog.get(r.get('provider_topic_key'),{})
     result={k:v for k,v in r.items() if k!='aliases_json'};result['aliases']=obj(r.get('aliases_json'),[])
-    result.update(kind='manual' if r['origin']=='manual' else meta.get('kind','concept'),source_observed_date=meta.get('observed_date'),historical_membership=False,members_complete=True if r['origin']=='manual' else meta.get('members_complete',False))
+    result.update(kind=_topic_kind(r, meta),source_observed_date=meta.get('observed_date'),historical_membership=False,members_complete=True if r['origin']=='manual' else meta.get('members_complete',False))
     members,origin=_members(c,r,day=day,catalog=catalog,overrides=overrides)
     result['observed_member_count']=len(members)
     result['member_count']=len(members) if result['members_complete'] else None
@@ -91,15 +96,35 @@ def topic_view(c,r,with_members=False,catalog=None,known_master=None,day=None,ov
 
 def list_topics(q='',include_archived=False,kind=None):
     if kind not in (None,'all','manual','concept','industry'):fail('不支持的题材类型')
+    search = normalized(q) if q else ''
     with connect() as c:
         catalog=_catalog_map()
         data=rows(c,'''SELECT t.*,r.name,r.description,r.aliases_json,r.archived,r.revision,r.effective_business_date FROM topic t JOIN topic_revision r ON r.topic_id=t.topic_id AND r.revision=(SELECT max(revision) FROM topic_revision WHERE topic_id=t.topic_id) ORDER BY r.name''')
-        selected=[r for r in data if (include_archived or not r['archived']) and (not q or q.lower() in (r['name']+r['description']+' '.join(obj(r['aliases_json'],[]))).lower())]
+        selected, suggestions = [], []
+        for row in data:
+            metadata = catalog.get(row.get('provider_topic_key'), {})
+            if (not include_archived and row['archived']) or (kind not in (None, 'all') and _topic_kind(row, metadata) != kind):
+                continue
+            if not search or search in normalized(row.get('description') or ''):
+                selected.append((row, None))
+                continue
+            match = list_identity_match(search, row['name'], (row.get('provider_topic_key'), metadata.get('topic_code'), metadata.get('code')),
+                                        obj(row['aliases_json'], []))
+            if match:
+                if match['is_suggestion']:
+                    suggestions.append((row, match))
+                else:
+                    selected.append((row, None))
+        selected = selected or suggestions
         output=[];day=current(c) if selected else None
         for offset in range(0,len(selected),128):
-            batch=selected[offset:offset+128];overrides=_override_batch(c,batch,day)
-            output.extend(topic_view(c,r,catalog=catalog,day=day,overrides=overrides[r['topic_id']]) for r in batch)
-        if kind and kind!='all':output=[r for r in output if r['kind']==kind]
+            batch = selected[offset:offset+128]
+            overrides = _override_batch(c, [row for row, _ in batch], day)
+            for row, suggestion in batch:
+                item = topic_view(c, row, catalog=catalog, day=day, overrides=overrides[row['topic_id']])
+                if suggestion:
+                    item['search_match'] = suggestion
+                output.append(item)
         return {'items':output,'total':len(output)}
 
 def get_topic(topic_id):

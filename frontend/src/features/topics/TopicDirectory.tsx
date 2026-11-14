@@ -1,5 +1,6 @@
 import type { Row } from "../../lib/api";
 import { Badge, Empty, ErrorBox, Loading, Panel } from "../../components/UI";
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 
 export function topicKindLabel(topic: Row) {
   return topic.origin === "manual" || topic.kind === "manual"
@@ -9,16 +10,17 @@ export function topicKindLabel(topic: Row) {
       : "概念题材";
 }
 
-export function matchesTopic(topic: Row, query: string, kind: string) {
+export function matchesTopic(
+  topic: Row,
+  matches: ReturnType<typeof makeFuzzyMatcher>,
+  kind: string,
+) {
   const typeMatches =
     kind === "all" ||
     (kind === "manual" ? topic.origin === "manual" : topic.kind === kind);
-  const content = [topic.name, topic.description, ...(topic.aliases || [])]
-    .join(" ")
-    .toLocaleLowerCase();
   return (
     typeMatches &&
-    (!query.trim() || content.includes(query.trim().toLocaleLowerCase()))
+    matches(topic.name, topic.topic_id, topic.aliases, topic.description)
   );
 }
 
@@ -51,9 +53,11 @@ export default function TopicDirectory({
   onToggle: (id: string) => void;
   onReload: () => void;
 }) {
+  const matches = makeFuzzyMatcher(query);
   const visible = topics.filter(
     (topic) =>
-      (includeArchived || !topic.archived) && matchesTopic(topic, query, kind),
+      (includeArchived || !topic.archived) &&
+      matchesTopic(topic, matches, kind),
   );
   return (
     <Panel
@@ -75,7 +79,7 @@ export default function TopicDirectory({
         <input
           type="search"
           aria-label="搜索题材或行业"
-          placeholder="搜索题材、行业或别名"
+          placeholder="名称 / 别名 / 拼音 / 首字母"
           value={query}
           onChange={(event) => onQuery(event.target.value)}
         />

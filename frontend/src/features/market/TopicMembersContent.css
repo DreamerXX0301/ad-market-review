@@ -1,4 +1,48 @@
 /* Embedded members use the existing quote/coverage cells without modal sizing. */
+.board-list-search {
+  display: flex;
+  flex: 1 1 185px;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 0 6px 0 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--surface2);
+  color: var(--muted);
+}
+.board-list-search:focus-within {
+  border-color: var(--blue);
+}
+.board-list-search > svg,
+.board-list-search > .icon-btn {
+  flex-shrink: 0;
+}
+.board-list-search > input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: auto;
+  padding: 5px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--workbench-type-label, 11px);
+}
+.board-list-search > .icon-btn {
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+}
+.member-dialog-search-row > .board-list-search {
+  flex-grow: 0;
+  flex-basis: 215px;
+}
 .market-member-day-change {
   display: inline-flex;
   flex-wrap: wrap;
@@ -22,10 +66,6 @@
 .market-members-inline .member-dialog-search-row {
   gap: 10px;
 }
-.market-members-inline .member-dialog-search-row .member-dialog-field-search {
-  flex-basis: 160px;
-  max-width: none;
-}
 .market-members-inline .member-dialog-toolbar .member-dialog-field {
   gap: 4px;
 }
@@ -36,7 +76,6 @@
   margin-bottom: 8px;
 }
 .market-members-inline .member-dialog-search-row > .muted {
-  flex-basis: 100%;
   padding-bottom: 0;
   font-size: var(--workbench-type-label, 11px);
 }

@@ -262,8 +262,14 @@ def test_current_industry_and_concept_memberships_are_batched_searchable_and_not
     assert row['current_topics_observed_date'] == market.entry
     assert next(tag for tag in row['current_topics'] if tag['name'] == '合成行业')['source_observed_date'] == market.days[68]
     assert row['source_name'] == strategy['name'] and row['event_close'] == original['entry_price']
-    for search, expected in [('折叠后仍可搜索概念', 1), ('合成行业', 2), ('原收藏板块', 1)]:
-        assert client.get('/api/v1/watchlist', params={'query': search}).json()['matched_count'] == expected
+    for search, expected in [('折叠后仍可搜索概念', 1), ('合成行业', 2), ('原收藏板块', 1),
+                             ('hchy', 2), ('yuanshoucangbankuai', 1), ('６００００１．ｓｈ', 1), ('600003', 0)]:
+        result = client.get('/api/v1/watchlist', params={'query': search}).json()
+        assert result['matched_count'] == expected and result['total'] == 2
+        assert all('search_match' not in item for item in result['items'])
+    suggested = client.get('/api/v1/watchlist', params={'query': '原收藏板快'}).json()
+    assert suggested['matched_count'] == 1 and suggested['items'][0]['instrument_id'] == '000001.SZ'
+    assert suggested['items'][0]['search_match']['is_suggestion'] is True
     definitions = client.get('/api/v1/topics').json()['items']
     concept = next(item for item in definitions if item['name'] == '折叠后仍可搜索概念')
     assert client.post('/api/v1/topics/'+concept['topic_id']+'/members', json={'instrument_id': '600001.SH', 'action': 'exclude'}).status_code == 200

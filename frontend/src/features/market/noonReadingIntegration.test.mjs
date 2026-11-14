@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { build } from "vite";
-import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -59,7 +58,6 @@ fixture.snapshot.workbench.event_classification_counts = {
   limit_down:{sample_count:1,industries:[],topics:[],up_count:0,valid_count:1,mean_change_pct:-9.95},
   limit_break:{sample_count:1,industries:[],topics:[],up_count:1,valid_count:2,mean_change_pct:6.47},
 };
-const require = createRequire(import.meta.url);
 const output = await build({
   configFile: false, root: new URL("../../../", import.meta.url).pathname, logLevel: "silent",
   plugins: [{
@@ -87,7 +85,7 @@ const output = await build({
 });
 const entry = output.output.find((item) => item.type === "chunk" && item.isEntry);
 const code = entry.code.replace(/from "([^".][^"]*)"/g,
-  (_, id) => `from ${JSON.stringify(pathToFileURL(require.resolve(id)).href)}`);
+  (_, id) => `from ${JSON.stringify(import.meta.resolve(id))}`);
 const moduleDirectory = await fs.mkdtemp(path.join(tmpdir(), "noon-reading-test-"));
 const modulePath = path.join(moduleDirectory, "component.mjs");
 await fs.writeFile(modulePath, code);

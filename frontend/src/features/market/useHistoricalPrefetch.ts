@@ -3,6 +3,7 @@ import {
   firstGainersReadPath,
   historicalPrefetchBusy,
   prefetchMarketReads,
+  sectorBoardReadPath,
   subscribeReadChanges,
   usePageActive,
 } from "../../lib/api";
@@ -24,8 +25,9 @@ export function marketPrimaryReadPath(route: string, date: string) {
       return firstGainersReadPath(date);
     case "abnormal":
       return `/market/abnormal?monitor_scope=latest&limit=1000&date=${date}`;
-    case "emotion":
     case "sectors":
+      return sectorBoardReadPath(date);
+    case "emotion":
     case "ladder":
       return `/market/${route}?date=${date}&limit=1000`;
     case "auction":

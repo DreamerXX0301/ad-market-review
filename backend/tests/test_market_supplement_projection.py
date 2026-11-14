@@ -7,6 +7,8 @@ from copy import deepcopy
 import json
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from app.services import market_service as service
 from app.services import market_supplement as supplement
@@ -169,6 +171,35 @@ def test_sector_page_retains_seven_days_and_full_descriptor_dates_without_fund_d
     activity = after['items'][0]['sector_activity_7d']['change_pct']
     assert activity['count'] == 7 and activity['dates'] == DAYS[1:-1]
     assert after['sector_activity_7d']['window_start'] == DAYS[1]
+
+
+def test_market_sector_http_opt_in_keeps_short_retained_history_partial(published):
+    from app.routers.platform import router
+
+    app = FastAPI()
+    app.include_router(router)
+    path = f'/api/v1/market/sectors?date={DAY}'
+    with TestClient(app) as client:
+        legacy = client.get(path)
+        ten = client.get(path + '&sector_activity_sessions=10')
+        explicit_legacy = client.get(path + '&sector_activity_sessions=7')
+        assert legacy.status_code == ten.status_code == explicit_legacy.status_code == 200
+        assert client.get(path + '&sector_activity_sessions=8').status_code == 422
+        assert client.get('/api/v1/market/flow?sector_activity_sessions=10').status_code == 422
+        assert client.get('/api/v1/market/overview?sector_activity_sessions=7').status_code == 422
+
+    legacy, ten = legacy.json(), ten.json()
+    assert explicit_legacy.json() == legacy
+    legacy_summary = legacy.pop('sector_activity_7d')
+    ten_summary = ten.pop('sector_activity_10d')
+    assert legacy_summary['window_start'] == DAYS[1] and legacy_summary['expected_days'] == 7
+    assert ten_summary['window_start'] == DAYS[0] and ten_summary['expected_days'] == 10
+    legacy_row = legacy['items'][0].pop('sector_activity_7d')['change_pct']
+    ten_row = ten['items'][0].pop('sector_activity_10d')['change_pct']
+    assert legacy_row['count'] == ten_row['count'] == 7
+    assert ten_row['dates'] == DAYS[1:-1]
+    assert legacy_row['state'] == 'complete' and ten_row['state'] == 'observed_partial'
+    assert ten == legacy  # Every other API field is independent of the activity window.
 
 
 def test_flow_keeps_later_anchor_history_and_sector_fallback(published):

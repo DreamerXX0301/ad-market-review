@@ -71,6 +71,23 @@ def test_missing_quote_stays_unknown_board_filter_sort_and_pages_are_full_sample
     assert view(value, query='600001')['matched'] == 1
 
 
+def test_noon_member_fuzzy_filter_uses_frozen_names_and_preserves_board_filters():
+    value = payload()
+    watched, other = value['stocks']
+    watched['name'] = '日出东方'
+    other['name'] = '上海电影'
+    value['sector_memberships'] = views.freeze_memberships(value, [topic()])
+    before = canonical(value)
+
+    for query in ('ｒｃ', 'richu', 'richudongfang', '日出', watched['instrument_id'].lower()):
+        result = view(value, query=query, limit=1)
+        assert result['total'] == 2 and result['matched'] == 1
+        assert result['items'][0]['instrument_id'] == watched['instrument_id']
+    assert view(value, query='rc', board='star')['matched'] == 0
+    assert view(value, query='日出东芳')['matched'] == 0
+    assert canonical(value) == before
+
+
 def test_only_confirmed_members_without_transaction_show_suspension(monkeypatch):
     from app.services import market_suspensions
 

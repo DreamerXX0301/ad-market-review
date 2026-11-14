@@ -25,7 +25,7 @@ const helper = encode(
       new URL("./researchEvidencePresentation.ts", import.meta.url),
       "utf8",
     ),
-  ),
+  ).replace('"../../lib/fuzzySearch"', JSON.stringify(new URL("../../lib/fuzzySearch.ts", import.meta.url).href)),
 );
 const {
   researchUrl,

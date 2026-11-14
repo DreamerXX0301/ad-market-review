@@ -32,7 +32,7 @@ const {
   filterGapDiagnosisStocks,
   gapEpisodeView,
 } = await import(
-  "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
+  "data:text/javascript;base64," + Buffer.from(compiled.replace('"../../lib/fuzzySearch"', JSON.stringify(new URL("../../lib/fuzzySearch.ts", import.meta.url).href))).toString("base64")
 );
 for (const status of [
   "failed",

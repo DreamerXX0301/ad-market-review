@@ -12,6 +12,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { Row } from "../../lib/api";
 import CopyStockCode from "../../components/CopyStockCode";
 import { amount, num, integer, percent, tone } from "../../lib/format";
+import { makeFuzzyMatcher, SEARCH_HINT } from "../../lib/fuzzySearch";
 import AuctionStockBadges from "./AuctionStockBadges";
 import {
   auctionStockBoardCounts,
@@ -48,6 +49,7 @@ export default function AuctionStockTiles({
   }>({ key: "height", direction: "desc" });
   const [query, setQuery] = useState("");
   const [event, setEvent] = useState("all");
+  const matches = makeFuzzyMatcher(query);
   const boardCounts = auctionStockBoardCounts(ids, quotes);
   const total = boardCounts.find((item) => item.key === "all")?.count ?? 0;
   const rows = auctionStockListRows(
@@ -74,15 +76,12 @@ export default function AuctionStockTiles({
       ...(related?.industries || []),
       ...(related?.topics || []),
     ].map((item: Row) => item.name);
-    return [
+    return matches(
       row.name,
       row.instrument_id,
-      ...labels,
+      labels,
       auctionStockEvent(row)?.label,
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(query.trim().toLowerCase());
+    );
   });
   function selectSort(key: AuctionStockSortKey) {
     setSort((previous) => ({
@@ -101,7 +100,7 @@ export default function AuctionStockTiles({
               aria-label="组内搜索"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="个股名称、代码或行业概念标签"
+              placeholder={SEARCH_HINT}
             />
           </label>
           <label>

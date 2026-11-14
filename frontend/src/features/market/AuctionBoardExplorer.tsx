@@ -7,6 +7,7 @@ import { useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
 import { Empty, ErrorBox, Loading, Panel } from "../../components/UI";
 import { integer, num, percent, tone } from "../../lib/format";
+import { makeFuzzyMatcher, SEARCH_HINT } from "../../lib/fuzzySearch";
 import { auctionSortRows } from "./auctionPresentation";
 import {
   auctionExplorerGroups,
@@ -54,14 +55,12 @@ export default function AuctionBoardExplorer({
     () => auctionExplorerGroups(result.data, resonance.data, date, quotes),
     [result.data, resonance.data, date, quotes],
   );
+  const matches = makeFuzzyMatcher(query);
   const filtered = groups.filter(
     (row) =>
       (kind === "all" || row.kind === kind) &&
       (!anchor || row.instrument_ids?.includes(anchorId)) &&
-      (!query.trim() ||
-        `${row.name} ${row.topic_code}`
-          .toLowerCase()
-          .includes(query.trim().toLowerCase())) &&
+      matches(row.name, row.topic_code, row.topic_id, row.instrument_id) &&
       (mode !== "resonance" || (row.sample_count >= 3 && row.top_count >= 2)),
   );
   const focused = auctionFocusedDirections(filtered);
@@ -188,7 +187,7 @@ export default function AuctionBoardExplorer({
                 aria-label="板块搜索"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="行业、概念名称或代码"
+                placeholder={SEARCH_HINT}
               />
             </span>
           </label>

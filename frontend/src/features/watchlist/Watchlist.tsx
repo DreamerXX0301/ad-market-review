@@ -316,7 +316,7 @@ export default function Watchlist({
                 <Search size={17} aria-hidden="true" />
                 <input
                   aria-label="搜索自选股票"
-                  placeholder="搜索股票、代码、来源策略或行业题材"
+                  placeholder="股票、代码、拼音、策略或行业题材"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />

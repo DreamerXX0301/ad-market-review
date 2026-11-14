@@ -18,7 +18,7 @@ async function compiled(name, jsx = false) {
     },
   ).outputText;
 }
-const helpers = encode(await compiled("./dataPresentation.ts"));
+const helpers = encode((await compiled("./dataPresentation.ts")).replace('"../../lib/fuzzySearch"', JSON.stringify(new URL("../../lib/fuzzySearch.ts", import.meta.url).href)));
 const ui = encode(`import {jsx} from ${JSON.stringify(runtime)};
 export const Panel=({title,subtitle,actions,children})=>jsx('section',{children:[jsx('h2',{children:title},'title'),jsx('p',{children:subtitle},'subtitle'),jsx('div',{children:actions},'actions'),jsx('div',{children},'body')]});
 export const Badge=({children})=>jsx('span',{children});

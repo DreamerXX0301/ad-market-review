@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import { useEffect, useState } from "react";
 import { RefreshCw, Settings2, Trash2, Users } from "lucide-react";
 import { list, post, requestKey, useApi } from "../../lib/api";
@@ -66,6 +67,7 @@ export default function SectorTracking({
     ),
     rounds = list(result.data),
     byRound = new Map(rounds.map((round) => [round.round_id, round]));
+  const matches = makeFuzzyMatcher(query);
   const rows = (
     tab === "alerts"
       ? list(events.data).map((event) => ({
@@ -84,10 +86,7 @@ export default function SectorTracking({
   ).filter(
     (row) =>
       (kind === "all" || row.sector_kind === kind) &&
-      (!query ||
-        `${row.name} ${row.topic_code} ${row.strategy_name}`
-          .toLowerCase()
-          .includes(query.toLowerCase())),
+      matches(row.name, row.topic_code, row.strategy_name),
   );
   const hasFilters = Boolean(
     strategyId || kind !== "all" || query || (tab === "tracking" && triggered),
@@ -199,7 +198,7 @@ export default function SectorTracking({
             </select>
             <input
               aria-label="搜索跟踪板块"
-              placeholder="板块名称 / 代码"
+              placeholder="名称 / 代码 / 拼音 / 首字母"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />

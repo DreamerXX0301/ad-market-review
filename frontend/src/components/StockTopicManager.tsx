@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { list, post, useApi } from "../lib/api";
 import type { Row } from "../lib/api";
+import { makeFuzzyMatcher } from "../lib/fuzzySearch";
 
 /** Additive current-day research edits; source catalog membership is preserved. */
 export default function StockTopicManager({
@@ -22,14 +23,12 @@ export default function StockTopicManager({
     [reason, setReason] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const matches = makeFuzzyMatcher(query);
   const choices = list(topics.data).filter(
     (topic) =>
       !topic.archived &&
       !currentIds.has(topic.topic_id) &&
-      [topic.name, ...(topic.aliases || [])]
-        .join(" ")
-        .toLocaleLowerCase()
-        .includes(query.trim().toLocaleLowerCase()),
+      matches(topic.name, topic.topic_id, topic.aliases),
   );
   async function save() {
     setError("");
@@ -95,7 +94,7 @@ export default function StockTopicManager({
           <input
             type="search"
             aria-label="搜索可加入题材"
-            placeholder="搜索题材、行业或别名"
+            placeholder="名称 / 别名 / 拼音 / 首字母"
             value={query}
             disabled={busy}
             onChange={(event) => setQuery(event.target.value)}

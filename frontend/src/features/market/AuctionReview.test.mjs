@@ -395,9 +395,9 @@ const listQuotes=[
  {instrument_id:'300101.SZ',name:'分组高板低开',state:'observed',auction_pct:-1,previous_board_count:3,board:'chinext'},
  {instrument_id:'920101.BJ',name:'分组缺报样本',state:'unknown',auction_pct:99,board:'unknown'},
 ];
-function renderStockList(states={}){
+function renderStockList(states={},explorer){
  setStates(states);
- return renderToStaticMarkup(createElement(AuctionStockTiles,{ids:listQuotes.map(r=>r.instrument_id),quotes:listQuotes,chartDate:'2026-10-28',onStock(){},topIds:new Set(['600101.SH'])})).replaceAll(/<!--[^]*?-->/g,'');
+ return renderToStaticMarkup(createElement(AuctionStockTiles,{ids:listQuotes.map(r=>r.instrument_id),quotes:listQuotes,chartDate:'2026-10-28',onStock(){},topIds:new Set(['600101.SH']),explorer})).replaceAll(/<!--[^]*?-->/g,'');
 }
 html=renderStockList();
 assert.ok(html.indexOf('分组高板高开')<html.indexOf('分组高板低开'));
@@ -412,4 +412,8 @@ assert.ok(html.indexOf('分组首板强开')<html.indexOf('分组高板高开'))
 html=renderStockList({0:'star',1:{key:'change',direction:'asc'}});
 assert.match(html,/当前 1 \/ 本组 4只/);assert.match(html,/分组首板强开/);assert.doesNotMatch(html,/分组高板高开|分组高板低开|分组缺报样本/);
 html=renderStockList({0:'beijing'});assert.match(html,/当前 0 \/ 本组 4只/);assert.match(html,/本组没有符合当前上市板块的股票/);
+html=renderStockList({2:'fzsbqk 688101'},{date:day,topics:null});
+assert.match(html,/分组首板强开/);assert.doesNotMatch(html,/分组高板高开|分组高板低开|分组缺报样本/);
+html=renderStockList({0:'main',2:'fzsbqk'},{date:day,topics:null});
+assert.doesNotMatch(html,/分组首板强开/,'pinyin lookup does not widen the board filter');
 console.log('Expanded auction stock cards: independent board filters/counts, height/change sorting, safe empty state and unknown-last integration passed');

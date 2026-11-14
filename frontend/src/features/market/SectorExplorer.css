@@ -30,16 +30,14 @@
   min-width: 0;
 }
 .sector-explorer-search {
-  flex: 1;
+  flex: 0 1 290px;
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: min(200px, 100%);
 }
-.sector-explorer-search input {
-  flex: 1;
-  min-width: 0;
-  width: 100%;
+.sector-explorer-search > .icon-btn {
+  flex-shrink: 0;
 }
 .sector-explorer-ranks {
   margin: 0;
@@ -132,16 +130,21 @@
   min-width: 17px;
 }
 .sector-explorer-full-columns .sector-explorer-ranking table {
-  min-width: 700px;
+  min-width: 900px;
 }
 .sector-mode-broken .sector-explorer-ranking table {
-  min-width: 320px;
+  min-width: 485px;
 }
 .sector-mode-broken .sector-explorer-ranking th:first-child {
-  width: 32%;
+  width: 30%;
 }
 .sector-mode-broken .sector-explorer-ranking th:not(:first-child) {
-  width: 17%;
+  width: 16.5%;
+}
+.sector-mode-broken
+  .sector-explorer-ranking
+  th[data-field="_sector_broken_rate_sort"] {
+  width: 20.5%;
 }
 .sector-explorer-full-columns:not(.sector-mode-broken)
   .sector-explorer-ranking
@@ -159,21 +162,16 @@
   gap: 1px 3px;
   font-size: var(--workbench-type-caption, 10px);
 }
-.sector-explorer-full-columns .sector-explorer-ranking :is(th, td):last-child {
-  position: sticky;
-  right: 0;
-  z-index: 2;
-  background: var(--surface2);
-  box-shadow: -1px 0 0 var(--border);
-}
-.sector-explorer-full-columns .sector-explorer-ranking th:last-child {
-  z-index: 3;
-}
-.sector-explorer-full-columns
+.sector-explorer-grid:is(.sector-explorer-full-columns, .sector-mode-broken)
   .sector-explorer-ranking
-  tr.selected
-  td:last-child {
-  background: color-mix(in srgb, var(--blue) 15%, var(--surface));
+  :is(.market-sort-heading, td[data-field]) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.sector-explorer-grid:is(.sector-explorer-full-columns, .sector-mode-broken)
+  :is(.sector-explorer-observed-count, .sector-explorer-activity-count) {
+  flex-wrap: nowrap;
 }
 .sector-explorer-ranking :is(th, td):nth-child(2) {
   white-space: nowrap;
@@ -478,7 +476,7 @@
   }
 }
 /* Keep the current metric readable next to the sidebar on a narrow desktop. */
-/* The seven-day column stays visible in the default compact view as well. */
+/* The activity column stays visible in the default compact view. */
 .sector-explorer-grid:not(.sector-explorer-full-columns):not(
     .sector-mode-broken
   )

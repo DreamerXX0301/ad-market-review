@@ -747,6 +747,11 @@ export function Table({
                               code={r.code}
                               instrumentId={r.instrument_id}
                             />
+                            {r.search_match?.is_suggestion && (
+                              <small className="muted">
+                                {r.search_match.match_label}
+                              </small>
+                            )}
                           </div>
                         ) : ["code", "instrument_id"].includes(c.key) &&
                           r.instrument_id ? (

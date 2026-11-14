@@ -11,7 +11,7 @@ async function load(path) {
     },
   }).outputText;
   return import(
-    "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
+    "data:text/javascript;base64," + Buffer.from(compiled.replace('"../../lib/fuzzySearch"', JSON.stringify(new URL("../../lib/fuzzySearch.ts", import.meta.url).href))).toString("base64")
   );
 }
 const { watchlistEventBaseline, filterWatchlistRows, watchlistPerformance } =

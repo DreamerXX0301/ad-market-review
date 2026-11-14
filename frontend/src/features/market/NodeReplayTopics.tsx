@@ -147,8 +147,10 @@ export default function NodeReplayTopics({
         left.topic.topic_id.localeCompare(right.topic.topic_id),
     );
   const search = ladderSearch(query, value?.search_names);
-  const results = search.results(topics, ({ topic }, typo) =>
-    search.label(topic.name, typo),
+  const results = search.results(
+    topics,
+    ({ topic }, typo) =>
+      search.label(topic.name, typo) || search.contains(topic.topic_id),
   );
   const pages = Math.max(1, Math.ceil(results.length / pageSize));
   const shownPage = Math.min(page, pages - 1);
@@ -290,7 +292,7 @@ export default function NodeReplayTopics({
         <input
           type="search"
           aria-label={`搜索${kinds[kind]}名称`}
-          placeholder={`${kinds[kind]}、拼音或首字母`}
+          placeholder={`${kinds[kind]}、代码、拼音或首字母`}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);

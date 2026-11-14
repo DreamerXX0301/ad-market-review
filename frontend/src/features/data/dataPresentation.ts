@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 type DataRow = Record<string, any>;
 
 export function dataTaskTitle(task: DataRow) {
@@ -460,31 +461,28 @@ export function filterGapDiagnosisStocks(
   query: string,
   sort: string,
 ) {
-  const term = query.trim().toLowerCase();
+  const matches = makeFuzzyMatcher(query);
   const rows: DataRow[] = Array.isArray(diagnosis?.stocks)
     ? diagnosis.stocks
     : [];
   const value = (row: DataRow) => countOrUnknown(row[sort]);
   return rows
-    .filter(
-      (row) =>
-        !term ||
-        [
-          row.name,
-          row.code,
-          row.instrument_id,
-          ...(row.episodes || []).flatMap((episode: DataRow) => [
+    .filter((row) =>
+      matches(
+        row.name,
+        row.code,
+        row.instrument_id,
+        (row.episodes || []).flatMap((episode: DataRow) => {
+          const view = gapEpisodeView(episode);
+          return [
             episode.start_date,
             episode.end_date,
-            gapEpisodeView(episode).label,
-            gapEpisodeView(episode).reason,
-            ...(episode.dates || []),
-          ]),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase()
-          .includes(term),
+            view.label,
+            view.reason,
+            episode.dates,
+          ];
+        }),
+      ),
     )
     .slice()
     .sort((a, b) => {

@@ -63,7 +63,7 @@ async function compile(
     source = source.replaceAll(JSON.stringify(name), JSON.stringify(value));
   return encode(source.replace(/import "[^\"]+\.css";/g, ""));
 }
-const helpers = await compile("./dataPresentation.ts");
+const helpers = await compile("./dataPresentation.ts", {"../../lib/fuzzySearch":new URL("../../lib/fuzzySearch.ts",import.meta.url).href});
 const gap = await compile("./GapDiagnosisPanel.tsx", {
   "./dataPresentation": helpers,
 });

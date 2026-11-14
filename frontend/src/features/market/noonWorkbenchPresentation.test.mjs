@@ -52,11 +52,8 @@ console.log("noon workbench: strict heights, full-sample pagination, immutable o
 // Render the actual component without a browser: old or partial snapshots must
 // remain readable and full-group statistics must survive detail pagination.
 const { build } = await import("vite");
-const { createRequire } = await import("node:module");
-const { pathToFileURL } = await import("node:url");
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
-const require = createRequire(import.meta.url);
 const result = await build({
   configFile: false,
   root: new URL("../../../", import.meta.url).pathname,
@@ -64,7 +61,7 @@ const result = await build({
   build: { write: false, ssr: new URL("./NoonWorkbenchAnalysis.tsx", import.meta.url).pathname, minify: false },
 });
 const output = result.output.find((item) => item.type === "chunk" && item.isEntry);
-const code = output.code.replace(/from "([^".][^"]*)"/g, (_, id) => `from ${JSON.stringify(pathToFileURL(require.resolve(id)).href)}`);
+const code = output.code.replace(/from "([^".][^"]*)"/g, (_, id) => `from ${JSON.stringify(import.meta.resolve(id))}`);
 const { default: Workbench } = await import("data:text/javascript;base64," + Buffer.from(code).toString("base64"));
 const missing = renderToStaticMarkup(createElement(Workbench, { workbench: null }));
 assert.ok(missing.includes("该快照尚未提供可核验的跨日分析"));

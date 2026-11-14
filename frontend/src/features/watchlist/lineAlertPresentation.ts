@@ -39,34 +39,6 @@ export function lineAlertInScope(event: Row | null, asOf?: string) {
     (!asOf || event.trade_date <= asOf)
   );
 }
-export function filterLineAlerts(
-  events: Row[],
-  query: string,
-  state: string,
-  asOf?: string,
-) {
-  const term = query.trim().toLocaleLowerCase();
-  return events.filter(
-    (event) =>
-      lineAlertInScope(event, asOf) &&
-      (state === "all" ||
-        (state === "invalidated") === lineAlertView(event).invalidated) &&
-      (!term ||
-        [
-          event.name,
-          event.code,
-          event.instrument_id,
-          event.title,
-          event.reason,
-          lineAlertView(event).title,
-          lineAlertSource(event),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase()
-          .includes(term)),
-  );
-}
 export function lineAlertWatchlistState(event: Row) {
   if (isAutomaticPriceAlert(event)) return "仅提醒 · 不自动入池";
   const labels: Record<string, string> = {

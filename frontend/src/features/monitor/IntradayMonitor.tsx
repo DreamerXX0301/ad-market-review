@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -205,13 +206,9 @@ export function filterMonitorRows(
     !Object.hasOwn(metricLabels, filters.metric)
   )
     return [];
-  const text = query.normalize("NFKC").trim().toLowerCase();
-  const phonetic = text
-    .replaceAll("u:", "v")
-    .replaceAll("ü", "v")
-    .replace(/[\s'’\-]/g, "");
-  const usePhonetic = /^[a-z]{2,80}$/.test(phonetic);
-  const topicText = filters.topicQuery.trim().toLowerCase();
+  const matchesStock = makeFuzzyMatcher(query);
+  const topicQuery = filters.topicQuery.trim();
+  const matchesTopic = makeFuzzyMatcher(topicQuery);
   const lower = filters.min.trim(),
     upper = filters.max.trim();
   const bounded = !!(lower || upper);
@@ -241,9 +238,9 @@ export function filterMonitorRows(
     )
       return false;
     if (
-      topicText &&
+      topicQuery &&
       !currentMonitorTopics(row, topicDate).some((topic) =>
-        `${topic.name} ${topic.topic_id}`.toLowerCase().includes(topicText),
+        matchesTopic(topic.name, topic.topic_id),
       )
     )
       return false;
@@ -267,24 +264,16 @@ export function filterMonitorRows(
         (upper && (date ? value > upper : value > Number(upper))))
     )
       return false;
-    const searchableText = [
+    return matchesStock(
       row.name,
       row.code,
       row.instrument_id,
       row.title,
-      ...(Array.isArray(row.sources)
+      Array.isArray(row.sources)
         ? row.sources.map((source: Row) => source.label)
-        : []),
-    ]
-      .join(" ")
-      .normalize("NFKC")
-      .toLowerCase();
-    return (
-      searchableText.includes(text) ||
-      (usePhonetic &&
-        [row.search_pinyin, row.search_initials].some(
-          (key) => typeof key === "string" && key.startsWith(phonetic),
-        ))
+        : [],
+      row.search_pinyin,
+      row.search_initials,
     );
   });
 }
@@ -986,7 +975,7 @@ export default function IntradayMonitor({
                   <input
                     type="search"
                     aria-label="搜索行业或概念"
-                    placeholder="行业 / 概念名称或ID"
+                    placeholder="行业 / 概念 / 拼音 / 首字母"
                     list="intraday-monitor-topic-options"
                     value={filters.topicQuery}
                     onChange={(event) =>

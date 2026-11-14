@@ -13,6 +13,7 @@ import {
   Warnings,
 } from "../../components/UI";
 import { integer } from "../../lib/format";
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import MarketDataCoverage from "./MarketDataCoverage";
 import { useHistoricalPrefetch } from "./useHistoricalPrefetch";
 
@@ -63,11 +64,15 @@ export default function AbnormalMonitor({
     prefetchDates,
     primarySettled,
   );
+  const matches = makeFuzzyMatcher(filter);
   const rows = list(data).filter((row) =>
-    [row.name, row.code, row.instrument_id, row.event_type]
-      .join(" ")
-      .toLowerCase()
-      .includes(filter.trim().toLowerCase()),
+    matches(
+      row.name,
+      row.code,
+      row.instrument_id,
+      row.event_type,
+      row.monitor_label,
+    ),
   );
   const available = data?.data_coverage?.selected_date_available === true;
   const quoteDate = monitorQuoteDate(data?.quote_as_of);
@@ -118,7 +123,7 @@ export default function AbnormalMonitor({
             className="search-input"
             type="search"
             aria-label="筛选监控名单"
-            placeholder="股票、代码或监控标签…"
+            placeholder="股票 / 代码 / 拼音 / 首字母 / 标签"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
           />

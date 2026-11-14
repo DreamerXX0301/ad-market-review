@@ -1,4 +1,4 @@
-import type { Row } from "../../lib/api";
+import { sectorActivitySessions, type Row } from "../../lib/api";
 import { amountActivityView } from "./amountActivityPresentation";
 import "./AmountActivity.css";
 
@@ -11,7 +11,11 @@ export function SectorActivityCell({ activity }: { activity?: Row }) {
     metric,
     label,
     raw: activity?.[metric],
-    view: amountActivityView(activity?.[metric]),
+    view: amountActivityView(
+      activity?.[metric],
+      sectorActivitySessions,
+      label + "榜单",
+    ),
   }));
   return (
     <div className="sector-activity-cell">
@@ -81,21 +85,23 @@ export function SectorActivityCoverage({
   kind: string;
   level: string;
 }) {
-  const groups: Row[] = Array.isArray(summary?.groups)
-    ? summary.groups.filter(
-        (group: Row) =>
-          group.kind === kind &&
-          (kind !== "industry" ||
-            level === "all" ||
-            String(group.level ?? "unknown") === level),
-      )
-    : [];
+  const groups: Row[] =
+    summary?.expected_days === sectorActivitySessions &&
+    Array.isArray(summary.groups)
+      ? summary.groups.filter(
+          (group: Row) =>
+            group.kind === kind &&
+            (kind !== "industry" ||
+              level === "all" ||
+              String(group.level ?? "unknown") === level),
+        )
+      : [];
   return (
     <div
       className="sector-activity-coverage"
-      aria-label="板块近七日活跃统计范围"
+      aria-label={`板块近${sectorActivitySessions}日活跃统计范围`}
     >
-      <strong>近7日榜单活跃</strong>
+      <strong>近{sectorActivitySessions}日榜单活跃</strong>
       <span>
         固定观察同类{kind === "industry" ? "、同行业层级" : ""}
         的上涨前10与成交额前10；含观察日，不随下方排序改变。
@@ -110,10 +116,13 @@ export function SectorActivityCoverage({
                   : `${group.level}级 · `
                 : ""}
               {group.metric === "amount" ? "成交额前10" : "上涨前10"}：
-              {typeof group.observed_days === "number"
-                ? group.complete === true && group.observed_days === 7
-                  ? "核验范围7/7日"
-                  : `已观察${group.observed_days}/7日 · 样本不完整`
+              {Number.isInteger(group.observed_days) &&
+              group.observed_days >= 0 &&
+              group.observed_days <= sectorActivitySessions
+                ? group.complete === true &&
+                  group.observed_days === sectorActivitySessions
+                  ? `核验范围${sectorActivitySessions}/${sectorActivitySessions}日`
+                  : `已观察${group.observed_days}/${sectorActivitySessions}日 · 样本不完整`
                 : "观察范围待核验"}
             </span>
           ))

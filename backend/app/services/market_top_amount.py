@@ -38,12 +38,12 @@ def _day(value):
         return False
 
 
-def _window(market, day):
+def _window(market, day, *, sessions=7):
     source = market.calendar()
     if not isinstance(source, list) or not all(_day(value) for value in source) or source != sorted(set(source)) or day not in source:
         return [day] if _day(day) else [], False
     end = source.index(day)
-    return source[max(0, end - 6):end + 1], True
+    return source[max(0, end + 1 - sessions):end + 1], True
 
 
 def _facts(market, status, day, current_rows):

@@ -13,7 +13,7 @@ const compile = async (path) =>
       },
     },
   ).outputText;
-const helpers = encoded(await compile("./lineAlertPresentation.ts"));
+const helpers = encoded((await compile("./lineAlertPresentation.ts")).replace('"../../lib/fuzzySearch"', JSON.stringify(new URL("../../lib/fuzzySearch.ts", import.meta.url).href)));
 const slots = [];
 let cursor = 0,
   dirty = false,

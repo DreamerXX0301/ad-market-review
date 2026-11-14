@@ -14,6 +14,7 @@
     "@vitejs/plugin-react": "latest",
     "echarts": "^6.0.0",
     "lucide-react": "^0.468.0",
+    "pinyin-pro": "3.29.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "typescript": "~5.8.3",

@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import { build } from "vite";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 
 // Synthetic data exercises presentation only; no business snapshot or network writes.
 const snapshotId = "noon_" + "a".repeat(32);
@@ -40,10 +38,9 @@ const output = await build({
   }],
   build: { write: false, ssr: new URL("./NoonWorkbenchAnalysis.tsx", import.meta.url).pathname, minify: false },
 });
-const require = createRequire(import.meta.url);
 const entry = output.output.find((item) => item.type === "chunk" && item.isEntry);
 const code = entry.code.replace(/from "([^".][^"]*)"/g,
-  (_, id) => `from ${JSON.stringify(pathToFileURL(require.resolve(id)).href)}`);
+  (_, id) => `from ${JSON.stringify(import.meta.resolve(id))}`);
 const { NoonDirections } = await import("data:text/javascript;base64," + Buffer.from(code).toString("base64"));
 const nodes = (node) => !node || typeof node !== "object" ? [] : Array.isArray(node)
   ? node.flatMap(nodes) : [node, ...nodes(node.props?.children)];
@@ -82,6 +79,9 @@ try {
   const search = nodes(tree).find((node) => node.props?.["aria-label"] === "搜索午间板块");
   search.props.onChange({ target: { value: "885001" } }); render();
   assert.equal(bodyRows().length, 1);
+  assert.equal(embedded().props.topic.topic_code, concept.instrument_id);
+  search.props.onChange({ target: { value: "hctm 885001" } }); render();
+  assert.equal(bodyRows().length, 1, "phonetic initials and a code can narrow same-name boards");
   assert.equal(embedded().props.topic.topic_code, concept.instrument_id);
   nodes(tree).find((node) => node.props?.["aria-label"] === "搜索午间板块").props.onChange({ target: { value: "不存在" } }); render();
   assert.equal(embedded(), undefined, "empty search clears members rather than retaining previous data");

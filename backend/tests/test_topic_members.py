@@ -73,6 +73,26 @@ def test_negative_sort_null_last_and_exact_date_no_old_quote(memberships):
     assert c['turnover_rate'] is None
 
 
+def test_member_search_matches_phonetics_and_stays_within_selected_set(memberships):
+    _, client, ids, _, _ = memberships
+    selected = (ids['概念甲'], ids['概念乙'])
+
+    for term in ('dinggupiao', 'dgp', '688001.sh', '８８００１'):
+        result = query(client, *selected, query=term)
+        assert [row['instrument_id'] for row in result['items']] == [D]
+        assert result['total'] == 1 and result['items'][0]['quote_date'] is None
+        assert 'search_match' not in result['items'][0]
+
+    # Associated labels only filter the already resolved member set and retain sort order.
+    related = query(client, *selected, query='hangyejia')
+    assert [row['instrument_id'] for row in related['items']] == [C, A, D]
+    assert query(client, *selected, query='hangyejia', match='all')['total'] == 0
+    assert query(client, *selected, query='688002')['total'] == 0
+    suggestion = query(client, *selected, query='丁股漂')
+    assert [row['instrument_id'] for row in suggestion['items']] == [D]
+    assert suggestion['items'][0]['search_match']['is_suggestion'] is True
+
+
 def test_single_topic_compatibility_and_multiple_classification_tags(memberships):
     _,client,ids,_,_=memberships
     manual=client.post('/api/v1/topics',json={'name':'人工研究','instrument_ids':[A]}).json()

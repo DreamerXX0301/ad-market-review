@@ -39,6 +39,7 @@ const { previousPublishedDays, outsideAuctionWindow, marketPrimaryReadPath, same
             export const prefetchMarketReads=(...args)=>{globalThis.prefetchFixture.calls.push(args);return Promise.resolve(true);};
             export const subscribeReadChanges=(callback)=>{globalThis.prefetchFixture.change=callback;return()=>{globalThis.prefetchFixture.change=null;};};
             export const usePageActive=()=>globalThis.prefetchFixture.active;
+            export const sectorBoardReadPath=(day)=>'/market/sectors?date='+day+'&limit=1000&sector_activity_sessions=10';
             export const firstGainersReadPath=(day)=>'/market/gainers?date='+day+'&page=1&page_size=25&query=&sort_by=change_30d_pct&sort_order=desc&top_n=100';`,
           ),
         ),
@@ -88,7 +89,7 @@ assert.deepEqual(currentPaths, [
   "/market/news-events?date=2026-11-10",
   "/market/indices?date=2026-11-10",
   "/market/emotion?date=2026-11-10&limit=1000",
-  "/market/sectors?date=2026-11-10&limit=1000",
+  "/market/sectors?date=2026-11-10&limit=1000&sector_activity_sessions=10",
   "/market/ladder?date=2026-11-10&limit=1000",
   "/market/dragon-tiger?date=2026-11-10",
   "/market/gainers?date=2026-11-10&page=1&page_size=25&query=&sort_by=change_30d_pct&sort_order=desc&top_n=100",

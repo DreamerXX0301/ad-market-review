@@ -11,9 +11,11 @@ from app.core import get_market, json_clean, digest
 from app.services.market_supplement import load_supplement, load_supplement_with_fingerprint, annual_coverage
 from app.services.market_history import resolve_reference, data_coverage
 from app.services.market_amount import amount_change_metadata
+from app.services.search_matching import list_identity_match
 from app.services.pane_read_cache import (
     historical_cache_requested, pane_warm_in_progress, read_block, retained_days, snapshot_evidence,
 )
+from app.services.sector_activity import ACTIVITY_VERSIONS, DEFAULT_ACTIVITY_SESSIONS, decorate_sector_activity
 from app.services.sector_history import sector_prices_for_date
 from app.services.sector_views import sector_view
 
@@ -250,7 +252,7 @@ def market_topic_members(day=None, *, topic_id=None, source_code=None, kind=None
     return list_members(market, status, day, reference, rows, topic_id=topic_id, source_code=source_code, kind=kind, source_name=source_name)
 
 
-def _sectors_from_panel(market, status, day, reference, indexed, *, evidence=None):
+def _sectors_from_panel(market, status, day, reference, indexed, *, evidence=None, activity_sessions=DEFAULT_ACTIVITY_SESSIONS):
     """Reuse one dated panel for the sector page and missing-flow fallback."""
     local, membership = resolve_reference('sectors', day, status, reference)
     prices = sector_prices_for_date(reference.get('_supplement', {}), day)
@@ -260,14 +262,14 @@ def _sectors_from_panel(market, status, day, reference, indexed, *, evidence=Non
     from app.services.market_broken_boards import build_analysis, decorate_sectors
     broken = build_analysis(market,status,day,reference,list(indexed.values()),history_days=1,include_feedback=False)
     result['items'] = decorate_sectors(result['items'],local,membership,broken)
-    from app.services.sector_activity import decorate_sector_activity
-    result['items'], result['sector_activity_7d'] = decorate_sector_activity(market,status,day,result['items'],reference,prices)
+    result['items'], result[f'sector_activity_{activity_sessions}d'] = decorate_sector_activity(
+        market, status, day, result['items'], reference, prices, sessions=activity_sessions)
     return result
 
 
 @supplement_reader
 def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, sort_by=None, sort_order="desc", top_n=None, monitor_scope='historical', rank_state='all', market=None, supplement_dates=None, gainers_lookup=None,
-                include_latest_classification_reference=False, summary_only=False):
+                include_latest_classification_reference=False, summary_only=False, sector_activity_sessions=None, fuzzy_query=False):
     if rank_state not in ('all', 'unranked') or (rank_state != 'all' and kind != 'gainers'):
         raise HTTPException(422, '未排名范围仅支持近30日涨幅榜')
     if rank_state == 'unranked' and top_n is not None:
@@ -276,9 +278,11 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         raise HTTPException(422, '监控名单范围仅支持监管页的historical或latest')
     if top_n is not None and (kind != 'gainers' or isinstance(top_n,bool) or top_n not in (100,200,300,500,1000)):
         raise HTTPException(422, '近30日涨幅榜仅支持前100、200、300、500或1000；省略top_n查看全市场')
+    if sector_activity_sessions is not None and (kind != 'sectors' or type(sector_activity_sessions) is not int or sector_activity_sessions not in ACTIVITY_VERSIONS):
+        raise HTTPException(422, '板块活跃度窗口仅适用于板块排行榜，支持7或10个交易日')
     requested_date = day
     # Flow may read a later anchor's historical series and fall back to sectors;
-    # sector views additionally need their retained seven-day index history.
+    # sector views additionally need their retained index history.
     fields=None if kind=='flow' else _SECTOR_SUPPLEMENT_FIELDS if kind=='sectors' else _POOL_SUPPLEMENT_FIELDS
     market, status, day, reference, rows = panel(None if kind == 'abnormal' and monitor_scope == 'latest' else day,
         supplement_fields=fields, **({'market': market} if market is not None else {}),
@@ -330,7 +334,8 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
             base['items'] = matched
         base["warnings"] = ["按30个市场交易日端点计算；端点经确认连续停牌时可用停牌前实际收盘并注明日期。中间缺报价另列缺口。区间已核验公司行动使用事件前复权价格，未核验则不计算涨幅。", "年内涨停以逐日来源池计数；覆盖不完整时只显示已确认次数下界，不补0。"]
     elif kind == "sectors":
-        base.update(_sectors_from_panel(market, status, day, reference, indexed, evidence=evidence))
+        base.update(_sectors_from_panel(market, status, day, reference, indexed, evidence=evidence,
+                                       activity_sessions=sector_activity_sessions or DEFAULT_ACTIVITY_SESSIONS))
     elif kind == "ladder":
         from app.infrastructure.config import topic_adjustments_enabled
         from app.services.market_ladder import read_ladder
@@ -448,7 +453,18 @@ def market_page(kind, day=None, limit=100, *, query="", page=1, page_size=None, 
         base['items']=known+sorted(unknown,key=lambda r:str(r.get('instrument_id','')))
         base.update(sort_by=sort_by,sort_order=sort_order,sort_scope='全量筛选结果，排序后分页；未知值始终排末')
     search=query.strip().casefold()
-    if search:base['items']=[r for r in base['items'] if search in (' '.join(str(r.get(k,'')) for k in ('code','name','instrument_id'))+' '+' '.join(str(t.get('name',''))+' '+str(t.get('topic_id','')) for t in r.get('topics',[]) if isinstance(t,dict))).casefold()]
+    if search and kind == 'gainers' and fuzzy_query and gainers_lookup is None:
+        matched_rows, suggestions = [], []
+        for row in base['items']:
+            match = list_identity_match(search, row.get('name'), (row.get('code'), row.get('instrument_id')), row.get('topics') or ())
+            if match:
+                if match['is_suggestion']:
+                    suggestions.append({**row, 'search_match': match})
+                else:
+                    matched_rows.append(row)
+        base['items'] = matched_rows or suggestions
+    elif search:
+        base['items'] = [r for r in base['items'] if search in (' '.join(str(r.get(k,'')) for k in ('code','name','instrument_id'))+' '+' '.join(str(t.get('name',''))+' '+str(t.get('topic_id','')) for t in r.get('topics',[]) if isinstance(t,dict))).casefold()]
     base["total"] = len(base["items"])
     if kind == 'ladder':
         # Every confirmed closing-limit row is returned, including first boards.

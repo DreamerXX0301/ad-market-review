@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { build } from "vite";
 import { createElement } from "react";
@@ -34,13 +33,12 @@ const output = await build({
   build: { write:false, ssr:new URL("./NoonReview.tsx",import.meta.url).pathname, minify:false },
 });
 const encode=value=>"data:text/javascript;base64,"+Buffer.from(value).toString("base64");
-const require=createRequire(import.meta.url);
 const jsxProbe=encode(`import * as real from ${JSON.stringify(import.meta.resolve("react/jsx-runtime"))};
   export const Fragment=real.Fragment;
   export function jsx(type,props,key){if(type==='button')globalThis.__noonButtons.push(props);return real.jsx(type,props,key);}
   export function jsxs(type,props,key){if(type==='button')globalThis.__noonButtons.push(props);return real.jsxs(type,props,key);}`);
 const chunk=output.output.find(item=>item.type==="chunk"&&item.isEntry);
-const code=chunk.code.replace(/from "([^".][^"]*)"/g,(_,id)=>`from ${JSON.stringify(id==="react/jsx-runtime"?jsxProbe:pathToFileURL(require.resolve(id)).href)}`);
+const code=chunk.code.replace(/from "([^".][^"]*)"/g,(_,id)=>`from ${JSON.stringify(id==="react/jsx-runtime"?jsxProbe:import.meta.resolve(id))}`);
 const directory=await fs.mkdtemp(path.join(tmpdir(),"noon-submission-race-"));
 const modulePath=path.join(directory,"component.mjs");
 await fs.writeFile(modulePath,code);

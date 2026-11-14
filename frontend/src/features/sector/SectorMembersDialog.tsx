@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import { useState } from "react";
 import { list, useApi } from "../../lib/api";
 import type { Row } from "../../lib/api";
@@ -76,12 +77,9 @@ export default function SectorMembersDialog({
   const memberCount = data?.total ?? list(data).length;
   const knownMemberCount =
     data?.members_complete === true || memberCount > 0 ? memberCount : null;
-  const rows = list(data).filter(
-    (row) =>
-      !query ||
-      `${row.name} ${row.code} ${row.instrument_id}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
+  const matches = makeFuzzyMatcher(query);
+  const rows = list(data).filter((row) =>
+    matches(row.name, row.code, row.instrument_id),
   );
   return (
     <Modal
@@ -159,7 +157,7 @@ export default function SectorMembersDialog({
           <label className="member-dialog-field member-dialog-field-search">
             <span>搜索成分股</span>
             <input
-              placeholder="股票名称 / 代码"
+              placeholder="名称 / 代码 / 拼音 / 首字母"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />

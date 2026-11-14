@@ -71,11 +71,8 @@ assert.match(
 );
 
 const { build } = await import("vite");
-const { createRequire } = await import("node:module");
-const { pathToFileURL } = await import("node:url");
 const { createElement } = await import("react");
 const { renderToStaticMarkup } = await import("react-dom/server");
-const require = createRequire(import.meta.url);
 const bundle = await build({
   configFile: false,
   root: new URL("../../../", import.meta.url).pathname,
@@ -91,7 +88,7 @@ const entry = bundle.output.find(
 );
 const code = entry.code.replace(
   /from "([^".][^"]*)"/g,
-  (_, id) => `from ${JSON.stringify(pathToFileURL(require.resolve(id)).href)}`,
+  (_, id) => `from ${JSON.stringify(import.meta.resolve(id))}`,
 );
 const { NoonSectorQuote } = await import(
   "data:text/javascript;base64," + Buffer.from(code).toString("base64")
@@ -314,6 +311,10 @@ const suspensionCode = ts.transpileModule(
 ).outputText.replaceAll('"react/jsx-runtime"', JSON.stringify(jsxRuntime));
 const suspensionModule = encoded(suspensionCode);
 const { default: MarketSuspensionBadge } = await import(suspensionModule);
+const fuzzySource = ts.transpileModule(
+  await fs.readFile(new URL("../../lib/fuzzySearch.ts", import.meta.url), "utf8"),
+  { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } },
+).outputText.replaceAll('"pinyin-pro"', JSON.stringify(import.meta.resolve("pinyin-pro")));
 for (const [from, to] of Object.entries({
   "./NoonStockChange": encoded("export default 'stock-change';"),
   "./MarketSuspensionBadge": suspensionModule,
@@ -325,6 +326,7 @@ for (const [from, to] of Object.entries({
   "../../lib/format": encoded(
     "export const amount=v=>v??'—',num=v=>v??'—',percent=v=>v??'—',tone=v=>v==null?'':v<0?'down':'up';",
   ),
+  "../../lib/fuzzySearch": encoded(fuzzySource),
   "../../components/UI": encoded(
     "export const Badge='Badge',Empty='Empty',ErrorBox='ErrorBox',Loading='Loading',Modal='Modal',Table='Table',Warning='Warning';",
   ),
@@ -490,7 +492,7 @@ try {
   nodes(tree)
     .find(
       (node) =>
-        node.type === "input" && node.props.placeholder === "名称 / 代码",
+        node.type === "input" && node.props.placeholder === "名称 / 代码 / 拼音 / 首字母",
     )
     .props.onChange({ target: { value: "合成" } });
   render();

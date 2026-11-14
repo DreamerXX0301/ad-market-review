@@ -2,6 +2,26 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import ts from "typescript";
+const fuzzy = ts
+  .transpileModule(
+    await fs.readFile(
+      new URL("../../lib/fuzzySearch.ts", import.meta.url),
+      "utf8",
+    ),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022,
+      },
+    },
+  )
+  .outputText.replace(
+    '"pinyin-pro"',
+    JSON.stringify(import.meta.resolve("pinyin-pro")),
+  );
+const { makeFuzzyMatcher } = await import(
+  "data:text/javascript;base64," + Buffer.from(fuzzy).toString("base64")
+);
 const source = await fs.readFile(
   new URL("./marketPresentation.ts", import.meta.url),
   "utf8",
@@ -199,6 +219,14 @@ assert.deepEqual(
   ["688001"],
 );
 assert.equal(filterMarketMembers(memberRows, "样本", "chinext").length, 0);
+for (const query of ["yb", "yang ben", "样本 68", "６８８００１"]) {
+  assert.deepEqual(
+    filterMarketMembers(memberRows, query, "star", makeFuzzyMatcher(query)).map(
+      (item) => item.code,
+    ),
+    ["688001"],
+  );
+}
 for (const key of ["return_ytd_pct", "return_mtd_pct"]) {
   assert.deepEqual(
     sortMarketRows(

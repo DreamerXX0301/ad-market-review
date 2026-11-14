@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import type { Row } from "../../lib/api";
 
 export type TopicMatch = "matched" | "unmatched" | "unknown";
@@ -66,9 +67,10 @@ export function topicSortValue(row: Row): string | null {
 }
 
 export function matchesTrackingText(row: Row, query: string): boolean {
-  return [row.name, row.code, row.instrument_id, row.strategy_name]
-    .filter(Boolean)
-    .join(" ")
-    .toLocaleLowerCase()
-    .includes(query.trim().toLocaleLowerCase());
+  return makeFuzzyMatcher(query)(
+    row.name,
+    row.code,
+    row.instrument_id,
+    row.strategy_name,
+  );
 }

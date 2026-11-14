@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { Row } from "../../lib/api";
 import { useApi } from "../../lib/api";
 import { amount, num, percent, tone } from "../../lib/format";
+import { SEARCH_HINT } from "../../lib/fuzzySearch";
 import {
   Badge,
   Empty,
@@ -248,7 +249,7 @@ export default function NoonSectorDialog({
                         className="search-input"
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
-                        placeholder="名称 / 代码"
+                        placeholder={SEARCH_HINT}
                       />
                     </label>
                     <label className="member-dialog-field">

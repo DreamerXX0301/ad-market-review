@@ -12,6 +12,7 @@ from app.core import connect, get_market
 from app.domain.universe import BOARDS, identity_flags
 from app.services import topics
 from app.services.market_supplement import load_supplement
+from app.services.search_matching import list_identity_match
 from app.services.stock_board_presentation import decorate_board_collections
 from app.services.supplement_access import supplement_reader
 from app.services.topic_member_metrics import member_metrics
@@ -144,7 +145,8 @@ def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_or
         if item['public']['archived'] and key not in selected: continue
         for ident in item['members'] & candidates:
             associated.setdefault(ident, []).append(item['public'])
-    output = []; search = query.strip().casefold()
+    output, suggestions = [], []
+    search = query.strip()
     for ident in sorted(candidates):
         quote = quotes.get(ident); tags = sorted(associated.get(ident, []), key=lambda item: (item['kind'], item['name'], item['topic_id']))
         stats = historical.get(ident, {})
@@ -165,7 +167,16 @@ def list_members(topic_ids, match='any', query='', sort_by='change_pct', sort_or
         item.update(board=board, board_label=BOARDS.get(board, '未知'),
                     board_scope='当前已核验名录证券代码与交易所分类；不代表历史上市板块身份',
                     board_reason=None if board != 'unknown' else '没有可确认的股票名录身份，不默认归为主板')
-        if not search or search in ' '.join([item['code'], item['name'], ident, *item['topics'], *item['industries']]).casefold(): output.append(item)
+        if search:
+            match_result = list_identity_match(search, item['name'], (item['code'], ident), tags)
+            if not match_result:
+                continue
+            if match_result['is_suggestion']:
+                item['search_match'] = match_result
+                suggestions.append(item)
+                continue
+        output.append(item)
+    output = output or suggestions
     quoted_members = [quotes[item['instrument_id']] for item in output
                       if item['quote_available'] and item['instrument_id'] not in duplicates
                       and item['close'] is not None and item['close'] > 0]

@@ -6,9 +6,15 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
+  Search,
   X,
 } from "lucide-react";
-import type { Row } from "../../lib/api";
+import {
+  sectorActivityField,
+  sectorActivitySessions,
+  type Row,
+} from "../../lib/api";
+import { makeFuzzyMatcher, SEARCH_HINT } from "../../lib/fuzzySearch";
 import { createStockNavigation } from "../../components/stockNavigation";
 import type { StockNavigation } from "../../components/stockNavigation";
 import CopyStockCode from "../../components/CopyStockCode";
@@ -37,6 +43,7 @@ import {
   sectorExplorerId,
   sectorExplorerRows,
   sectorBrokenBoard,
+  sectorActivityMetricForMode,
 } from "./sectorExplorerPresentation";
 import type {
   SectorActivityMetric,
@@ -361,6 +368,7 @@ export default function SectorExplorer({
     kind,
     groupKey: effectiveGroup,
     query,
+    matchQuery: makeFuzzyMatcher(query),
     mode,
     activityMetric,
     observationDate: date,
@@ -390,7 +398,13 @@ export default function SectorExplorer({
       : null) || ordered[0];
   const selectedId = selected ? sectorExplorerId(selected) : "";
   const allGroupRows = useMemo(
-    () => sectorExplorerRows(rows, { ...options, mode: "all", query: "" }),
+    () =>
+      sectorExplorerRows(rows, {
+        ...options,
+        mode: "all",
+        query: "",
+        matchQuery: undefined,
+      }),
     [rows, kind, effectiveGroup, activityMetric, date, current?.snapshot_id],
   );
   const up = allGroupRows.filter(
@@ -405,8 +419,7 @@ export default function SectorExplorer({
   const visible = ordered.slice(safePage * pageSize, (safePage + 1) * pageSize);
   const target = selected ? sectorChartTarget(selected, rows) : null;
   const groupLevel = group?.level == null ? "unknown" : String(group.level);
-  const activityCaption =
-    activityMetric === "amount" ? "近7日成交额榜" : "近7日上涨榜";
+  const activityCaption = `近${sectorActivitySessions}日${activityMetric === "amount" ? "成交额榜" : "上涨榜"}`;
   const brokenMode = mode === "broken";
   const selectedBroken = selected
     ? sectorBrokenBoard(selected, date, current?.snapshot_id)
@@ -448,7 +461,7 @@ export default function SectorExplorer({
     setMode(next);
     setSort(null);
     setPage(0);
-    if (next === "amount") setActivityMetric("amount");
+    setActivityMetric((current) => sectorActivityMetricForMode(next, current));
   }
   function changeSort(key: string) {
     setSort({
@@ -512,22 +525,27 @@ export default function SectorExplorer({
             </label>
           )}
           <div className="sector-explorer-search">
-            <input
-              className="search-input"
-              aria-label="搜索行业与概念"
-              placeholder="搜索名称或板块代码…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+            <div className="board-list-search">
+              <Search aria-hidden="true" size={14} />
+              <input
+                aria-label="搜索行业与概念"
+                placeholder={SEARCH_HINT}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              {query && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="清除题材搜索"
+                  onClick={() => setQuery("")}
+                >
+                  <X aria-hidden="true" size={14} />
+                </button>
+              )}
+            </div>
             <button
-              className="icon-btn"
-              aria-label="清除题材搜索"
-              disabled={!query}
-              onClick={() => setQuery("")}
-            >
-              <X size={14} />
-            </button>
-            <button
+              type="button"
               className="icon-btn"
               onClick={onReload}
               aria-label="刷新行业与概念"
@@ -562,8 +580,12 @@ export default function SectorExplorer({
                 setActivityMetric(e.target.value as SectorActivityMetric)
               }
             >
-              <option value="change_pct">近7日上涨前10</option>
-              <option value="amount">近7日成交额前10</option>
+              <option value="change_pct">
+                近{sectorActivitySessions}日上涨前10
+              </option>
+              <option value="amount">
+                近{sectorActivitySessions}日成交额前10
+              </option>
             </select>
           </label>
         </div>
@@ -649,7 +671,7 @@ export default function SectorExplorer({
                         />
                       </th>
                       {rankingColumns.map(([field, caption]) => (
-                        <th key={field}>
+                        <th key={field} data-field={field}>
                           <MarketSortHeader
                             field={field}
                             caption={caption}
@@ -712,7 +734,7 @@ export default function SectorExplorer({
                           </div>
                         </td>
                         {rankingColumns.map(([field]) => (
-                          <td key={field}>
+                          <td key={field} data-field={field}>
                             <RankingValue row={row} field={field} />
                           </td>
                         ))}
@@ -758,7 +780,8 @@ export default function SectorExplorer({
               </p>
             ) : (
               <p>
-                近期活跃使用固定近7个市场交易日的同源同类Top10记录；部分覆盖仅显示已观察次数，补齐竞争者可能改变次数和顺序。表头排序不重定义榜单。
+                近期活跃使用固定近{sectorActivitySessions}
+                个市场交易日的同源同类前10名记录。部分覆盖仅显示已观察次数，补齐竞争者可能改变次数和顺序。表头排序不重定义榜单。
                 完整列中的炸板结构使用所选日留存成员与同日来源池，部分覆盖不补0。
               </p>
             )}
@@ -837,8 +860,12 @@ export default function SectorExplorer({
                   compact
                 />
                 <details className="sector-explorer-evidence">
-                  <summary>近7日上榜日期与双榜明细</summary>
-                  <SectorActivityCell activity={selected.sector_activity_7d} />
+                  <summary>
+                    近{sectorActivitySessions}日上榜日期与双榜明细
+                  </summary>
+                  <SectorActivityCell
+                    activity={selected[sectorActivityField]}
+                  />
                 </details>
               </>
             ) : loading ? (
@@ -853,7 +880,7 @@ export default function SectorExplorer({
         </section>
       </div>
       <details className="market-members-details sector-explorer-sources">
-        <summary>数据范围、近7日覆盖与来源说明</summary>
+        <summary>数据范围、近{sectorActivitySessions}日覆盖与来源说明</summary>
         <MarketDataCoverage
           coverage={current?.data_coverage}
           loading={loading}
@@ -863,7 +890,7 @@ export default function SectorExplorer({
           loading={loading}
         />
         <SectorActivityCoverage
-          summary={current?.sector_activity_7d}
+          summary={current?.[sectorActivityField]}
           kind={kind}
           level={groupLevel}
         />

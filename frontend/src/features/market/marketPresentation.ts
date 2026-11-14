@@ -164,7 +164,12 @@ export function amountChangeText(value: unknown): string {
 }
 
 /** Filter the full returned membership set, before ordering or pagination. */
-export function filterMarketMembers(rows: Row[], query: string, board: string) {
+export function filterMarketMembers(
+  rows: Row[],
+  query: string,
+  board: string,
+  matches?: (...fields: unknown[]) => boolean,
+) {
   const search = query.trim().toLowerCase();
   const known = ["main", "chinext", "star", "beijing"];
   return rows.filter(
@@ -173,10 +178,18 @@ export function filterMarketMembers(rows: Row[], query: string, board: string) {
         (board === "unknown"
           ? !known.includes(row.board)
           : row.board === board)) &&
-      (!search ||
-        `${row.name || ""} ${row.code || ""} ${row.instrument_id || ""}`
-          .toLowerCase()
-          .includes(search)),
+      (matches
+        ? matches(
+            row.name,
+            row.code,
+            row.instrument_id,
+            row.search_pinyin,
+            row.search_initials,
+          )
+        : !search ||
+          `${row.name || ""} ${row.code || ""} ${row.instrument_id || ""}`
+            .toLowerCase()
+            .includes(search)),
   );
 }
 

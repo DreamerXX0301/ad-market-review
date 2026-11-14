@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
 import { build } from "vite";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const output = await build({ configFile: false, root: new URL("../../../", import.meta.url).pathname, logLevel: "silent",
   build: { write: false, ssr: new URL("./NoonWorkbenchAnalysis.tsx", import.meta.url).pathname, minify: false } });
 const entry = output.output.find(item => item.type === "chunk" && item.isEntry);
-const require = createRequire(import.meta.url);
-const code = entry.code.replace(/from "([^".][^"]*)"/g, (_, id) => "from " + JSON.stringify(pathToFileURL(require.resolve(id)).href));
+const code = entry.code.replace(/from "([^".][^"]*)"/g, (_, id) => "from " + JSON.stringify(import.meta.resolve(id)));
 const { default: Workbench } = await import("data:text/javascript;base64," + Buffer.from(code).toString("base64"));
 const base = { version: "noon-workbench-v1", previous_feedback: {}, today_ladder: {}, directions: {}, afternoon: [] };
 const render = feedback => renderToStaticMarkup(createElement(Workbench, { workbench: { ...base, previous_close_feedback: feedback }, chartDate: "2026-10-28", onStock(){} }));

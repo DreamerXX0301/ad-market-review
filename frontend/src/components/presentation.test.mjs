@@ -28,6 +28,10 @@ async function moduleAt(path) {
       JSON.stringify(url),
     );
   }
+  compiled = compiled.replace(
+    '"../../lib/fuzzySearch"',
+    JSON.stringify(new URL("../lib/fuzzySearch.ts", import.meta.url).href),
+  );
   return import(
     "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
   );
@@ -595,7 +599,12 @@ let rawPreferences = null,
 const storage = {
   getItem(key) {
     assert.ok(
-      [CHART_PREFERENCES_KEY, PREVIOUS_CHART_PREFERENCES_KEY, EARLIER_CHART_PREFERENCES_KEY, LEGACY_CHART_PREFERENCES_KEY].includes(key),
+      [
+        CHART_PREFERENCES_KEY,
+        PREVIOUS_CHART_PREFERENCES_KEY,
+        EARLIER_CHART_PREFERENCES_KEY,
+        LEGACY_CHART_PREFERENCES_KEY,
+      ].includes(key),
     );
     return key === CHART_PREFERENCES_KEY ? rawPreferences : null;
   },
@@ -624,7 +633,8 @@ assert.equal(chartB, 1);
 assert.equal(rawPreferences.includes("ignoredToken"), false);
 assert.equal(rawPreferences.includes("must-not-persist"), false);
 assert.equal(chartStore.getSnapshot().preferences.showEventBaseline, false);
-const reopenedTrendPreferences = createChartPreferenceStore(storage).getSnapshot().preferences;
+const reopenedTrendPreferences =
+  createChartPreferenceStore(storage).getSnapshot().preferences;
 assert.equal(reopenedTrendPreferences.stockShowAutomaticTrendlines, false);
 assert.equal(reopenedTrendPreferences.indexShowAutomaticTrendlines, true);
 assert.equal(reopenedTrendPreferences.stockShowAllTrendHistory, true);
@@ -700,42 +710,84 @@ assert.deepEqual(waveStore.getSnapshot().preferences.indexMas, [250]);
 assert.equal(waveStore.getSnapshot().preferences.stockPriceBasis, "forward");
 assert.equal(waveStore.getSnapshot().preferences.showLimits, false);
 assert.equal(waveStore.getSnapshot().preferences.showEventBaseline, false);
-assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, false), {
-  showWaves: true, waveMode: "turning",
-});
-assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, true), {
-  showWaves: true, waveMode: "latest",
-});
+assert.deepEqual(
+  effectiveChartWaves(waveStore.getSnapshot().preferences, false),
+  {
+    showWaves: true,
+    waveMode: "turning",
+  },
+);
+assert.deepEqual(
+  effectiveChartWaves(waveStore.getSnapshot().preferences, true),
+  {
+    showWaves: true,
+    waveMode: "latest",
+  },
+);
 waveStore.update({ stockShowWaves: false, stockWaveMode: "down" });
 waveStore.update({ indexWaveMode: "up" });
 let waveReload = createChartPreferenceStore(waveStorageAdapter);
-assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, false), {
-  showWaves: false, waveMode: "latest",
-});
-assert.deepEqual(effectiveChartWaves(waveReload.getSnapshot().preferences, true), {
-  showWaves: true, waveMode: "latest",
-});
+assert.deepEqual(
+  effectiveChartWaves(waveReload.getSnapshot().preferences, false),
+  {
+    showWaves: false,
+    waveMode: "latest",
+  },
+);
+assert.deepEqual(
+  effectiveChartWaves(waveReload.getSnapshot().preferences, true),
+  {
+    showWaves: true,
+    waveMode: "latest",
+  },
+);
 assert.equal(waveStorage.get(EARLIER_CHART_PREFERENCES_KEY), v2Raw);
 // An old tab may write its v2 key; it cannot replace saved v4 wave settings.
-waveStorage.set(EARLIER_CHART_PREFERENCES_KEY, JSON.stringify({ version: 2, stockMas: [] }));
+waveStorage.set(
+  EARLIER_CHART_PREFERENCES_KEY,
+  JSON.stringify({ version: 2, stockMas: [] }),
+);
 waveReload = createChartPreferenceStore(waveStorageAdapter);
 assert.equal(waveReload.getSnapshot().preferences.stockWaveMode, "latest");
 assert.deepEqual(waveReload.getSnapshot().preferences.stockMas, [30, 60]);
 for (const mode of ["latest", "up", "down", "turning"]) {
   waveStore.update({ stockWaveMode: mode });
-  assert.equal(createChartPreferenceStore(waveStorageAdapter).getSnapshot().preferences.stockWaveMode, mode === "turning" ? "turning" : "latest");
+  assert.equal(
+    createChartPreferenceStore(waveStorageAdapter).getSnapshot().preferences
+      .stockWaveMode,
+    mode === "turning" ? "turning" : "latest",
+  );
 }
 for (const mode of ["unknown", null, {}, 1]) {
-  const sanitized = normalizeChartPreferences({ version: 3, stockWaveMode: mode, indexWaveMode: mode, stockShowWaves: "false" });
-  assert.deepEqual(effectiveChartWaves(sanitized, false), { showWaves: true, waveMode: "turning" });
-  assert.deepEqual(effectiveChartWaves(sanitized, true), { showWaves: true, waveMode: "latest" });
+  const sanitized = normalizeChartPreferences({
+    version: 3,
+    stockWaveMode: mode,
+    indexWaveMode: mode,
+    stockShowWaves: "false",
+  });
+  assert.deepEqual(effectiveChartWaves(sanitized, false), {
+    showWaves: true,
+    waveMode: "turning",
+  });
+  assert.deepEqual(effectiveChartWaves(sanitized, true), {
+    showWaves: true,
+    waveMode: "latest",
+  });
 }
-waveStore.receiveStorage(JSON.stringify({ version: 3, stockShowWaves: false, stockWaveMode: "up" }));
-assert.deepEqual(effectiveChartWaves(waveStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "latest" });
+waveStore.receiveStorage(
+  JSON.stringify({ version: 3, stockShowWaves: false, stockWaveMode: "up" }),
+);
+assert.deepEqual(
+  effectiveChartWaves(waveStore.getSnapshot().preferences, false),
+  { showWaves: false, waveMode: "latest" },
+);
 waveStore.reset();
 assert.deepEqual(waveStore.getSnapshot().preferences, defaultPreferences);
 deniedStore.update({ stockShowWaves: false, stockWaveMode: "up" });
-assert.deepEqual(effectiveChartWaves(deniedStore.getSnapshot().preferences, false), { showWaves: false, waveMode: "latest" });
+assert.deepEqual(
+  effectiveChartWaves(deniedStore.getSnapshot().preferences, false),
+  { showWaves: false, waveMode: "latest" },
+);
 assert.equal(deniedStore.getSnapshot().persistent, false);
 // Execute the actual App theme adapters in isolation: restricted localStorage
 // must not throw before the chart preference store can fall back to memory.
@@ -898,9 +950,28 @@ console.log(
   "presentation: raw-value sorting, comparable D/W/M returns, recent-100 daily zoom, frozen event affine projection and rejection, CNY/volume units, three-valued filters, versioned shared preferences, index isolation, reload/storage sync, and private-storage fallback passed",
 );
 
-for (const [period, closed, label] of [["W", "week_closed", "本周形成中"], ["M", "month_closed", "本月形成中"]]) {
-  const actual = chartIndicatorAvailability({[closed]: false, indicator_warmup_bars: 0, macd_dif: null}, ["macd_dif"], period);
+for (const [period, closed, label] of [
+  ["W", "week_closed", "本周形成中"],
+  ["M", "month_closed", "本月形成中"],
+]) {
+  const actual = chartIndicatorAvailability(
+    { [closed]: false, indicator_warmup_bars: 0, macd_dif: null },
+    ["macd_dif"],
+    period,
+  );
   assert.equal(actual.label, label);
   assert.doesNotMatch(actual.label, /预热/);
 }
-assert.match(chartIndicatorAvailability({week_closed: false, indicator_warmup_bars: 17, macd_dif: null, indicator_warmup_reason: "历史连续完整周期不足35根"}, ["macd_dif"], "W").reason, /历史连续完整周期不足35根/);
+assert.match(
+  chartIndicatorAvailability(
+    {
+      week_closed: false,
+      indicator_warmup_bars: 17,
+      macd_dif: null,
+      indicator_warmup_reason: "历史连续完整周期不足35根",
+    },
+    ["macd_dif"],
+    "W",
+  ).reason,
+  /历史连续完整周期不足35根/,
+);

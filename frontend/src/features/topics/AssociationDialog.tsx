@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import CopyStockCode from "../../components/CopyStockCode";
 import { useState } from "react";
 import { Check, X } from "lucide-react";
@@ -24,7 +25,8 @@ export default function AssociationDialog({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const toast = useToast();
-  const visible = topics.filter((topic) => matchesTopic(topic, query, kind));
+  const matches = makeFuzzyMatcher(query);
+  const visible = topics.filter((topic) => matchesTopic(topic, matches, kind));
   const selected = topics.filter((topic) => ids.includes(topic.topic_id));
   function toggle(id: string) {
     setError("");
@@ -79,7 +81,7 @@ export default function AssociationDialog({
           <input
             type="search"
             aria-label="搜索关联分类"
-            placeholder="搜索目标题材、行业或别名"
+            placeholder="名称 / 别名 / 拼音 / 首字母"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />

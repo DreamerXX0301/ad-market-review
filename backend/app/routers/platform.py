@@ -1,4 +1,6 @@
 """Platform HTTP endpoints; all data and job behavior lives in services."""
+from typing import Annotated
+
 from fastapi import APIRouter,Body,HTTPException,Query
 from fastapi.responses import JSONResponse
 from app.core import APP_NAME,APP_ID,json_clean,connect
@@ -90,13 +92,20 @@ def ladder_topic_adjustment_save(payload:dict=Body(...)):
 
 @router.get('/market/{kind}')
 @with_historical_cache
-def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000),monitor_scope:str=Query('historical',pattern='^(historical|latest)$'),rank_state:str=Query('all',pattern='^(all|unranked)$'),summary_only:bool=False):
+def market_page(kind:str,date:str|None=None,limit:int=Query(100,ge=1,le=1000),query:str='',page:int=Query(1,ge=1),page_size:int|None=Query(None,ge=1,le=200),sort_by:str|None=None,sort_order:str=Query('desc',pattern='^(asc|desc)$'),top_n:int|None=Query(None,ge=100,le=1000),monitor_scope:str=Query('historical',pattern='^(historical|latest)$'),rank_state:str=Query('all',pattern='^(all|unranked)$'),summary_only:bool=False,
+                sector_activity_sessions:Annotated[int|None,Query(description='仅板块排行榜，支持7或10个交易日；默认7')]=None):
     if rank_state!='all' and kind!='gainers':raise HTTPException(422,'未排名范围仅适用于近30日涨幅榜')
     if monitor_scope!='historical' and kind!='abnormal':raise HTTPException(422,'最新监控名单范围仅适用于监管页')
     if summary_only and kind!='emotion':raise HTTPException(422,'首屏摘要范围仅适用于市场情绪')
+    if sector_activity_sessions is not None and kind!='sectors':raise HTTPException(422,'板块活跃度窗口仅适用于板块排行榜')
     # Services already return JSON-native read models. Avoid FastAPI recursively
     # copying every bar/evidence field again before JSON encoding large charts.
-    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope,rank_state=rank_state,include_latest_classification_reference=True,**({'summary_only':True} if summary_only else {})))
+    options = {'summary_only': True} if summary_only else {}
+    if sector_activity_sessions is not None:
+        options['sector_activity_sessions'] = sector_activity_sessions
+    if kind == 'gainers' and query.strip():
+        options['fuzzy_query'] = True
+    return JSONResponse(market_service.overview(date) if kind=='overview' else market_service.market_page(kind,date,limit,query=query,page=page,page_size=page_size,sort_by=sort_by,sort_order=sort_order,top_n=top_n,monitor_scope=monitor_scope,rank_state=rank_state,include_latest_classification_reference=True,**options))
 
 @router.get('/instruments')
 def instruments(query:str='',limit:int=Query(50,ge=1,le=10000),fuzzy:bool=False):

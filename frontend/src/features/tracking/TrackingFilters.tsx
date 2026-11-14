@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import { useState } from "react";
 import { X } from "lucide-react";
 import type { Row } from "../../lib/api";
@@ -30,14 +31,11 @@ export default function TrackingFilters({
   scope?: string;
 }) {
   const [topicQuery, setTopicQuery] = useState("");
-  const needle = topicQuery.trim().toLocaleLowerCase();
+  const matchesTopic = makeFuzzyMatcher(topicQuery);
   const visible = topics.filter(
     (topic) =>
       !selected.includes(topic.topic_id) &&
-      [topic.name, ...(topic.aliases || [])]
-        .join(" ")
-        .toLocaleLowerCase()
-        .includes(needle),
+      matchesTopic(topic.name, topic.topic_id, topic.aliases),
   );
   return (
     <div className="tracking-filters">
@@ -48,7 +46,7 @@ export default function TrackingFilters({
             type="search"
             value={query}
             onChange={(event) => onQuery(event.target.value)}
-            placeholder="名称、代码或策略名称"
+            placeholder="股票或策略、代码、拼音、首字母"
           />
         </label>
         <label>
@@ -57,7 +55,7 @@ export default function TrackingFilters({
             type="search"
             value={topicQuery}
             onChange={(event) => setTopicQuery(event.target.value)}
-            placeholder="题材、行业或别名"
+            placeholder="名称 / 别名 / 拼音 / 首字母"
           />
         </label>
         <label>

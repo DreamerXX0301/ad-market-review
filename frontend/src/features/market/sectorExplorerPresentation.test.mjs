@@ -2,6 +2,26 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import ts from "typescript";
 
+const fuzzySource = ts
+  .transpileModule(
+    await fs.readFile(
+      new URL("../../lib/fuzzySearch.ts", import.meta.url),
+      "utf8",
+    ),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.ES2022,
+        target: ts.ScriptTarget.ES2022,
+      },
+    },
+  )
+  .outputText.replace(
+    '"pinyin-pro"',
+    JSON.stringify(import.meta.resolve("pinyin-pro")),
+  );
+const { makeFuzzyMatcher } = await import(
+  "data:text/javascript;base64," + Buffer.from(fuzzySource).toString("base64")
+);
 async function load(name) {
   const source = await fs.readFile(new URL(name, import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, {
@@ -11,7 +31,15 @@ async function load(name) {
     },
   }).outputText;
   return import(
-    "data:text/javascript;base64," + Buffer.from(compiled).toString("base64")
+    "data:text/javascript;base64," +
+      Buffer.from(
+        compiled.replace(
+          '"../../lib/api"',
+          JSON.stringify(
+            "data:text/javascript,export const sectorActivityField='sector_activity_10d',sectorActivitySessions=10",
+          ),
+        ),
+      ).toString("base64")
   );
 }
 const {
@@ -20,6 +48,7 @@ const {
   sectorExplorerRows: prepare,
   sectorExplorerDefaultSort: defaultSort,
   sectorBrokenBoard: brokenView,
+  sectorActivityMetricForMode: modeMetric,
 } = await load("./sectorExplorerPresentation.ts");
 const { sortMarketRows: sort } = await load("./marketPresentation.ts");
 
@@ -44,8 +73,8 @@ const activity = (extra = {}) => ({
   group_kind: "concept",
   group_level: null,
   metric: "change_pct",
-  expected_days: 7,
-  observed_days: 7,
+  expected_days: 10,
+  observed_days: 10,
   complete: true,
   state: "complete",
   count: 2,
@@ -141,6 +170,22 @@ assert.equal(
   1,
 );
 assert.equal(prepare(prices, { kind: "concept", query: "隐藏词" }).length, 0);
+for (const query of [
+  "jqr",
+  " ji qi ren ",
+  "８８５００２.ti",
+  "机器人 885002",
+]) {
+  const matches = prepare(prices, {
+    kind: "concept",
+    query,
+    matchQuery: makeFuzzyMatcher(query),
+  });
+  assert.deepEqual(
+    matches.map((item) => item.topic_code),
+    ["885002.TI"],
+  );
+}
 assert.equal(
   prepare(prices, { kind: "concept", query: "change_pct" }).length,
   0,
@@ -156,15 +201,24 @@ assert.equal(
   "real index quotes do not depend on historic members",
 );
 
+assert.equal(modeMetric("amount", modeMetric("all", "change_pct")), "amount");
+assert.equal(
+  modeMetric("all", modeMetric("amount", "change_pct")),
+  "change_pct",
+);
+assert.equal(modeMetric("rising", "amount"), "change_pct");
+assert.equal(modeMetric("activity", "amount"), "amount");
+assert.equal(modeMetric("activity", "change_pct"), "change_pct");
+
 // Exact zero and incomplete observation are materially different facts.
 let result = decorated({
-  sector_activity_7d: { change_pct: activity({ count: 0 }) },
+  sector_activity_10d: { change_pct: activity({ count: 0 }) },
 });
 assert.equal(result._sector_activity_count, 0);
 assert.equal(result._sector_activity_complete, true);
-assert.equal(result._sector_activity_label, "近7日0次");
+assert.equal(result._sector_activity_label, "近10日0次");
 result = decorated({
-  sector_activity_7d: {
+  sector_activity_10d: {
     change_pct: activity({
       state: "observed_partial",
       complete: false,
@@ -181,9 +235,9 @@ for (const invalid of [
   { count: null },
   { count: -1 },
   { count: 1.5 },
-  { count: 8 },
+  { count: 11 },
   { count: true },
-  { expected_days: 10 },
+  { expected_days: 7 },
   { observed_days: 1, count: 2 },
   { complete: false },
   { state: "unknown" },
@@ -195,7 +249,7 @@ for (const invalid of [
   { state: "observed_partial", complete: false, observed_days: 4, count: 0 },
 ]) {
   assert.equal(
-    decorated({ sector_activity_7d: { change_pct: activity(invalid) } })
+    decorated({ sector_activity_10d: { change_pct: activity(invalid) } })
       ._sector_activity_count,
     null,
     JSON.stringify(invalid),
@@ -204,19 +258,19 @@ for (const invalid of [
 assert.equal(
   decorated({
     normalization_version: null,
-    sector_activity_7d: { change_pct: activity() },
+    sector_activity_10d: { change_pct: activity() },
   })._sector_activity_count,
   null,
 );
 assert.equal(
   decorated({
     quote_basis: "member_sample",
-    sector_activity_7d: { change_pct: activity() },
+    sector_activity_10d: { change_pct: activity() },
   })._sector_activity_count,
   null,
 );
 const dual = {
-  sector_activity_7d: {
+  sector_activity_10d: {
     change_pct: activity({ count: 2 }),
     amount: activity({ metric: "amount", count: 5 }),
   },
@@ -226,7 +280,7 @@ assert.equal(decorated(dual, "amount")._sector_activity_count, 5);
 const industryActivity = row("881001.TI", {
   kind: "industry",
   level: 1,
-  sector_activity_7d: {
+  sector_activity_10d: {
     change_pct: activity({ group_kind: "industry", group_level: 2 }),
   },
 });
@@ -262,7 +316,7 @@ assert.equal(decorated({ limit_up_count: 0 })._sector_limit_sort, 0);
 // The existing whole-result sorter preserves unknown-last for both directions.
 const ranked = [0, 2, 7, null].map((n, i) =>
   row("88500" + i + ".TI", {
-    sector_activity_7d: { change_pct: activity({ count: n }) },
+    sector_activity_10d: { change_pct: activity({ count: n }) },
   }),
 );
 const prepared = prepare(ranked, { kind: "concept" });
@@ -467,5 +521,5 @@ assert.equal("_sector_up_ratio" in frozen, false);
 assert.equal(output[0]._sector_up_ratio, 50);
 
 console.log(
-  "Sector explorer: separate source/normalization/level/basis scopes, deliberate search, original rank modes, exact/partial seven-day facts, strict sample ratio, unknown-last and immutable input passed",
+  "Sector explorer: separate source/normalization/level/basis scopes, deliberate search, original rank modes, exact/partial ten-day facts, strict sample ratio, unknown-last and immutable input passed",
 );

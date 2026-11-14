@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import type { Row } from "../../lib/api";
 import type { ChartEventBaseline } from "../../components/chartDisplay";
 
@@ -59,7 +60,7 @@ export function filterWatchlistRows(
   query: string,
   source = "all",
 ) {
-  const search = query.trim().toLocaleLowerCase();
+  const matches = makeFuzzyMatcher(query);
   return rows.filter((row) => {
     const sourceMatches =
       source === "all" ||
@@ -74,19 +75,14 @@ export function filterWatchlistRows(
       : [];
     return (
       sourceMatches &&
-      (!search ||
-        [
-          row.name,
-          row.code,
-          row.instrument_id,
-          row.source_name,
-          ...names,
-          ...industries,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase()
-          .includes(search))
+      matches(
+        row.name,
+        row.code,
+        row.instrument_id,
+        row.source_name,
+        names,
+        industries,
+      )
     );
   });
 }

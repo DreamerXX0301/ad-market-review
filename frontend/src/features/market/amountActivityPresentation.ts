@@ -10,18 +10,25 @@ const day = (value: unknown): value is string => {
     Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
   );
 };
-export function amountActivityView(value: Row | null | undefined) {
+export function amountActivityView(
+  value: Row | null | undefined,
+  sessions = 7,
+  basis = "成交额TOP10榜单",
+) {
+  const sameWindow = value?.expected_days === sessions;
   const observed =
-    count(value?.observed_days) && value.observed_days <= 7
+    sameWindow && count(value?.observed_days) && value.observed_days <= sessions
       ? value.observed_days
       : null;
   const complete =
     value?.complete === true &&
     value?.state === "complete" &&
-    value?.expected_days === 7 &&
-    observed === 7;
+    observed === sessions;
   const appearances =
-    count(value?.count) && value.count <= 7 && value?.state !== "unknown"
+    sameWindow &&
+    count(value?.count) &&
+    value.count <= sessions &&
+    value?.state !== "unknown"
       ? value.count
       : null;
   const ranks: Row[] = Array.isArray(value?.ranks) ? value.ranks : [];
@@ -49,22 +56,22 @@ export function amountActivityView(value: Row | null | undefined) {
         ? "上榜次数待核验"
         : appearances === 0
           ? complete
-            ? "近7日未上榜"
+            ? `近${sessions}日未上榜`
             : "已观察样本未见"
           : complete
-            ? `近7日上榜${appearances}次`
-            : `近7日已观察${appearances}次`,
+            ? `近${sessions}日上榜${appearances}次`
+            : `近${sessions}日已观察${appearances}次`,
     coverage:
       observed === null
         ? "观察范围待核验"
         : complete
-          ? "核验范围7/7日"
-          : `已观察${observed}/7日 · 样本不完整`,
+          ? `核验范围${sessions}/${sessions}日`
+          : `已观察${observed}/${sessions}日 · 样本不完整`,
     reason:
       typeof value?.reason === "string"
         ? value.reason
         : complete
-          ? "近7个市场交易日（含观察日）的已留存成交额TOP10榜单"
+          ? `近${sessions}个市场交易日（含观察日）的已留存${basis}`
           : "部分日期或榜单样本不完整，次数仅说明本地已观察排名",
     details,
     dates: [...new Set(dates)].sort().reverse(),

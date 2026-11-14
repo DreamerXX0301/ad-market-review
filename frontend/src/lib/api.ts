@@ -46,6 +46,13 @@ export function firstGainersReadPath(day: string) {
   return `/market/gainers?date=${day}&page=1&page_size=25&query=&sort_by=change_30d_pct&sort_order=desc&top_n=100`;
 }
 
+export const sectorActivitySessions = 10;
+export const sectorActivityField = `sector_activity_${sectorActivitySessions}d`;
+
+export function sectorBoardReadPath(day: string) {
+  return `/market/sectors?date=${day}&limit=1000&sector_activity_sessions=${sectorActivitySessions}`;
+}
+
 function clearHistoricalWarmReads() {
   historicalWarmRevision += 1;
   historicalWarmReads.clear();
@@ -443,13 +450,12 @@ type HistoricalTarget = {
 
 function historicalPath({ day, kind, monitorScope }: HistoricalTarget) {
   if (kind === "gainers") return firstGainersReadPath(day);
+  if (kind === "sectors") return sectorBoardReadPath(day);
   if (kind === "ladder/nodes")
     return `/market/ladder/nodes?date=${day}&as_of=${day}`;
   if (kind === "abnormal")
     return `/market/abnormal?monitor_scope=${monitorScope || "historical"}&limit=1000&date=${day}`;
-  const limit = ["emotion", "ladder", "sectors"].includes(kind)
-    ? "&limit=1000"
-    : "";
+  const limit = ["emotion", "ladder"].includes(kind) ? "&limit=1000" : "";
   return `/market/${kind}?date=${day}${limit}`;
 }
 

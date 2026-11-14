@@ -122,6 +122,33 @@ def test_list_all_fields_match_legacy_filters_unknowns_and_catalog(local,archive
     assert topics.list_topics(query,archived,kind)==legacy_list(connection,catalog,query,archived,kind)
 
 
+def test_directory_search_preserves_kind_archive_description_and_name_order(local):
+    connection, catalog = local
+    for identifier, kind, archived, name, aliases in (
+        ('industry-a', 'industry', False, '智慧能源', ['储能建设']),
+        ('concept-b', 'concept', False, '储能建设', []),
+        ('industry-c', 'industry', True, '储能设施', []),
+    ):
+        add_topic(connection, catalog, identifier, kind=kind, archived=archived)
+        connection.execute('UPDATE topic_revision SET name=?, description=?, aliases_json=? WHERE topic_id=?',
+                           (name, '核验业务范围', js(aliases), identifier))
+    catalog['industry-a']['topic_code'] = '881002.TI'
+
+    for search in ('zhihuinengyuan', 'zhny', 'cnjs', '８８１００２．ｔｉ', '业务范围'):
+        result = topics.list_topics(search, kind='industry')
+        assert [row['topic_id'] for row in result['items']] == ['industry-a']
+        assert 'search_match' not in result['items'][0]
+
+    strict = topics.list_topics('储能建设')
+    assert [row['topic_id'] for row in strict['items']] == ['concept-b', 'industry-a']
+    assert topics.list_topics('881003', kind='industry')['total'] == 0
+    assert topics.list_topics('储能设施', kind='industry')['total'] == 0
+    assert topics.list_topics('储能设施', True, 'industry')['items'][0]['topic_id'] == 'industry-c'
+    suggestion = topics.list_topics('智慧能原', kind='industry')
+    assert suggestion['items'][0]['topic_id'] == 'industry-a'
+    assert suggestion['items'][0]['search_match']['is_suggestion'] is True
+
+
 def test_detail_keeps_original_excluded_order_and_override_provenance(local):
     seed(local);connection,catalog=local;topic=topics._topic(connection,'topic-1')
     master={'600001.SH':{'name':'one'},'600002.SH':{'name':'two'}}

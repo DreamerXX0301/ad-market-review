@@ -255,6 +255,45 @@ def test_top_n_search_is_scoped_and_omission_retains_full_market(rank_scope):
     assert full['summary']['top_n'] is None
 
 
+def test_http_gainers_matches_names_and_dated_tags_before_paging(rank_scope, monkeypatch):
+    from app.routers.platform import router
+
+    rank_scope[1]['name'] = '甲壳科技'
+    rank_scope[119]['name'] = '甲壳材料'
+    tags = [topic(['000002.SH', '000120.SH'], name='智能制造', observed=TODAY),
+            topic(['000001.SH'], name='未来主题', observed='2026-10-21', code='881002.TI')]
+    monkeypatch.setattr(market, 'panel', lambda day, **_: (
+        object(), {'snapshot_id': 'fixture', 'data_end': TODAY}, day, {'topics': tags}, []))
+    app = FastAPI(); app.include_router(router)
+    client = TestClient(app)
+    baseline = market.market_page('gainers', TODAY)['ranking_distribution']
+
+    for query in ('jiaqiao', 'jq', 'znzz', '000120.sh'):
+        response = client.get('/api/v1/market/gainers', params={
+            'date': TODAY, 'query': query, 'page': 1, 'page_size': 1,
+            'sort_by': 'change_pct', 'sort_order': 'desc',
+        })
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result['items'][0]['rank'] == 120 and 'search_match' not in result['items'][0]
+        assert result['ranking_distribution'] == baseline
+        if query != '000120.sh':
+            assert result['total'] == result['pages'] == 2
+
+    limited = market.market_page('gainers', TODAY, query='jq', top_n=100, fuzzy_query=True)
+    assert [row['rank'] for row in limited['items']] == [2]
+    # AI's shared service entry retains literal semantics and scoped categories.
+    assert market.market_page('gainers', TODAY, query='jq')['total'] == 0
+    assert market.market_page('gainers', TODAY, query='wlzt', fuzzy_query=True)['total'] == 0
+    assert market.market_page('gainers', TODAY, query='0001200', fuzzy_query=True)['total'] == 0
+    partial_code = market.market_page('gainers', TODAY, query='00012', fuzzy_query=True)
+    assert [row['rank'] for row in partial_code['items']] == [12, *range(120, 130)]
+    suggested = market.market_page('gainers', TODAY, query='甲壳刻技', fuzzy_query=True)
+    assert suggested['items'][0]['rank'] == 2
+    assert suggested['items'][0]['search_match']['is_suggestion'] is True
+    assert all('search_match' not in row for row in rank_scope)
+
+
 def test_nonpaginated_limit_reaches_a_thousand_without_changing_full_total(rank_scope):
     result = market.market_page('gainers', TODAY, limit=1000)
     assert len(result['items']) == 1000 and result['total'] == 1501
@@ -284,6 +323,11 @@ def test_http_rank_scope_forwarded_and_bounded(monkeypatch):
     app = FastAPI(); app.include_router(router); client = TestClient(app)
     assert client.get('/api/v1/market/gainers?date='+TODAY+'&top_n=1000&page_size=25').status_code == 200
     assert seen[0]['top_n'] == 1000 and seen[0]['page_size'] == 25
+    assert 'fuzzy_query' not in seen[0]
+    assert client.get('/api/v1/market/gainers', params={'query': 'rc'}).status_code == 200
+    assert seen[-1]['query'] == 'rc' and seen[-1]['fuzzy_query'] is True
+    assert client.get('/api/v1/market/sectors', params={'query': 'rc'}).status_code == 200
+    assert 'fuzzy_query' not in seen[-1]
     assert client.get('/api/v1/market/gainers?top_n=1001').status_code == 422
 
 

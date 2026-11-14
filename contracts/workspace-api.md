@@ -18,9 +18,13 @@
 
 来源成员和人工覆盖分开；撤销人工修改恢复来源集合，不抹历史。来源成员未完整时 `member_count=null`，`observed_member_count` 是样本下界；完整空集才为零。归档分类可读，不可新增关联。
 
+题材目录 `q` 支持名称和别名的文字匹配、全拼和首字母，说明继续按文字筛选，来源代码只匹配原值或片段。先限定分类类型和归档范围；没有常规命中时可返回附 `search_match` 的近似候选。结果仍按名称排列。
+
 联合查询使用重复 `topic_ids`（1–20 个），`match=any|all`、query、sort_by、sort_order；可选重复 `boards=main|chinext|star|beijing`（主板、创业板、科创板、北交所，最多4项，不接受重复或其他值）。省略 boards 时不限；指定多个板块取其并集，再与分类交并集、搜索结果取交集。按当前已核验股票名录复用股票范围的板块分类，不从没有名录身份的成员代码猜测；未知身份在不限时保留，指定板块时不匹配，勾选四个板块不等于包含未知的“不限”。返回 `selected_topics/members_complete/business_date/quote_date/snapshot_id/warnings/boards`（boards 按上述固定顺序回显）；行含身份、`board/board_label/board_scope/board_reason`、topics/industries/matched_topics、精确当日报价及统一个股统计。board 未知为 unknown，原因非空；当前名录板块不是历史上市身份。无当日报价保留行且行情为 null，不以旧值替代。
 
 排序支持 change_pct/amount/turnover_rate/close/name/code/return_ytd_pct/change_30d_pct/limit_up_ytd/last_limit_up_date/sessions_since_limit_up；上市板块在历史指标批量计算前筛选，完整过滤结果与 total/metric_coverage 一致，服务端全量排序后前端每页25只，切换板块回到第一页。null 在两个方向均最后，下界不作精确次数排序。筛选不改变当前业务日，也不写入分类归属或已选股票的其他关联。
+
+联合成员 `query` 在已选成员的股票名称、代码、题材和行业内查找，支持文字匹配、全拼和首字母。代码只匹配原值、前缀或子串。没有常规命中时可返回同音或轻微错字候选，并附 `search_match` 标明“可能想找”。搜索只筛选已选成员，沿用原交并集、板块筛选和排序。
 
 批量关联 body 为 `{instrument_ids,topic_ids,reason?}`，最多 100 股、20 分类。全部验证后同事务追加 include，保留其他归属；已有有效关系 unchanged，被人工排除的可重新纳入。返回 added/unchanged 及数量。它按当前有效状态幂等，不承诺跨后续人工修改的请求重放。
 
@@ -356,7 +360,7 @@ PUT保留完整`noon/after_close={enabled,time}`与可选`expected_revision`；�
 
 新初始化/盘后增量在同步 plan 冻结 `master_request_params={asset_type:"a-share",exchange:"SH,SZ,BJ",limit:10000,offset:0}`，显式交易所范围用于来源返回证券上市日期；实际仍未知的日期保留未知。旧已有 plan 无此字段时使用原无exchange参数，保持 accepted/master.json 的请求签名与验收证据，不能升级时静默重写旧任务。原始响应继续留证，已验证同身份上市日期的恢复规则不变。
 - 行字段含 `source_kind/source_id/source_name`、`added_business_date/created_at_ms`、`observed_date`、`tracking_round_id/tracking_entry_date`、`event_date/event_close/event_price_basis`、`latest_price/today_change_pct/quote_date`。人工收藏且无原个股轮次时，事件日和事件价保持 null 并提供 `event_baseline_reason`；板块成员不套用板块指数的事件基准。
-- 每行 `current_topics` 为当前有效行业、概念与人工研究归属，`current_industries` 为行业子集；元素含 `topic_id/name/kind/source_observed_date/members_complete`。`current_topics_observed_date` 是业务日有效关系日期，不冒充来源采集日；逐来源日期见标签字段。归属使用题材库当前来源成员及人工修改批量读取，与普通个股详情共用同一只读归属服务，不缓存原收藏时归属，不查询逐股接口或扫描历史行情。缺少已知归属不推断不属于；`query` 同时匹配股票、代码、首次来源和全部行业/题材名称。界面合并为“行业 / 题材”一列，默认最多1枚行业和2枚概念标签，其余可展开且仍可搜索。
+- 每行 `current_topics` 为当前有效行业、概念与人工研究归属，`current_industries` 为行业子集；元素含 `topic_id/name/kind/source_observed_date/members_complete`。`current_topics_observed_date` 是业务日有效关系日期，不冒充来源采集日；逐来源日期见标签字段。归属使用题材库当前来源成员及人工修改批量读取，与普通个股详情共用同一只读归属服务，不缓存原收藏时归属，不查询逐股接口或扫描历史行情。缺少已知归属不推断不属于。`query` 支持股票、首次来源和全部当前行业/题材名称的文字匹配、全拼和首字母，代码按原值或片段匹配。没有常规命中时可返回附 `search_match` 的近似候选。`total` 仍是自选总数，`matched_count` 为筛选数。界面合并为“行业 / 题材”一列，默认最多1枚行业和2枚概念标签，其余可展开且仍可搜索。
 - 自选股票详情可按筛选排序后的完整列表上一只/下一只；每只股票独立传递其冻结事件基准，切换到无事件来源股票时不会继承上一只的基准线。该导航的观察日期使用业务行情日，不受盘面历史日期影响。
 
 ## 手动批量执行策略

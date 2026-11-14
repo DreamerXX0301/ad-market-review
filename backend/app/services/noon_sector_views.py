@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from app.core import connect
 from app.services import noon_membership_context as membership
 from app.services.noon_collection import canonical
+from app.services.search_matching import identity_match, normalized
 
 VERSION = 'noon-sector-memberships-v1'
 MAX_BYTES = 2 * 1024 * 1024
@@ -167,9 +168,16 @@ def build_sector_view(payload, topic_code, *, snapshot_id, content_sha256, board
         raise HTTPException(422, '午评板块、筛选或分页参数无效')
     view = sector_member_rows(payload, topic_code)
     items = view['items']
-    needle = query.strip().casefold()
+    needle = normalized(query)
+
+    def matches(row):
+        if not needle or needle in normalized(f"{row['name']} {row['instrument_id']}"):
+            return True
+        match = identity_match(needle, row['name'], row['code'], row['instrument_id'])
+        return match is not None and not match[1]['is_suggestion']
+
     filtered = [row for row in items if (board == 'all' or row['board'] == board)
-                and (not needle or needle in f"{row['name']} {row['instrument_id']}".casefold())]
+                and matches(row)]
     known, unknown = [], []
     for row in filtered:
         valid_sort = (isinstance(row.get(sort), str) and row[sort].strip()

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Row } from "../../lib/api";
 import { list, useApi } from "../../lib/api";
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 
 export default function TopicSelect({
   topics,
@@ -21,16 +22,9 @@ export default function TopicSelect({
     const existing = topics.find((topic) => topic.topic_id === item.topic_id);
     return existing ? [{ ...item, name: existing.name }] : [];
   });
-  const needle = query.trim().toLocaleLowerCase();
+  const matches = makeFuzzyMatcher(query);
   const visible = topics.filter((topic) =>
-    [
-      topic.name,
-      topic.topic_id,
-      ...(Array.isArray(topic.aliases) ? topic.aliases : []),
-    ]
-      .join(" ")
-      .toLocaleLowerCase()
-      .includes(needle),
+    matches(topic.name, topic.topic_id, topic.aliases),
   );
   const selected = topics.find((topic) => topic.topic_id === value);
   const selectedHidden =
@@ -46,7 +40,7 @@ export default function TopicSelect({
       <input
         type="search"
         aria-label={`搜索${label}`}
-        placeholder="搜索题材、行业或别名"
+        placeholder="名称 / 别名 / 拼音 / 首字母"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />

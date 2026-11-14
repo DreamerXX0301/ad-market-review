@@ -1,8 +1,20 @@
-import type { Row } from "../../lib/api";
+import {
+  sectorActivityField,
+  sectorActivitySessions,
+  type Row,
+} from "../../lib/api";
 
 export type SectorExplorerMode =
   "all" | "rising" | "falling" | "amount" | "limit" | "activity" | "broken";
 export type SectorActivityMetric = "change_pct" | "amount";
+export function sectorActivityMetricForMode(
+  mode: SectorExplorerMode,
+  current: SectorActivityMetric,
+): SectorActivityMetric {
+  if (mode === "amount") return "amount";
+  if (mode === "all" || mode === "rising") return "change_pct";
+  return current;
+}
 export type SectorExplorerKind = "concept" | "industry";
 export type SectorExplorerGroup = {
   key: string;
@@ -152,7 +164,7 @@ export function sectorExplorerGroups(
 
 function activityView(row: Row, metric: SectorActivityMetric) {
   const group = groupOf(row);
-  const raw = row.sector_activity_7d?.[metric];
+  const raw = row[sectorActivityField]?.[metric];
   const unavailable = {
     count: null as number | null,
     complete: false,
@@ -173,9 +185,9 @@ function activityView(row: Row, metric: SectorActivityMetric) {
     (!rowDate || raw.window_end === rowDate);
   if (
     !scopeValid ||
-    raw.expected_days !== 7 ||
+    raw.expected_days !== sectorActivitySessions ||
     !count(raw.observed_days) ||
-    raw.observed_days > 7 ||
+    raw.observed_days > sectorActivitySessions ||
     !count(raw.count) ||
     raw.count > raw.observed_days
   )
@@ -183,13 +195,13 @@ function activityView(row: Row, metric: SectorActivityMetric) {
   if (
     raw.state === "complete" &&
     raw.complete === true &&
-    raw.observed_days === 7
+    raw.observed_days === sectorActivitySessions
   )
     return {
       count: raw.count,
       complete: true,
       state: "complete",
-      label: `近7日${raw.count}次`,
+      label: `近${sectorActivitySessions}日${raw.count}次`,
     };
   if (
     raw.state === "observed_partial" &&
@@ -298,6 +310,7 @@ export function sectorExplorerRows(
     kind,
     groupKey,
     query = "",
+    matchQuery,
     mode = "all",
     activityMetric = "change_pct",
     observationDate,
@@ -306,6 +319,7 @@ export function sectorExplorerRows(
     kind: SectorExplorerKind;
     groupKey?: string | null;
     query?: string;
+    matchQuery?: (...fields: unknown[]) => boolean;
     mode?: SectorExplorerMode;
     activityMetric?: SectorActivityMetric;
     observationDate?: string;
@@ -316,19 +330,27 @@ export function sectorExplorerRows(
   const selected = groups.find((group) => group.key === groupKey) || groups[0];
   if (!selected) return [];
   const search = query.trim().toLocaleLowerCase();
+  const matches =
+    matchQuery ??
+    ((...fields: unknown[]) =>
+      !search ||
+      fields.some((field) =>
+        text(field)?.toLocaleLowerCase().includes(search),
+      ));
   return rows
     .filter((row) => {
       if (kindOf(row) !== kind || groupOf(row).key !== selected.key)
         return false;
       if (
-        search &&
-        ![
+        !matches(
           row.name,
           row.topic_code,
           row.thscode,
           row.source_code,
           row.topic_id,
-        ].some((value) => text(value)?.toLocaleLowerCase().includes(search))
+          row.search_pinyin,
+          row.search_initials,
+        )
       )
         return false;
       return mode === "rising"

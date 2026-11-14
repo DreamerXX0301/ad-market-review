@@ -13,7 +13,7 @@ const encode = (source) =>
   "data:text/javascript;base64," + Buffer.from(source).toString("base64");
 async function helper(path) {
   return import(
-    encode(compile(await fs.readFile(new URL(path, import.meta.url), "utf8")))
+    encode(compile(await fs.readFile(new URL(path, import.meta.url), "utf8")).replace('"../../lib/fuzzySearch"', JSON.stringify(new URL("../../lib/fuzzySearch.ts", import.meta.url).href)))
   );
 }
 const { createStockNavigation, trackingEventBaseline, stepStockSelection } =

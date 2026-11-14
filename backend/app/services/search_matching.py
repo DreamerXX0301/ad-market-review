@@ -76,3 +76,24 @@ def identity_match(query, name, *codes):
             or (is_latin and len(latin) >= 5 and one_edit(latin, full))):
         return 6, {'match_type': 'typo', 'match_label': '可能想找 · 近似名称', 'is_suggestion': True}
     return None
+
+
+def list_identity_match(query, name, codes, labels=()):
+    """Find the best identity or classification match without reordering a list."""
+    if not normalized(query):
+        return None
+    match = identity_match(query, name or '', *codes)
+    if match and match[0] == 0:
+        return match[1]
+    for label in labels:
+        if isinstance(label, dict):
+            candidate = identity_match(query, label.get('name') or '', label.get('topic_id'), label.get('topic_code'))
+        elif isinstance(label, str):
+            candidate = identity_match(query, label)
+        else:
+            continue
+        if candidate and (match is None or candidate[0] < match[0]):
+            match = candidate
+            if match[0] == 0:
+                break
+    return match[1] if match else None

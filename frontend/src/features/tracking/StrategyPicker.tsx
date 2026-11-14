@@ -1,3 +1,4 @@
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Layers3, Search } from "lucide-react";
@@ -27,6 +28,7 @@ export default function StrategyPicker({
     search = useRef<HTMLInputElement>(null);
   const id = useId();
   const current = strategies.find((strategy) => strategy.strategy_id === value);
+  const matches = makeFuzzyMatcher(query);
   const choices = [
     {
       strategy_id: "",
@@ -37,11 +39,7 @@ export default function StrategyPicker({
       ),
     },
     ...strategies,
-  ].filter(
-    (strategy) =>
-      !query.trim() ||
-      strategy.name.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  ].filter((strategy) => matches(strategy.name));
   const choose = (next: string) => {
     onChange(next);
     setOpen(false);
@@ -131,7 +129,7 @@ export default function StrategyPicker({
                 aria-activedescendant={
                   choices[active] ? `${id}-${active}` : undefined
                 }
-                placeholder="搜索策略名称…"
+                placeholder="策略名称 / 拼音 / 首字母"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {

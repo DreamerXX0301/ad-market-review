@@ -5,6 +5,9 @@ import { ChevronRight, RefreshCw, Search } from "lucide-react";
 import {
   firstGainersReadPath,
   list,
+  sectorActivityField,
+  sectorActivitySessions,
+  sectorBoardReadPath,
   useApi,
   usePageActive,
 } from "../../lib/api";
@@ -24,6 +27,7 @@ import {
   textValue,
   label,
 } from "../../lib/format";
+import { makeFuzzyMatcher } from "../../lib/fuzzySearch";
 import {
   Badge,
   Cell,
@@ -813,9 +817,11 @@ export function MarketPage({
   const path =
     date && firstGainersPage
       ? firstGainersReadPath(date)
-      : date && route !== "abnormal"
-        ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
-        : null;
+      : date && route === "sectors"
+        ? sectorBoardReadPath(date)
+        : date && route !== "abnormal"
+          ? `/market/${route}?date=${date}${!isGainers ? "&limit=1000" : ""}${isGainers ? "&page=" + gainerPage + "&page_size=25&query=" + encodeURIComponent(gainerQuery) + "&sort_by=" + gainerSort.key + "&sort_order=" + gainerSort.order + (gainerUnranked ? "&rank_state=unranked" : gainerTopN == null || gainerQuery ? "" : "&top_n=" + gainerTopN) : ""}`
+          : null;
   const result = useApi<Row>(path);
   const data = result.data;
   const primarySettled =
@@ -834,7 +840,7 @@ export function MarketPage({
   );
   const sectorResult = useApi<Row>(
     route === "flow" && kind === "concept" && date
-      ? `/market/sectors?date=${date}&limit=1000`
+      ? sectorBoardReadPath(date)
       : null,
   );
   const conceptFlow = route === "flow" && kind === "concept";
@@ -891,6 +897,15 @@ export function MarketPage({
   useEffect(() => {
     setLevel(kind === "industry" && levels.length ? levels[0] : "all");
   }, [kind, levels.join(",")]);
+  const matches = makeFuzzyMatcher(filter);
+  const classificationFields = (values: unknown) =>
+    Array.isArray(values)
+      ? values.map((value) =>
+          value && typeof value === "object"
+            ? [value.name, value.topic_id, value.topic_code]
+            : value,
+        )
+      : values;
   let filtered = rows.filter(
     (r) =>
       (!isSector || rowKind(r) === kind) &&
@@ -898,7 +913,16 @@ export function MarketPage({
         String(r.classification_level ?? r.level) === level) &&
       (isGainers ||
         !filter ||
-        JSON.stringify(r).toLowerCase().includes(filter.toLowerCase())),
+        matches(
+          r.name,
+          r.code,
+          r.instrument_id,
+          r.topic_id,
+          r.topic_code,
+          r.category,
+          classificationFields(r.topics),
+          classificationFields(r.industries),
+        )),
   );
   if (isSector) {
     if (rank === "decline")
@@ -1362,7 +1386,7 @@ export function MarketPage({
                   aria-label={
                     gainerUnranked ? "搜索未排名证券" : "搜索全市场证券"
                   }
-                  placeholder="搜索名称、题材、代码"
+                  placeholder="名称 / 代码 / 拼音 / 首字母 / 题材"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                 />
@@ -1370,7 +1394,7 @@ export function MarketPage({
             ) : (
               <input
                 className="search-input compact"
-                placeholder="筛选名称、题材、代码…"
+                placeholder="名称 / 代码 / 拼音 / 首字母 / 题材"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               />
@@ -1580,7 +1604,7 @@ export function MarketPage({
         )}
         {isQuoteBoard && (
           <SectorActivityCoverage
-            summary={tableData?.sector_activity_7d}
+            summary={tableData?.[sectorActivityField]}
             kind={kind}
             level={level}
           />
@@ -1622,13 +1646,13 @@ export function MarketPage({
                     ]
                   : info.columns
               )
-                .concat(isQuoteBoard ? ["sector_activity_7d"] : [])
+                .concat(isQuoteBoard ? [sectorActivityField] : [])
                 .concat(isSector ? ["sector_chart"] : [])
                 .map((key) => ({
                   key,
-                  ...(key === "sector_activity_7d"
+                  ...(key === sectorActivityField
                     ? {
-                        title: "近7日榜单活跃",
+                        title: `近${sectorActivitySessions}日榜单活跃`,
                         sortable: false,
                         render: (value: unknown) => (
                           <SectorActivityCell
